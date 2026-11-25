@@ -1393,6 +1393,7 @@ export async function loadProjectConfigs(strictRead = false): Promise<ProjectCon
           ...(recipeRunSupportsVideoRecording ? { recipeRunSupportsVideoRecording: true } : {}),
           ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
           ...(staticReview ? { staticReview } : {}),
+          ...(raw.traces ? { traces: { enabled: raw.traces.enabled !== false } } : {}),
           ...(raw.qa ? { qa: raw.qa } : {}),
           ...(workflowDefaults ? { workflowDefaults } : {}),
           ...(raw.execution_templates &&

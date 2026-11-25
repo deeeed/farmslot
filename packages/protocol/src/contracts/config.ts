@@ -431,6 +431,8 @@ export interface ProjectConfig {
   backlog?: ProjectBacklogConfig;
   roadmap?: ProjectRoadmapConfig;
   prepare?: ProjectPrepareConfig;
+  /** ADR-039 Amendment 10: false opts the project out of training traces (default true). */
+  traces?: { enabled: boolean };
   /** Canonical static-review template and compatible frozen fixture guidance. */
   staticReview?: {
     templateId?: string;

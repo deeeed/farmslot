@@ -2862,3 +2862,38 @@ function readRetainedManifest(
     typeof readRetainedManifestUntimed
   >;
 }
+
+/**
+ * ADR-039 Amendment 10: one retained task file, read without opening the store, for offline
+ * trace export. Returns null when the bundle or the file is not in place, or its bytes do not
+ * match the manifest; it never writes, migrates or repairs anything.
+ */
+export async function readRetainedTaskFileReadOnly(input: {
+  storeRoot: string;
+  bundleDigest: string;
+  taskKey: string;
+  relativePath: string;
+}): Promise<Buffer | null> {
+  if (!BUNDLE_DIGEST.test(input.bundleDigest)) return null;
+  assertSafeBundleSegment(input.taskKey, 'task key');
+  assertSafeBundleRelativePath(input.relativePath);
+  const directory = path.join(input.storeRoot, 'sha256', input.bundleDigest);
+  const read = async (file: string) => {
+    try {
+      return await readFile(file);
+    } catch (error) {
+      if (hasCode(error, 'ENOENT') || hasCode(error, 'ENOTDIR')) return null;
+      throw error;
+    }
+  };
+  const raw = await read(path.join(directory, 'manifest.json'));
+  if (!raw || sha256Text(raw.toString('utf8')) !== input.bundleDigest) return null;
+  const manifest = JSON.parse(raw.toString('utf8')) as RunBundleManifest;
+  const key = `tasks/${input.taskKey}/${input.relativePath}`;
+  const meta = manifest.entries[key];
+  if (!meta) return null;
+  // A payload kept elsewhere (deduplicated or archived) is not read here.
+  const bytes = await read(resolvePathInsideRoot(directory, key));
+  if (!bytes) return null;
+  return createHash('sha256').update(bytes).digest('hex') === meta.sha256 ? bytes : null;
+}

@@ -278,13 +278,16 @@ The table is normative; unlisted or unproven methods are admin-only. Native-owne
 | `run.create`                            | admin                |                                                                                    |
 | `run.createNative`                      | admin                |                                                                                    |
 | `run.delete`                            | admin                |                                                                                    |
+| `run.episode.recapture`                 | admin                |                                                                                    |
 | `run.extendReviewBudget`                | admin                |                                                                                    |
 | `run.forceComplete`                     | admin                |                                                                                    |
 | `run.forSlot`                           | admin                |                                                                                    |
 | `run.get`                               | admin                | reads run artifact paths by pathname                                               |
 | `run.getGrade`                          | admin                |                                                                                    |
 | `run.grade`                             | admin                |                                                                                    |
+| `run.grade.external.record`             | admin                |                                                                                    |
 | `run.interactiveDev.resolve`            | admin                |                                                                                    |
+| `run.interview.record`                  | admin                |                                                                                    |
 | `run.linkedTickets.set`                 | admin                |                                                                                    |
 | `run.list`                              | operator             |                                                                                    |
 | `run.overrideClaim`                     | admin                |                                                                                    |
