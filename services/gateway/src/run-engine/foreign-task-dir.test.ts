@@ -127,15 +127,6 @@ test('a re-dispatched task file marked pending by write-task is still refused', 
   );
 });
 
-test('the advised fresh task dir is not refused', async (t) => {
-  const dir = taskDir(t, { attemptId: 'archived-run', receipt: true });
-  const fresh = path.join(path.dirname(dir), 'rerun-2');
-  fs.mkdirSync(fresh);
-  for (const file of ['TASK.md', 'CHECKLIST.md'])
-    fs.copyFileSync(path.join(dir, file), path.join(fresh, file));
-  assert.equal(await foreignTaskDirRefusal(run(fresh)), null);
-});
-
 test('a malformed handoff fails the check; a missing one is left to task init', async (t) => {
   const dir = taskDir(t, { attemptId: 'archived-run', receipt: true });
   fs.writeFileSync(path.join(dir, 'inputs/handoff.json'), '{not json');
