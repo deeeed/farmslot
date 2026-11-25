@@ -227,7 +227,11 @@ test('the task-dir listing runs under zsh -f with no task root, an empty one or 
   t.after(() => rm(parent, { recursive: true, force: true }));
   const list = async () =>
     (
-      await execFileAsync('/bin/zsh', ['-f', '-c', buildTempTaskDirListCommand({ repo, taskRoot: 'temp/tasks' })])
+      await execFileAsync('/bin/zsh', [
+        '-f',
+        '-c',
+        buildTempTaskDirListCommand({ repo, taskRoot: 'temp/tasks' }),
+      ])
     ).stdout;
   assert.equal(await list(), '', 'no temp/tasks');
   await mkdir(path.join(repo, 'temp/tasks/feat'), { recursive: true });
@@ -266,7 +270,10 @@ test('a locked or unregistered worktree is deleted; a clone owning one outside t
   // A `.git` file Git does not list at this path: a copied worktree.
   const copied = path.join(repo, 'temp/scratch-copy');
   await mkdir(copied, { recursive: true });
-  await writeFile(path.join(copied, '.git'), `gitdir: ${path.join(origin, '.git/worktrees/locked-wt')}\n`);
+  await writeFile(
+    path.join(copied, '.git'),
+    `gitdir: ${path.join(origin, '.git/worktrees/locked-wt')}\n`,
+  );
   // A clone inside temp/ whose own worktree lives outside it.
   const clone = path.join(repo, 'temp/tasks/owner-clone');
   await git(parent, 'init', '-q', '-b', 'main', clone);
@@ -276,7 +283,10 @@ test('a locked or unregistered worktree is deleted; a clone owning one outside t
   const result = await scrub(repo, []);
 
   assert.deepEqual(
-    result.removed.filter(({ kind }) => kind.startsWith('linked worktree')).map(({ path: p }) => p).sort(),
+    result.removed
+      .filter(({ kind }) => kind.startsWith('linked worktree'))
+      .map(({ path: p }) => p)
+      .sort(),
     ['temp/scratch-copy', 'temp/tasks/locked-wt'],
   );
   assert.doesNotMatch(await git(origin, 'worktree', 'list'), /locked-wt/);
