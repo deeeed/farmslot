@@ -745,20 +745,22 @@ async function slotPrepareInner(
 
   await excludeSlotScaffolding(vars, projectJson);
 
-  // 1c. A new run starts on a temp/ holding nothing of another run's: a held-out trial must not
-  // read an earlier task, its scratch or its traces. Farm state, this run's own and its parent
-  // chain's task dirs, and live runs' stay. A warm handoff, a replay or a resumed task keeps
-  // its files. Anything that cannot be removed fails prepare, by name.
+  // 1d. A new run starts on a temp/ holding nothing of another run's: a held-out trial must not
+  // read an earlier task, its scratch or its traces. Farm state and this run's own and its
+  // parent chain's task dirs stay; nested checkouts move out of the checkout. A warm handoff, a
+  // replay or a resumed task keeps its files. Anything that stays fails prepare, by name.
   const scrubbingRun = params.runId ? getRun(params.runId) : undefined;
   if (shouldScrubTempForRun(scrubbingRun)) {
     checkAborted();
-    const scrub = await scrubTempForRun(vars, projectJson, scrubbingRun, { keepOwn: true });
+    const scrub = await scrubTempForRun(vars, projectJson, scrubbingRun);
     if (scrub) {
       for (const dir of scrub.taskDirs)
         step(
           'clean',
-          `Removed earlier task dir ${dir.path} (${dir.runId ? `run ${dir.runId.slice(0, 8)}, ${dir.bundled ? 'in its bundle' : 'NOT in a bundle'}` : 'no run record'})`,
+          `Removed earlier task dir ${dir.path} (${dir.runId ? `run ${dir.runId.slice(0, 8)}, ${dir.bundle}` : dir.bundle})`,
         );
+      for (const entry of scrub.retained)
+        step('clean', `Moved nested checkout ${entry.path} out of the checkout to ${entry.to}`);
       const other = scrub.removed.length - scrub.taskDirs.length;
       if (other > 0)
         step('clean', `Removed ${other} other entr${other === 1 ? 'y' : 'ies'} from temp/`);

@@ -7,8 +7,8 @@ import { after, mock, test } from 'node:test';
 
 import type { Run, RunOutput } from '@farmslot/protocol';
 
-// The scrub runs for real against a temp slot repo; only the transport and the bundle
-// store are faked (a bundle dir per run, present or not).
+// The scrub runs for real against a temp slot repo; only the transport and the bundle store
+// are faked: `<bundles>/<runId>/manifest.json` and `<bundles>/<runId>/tasks/t/`.
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'temp-scrub-run-')));
 for (const dir of ['runs', 'home', 'pool', 'bundles']) mkdirSync(path.join(root, dir));
 process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
@@ -30,19 +30,34 @@ const realRetained = await import('../../run-completion/retained-artifacts.js');
 mock.module('../../run-completion/retained-artifacts.js', {
   namedExports: {
     ...realRetained,
-    retainedRunTaskDirectory: async (run: Run) => path.join(root, 'bundles', run.id),
+    retainedRunTaskDirectory: async (run: Run) => path.join(root, 'bundles', run.id, 'tasks/t'),
   },
 });
 
 const runs = await import('../../runs/store.js');
 const { makeVars } = await import('../../runners/test-fixtures.js');
-const { scrubTempForRun, shouldScrubTempForRun, taskBundleConfirmed } =
+const { ownTaskDirInBundle, scrubTempForRun, shouldScrubTempForRun, taskBundleCheck, tempStatePaths } =
   await import('./temp-scrub.js');
 
 const SLOT_ID = 'macpro-mme-1';
 const repo = path.join(root, 'slot');
 const vars = makeVars({ slotId: SLOT_ID, remoteRepo: repo });
-const projectJson = { task_dir: 'temp/tasks', paths: { runtime_dir: 'temp/farmslot' } };
+const projectJson = {
+  task_dir: 'temp/tasks',
+  paths: { runtime_dir: 'temp/farmslot' },
+  resources: {
+    'dev-server': {
+      type: 'dev-server',
+      label: 'Dev server',
+      watch: { type: 'pid-file', path: '{{runtime_dir}}/next-dev.pid' },
+    },
+    browser: {
+      type: 'browser',
+      label: 'Browser',
+      watch: { type: 'pid-file', path: 'temp/recipe/runtime/terminal/browser.pid' },
+    },
+  },
+};
 const orchestratorTask = (flow: string, name: string) =>
   `/farm/projects/va-mmcx-terminal-farm/tasks/${flow}/${name}/TASK.md`;
 const write = (rel: string) => {
@@ -69,20 +84,45 @@ function slotRun(ticket: string, flow: string, name: string, patch: Partial<Run>
   );
   return runs.updateRun(run.id, { taskFile: orchestratorTask(flow, name), ...patch })!;
 }
-function bundleHas(run: Run, files: string[]) {
+function bundleHas(run: Run, files: string[], taskRelativePath?: string) {
+  const dir = path.join(root, 'bundles', run.id);
   for (const rel of files) {
-    mkdirSync(path.dirname(path.join(root, 'bundles', run.id, rel)), { recursive: true });
-    writeFileSync(path.join(root, 'bundles', run.id, rel), 'x');
+    mkdirSync(path.dirname(path.join(dir, 'tasks/t', rel)), { recursive: true });
+    writeFileSync(path.join(dir, 'tasks/t', rel), 'x');
   }
+  const folder = path.basename(path.dirname(path.dirname(run.taskFile!)));
+  const name = path.basename(path.dirname(run.taskFile!));
+  writeFileSync(
+    path.join(dir, 'manifest.json'),
+    JSON.stringify({
+      runs: [
+        {
+          originalRunId: run.id,
+          taskRelativePath:
+            taskRelativePath ?? `projects/va-mmcx-terminal-farm/tasks/${folder}/${name}`,
+        },
+      ],
+    }),
+  );
 }
 
-test('a new run clears temp/ except farm state, its own and parent task dirs and live runs', async () => {
+test('farm state comes from the project: runtime dir and watched resource dirs', () => {
+  assert.deepEqual(tempStatePaths(projectJson), [
+    'temp/farmslot',
+    'temp/recipe/harness',
+    'temp/recipe/runtime/terminal',
+    'temp/.agent/preflight.pid',
+    'temp/.metadata_never_index',
+  ]);
+});
+
+test('a new run clears temp/ except farm state and its own and parent task dirs', async () => {
   for (const rel of [
     'temp/farmslot/deps.lock-hash',
+    'temp/recipe/runtime/terminal/browser.pid',
     'temp/tasks/feat/tat-4752-1123-101010/TASK.md',
     'temp/tasks/fix/tat-4591-1111-173307/TASK.md',
     'temp/tasks/feat/parent-1124-080000/TASK.md',
-    'temp/tasks/feat/live-1125-080000/TASK.md',
     'temp/tasks/feat/new-1125-090000/TASK.md',
     'temp/scratch-tat4752/fix-notes.md',
     'temp/tat4505-trace.json',
@@ -95,56 +135,89 @@ test('a new run clears temp/ except farm state, its own and parent task dirs and
   bundleHas(bundled, ['TASK.md', 'artifacts/fix.diff']);
   const unbundled = slotRun('TAT-4591', 'fix', 'tat-4591-1111-173307', { status: 'failed' });
   const parent = slotRun('TAT-4800', 'feat', 'parent-1124-080000', { status: 'done' });
-  const live = slotRun('TAT-4801', 'feat', 'live-1125-080000', { status: 'monitoring' });
   const child = slotRun('TAT-4802', 'feat', 'new-1125-090000', { parentRunId: parent.id });
 
-  const outcome = await scrubTempForRun(vars, projectJson, child, { keepOwn: true });
+  const outcome = await scrubTempForRun(vars, projectJson, child);
 
   assert.ok(outcome);
   assert.deepEqual(outcome.refused, []);
   for (const kept of [
     'temp/farmslot/deps.lock-hash',
+    'temp/recipe/runtime/terminal/browser.pid',
     'temp/tasks/feat/parent-1124-080000/TASK.md',
-    'temp/tasks/feat/live-1125-080000/TASK.md',
     'temp/tasks/feat/new-1125-090000/TASK.md',
   ])
     assert.equal(existsSync(path.join(repo, kept)), true, kept);
   for (const gone of [
     'temp/tasks/feat/tat-4752-1123-101010',
-    'temp/tasks/fix/tat-4591-1111-173307',
+    'temp/tasks/fix',
     'temp/scratch-tat4752',
     'temp/tat4505-trace.json',
   ])
     assert.equal(existsSync(path.join(repo, gone)), false, gone);
   assert.deepEqual(
-    outcome.taskDirs.map(({ runId, bundled: inBundle }) => [runId, inBundle]).sort(),
+    outcome.taskDirs.map(({ runId, bundle }) => [runId, bundle]).sort(),
     [
-      [bundled.id, true],
-      [unbundled.id, false],
+      [bundled.id, 'in its bundle'],
+      [unbundled.id, 'NOT in a bundle (no final bundle)'],
     ].sort(),
-    'each removed task dir is named with its run and whether its bundle has it',
   );
-  for (const run of [live, child]) runs.updateRun(run.id, { status: 'failed' });
+  runs.updateRun(child.id, { status: 'failed' });
 });
 
-test('a bundle confirms a task dir only when it holds TASK.md and every artifact', async () => {
-  const run = slotRun('TAT-4900', 'feat', 'tat-4900', { status: 'done', output: captured });
+test('another live run on the slot stops the clear-out', async () => {
+  write('temp/tasks/feat/live-1125-080000/TASK.md');
+  write('temp/scratch-live/notes.md');
+  const live = slotRun('TAT-4900', 'feat', 'live-1125-080000', { status: 'monitoring' });
+  const fresh = slotRun('TAT-4901', 'feat', 'fresh-1125-090000');
+  await assert.rejects(scrubTempForRun(vars, projectJson, fresh), /still has live run/);
+  assert.equal(existsSync(path.join(repo, 'temp/scratch-live/notes.md')), true);
+  for (const run of [live, fresh]) runs.updateRun(run.id, { status: 'failed' });
+});
+
+test('a bundle confirms a task only for this task, with TASK.md and every artifact', async () => {
+  const run = slotRun('TAT-5000', 'feat', 'tat-5000', { status: 'done', output: captured });
   bundleHas(run, ['TASK.md']);
-  assert.equal(await taskBundleConfirmed(runs.getRun(run.id)!), false, 'an artifact is missing');
-  bundleHas(run, ['artifacts/fix.diff']);
-  assert.equal(await taskBundleConfirmed(runs.getRun(run.id)!), true);
+  assert.deepEqual(await taskBundleCheck(runs.getRun(run.id)!), {
+    confirmed: false,
+    reason: 'bundle lacks artifacts/fix.diff',
+  });
+  bundleHas(run, ['artifacts/fix.diff'], 'projects/va-mmcx-terminal-farm/tasks/feat/other-task');
+  assert.deepEqual(await taskBundleCheck(runs.getRun(run.id)!), {
+    confirmed: false,
+    reason: 'bundle record names another task',
+  });
+  bundleHas(run, []);
+  assert.equal((await taskBundleCheck(runs.getRun(run.id)!)).confirmed, true);
   runs.updateRun(run.id, { output: { ...captured, retentionMissingData: ['media'] } });
-  assert.equal(await taskBundleConfirmed(runs.getRun(run.id)!), false, 'capture was incomplete');
-  runs.updateRun(run.id, { output: { ...captured, captureError: 'store full' } });
-  assert.equal(await taskBundleConfirmed(runs.getRun(run.id)!), false, 'capture failed');
+  assert.equal((await taskBundleCheck(runs.getRun(run.id)!)).confirmed, false);
+  runs.updateRun(run.id, { output: captured });
+
+  write('temp/tasks/feat/tat-5000/TASK.md');
+  write('temp/tasks/feat/tat-5000/artifacts/fix.diff');
+  const slotDir = path.join(repo, 'temp/tasks/feat/tat-5000');
+  assert.equal((await ownTaskDirInBundle(vars, runs.getRun(run.id)!, slotDir)).confirmed, true);
+  write('temp/tasks/feat/tat-5000/late-note.md');
+  assert.deepEqual(await ownTaskDirInBundle(vars, runs.getRun(run.id)!, slotDir), {
+    confirmed: false,
+    reason: 'late-note.md is not in the bundle',
+  });
 });
 
-test('a warm handoff, a replay or a resumed task does not clear temp/', () => {
-  const fresh = slotRun('TAT-5000', 'feat', 'fresh');
+test('a warm handoff, a replay or a resumed task keeps temp/; a failed handoff does not', () => {
+  const fresh = slotRun('TAT-5100', 'feat', 'fresh');
   assert.equal(shouldScrubTempForRun(fresh), true);
   assert.equal(
     shouldScrubTempForRun({ ...fresh, engineState: { flags: { warmSessionReuse: true } } }),
     false,
+  );
+  assert.equal(
+    shouldScrubTempForRun({
+      ...fresh,
+      engineState: { flags: { warmSessionReuse: true, warmHandoffSucceeded: false } },
+    }),
+    true,
+    'a handoff that fell back to a fresh dispatch is a new run',
   );
   assert.equal(
     shouldScrubTempForRun({
@@ -156,9 +229,14 @@ test('a warm handoff, a replay or a resumed task does not clear temp/', () => {
   assert.equal(
     shouldScrubTempForRun({
       ...fresh,
-      steps: [...fresh.steps, { name: 'dispatch', status: 'done' }],
+      engineState: { taskInit: { taskFile: orchestratorTask('feat', 'old'), status: 'initialized' } },
     }),
+    true,
+    'an initialized earlier task is not this one',
+  );
+  assert.equal(
+    shouldScrubTempForRun({ ...fresh, steps: [...fresh.steps, { name: 'dispatch', status: 'done' }] }),
     false,
   );
-  assert.equal(shouldScrubTempForRun(undefined), false, 'no run identity, no scrub');
+  assert.equal(shouldScrubTempForRun(undefined), false);
 });

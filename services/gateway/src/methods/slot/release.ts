@@ -122,6 +122,7 @@ import {
   detachRunsForReleasedSlot,
   markCompletionFailureDiscarded,
 } from './release-run-ownership.js';
+import { ownTaskDirInBundle, TEMP_TASK_ROOT } from './temp-scrub.js';
 import {
   activePrepareAborts,
   applySelectedApp,
@@ -133,7 +134,6 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from './slot-tracking.js';
-import { scrubTempForRun, taskBundleConfirmed, TEMP_TASK_ROOT } from './temp-scrub.js';
 
 // In-flight teardown coalescing: two concurrent releases for the same slot
 // must be ONE teardown — the slower duplicate previously re-killed and reset
@@ -1102,15 +1102,13 @@ async function slotReleaseImpl(
       taskDirName,
     );
 
-    // The run this release ends: the expected or bound owner, else the slot's last finished run.
-    const recent = listRunsForSlotHistory(params.slotId, { limit: 1 }).runs[0];
-    const releaseRunId =
-      params.expectedRunId ??
-      boundOwner ??
-      (recent && isTerminalRunStatus(recent.status) ? recent.id : null);
     if (!preserveAgents) {
       await assertReleaseClaim();
-      const runId = releaseRunId;
+      const recent = listRunsForSlotHistory(params.slotId, { limit: 1 }).runs[0];
+      const runId =
+        params.expectedRunId ??
+        boundOwner ??
+        (recent && isTerminalRunStatus(recent.status) ? recent.id : null);
       const destination = runId
         ? path.join(runSessionArchiveDir(runId), 'slot-scaffolding')
         : path.join(runsDirectory(), 'slot-scaffolding', vars.slotId);
@@ -1161,19 +1159,39 @@ async function slotReleaseImpl(
       }
       await refreshRetention(moved);
     }
-    // The temp/tasks layout: clear temp/ only once the bundle is confirmed to hold this run's
-    // task dir. Delete rather than park (a park across devices fails on an external drive, and
-    // a parked copy still sits on the node). Unconfirmed, temp/ stays for the next prepare.
-    const tempScrub = !preserveAgents && taskDirName === TEMP_TASK_ROOT;
-    const releasing =
-      tempScrub && releaseRunId ? await getRunWithArchived(releaseRunId) : undefined;
-    const bundleConfirmed = Boolean(releasing && (await taskBundleConfirmed(releasing)));
-    if (tempScrub && !bundleConfirmed)
-      step(
-        'storage-clean',
-        `Kept temp/: ${releasing ? `run ${releasing.id.slice(0, 8)}'s bundle is not confirmed` : 'no finished run'}; the next prepare clears it`,
-      );
-    if (taskRel && (!tempScrub || bundleConfirmed)) {
+    // The temp/tasks layout: the run's own task dir goes only once its bundle holds every file
+    // in it. Kept otherwise; the next run's prepare clears temp/, so the leak ends there.
+    let keepOwnTaskDir = false;
+    if (taskRel && taskDirName === TEMP_TASK_ROOT) {
+      const recent = listRunsForSlotHistory(params.slotId, { limit: 1 }).runs[0];
+      const ownerId =
+        params.expectedRunId ??
+        boundOwner ??
+        (recent && isTerminalRunStatus(recent.status) ? recent.id : null);
+      const owner = ownerId ? await getRunWithArchived(ownerId) : undefined;
+      let reason = 'no finished run owns it';
+      if (owner) {
+        try {
+          const check = await ownTaskDirInBundle(
+            vars,
+            owner,
+            `${vars.remoteRepo}/${taskDirName}/${taskRel}`,
+          );
+          reason = check.confirmed ? '' : check.reason;
+        } catch (error) {
+          // The bundle store could not be read: keep the dir and say why.
+          reason = `bundle check failed: ${(error as Error).message}`;
+        }
+      }
+      keepOwnTaskDir = reason !== '';
+      if (keepOwnTaskDir)
+        step(
+          'clean',
+          `Kept task dir ${taskDirName}/${taskRel}: ${reason}; the next prepare clears it`,
+        );
+      await assertReleaseClaim();
+    }
+    if (taskRel && !keepOwnTaskDir) {
       await execOnSlot(
         vars,
         `rm -rf ${shellQuote(`${vars.remoteRepo}/${taskDirName}/${taskRel}`)}`,
@@ -1187,20 +1205,7 @@ async function slotReleaseImpl(
     // release only: a preserveAgents release keeps workers that may still own it.
     let scratchKeep: string[] = [];
     let scratchFailed = false;
-    if (tempScrub && bundleConfirmed) {
-      await assertReleaseClaim();
-      try {
-        const scrub = await scrubTempForRun(vars, projectJson, releasing, { keepOwn: false });
-        if (scrub?.removed.length)
-          step('storage-clean', `Removed ${scrub.removed.length} entries from temp/`);
-        for (const entry of scrub?.refused ?? [])
-          step('storage-clean', `Left ${entry.path}: ${entry.reason}`);
-      } catch (err) {
-        // The next prepare clears temp/ and fails loudly if it cannot; release goes on.
-        step('storage-clean', `temp/ scrub failed: ${(err as Error).message.slice(0, 200)}`);
-      }
-    }
-    if (!preserveAgents && !tempScrub) {
+    if (!preserveAgents) {
       await assertReleaseClaim();
       try {
         const scratch = await parkTaskScratch(vars, projectJson);
