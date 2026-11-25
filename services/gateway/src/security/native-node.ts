@@ -4,6 +4,22 @@ import { GatewayMethodError } from '../core/method-error.js';
 
 import { readCredentialStoreSnapshot } from './credential-store.js';
 
+type BooleanCapability = Exclude<
+  keyof NativeExecutionNodeDeclaration,
+  'ownerPrincipalId' | 'conversationStreaming'
+>;
+// Every boolean capability a node may declare: a declaration field missing here fails to compile.
+const BOOLEAN_CAPABILITIES: Record<BooleanCapability, true> = {
+  supportsStandaloneDelegation: true,
+  supportsApprovalMode: true,
+  supportsEnsure: true,
+  supportsWorkers: true,
+  supportsWorkerStopAttestation: true,
+  supportsProfiles: true,
+  supportsObservations: true,
+  supportsStructuredResults: true,
+};
+
 export function nativeNodeDeclaration(
   value: unknown,
   machine: string,
@@ -41,16 +57,7 @@ export function nativeNodeDeclaration(
   if (capabilities.conversationStreaming !== undefined && capabilities.conversationStreaming !== 1)
     throw new GatewayMethodError('INVALID_PARAMS', 'Native conversationStreaming must be 1');
   if (capabilities.conversationStreaming === 1) declaration.conversationStreaming = 1;
-  for (const field of [
-    'supportsStandaloneDelegation',
-    'supportsApprovalMode',
-    'supportsEnsure',
-    'supportsWorkers',
-    'supportsProfiles',
-    'supportsObservations',
-    'supportsStructuredResults',
-    'supportsWorkerStopAttestation',
-  ] as const) {
+  for (const field of Object.keys(BOOLEAN_CAPABILITIES) as BooleanCapability[]) {
     const capability = capabilities[field];
     if (capability === undefined) continue;
     if (typeof capability !== 'boolean')

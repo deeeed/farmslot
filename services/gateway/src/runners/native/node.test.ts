@@ -324,13 +324,16 @@ test('a node that declares stop attestation accepts explicit stopped-process con
       requests++;
       const frame = JSON.parse(raw);
       assert.equal(frame.params.method, NATIVE_WORKER_CONFIRM_STOPPED);
+      assert.equal(frame.params.owner, owner);
+      assert.equal(frame.params.params.generation, params.generation);
+      assert.equal(frame.params.params.leaseId, params.leaseId);
       handleNodeResponse(frame.id, true, { session }, undefined, undefined, ws);
     },
   } as WebSocket;
   const params = {
     executionNodeId: machine,
     sessionId: 'session',
-    generation: 1,
+    generation: 'generation',
     leaseId: 'lease',
   };
   const register = (supportsWorkerStopAttestation?: boolean) =>

@@ -1,1 +1,0 @@
-- A native worker on an execution node can now take an explicit stop confirmation (`confirmStopped`). The gateway kept the node's declaration but dropped its stop-attestation capability, so every confirmation was refused with "Execution node upgrade required".
