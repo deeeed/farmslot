@@ -53,9 +53,10 @@ worker retirement, sentinel acquisition and all prepare phases, including
 bind-only profiles, and appears in `slot.check`. It receives the project and
 pool environment plus `FARMSLOT_MACHINE`. A nonzero exit blocks prepare and
 retains its diagnostic, for example `missing extension checkout on node, set
-TERMINAL_EXTENSION_CHECKOUT`. The hook runs before profile selection. Profile hook overrides and
-`FARMSLOT_PREPARE_PROFILE` do not apply. Keep the check under ten seconds; it
-must not install dependencies or change slot state.
+TERMINAL_EXTENSION_CHECKOUT`. The hook runs before profile selection. Profile
+hook overrides, `FARMSLOT_PREPARE_PROFILE` and `FARMSLOT_FLOW_TYPE` do not
+apply. Keep the check under ten seconds; it must not install dependencies or
+change slot state.
 
 ## Bundled phases
 
@@ -233,8 +234,15 @@ overrides are useful when the runtime can be repaired incrementally instead of
 rebuilt. If a profile overrides `preflight`, that hook owns its own runtime
 cleanup; Farmslot does not do the default dev-server port cleanup before it.
 
-Project lifecycle hooks receive `FARMSLOT_PREPARE_PROFILE=<name>`, so a project
-can either use hook overrides or keep one hook script that branches internally.
+Project lifecycle hooks (deps, preflight, health and unlock) receive
+`FARMSLOT_PREPARE_PROFILE=<name>`, so a project can either use hook overrides or
+keep one hook script that branches internally. They also receive
+`FARMSLOT_FLOW_TYPE=<flow>` when the prepare belongs to a flow: `dev`,
+`fix-bug`, `qa`, `review-pr`, `pr-complete` or `update-branch`. A script can
+then set up a runtime for a dev run but not for a review. A flowless prepare
+(`slot.recycle`, a keep-warm release, a manual prepare without `--flow-type`)
+unsets it. Prerequisites, signing and the profile requirement probes see
+neither.
 
 #### Lockfile drift on a PR branch
 

@@ -24,9 +24,27 @@ for (const mode of ['suspended', 'cancelled', 'complete', 'busy'] as const) {
     });
     const received = new Promise<void>((resolve) => {
       server.on('connection', (client) => {
+        let evaluations = 0;
         client.on('message', (data) => {
-          const request = JSON.parse(String(data)) as { id: number; method: string };
+          const request = JSON.parse(String(data)) as {
+            id: number;
+            method: string;
+            params?: { contextId?: number };
+          };
+          // The HUD evaluates in its own isolated world.
+          if (request.method === 'Page.getFrameTree') {
+            client.send(
+              JSON.stringify({ id: request.id, result: { frameTree: { frame: { id: 'main' } } } }),
+            );
+            return;
+          }
+          if (request.method === 'Page.createIsolatedWorld') {
+            client.send(JSON.stringify({ id: request.id, result: { executionContextId: 7 } }));
+            return;
+          }
           assert.equal(request.method, 'Runtime.evaluate');
+          evaluations += 1;
+          if (evaluations === 1) assert.equal(request.params?.contextId, 7);
           requestId = request.id;
           if (mode === 'complete') {
             client.send(
@@ -38,7 +56,7 @@ for (const mode of ['suspended', 'cancelled', 'complete', 'busy'] as const) {
                 JSON.stringify({ id: request.id, result: { result: { value: { hud: true } } } }),
               );
             }, 850);
-          } else if (mode === 'cancelled' && request.id > 1) {
+          } else if (mode === 'cancelled' && evaluations > 1) {
             client.send(
               JSON.stringify({ id: request.id, result: { result: { value: { healthy: true } } } }),
             );
@@ -52,7 +70,7 @@ for (const mode of ['suspended', 'cancelled', 'complete', 'busy'] as const) {
     const page = new CdpWebPage(session);
     const transport = createCdpWebUiTransport({ withPage: (_input, use) => use(page) });
     const controller = new AbortController();
-    if (mode === 'suspended') t.mock.timers.enable({ apis: ['setTimeout'] });
+    if (mode === 'suspended') t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     const context: ActionExecutionContext = {
       nodeId: 'hud',
       recipe: {},

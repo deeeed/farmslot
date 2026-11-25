@@ -174,6 +174,16 @@ class NodeRequestNotAcceptedError extends NodeTransportUnavailableError {
   }
 }
 
+/** This node socket already answered NODE_SHUTTING_DOWN: it takes no new requests. */
+export function isNodeSocketStopping(ws: WebSocket): boolean {
+  return stoppingNodes.has(ws);
+}
+
+/** The node refused the request because it is shutting down (NODE_SHUTTING_DOWN). */
+export function isNodeRequestNotAcceptedError(error: unknown): boolean {
+  return error instanceof NodeRequestNotAcceptedError;
+}
+
 export function isNodeTransportUnavailableError(
   error: unknown,
 ): error is NodeTransportUnavailableError {

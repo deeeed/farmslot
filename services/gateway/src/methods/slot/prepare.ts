@@ -114,6 +114,7 @@ import { checkPrepareDevice } from './prepare-device.js';
 import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-devserver-log.js';
 import { createPrepareGitTimer } from './prepare-git-timing.js';
 import { verifyPrepareHealth } from './prepare-health.js';
+import { prepareHookEnvExports } from './prepare-hook-env.js';
 import {
   isLockfile,
   LOCKFILE_DRIFT_FALLBACK_MARKER,
@@ -520,11 +521,12 @@ async function slotPrepareInner(
   const profileName = (): string => prepareProfile?.name ?? 'full';
   const phaseEnabled = (phase: PreparePhase): boolean =>
     !prepareProfile || prepareProfile.phases.has(phase);
-  // Every hook a prepare runs sees the selected profile, so a single project
-  // script can branch on FARMSLOT_PREPARE_PROFILE instead of per-profile hooks.
+  // The deps, preflight, health and unlock hooks see the selected profile and the flow type, so a
+  // single project script can branch on FARMSLOT_PREPARE_PROFILE / FARMSLOT_FLOW_TYPE instead of
+  // per-profile hooks. Prerequisites, signing and the profile requirement probes don't.
   // Subshell form keeps the wrapper safe inside `a && b` chains.
   const withProfileEnv = (cmd: string): string =>
-    `( export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}; ${cmd} )`;
+    `( ${prepareHookEnvExports(profileName(), params.flowType).join('; ')}; ${cmd} )`;
 
   const expandPrepareHook = (hookName: string): string => {
     const cmd = expandPrepareProfileHook(hookName, prepareProfile, projectJson, vars, projectVars);
@@ -748,8 +750,9 @@ async function slotPrepareInner(
   let fixturesSynced = false;
   // Fixtures are framework file materialization (template render + copy), not a
   // project hook invocation, so they intentionally do not receive
-  // FARMSLOT_PREPARE_PROFILE — ADR-037's "every hook" covers deps/preflight/
-  // health/unlock, which run project-owned commands.
+  // FARMSLOT_PREPARE_PROFILE or FARMSLOT_FLOW_TYPE (the flow reaches fixture sync as an
+  // argument) — ADR-037's "every hook" covers deps/preflight/health/unlock, which run
+  // project-owned commands.
   const syncFixtures = async () => {
     if (fixturesSynced) return;
     if (!phaseEnabled('fixtures')) {
@@ -2036,7 +2039,7 @@ async function slotPrepareInner(
     let phaseBuffer = '';
     const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
     const varExports: string[] = [
-      `export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}`,
+      ...prepareHookEnvExports(profileName(), params.flowType),
       ...(pinned ? [`export FARMSLOT_PREPARE_BASE_SHA=${shellQuote(pinnedBaseSha())}`] : []),
     ];
     for (const [rawKey, rawValue] of Object.entries(params.vars ?? {})) {

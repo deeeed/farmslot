@@ -85,6 +85,37 @@ test('runHealthCheck ignores stdout from failed health commands', async (t) => {
   assert.equal(result, '');
 });
 
+// The health check and the health_ok profile probe run under the prepare's domain env, not the
+// slot's default domain.
+test('runHealthCheck and the health_ok probe use the run domain env', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-health-domain-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const projectJson: RawProjectJson = {
+    hooks: { health_check: 'printf "%s" "$PROBE_DOMAIN"' },
+    command_env: {
+      domains: {
+        perps: { set: { PROBE_DOMAIN: 'perps' } },
+        'money-movement': { set: { PROBE_DOMAIN: 'money-movement' } },
+      },
+    },
+  };
+  const vars: SlotVars = { ...makeSlotVars(repo), domain: 'perps' };
+  const hook = 'printf "%s" "$PROBE_DOMAIN"';
+  assert.equal(await runHealthCheck(vars, hook, '', { projectJson }), 'perps');
+  assert.equal(
+    await runHealthCheck(vars, hook, '', { projectJson, domain: 'money-movement' }),
+    'money-movement',
+  );
+  const probe = await checkPrepareRequirement('health_ok', {
+    vars,
+    projectJson,
+    runtimeDir: '.agent',
+    domain: 'money-movement',
+  });
+  assert.equal(probe.ok, true, probe.detail);
+  assert.equal(probe.detail, 'health money-movement');
+});
+
 test('a failed health parser cannot supply a ready value', async (t) => {
   const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-health-parser-'));
   t.after(() => rm(repo, { recursive: true, force: true }));

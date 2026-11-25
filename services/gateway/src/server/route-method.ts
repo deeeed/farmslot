@@ -247,8 +247,22 @@ import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
 import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js';
 // Method handlers
 import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
-import { getAllNodes, getNode, registerNode } from '../fleet/machine-registry.js';
+import {
+  admitNodeConnection,
+  type ConnectedNode,
+  getAllNodes,
+  getNode,
+  NODE_ADMISSION_PROBE_MS,
+  type NodeProbeVerdict,
+  registerNode,
+} from '../fleet/machine-registry.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
+import {
+  isNodeRequestNotAcceptedError,
+  isNodeSocketStopping,
+  isNodeTransportUnavailableError,
+  sendNodeRequest,
+} from '../fleet/node-rpc.js';
 import { pairingCandidates, pairingCreate } from '../fleet/pairing.js';
 import { gatewayPeerVersions } from '../fleet/peer-versions.js';
 import {
@@ -644,6 +658,30 @@ async function refreshConnectedNodeBranches(
     seq: nextEventSeq(),
   });
   if (refreshError) throw refreshError;
+}
+
+/** The admission probe budget; FARMSLOT_NODE_ADMISSION_PROBE_MS overrides the 3 s default. */
+function nodeAdmissionProbeMs(): number {
+  const configured = Number(process.env.FARMSLOT_NODE_ADMISSION_PROBE_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : NODE_ADMISSION_PROBE_MS;
+}
+
+/** How the connected node answers a health check on its own socket (see NodeProbeVerdict). */
+async function probeConnectedNode(node: ConnectedNode): Promise<NodeProbeVerdict> {
+  try {
+    await sendNodeRequest(
+      node,
+      'health.check',
+      {},
+      // Longer than the admission budget: a late NODE_SHUTTING_DOWN still marks the node stopping.
+      { timeout: nodeAdmissionProbeMs() * 2, requireSameConnection: true },
+    );
+    return 'answered';
+  } catch (error) {
+    if (isNodeRequestNotAcceptedError(error)) return 'stopping';
+    // A timeout or a closed socket; any other refusal is still a reply from a live node.
+    return isNodeTransportUnavailableError(error) ? 'silent' : 'answered';
+  }
 }
 
 export interface RouteMethodContext {
@@ -1489,7 +1527,7 @@ async function routeAuthorizedMethod(
         terminalInputSequence?: unknown;
         observationCapabilities?: import('@farmslot/protocol').NodeObservationCapabilities;
       };
-      const resolved = authRuntime.resolver.resolveSessionPrincipal(state);
+      let resolved = authRuntime.resolver.resolveSessionPrincipal(state);
       assertNativeMachineAssignment(
         machine,
         resolved.ok ? resolved.principal : undefined,
@@ -1530,12 +1568,48 @@ async function routeAuthorizedMethod(
         state.authentication?.kind !== 'credential'
       )
         console.warn('[native node] declaration ignored: issued node credential required');
-      const nativeSessions = nativeNodeDeclaration(
-        (p as Record<string, unknown>).nativeSessions,
+      const declareNativeSessions = () =>
+        nativeNodeDeclaration(
+          (p as Record<string, unknown>).nativeSessions,
+          machine,
+          resolved.ok ? resolved.principal : undefined,
+          state.authentication?.kind === 'credential',
+        );
+      let nativeSessions = declareNativeSessions();
+      const report: unknown = (p as Record<string, unknown>).farmPaths;
+      if (report !== undefined && !isNodeFarmPaths(report))
+        throw new Error('Invalid node FarmPaths report');
+      const farmPaths = isNodeFarmPaths(report) ? report : undefined;
+      // One live node per machine, decided after this connection's own checks and before any of
+      // its side effects. Nothing below awaits until registerNode, so once the admission returns
+      // no other node.connect for this machine runs in between.
+      const admission = await admitNodeConnection(machine, pid, state.ws, {
+        probe: probeConnectedNode,
+        isStopping: isNodeSocketStopping,
+        budgetMs: nodeAdmissionProbeMs(),
+      });
+      if (admission.kind === 'refused')
+        throw new GatewayMethodError(admission.code, admission.message, {
+          userAction:
+            admission.code === 'NODE_ALREADY_CONNECTED'
+              ? `Stop the duplicate node process for ${machine} (this one, or pid ${admission.incumbentPid}): only one node per machine may connect.`
+              : 'Reconnect shortly.',
+        });
+      admission.release();
+      // The probe awaited: this connection's socket and identity are read again.
+      if (state.ws.readyState !== WebSocket.OPEN)
+        throw new GatewayMethodError(
+          'NODE_TRANSPORT_UNAVAILABLE',
+          `Node ${machine} closed while it was admitted`,
+        );
+      requireNodeSession(authRuntime, state);
+      resolved = authRuntime.resolver.resolveSessionPrincipal(state);
+      assertNativeMachineAssignment(
         machine,
         resolved.ok ? resolved.principal : undefined,
-        state.authentication?.kind === 'credential',
+        authRuntime.store.snapshot().principals,
       );
+      nativeSessions = declareNativeSessions();
       if (nativeSessions) rememberNativeExecutionNode(machine, nativeSessions);
       const authentication = state.authentication ? { ...state.authentication } : undefined;
       const registeredClientKind = state.clientKind;
@@ -1569,10 +1643,6 @@ async function routeAuthorizedMethod(
               },
             }
           : undefined;
-      const report: unknown = (p as Record<string, unknown>).farmPaths;
-      if (report !== undefined && !isNodeFarmPaths(report))
-        throw new Error('Invalid node FarmPaths report');
-      const farmPaths = isNodeFarmPaths(report) ? report : undefined;
       const nodeLink = nodeLinkCapabilities((p as Record<string, unknown>).nodeLink);
       const nodePrincipal =
         resolved.ok && resolved.principal.subject.type === 'node'
@@ -1629,6 +1699,12 @@ async function routeAuthorizedMethod(
           ...(taskRuntime === 1 ? { taskRuntime: 1 as const } : {}),
         },
       );
+      if (admission.replaced)
+        console.warn(
+          `[node] replaced node ${machine} pid ${admission.replaced.pid} (${admission.replaced.verdict}) with pid ${pid}`,
+        );
+      // A silent incumbent's socket closes now; its close handler finds nothing left to unregister.
+      admission.terminateAfterRegister?.terminate();
       nativeConversations.reconcile();
       nativeObservations.registrationChanged(
         machine,
