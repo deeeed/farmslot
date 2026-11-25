@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Linked tickets reach the task document on every flow. `LINKED_TICKETS` was built from `ticketData.linkedTickets` alone, which only the PR-data path fills, so a dev or fix-bug run rendered no **Linked Tickets** section at all; and the keys an operator adds in Command Center live on `run.linkedTicketRefs`, which the writer never read, so they reached no task document on any flow, PR runs included. The writer now renders the identities `runLinkedTicketsView` already resolves for the UI, so there is one merge rather than two. A recorded URL and title win, then the run's own Jira link, and the project's `jira.base_url` covers a run with neither, through the one browse base `TICKET_URL` already uses; with no base the key stays unlinked rather than inventing a host. The resolver also answers which refs the run actually names — its fetched key, a recorded linked ticket or an operator's addition — because a backlog run's `MANUAL-000124` matches the Jira key shape, and linking it from `ticketOrPr` alone would publish a dead browse URL while `TICKET_URL` stayed empty for the same run. An operator key added after the task is written does not reach that worker; it reaches the next task written for the run. A worker asked to link every ticket in the PR body can now see them.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.39.11 - 2026-11-21

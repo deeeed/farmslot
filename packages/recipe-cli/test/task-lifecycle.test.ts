@@ -319,3 +319,33 @@ test('standalone skill and fast views add no lifecycle process', async (t) => {
   );
   assert.equal(JSON.parse(frames[0]).activity.reason, 'run-unavailable');
 });
+
+test("the task view shows only the worker checklist's child units, not a reviewer's on the same step", (t) => {
+  const { target, dir } = task(t, 'feat/TAT-4769');
+  fs.writeFileSync(path.join(dir, 'CHECKLIST.md'), '# Task\n\n- [ ] 1. Build.\n- [ ] 2. Test.\n');
+  fs.mkdirSync(path.join(dir, 'subtasks'));
+  const unit = (id: string, checklist: string) => ({
+    id,
+    parent: { checklist, stepNumber: 2 },
+    checklist: `subtasks/${id}.md`,
+    signal: `subtasks/${id}-SIGNAL.json`,
+    source: { kind: 'inline' },
+    registeredAt: new Date().toISOString(),
+  });
+  fs.writeFileSync(
+    path.join(dir, 'subtasks/index.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      units: [unit('worker-check', 'CHECKLIST.md'), unit('perps-review', 'REVIEW.rev-1.md')],
+    }),
+  );
+  for (const id of ['worker-check', 'perps-review']) {
+    fs.writeFileSync(path.join(dir, `subtasks/${id}.md`), '- [ ] 1. Row.\n');
+    fs.writeFileSync(path.join(dir, `subtasks/${id}-SIGNAL.json`), '{"status":"running"}');
+  }
+  const view = collectTaskView(target, dir, Date.now());
+  assert.deepEqual(
+    view.subtasks.map((entry) => entry.id),
+    ['worker-check'],
+  );
+});

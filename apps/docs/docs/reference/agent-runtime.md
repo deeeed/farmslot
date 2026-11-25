@@ -153,11 +153,21 @@ the same session, a runner sub-agent, a harness script — is outside the contra
 
 ```bash
 ./mark sub start <id> --step N --from <path|inline:<text>> [--var KEY=VALUE ...]
-./mark sub <id> <n>
-./mark sub <id> complete [--report <artifact>] [--mark-last]
+./mark sub <id> <rows>                      # n, or a comma list of n and a-b: 2,4-6
+./mark sub <id> complete [--report <artifact>] [--mark-last | --rows <rows>]
 ./mark sub <id> blocked --reason "..."
 ./mark sub <id> status                      # the child projection as JSON
 ```
+
+One call marks every row it names, so a long child does not cost one command per row. Rows are
+checked before anything is written: an unknown row, a reversed range, a row named twice or a
+second positional argument (`sub <id> 2 3`) refuses the call. Rows marked together share one
+timestamp, so the per-row durations after the first read as 0 ms. `complete --rows` ticks the
+named final rows and completes the unit in the same call.
+
+A parent's terminal mark is refused only by its own open children: a unit registered on another
+checklist in the same task directory, such as a parallel or stopped reviewer's `REVIEW.<context>.md`,
+is that checklist's proof, not this one's.
 
 `--from` takes a path to a checklist-shaped file (a skill body is the usual one;
 see the authoring rule in `@farmslot/skills`) or `inline:<text>`. The source is

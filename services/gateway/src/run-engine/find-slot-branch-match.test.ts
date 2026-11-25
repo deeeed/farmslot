@@ -116,14 +116,14 @@ let pickerPayload: import('@farmslot/protocol').RunDecisionPayload | undefined;
 const liveRows = new Map<string, Record<string, unknown>>();
 let pressureDecisions = new Map<string, PressureAdmissionDecision>();
 const loadWaits: number[] = [];
-let afterLoadWait: (() => void) | undefined;
+let afterLoadWait: (() => void | Promise<void>) | undefined;
 mock.module('node:timers/promises', {
   namedExports: {
     ...promiseTimers,
     setTimeout: async (ms: number) => {
       loadWaits.push(ms);
       assert.ok(afterLoadWait, 'unexpected timer in slot selection');
-      afterLoadWait();
+      await afterLoadWait();
     },
   },
 });
@@ -145,12 +145,18 @@ const finishedReclaims: string[] = [];
 let finishedRefusal: string | undefined;
 let slotSelection: ProjectSlotSelectionConfig | undefined;
 let affinitySlot: SlotStatus | undefined;
+const archivedRuns = new Map<string, Run>();
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
     getRun: (id: string) =>
       id === run.id ? run : cancelledHolder?.id === id ? cancelledHolder : undefined,
     getAllRuns: () => (cancelledHolder ? [run, cancelledHolder] : [run]),
+    // A finished run another run's selection waits on may already be archived.
+    getRunWithArchived: async (id: string) =>
+      id === run.id
+        ? run
+        : (archivedRuns.get(id) ?? (cancelledHolder?.id === id ? cancelledHolder : undefined)),
     listRuns: () => ({ runs: [], totalCount: 0 }),
     persistRunNow: async () => {},
     updateRunStep: (
@@ -452,6 +458,18 @@ mock.module('./slot-capability-requirements.js', {
     },
   },
 });
+// The previous run's cleanup, as the held-slot pass retries it.
+let releaseCompleted: ((leaver: Run) => Promise<{ released: boolean }>) | undefined;
+const lifecycle = await import('../methods/run/lifecycle-control.js');
+mock.module('../methods/run/lifecycle-control.js', {
+  namedExports: {
+    ...lifecycle,
+    releaseCompletedRunSlot: async (leaver: Run) => {
+      assert.ok(releaseCompleted, 'unexpected slot release');
+      return releaseCompleted(leaver);
+    },
+  },
+});
 const { resolveDispatchPreviewFromFleet } = await import('../methods/dispatch/preview.js');
 const { nodeModelCatalogs } = await import('../runners/model-catalog.js');
 const { executeFindSlotStep } = await import('./find-slot-step.js');
@@ -541,6 +559,8 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   fleetReadFailure = false;
   fleetPoolErrors = undefined;
   pressureRefs = false;
+  archivedRuns.clear();
+  releaseCompleted = undefined;
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -2434,3 +2454,98 @@ for (const state of ['fresh', 'replayed'] as const) {
     assert.deepEqual(claims, [run.slotId]);
   });
 }
+
+test('a pinned run waits while the held-slot pass releases the cleanup its previous run left', async () => {
+  // eed987a0, 12afdc85: the previous run's teardown found a process it started still exiting.
+  reset('fix-bug', 'TAT-4137');
+  freshPreview = true;
+  expectedTarget = undefined;
+  const slot = slots[0]!;
+  run.slotId = slot.slot;
+  // Archived already: the wait and the pass find it the same way.
+  const leaver = makeRun({ id: 'leaver-run', project, status: 'done', slotId: slot.slot });
+  archivedRuns.set(leaver.id, leaver);
+  const hold = {
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: null,
+    cleanup_run_id: leaver.id,
+    held_reason: 'Process 4242 still uses the slot repository; slot teardown was skipped',
+  };
+  liveRows.set(slot.slot, hold);
+  Object.assign(slot, { lifecycle: 'held', phase: 'occupied', currentRunId: null });
+  let processExited = false;
+  const releases: string[] = [];
+  releaseCompleted = async (finished) => {
+    releases.push(finished.id);
+    if (!processExited) return { released: false };
+    liveRows.set(slot.slot, {
+      ...hold,
+      lifecycle: 'ready',
+      phase: null,
+      cleanup_run_id: null,
+      held_reason: null,
+    });
+    Object.assign(slot, { lifecycle: 'ready', phase: null });
+    return { released: true };
+  };
+  const { reconcileOrphanedSlots } = await import('./recovery.js');
+  const { isTerminalTeardownInFlight } = await import('./terminal-teardown-registry.js');
+  const { retryOccupiedRunSlot } = await import('../run-lifecycle/slot-teardown.js');
+  const pass = () =>
+    reconcileOrphanedSlots({
+      listRuns: () => ({ runs: [run] }),
+      loadFleetStatus: async () => ({
+        slots: [
+          { slot: slot.slot, lifecycle: slot.lifecycle, phase: slot.phase, currentRunId: null },
+        ],
+      }),
+      isTerminalTeardownInFlight,
+      readSlotField: async (id, field) => liveRows.get(id)?.[field],
+      getRun: (id) => (id === run.id ? run : undefined),
+      updateRun: () => {},
+      resetSlot: async () => assert.fail('the hold is released by its own cleanup'),
+      resetSlotIf: async () => assert.fail('the hold is released by its own cleanup'),
+      updateSlotStatusIf: async () => assert.fail('the hold is released by its own cleanup'),
+      broadcast: () => {},
+      retryOccupiedRunSlot,
+      resumeInterruptedRecovery: () => assert.fail('no workspace recovery'),
+    });
+  let polls = 0;
+  afterLoadWait = async () => {
+    polls += 1;
+    assert.ok(polls <= 3, 'the pin waited but the held-slot pass never released the slot');
+    // One pass while the process still runs, then the process exits before the next pass.
+    if (polls === 2) processExited = true;
+    await pass();
+  };
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, slot.slot);
+  assert.deepEqual(claims, [slot.slot]);
+  assert.deepEqual(releases, [leaver.id, leaver.id], 'the pass retried the cleanup twice');
+  assert.deepEqual(loadWaits, [2_000, 2_000]);
+});
+
+test('a queue pick inside a wider allowlist does not wait for the previous run cleanup', async () => {
+  reset('fix-bug', 'TAT-4137');
+  freshPreview = true;
+  expectedTarget = undefined;
+  const slot = slots[0]!;
+  Object.assign(run, {
+    slotId: slot.slot,
+    queuedAt: new Date().toISOString(),
+    allowedSlots: [slot.slot, slots[1]!.slot],
+  });
+  const leaver = makeRun({ id: 'leaver-run', project, status: 'done', slotId: slot.slot });
+  archivedRuns.set(leaver.id, leaver);
+  liveRows.set(slot.slot, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: null,
+    cleanup_run_id: leaver.id,
+    held_reason: 'Process 4242 still uses the slot repository; slot teardown was skipped',
+  });
+  Object.assign(slot, { lifecycle: 'held', phase: 'occupied', currentRunId: null });
+  await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /slot remains occupied/);
+  assert.deepEqual(loadWaits, [], 'the queue pick is refused without waiting');
+});

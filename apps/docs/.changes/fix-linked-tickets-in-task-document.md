@@ -1,0 +1,1 @@
+- The task directory contract records that `TASK.md` renders the linked-ticket refs a run names, including an operator's additions, and when a key added later reaches a task.

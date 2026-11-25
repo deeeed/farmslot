@@ -4,7 +4,6 @@ import {
   cancelledRunHoldReason,
   DEFAULT_BRANCH,
   Events,
-  isCompletionPrerequisiteFailure,
   isTerminalRunStatus,
   type Run,
 } from '@farmslot/protocol';
@@ -34,7 +33,11 @@ import {
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import type { ResourceShutdownOutcome } from '../fleet/slot-cleanup.js';
-import { isActiveSlotHolder, slotPinIsRequestOnly } from '../methods/dispatch/slot-scoring.js';
+import {
+  activeRunOnSlotReason,
+  isActiveSlotHolder,
+  slotPinIsRequestOnly,
+} from '../methods/dispatch/slot-scoring.js';
 import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import { resolveDevServerLogPath } from '../methods/slot/prepare-devserver-log.js';
 import {
@@ -62,6 +65,12 @@ import { unwatchSlot } from '../tasks/watcher.js';
 
 import { reapSlotBrowserSession } from './browser-session-reap.js';
 import {
+  cleanupHoldRunId,
+  occupiedHoldRetryable,
+  processInSlotRepoReason,
+  UNREADABLE_CENSUS_REASON,
+} from './cleanup-hold.js';
+import {
   isTmuxProcess,
   isWithinPath,
   parseLsofNames,
@@ -80,26 +89,10 @@ export class RunOwnedResourceCleanupError extends Error {}
 export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
   if (isTerminalTeardownInFlight(slotId)) return false;
   const before = await readSlotRow(slotId);
-  if (
-    before?.lifecycle !== 'held' ||
-    before.phase !== 'occupied' ||
-    before[SLOT_CLEANUP_STOP_UNCONFIRMED] === true
-  )
-    return false;
-  const runId = before.current_run_id || before.cleanup_run_id;
-  if (typeof runId !== 'string') return false; // An unidentified foreign hold grants no cleanup authority.
+  const runId = before ? cleanupHoldRunId(before) : undefined;
+  if (!before || runId === undefined) return false; // An unidentified foreign hold grants no cleanup authority.
   const run = await getRunWithArchived(runId);
-  if (
-    !run ||
-    run.slotId !== slotId ||
-    !isTerminalRunStatus(run.status) ||
-    // A cancelled run keeps the slot it still owns for replay until release,
-    // delete or archive (ADR-054); its cleanup hold is retried as before.
-    (run.status === 'cancelled' && before.current_run_id === run.id) ||
-    isCompletionPrerequisiteFailure(run) ||
-    isActiveSlotHolder(run)
-  )
-    return false;
+  if (!occupiedHoldRetryable(slotId, before, run)) return false;
   if (isTerminalTeardownInFlight(slotId)) return false;
   beginTerminalTeardown(slotId);
   try {
@@ -181,7 +174,7 @@ async function inspectSlotOwnership(
   if (!ownsRunSlotCleanup(row, run.id))
     return `Slot belongs to ${owner ?? 'no run'}, not ${run.id}`;
   const other = findOtherActiveRunOnSlot(run, row);
-  if (other) return `Another active run ${other.id} uses this slot`;
+  if (other) return activeRunOnSlotReason(other.id);
   return null;
 }
 
@@ -490,8 +483,7 @@ export async function slotTeardownBlocker(
       return match ? [match[1]] : [];
     }),
   );
-  if (census.stdout.trim() && livePids.size === 0)
-    return 'Workspace process identity census is unreadable; slot teardown was skipped';
+  if (census.stdout.trim() && livePids.size === 0) return UNREADABLE_CENSUS_REASON;
   const currentCwds = parseLsofNames(census.stdout);
   for (const child of idleChildren) {
     const cwd = currentCwds.find(([pid]) => pid === child)?.[1];
@@ -507,7 +499,7 @@ export async function slotTeardownBlocker(
       !passive.has(pid) &&
       !ownedProviders.has(pid)
     )
-      return `Process ${pid} still uses the slot repository; slot teardown was skipped`;
+      return processInSlotRepoReason(pid);
   }
   // Automatic run cleanup never destroys the configured session itself.
   return null;

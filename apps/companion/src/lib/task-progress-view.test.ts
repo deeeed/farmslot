@@ -83,6 +83,16 @@ test('a stale unit names the last child mark in visible text, not a tooltip', ()
   assert.equal(view.settled, false);
 });
 
+test('a unit left open by an ended owner reads as ended work, muted, with no current step', () => {
+  const view = subtaskProgressView(unit({ status: 'running', ownerEnded: true }));
+  assert.equal(view.statusLabel, 'owner ended');
+  assert.equal(view.staleNote, 'left running: the context that owned it has ended');
+  assert.equal(view.currentStep, null);
+  assert.equal(view.settled, false);
+  assert.equal(view.ownerEnded, true);
+  assert.equal(view.color, colors.textSecondary, 'the muted tone Command Center uses');
+});
+
 test('blocked keeps ownership, complete settles', () => {
   assert.equal(subtaskProgressView(unit({ status: 'blocked' })).settled, false);
   assert.equal(subtaskProgressView(unit({ status: 'complete' })).settled, true);

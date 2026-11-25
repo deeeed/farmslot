@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
+import '../core/hermetic-git.test-support.js';
 import '../core/private-pool.test-support.js';
 
 import { poolDirectory } from '../core/config.js';
