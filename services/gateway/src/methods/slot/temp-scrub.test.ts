@@ -264,13 +264,10 @@ test('nested checkouts are deleted outright and named with their kind', async ()
   const outcome = await scrubTempForRun(vars, terminalProject, run);
 
   assert.deepEqual(outcome?.refused, []);
-  assert.deepEqual(
-    outcome?.checkouts.map(({ path: p, kind }) => [p, kind]).sort(),
-    [
-      ['temp/tasks/feat/wt-1125-070000/wt', 'linked worktree'],
-      ['temp/tasks/goal3-clone', 'clone'],
-    ],
-  );
+  assert.deepEqual(outcome?.checkouts.map(({ path: p, kind }) => [p, kind]).sort(), [
+    ['temp/tasks/feat/wt-1125-070000/wt', 'linked worktree'],
+    ['temp/tasks/goal3-clone', 'clone'],
+  ]);
   assert.equal(present('temp/tasks/goal3-clone'), false);
   assert.equal(present('temp/tasks/feat/wt-1125-070000'), false);
   assert.doesNotMatch(git(repo, 'worktree', 'list'), /wt-1125-070000/);

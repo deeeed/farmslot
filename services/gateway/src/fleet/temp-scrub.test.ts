@@ -106,9 +106,9 @@ test('nested clones and bare repos are deleted outright and named with their kin
 
   assert.deepEqual(result.refused, []);
   assert.deepEqual(
-    result.removed.filter(({ kind }) => !['file', 'dir', 'link'].includes(kind)).sort((a, b) =>
-      a.path.localeCompare(b.path),
-    ),
+    result.removed
+      .filter(({ kind }) => !['file', 'dir', 'link'].includes(kind))
+      .sort((a, b) => a.path.localeCompare(b.path)),
     [
       { path: 'temp/scratch-x/bare.git', kind: 'bare' },
       { path: 'temp/tasks/feat/tat-4800/clone', kind: 'clone' },

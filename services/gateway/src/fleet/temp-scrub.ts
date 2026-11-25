@@ -156,7 +156,11 @@ export interface TempScratchDeleteResult {
 export function buildTempScratchDeleteCommand(input: { repo: string }): string {
   const config = {
     repo: input.repo.replace(/\/+$/, ''),
-    parents: ['temp', TEMP_TASK_ROOT, ...FLOW_TYPES.map((flow) => `${TEMP_TASK_ROOT}/${flowDir(flow)}`)],
+    parents: [
+      'temp',
+      TEMP_TASK_ROOT,
+      ...FLOW_TYPES.map((flow) => `${TEMP_TASK_ROOT}/${flowDir(flow)}`),
+    ],
   };
   return [
     `__fs_config=${shellQuote(JSON.stringify(config))}`,
