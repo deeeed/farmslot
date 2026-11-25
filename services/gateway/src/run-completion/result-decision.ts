@@ -642,14 +642,27 @@ export async function resolveResultDecision(
   return getRun(params.runId) ?? settled;
 }
 
+/** Every refused prerequisite is a stale CI receipt. */
+function onlyStaleReceipts(reasons: readonly RunGatePrerequisiteReason[] | undefined): boolean {
+  return (
+    Boolean(reasons?.length) && reasons!.every((reason) => reason.code === 'deterministic-stale')
+  );
+}
+
 /** A COMPLETE refusal whose every owed check is a stale CI receipt. */
 function staleReceiptRefusal(decision: RunDecision): boolean {
   const payload = decision.payload;
   return (
     payload?.kind === 'result-decision' &&
     payload.stoppedAt === 'complete' &&
-    Boolean(payload.refusal?.reasons.length) &&
-    payload.refusal!.reasons.every((reason) => reason.code === 'deterministic-stale')
+    onlyStaleReceipts(payload.refusal?.reasons)
+  );
+}
+
+/** COMPLETE's recorded refusal will be sent back at once: its hold needs no card. */
+export function staleReceiptSendBackDue(run: Run): boolean {
+  return (
+    !run.engineState?.staleReceiptSendBack && onlyStaleReceipts(refusal(run, 'complete')?.reasons)
   );
 }
 
@@ -657,7 +670,8 @@ function staleReceiptRefusal(decision: RunDecision): boolean {
  * A stale CI receipt is the worker's to rerun: a held run sends it back once with the
  * steps to mark again, and any later stale refusal waits for a person (961d55d3).
  * The marker lives in engineState because a completion replay drops resolved decisions.
- * Returns whether it sent the run back.
+ * Returns false only when its decision is still pending unannounced: a send-back that
+ * failed after resolving re-holds and announces on its own.
  */
 export async function sendBackStaleReceiptOnce(run: Run): Promise<boolean> {
   const decision = pendingResultDecision(run);
@@ -676,7 +690,7 @@ export async function sendBackStaleReceiptOnce(run: Run): Promise<boolean> {
     console.warn(
       `[result-decision] automatic send-back for ${run.id.slice(0, 8)} did not complete: ${(error as Error).message}`,
     );
-    return false;
+    return pendingResultDecision(getRun(run.id) ?? run)?.id !== decision.id;
   }
 }
 

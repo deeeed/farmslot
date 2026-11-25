@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import {
+  Events,
   FLOW_STEPS,
   hasUnsettledRunExecution,
   isCompletionPrerequisiteFailure,
@@ -128,7 +129,11 @@ mock.module('../runs/store.js', {
     },
   },
 });
-mock.module('../server.js', { namedExports: { broadcastEvent: () => {} } });
+/** Events the engine broadcast; a quiet hold sends no decision card. */
+const broadcasts: string[] = [];
+mock.module('../server.js', {
+  namedExports: { broadcastEvent: (event: string) => broadcasts.push(event) },
+});
 const backlog = await import('../backlog/store.js');
 mock.module('../backlog/store.js', {
   namedExports: { ...backlog, markBacklogRunObserved: async () => undefined },
@@ -139,6 +144,7 @@ mock.module('./resource-posture.js', {
 });
 /** Completion feedback a send-back delivered to the retained worker. */
 const sendBacks: Array<{ runId: string; feedback: string; note?: string }> = [];
+let sendBackError: Error | null = null;
 const completionSendBack = await import('../run-completion/completion-send-back.js');
 mock.module('../run-completion/completion-send-back.js', {
   namedExports: {
@@ -151,6 +157,7 @@ mock.module('../run-completion/completion-send-back.js', {
       note?: string,
     ) => {
       sendBacks.push({ runId: sent.id, feedback, note });
+      if (sendBackError) throw sendBackError;
     },
   },
 });
@@ -560,4 +567,58 @@ test('961d55d3: a readiness refusal of only stale receipts sends the worker back
   assert.equal(sendBacks.length, 1);
   assert.match(sendBacks[0]!.feedback, /Mark it again with/);
   assert.equal(pendingResultDecision(run), undefined);
+});
+
+const decisionCards = () => broadcasts.filter((event) => event === Events.RUN_DECISION_NEW).length;
+
+test('a stale-receipt hold the engine sends back shows no decision card; a failed check shows one', async () => {
+  run = tat4146v2(v2Output);
+  broadcasts.length = 0;
+  await completeRefused([staleReason]);
+  assert.equal(decisionCards(), 0);
+
+  run = tat4146v2(v2Output);
+  broadcasts.length = 0;
+  await completeRefused([failedReason]);
+  assert.equal(decisionCards(), 1);
+});
+
+test('a failed automatic send-back re-holds with exactly one decision card', async () => {
+  run = tat4146v2(v2Output);
+  sendBacks.length = 0;
+  broadcasts.length = 0;
+  sendBackError = new Error('worker pane is gone');
+  try {
+    await completeRefused([staleReason]);
+  } finally {
+    sendBackError = null;
+  }
+  assert.equal(sendBacks.length, 1);
+  assert.ok(pendingResultDecision(run), 'held again for a person');
+  assert.equal(decisionCards(), 1);
+});
+
+test('the hold lists only the reasons that gated COMPLETE, so one excluded reason does not block the send-back', async () => {
+  run = qaRun(qaOutput);
+  sendBacks.length = 0;
+  const excluded = { ...refusalReasons[2]!, code: 'run-progress-unconfirmed' };
+  completeError = async () => {
+    const { RunGateNotReadyError } = await import('./gate-prerequisites.js');
+    return new RunGateNotReadyError(
+      {
+        state: 'not-ready',
+        identity: { runId: run.id, generation: 5 },
+        reasons: [staleReason, excluded],
+      },
+      [staleReason],
+    );
+  };
+  try {
+    await startRun(run.id);
+  } finally {
+    completeError = null;
+  }
+  assert.equal(sendBacks.length, 1);
+  const decision = run.decisions.find((entry) => entry.payload?.kind === 'result-decision');
+  assert.deepEqual((decision?.payload as ResultDecisionPayload).refusal?.reasons, [staleReason]);
 });

@@ -24,6 +24,7 @@ import {
   finalizeEvalResultPackageForRun,
   readFrozenEvalFirstOutputPackage,
 } from '../evals/package-store.js';
+import { runReplayStep } from '../methods/run/replay-step.js';
 import {
   type ReviewOptions,
   type ReviewResult,
@@ -3112,28 +3113,24 @@ const severeFindings = [
   { severity: 'major' as const, file: 'b.ts', line: 2, description: 'No test covers the fix.' },
 ];
 
+const deliveredMonitor = {
+  workerSignal: { status: 'complete' },
+  pushVerification: { verified: true, dirtyFiles: 0, unpushedCommits: 0 },
+};
+const deliveredOutput: NonNullable<Run['output']> = {
+  capturedAt: '2026-11-24T10:00:00.000Z',
+  workerFinished: true,
+  artifactManifest: [],
+  manifestDigest: 'd'.repeat(64),
+  reportPath: 'artifacts/pr-description.md',
+};
+
 async function deliveredPublicationRun(t: import('node:test').TestContext): Promise<string> {
   const runId = await publicationGateRun(t, {});
   const run = getRun(runId)!;
   updateRun(runId, {
-    steps: [
-      {
-        name: 'monitor',
-        status: 'done',
-        outputs: {
-          workerSignal: { status: 'complete' },
-          pushVerification: { verified: true, dirtyFiles: 0, unpushedCommits: 0 },
-        },
-      },
-      ...run.steps,
-    ],
-    output: {
-      capturedAt: '2026-11-24T10:00:00.000Z',
-      workerFinished: true,
-      artifactManifest: [],
-      manifestDigest: 'd'.repeat(64),
-      reportPath: 'artifacts/pr-description.md',
-    },
+    steps: [{ name: 'monitor', status: 'done', outputs: deliveredMonitor }, ...run.steps],
+    output: deliveredOutput,
   });
   return runId;
 }
@@ -3252,33 +3249,101 @@ test('961d55d3: a spent review budget with an open blocker holds a publishing ru
   );
 });
 
-// M3: a replayed REVIEW whose launch the spent budget refuses still sees the last open blocker.
-test('961d55d3: a refused review launch with a recorded open blocker holds instead of reaching COMPLETE', async (t) => {
-  const recorded: ReviewStatus = {
-    id: 'pipeline-review-1',
-    source: 'human-gate',
-    mode: 'cold',
-    verdict: 'issues',
-    reviewedHeadSha: rowOneHead,
-    loopNumber: 2,
-    unresolvedCount: 2,
-    retryCount: 1,
-    maxRetries: 2,
-    issues: severeFindings,
-  };
-  const runId = await publicationGateRun(t, { reviews: [recorded] });
+const refusedLaunch = (runId: string): PostDispatchStepContext => ({
+  ...restartReplayContext(),
+  executeReviewForRun: async () => {
+    await assertReviewRoundAvailable(getRun(runId)!);
+    assert.fail('a spent budget refuses the launch');
+  },
+});
+
+// Round-2 M1: a run held at REVIEW with a blocker, replayed for real, whose launch the spent
+// budget refuses. The replay clears REVIEW's outputs; the open findings must survive it
+// (3e434597, 7b553a87 and f963d8a5 had this shape and no gate reviews).
+test('961d55d3: a held blocker survives a real replay, so a refused launch holds instead of reaching COMPLETE', async (t) => {
+  const runId = await deliveredPublicationRun(t);
   updateRun(runId, {
-    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `refused-severe-${i}`)),
+    // A ticket a replay accepts; the fixture default is only a label.
+    ticketOrPr: 'ROW-4769',
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `replayed-severe-${i}`)),
   });
-  const held = await heldReview(runId, {
-    ...restartReplayContext(),
-    executeReviewForRun: async () => {
-      await assertReviewRoundAvailable(getRun(runId)!);
-      assert.fail('a spent budget refuses the launch');
-    },
+  await heldReview(runId, reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true }));
+  updateRunStep(runId, 'review', { status: 'failed' });
+  // The steps a real run passed before REVIEW, so the replay accepts it.
+  updateRun(runId, {
+    status: 'needs-decision',
+    steps: [
+      ...['find-slot', 'write-task', 'prepare', 'dispatch'].map((name) => ({
+        name,
+        status: 'done' as const,
+      })),
+      ...getRun(runId)!.steps,
+    ],
   });
+
+  // Replayed from MONITOR, as a completion send-back does; no slot to reclaim here.
+  updateRun(runId, { slotId: null });
+  await runReplayStep({ runId, stepName: 'monitor' }, () => {}, { startEngine: async () => {} });
+  assert.equal(getRun(runId)!.steps.find((step) => step.name === 'review')?.outputs, undefined);
+  // MONITOR runs again and records the delivered result before REVIEW launches.
+  updateRun(runId, { slotId: 'isolated-review-slot', output: deliveredOutput });
+  updateRunStep(runId, 'monitor', { status: 'done', outputs: deliveredMonitor });
+
+  const held = await heldReview(runId, refusedLaunch(runId));
   assert.deepEqual(held.stepOutputs.issues, severeFindings);
   assert.ok(held.stepOutputs.reviewLaunchRejection);
+});
+
+test('a passing review clears the recorded open findings', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  updateRun(runId, {
+    engineState: { ...getRun(runId)!.engineState, openReviewFindings: severeFindings },
+  });
+  const io = await executeReviewStep(runId, {
+    ...restartReplayContext(),
+    executeReviewForRun: async () => ({
+      verdict: 'pass',
+      issues: [],
+      retryCount: 0,
+      maxRetries: 2,
+    }),
+  });
+  assert.equal(io.outputs?.verdict, 'pass');
+  assert.equal(getRun(runId)!.engineState?.openReviewFindings, undefined);
+});
+
+test('an undelivered publishing run at a spent budget with an open blocker fails', async (t) => {
+  const runId = await publicationGateRun(t, {});
+  updateRun(runId, {
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `undelivered-severe-${i}`)),
+  });
+  await assert.rejects(
+    executeReviewStep(
+      runId,
+      reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true }),
+    ),
+    (error: unknown) => {
+      assert.ok(!(error instanceof ResultDecisionHoldError), String(error));
+      return true;
+    },
+  );
+});
+
+// Round-2 M2: an interactive publishing run keeps its human gate at a spent budget.
+test('an interactive publishing run at a spent budget with an open blocker still reaches its gate', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  updateRun(runId, {
+    mode: 'interactive',
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `interactive-severe-${i}`)),
+  });
+  const io = await executeReviewStep(
+    runId,
+    reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true }),
+  );
+  assert.equal(io.outputs?.verdict, 'issues');
+  // A refused launch on the same run keeps the gate too.
+  const refused = await executeReviewStep(runId, refusedLaunch(runId));
+  assert.ok(refused.outputs?.reviewLaunchRejection);
 });
 
 test('an undelivered fix becomes a visible result decision with its findings preserved', async (t) => {

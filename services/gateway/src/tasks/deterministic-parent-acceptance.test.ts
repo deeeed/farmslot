@@ -24,6 +24,8 @@ let exitCode = 0;
 let realCheck = false;
 /** Raw checker stdout instead of the evaluated checks. */
 let checkerOutput: string | undefined;
+/** The returned check's command, when a test replaces the declared one. */
+let checkCommand: string | null | undefined;
 const require = createRequire(import.meta.url);
 mock.module('../core/config.js', {
   namedExports: {
@@ -77,6 +79,7 @@ mock.module('../core/exec.js', {
             checks: [
               {
                 ...declared,
+                ...(checkCommand !== undefined ? { command: checkCommand } : {}),
                 status,
                 exitCode: 0,
                 logPath: 'artifacts/ci.log',
@@ -170,6 +173,16 @@ test('a refused receipt names its checklist step, status and command', async (t)
     return true;
   });
   checkerOutput = undefined;
+  // A check whose frozen command is missing names no command.
+  checkCommand = null;
+  await assert.rejects(validateDeterministicChecksForRun(run), (error: unknown) => {
+    assert.ok(error instanceof DeterministicGateBlockedError);
+    assert.ok(error.reasons.length > 0);
+    for (const reason of error.reasons) assert.doesNotMatch(reason.message, /undefined|null/);
+    assert.doesNotMatch(error.reasons[0]!.message, /it runs/);
+    return true;
+  });
+  checkCommand = undefined;
   // A failed check is not a mark to rerun: it holds for a person.
   status = 'failed';
   await assert.rejects(validateDeterministicChecksForRun(run), (error: unknown) => {

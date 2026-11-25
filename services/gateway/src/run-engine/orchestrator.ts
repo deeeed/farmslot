@@ -72,6 +72,7 @@ import {
   ResultDecisionHoldError,
   runDeliveredResult,
   sendBackStaleReceiptOnce,
+  staleReceiptSendBackDue,
 } from '../run-completion/result-decision.js';
 import {
   reserveRunArtifactMetadata,
@@ -510,25 +511,34 @@ async function retainCompletionPrerequisiteFailure(
   // A delivered result waits for a person instead of failing (ADR-065
   // Amendment 7); without one the refusal stays Amendment 6's `failed`.
   if (runDeliveredResult(getRun(runId)!)) {
+    // Only a refusal the engine sends back at once holds without a card first.
+    const sendBackDue = stepName === S.COMPLETE && staleReceiptSendBackDue(getRun(runId)!);
+    let held: Run | null | undefined;
     try {
-      const held = await holdRunForResultDecision(
+      held = await holdRunForResultDecision(
         runId,
         stepName === S.COMPLETE ? 'complete' : 'finalize',
         error.message,
         {
           patch: { metrics: { ...current!.metrics, outcome: 'partial' } },
-          // A stale-receipt refusal may be sent back at once; no card for that.
-          announce: stepName !== S.COMPLETE,
+          announce: !sendBackDue,
         },
       );
-      if (held && stepName === S.COMPLETE && !(await sendBackStaleReceiptOnce(held)))
-        await announcePendingResultDecision(runId);
-      return;
     } catch (holdError) {
       // Never left `completing`: an unrecorded hold falls back to Amendment 6.
       console.error(
         `[run-engine] run ${runId.slice(0, 8)} could not be held for a decision; failing it: ${(holdError as Error).message}`,
       );
+    }
+    if (held !== undefined) {
+      // The run is held: a failed announcement never fails it.
+      if (held && sendBackDue && !(await sendBackStaleReceiptOnce(held)))
+        await announcePendingResultDecision(runId).catch((announceError: unknown) =>
+          console.warn(
+            `[run-engine] run ${runId.slice(0, 8)} held, but its decision was not announced: ${(announceError as Error).message}`,
+          ),
+        );
+      return;
     }
   }
   const collaborators = terminalCollaborators(Events.RUN_UPDATED, null);

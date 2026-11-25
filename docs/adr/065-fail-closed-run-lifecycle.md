@@ -972,10 +972,14 @@ extension changes. Release fragments record the presentation change.
 
 ### Decision
 
-A publishing run whose review ends with an open blocker or major finding waits at
-the Amendment 7 result decision instead of reaching COMPLETE; minor and nit findings
-still reach the publication gate. A no-verdict cap stop is not recorded as exhausted
-fix rounds, and the decision names which stop it was.
+An autonomous publishing run whose review ends with an open blocker or major finding
+does not reach COMPLETE. A delivered result waits at the Amendment 7 result decision,
+a spent review budget keeping its budget stop and so Accept (Amendment 13); an
+undelivered one fails under Amendment 6. `engineState.openReviewFindings` keeps
+those findings across a replay, so a refused review launch stops the same way.
+Minor and nit findings still reach the publication gate, and interactive runs keep
+their human gate. A no-verdict cap stop is not recorded as exhausted fix rounds, and
+the decision names which stop it was.
 
 Amendment 7's COMPLETE send-back is an operator action. The engine takes it once,
 on its own, when every prerequisite COMPLETE refused is a stale deterministic

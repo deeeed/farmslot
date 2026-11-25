@@ -11,13 +11,11 @@ import {
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
   isReviewValidationDepth,
-  latestReview,
   pipelineReviewOffReason,
   PipelineSteps,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReadyGatePrPackage,
   reviewFixRetriesExhausted,
-  type ReviewIssue,
   reviewPolicySatisfied,
   type ReviewSelection,
   type ReviewValidationDepth,
@@ -937,6 +935,15 @@ export async function executeReviewStep(
         reviewLaunchRejection: rejection,
       });
     }
+    if (reviewed.verdict === 'issues' || reviewed.verdict === 'pass') {
+      const open =
+        reviewed.verdict === 'issues' && blockingReviewFindings(reviewed.issues ?? []).length
+          ? reviewed.issues
+          : undefined;
+      updateRun(runId, {
+        engineState: { ...getRun(runId)?.engineState, openReviewFindings: open },
+      });
+    }
     if (reviewed.verdict === 'issues') {
       const latest = getRun(runId);
       const budget = latest && (await runReviewRoundBudget(latest));
@@ -945,7 +952,7 @@ export async function executeReviewStep(
           latest &&
           requiresPublicationApproval(latest) &&
           !reviewed.fixDeliveryFailure &&
-          !blockingReviewFindings(reviewed.issues ?? []).length
+          (latest.mode === 'interactive' || !blockingReviewFindings(reviewed.issues ?? []).length)
         ) {
           publicationReviewBudgetSpent = true;
           return reviewed;
@@ -1017,16 +1024,19 @@ export async function executeReviewStep(
     ) {
       // A budget stop is not a new review verdict. The publication gate checks the retained
       // reviews and every hard prerequisite before offering a person any override, unless the
-      // last review left a blocker or major open: that holds here (961d55d3).
-      const recorded = isReviewIssueList(error.stepOutputs.issues)
-        ? error.stepOutputs.issues
-        : (latestReview(getRun(runId)?.engineState?.publishGate?.reviews)?.issues ?? []);
-      if (blockingReviewFindings(recorded).length)
+      // last review verdict left a blocker or major open: an autonomous run stops here, held
+      // when it delivered a result and failed when not (961d55d3). Interactive runs keep
+      // their gate, as before.
+      const latest = getRun(runId) ?? current;
+      const open = latest.engineState?.openReviewFindings;
+      if (open?.length && latest.mode !== 'interactive') {
+        if (!runDeliveredResult(latest)) throw new Error(error.message);
         throw new ResultDecisionHoldError(error.message, inputs, {
           ...error.stepOutputs,
           verdict: 'issues',
-          issues: recorded,
+          issues: open,
         });
+      }
       stepPartialIO.delete(runId);
       return { inputs, outputs: { ...error.stepOutputs, cliCommand } };
     }
@@ -1181,19 +1191,6 @@ export async function executeReviewStep(
     inputs: { ...inputs, enabled: !result.skipped },
     outputs: { ...result, cliCommand, ...(interactiveRetry ? { interactiveRetry: true } : {}) },
   };
-}
-
-function isReviewIssueList(value: unknown): value is ReviewIssue[] {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (issue) =>
-        typeof issue === 'object' &&
-        issue !== null &&
-        typeof issue.file === 'string' &&
-        typeof issue.description === 'string',
-    )
-  );
 }
 
 /** Keep the worker tmux session alive while the publication human gate is open. */
