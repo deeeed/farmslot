@@ -48,6 +48,11 @@ interface ReviewPolicyFindings {
   advisoriesOnly: boolean;
 }
 
+/** Blocker and major findings; one without a severity counts as major. */
+export function blockingReviewFindings(findings: readonly ReviewIssue[]): ReviewIssue[] {
+  return findings.filter((issue) => issue.severity !== 'minor' && issue.severity !== 'nit');
+}
+
 /** Existing round-3+ task policy, applied only with an authoritative admission round. */
 export function reviewPolicyFindings(
   findings: readonly ReviewIssue[],
@@ -55,7 +60,7 @@ export function reviewPolicyFindings(
 ): ReviewPolicyFindings {
   const blocking =
     typeof round === 'number' && Number.isSafeInteger(round) && round >= 3
-      ? findings.filter((issue) => issue.severity !== 'minor' && issue.severity !== 'nit')
+      ? blockingReviewFindings(findings)
       : findings;
   return { blocking, advisoriesOnly: findings.length > 0 && blocking.length === 0 };
 }

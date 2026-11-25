@@ -22,6 +22,8 @@ const declared = {
 let status: 'passed' | 'stale' | 'failed' = 'passed';
 let exitCode = 0;
 let realCheck = false;
+/** Raw checker stdout instead of the evaluated checks. */
+let checkerOutput: string | undefined;
 const require = createRequire(import.meta.url);
 mock.module('../core/config.js', {
   namedExports: {
@@ -65,6 +67,7 @@ mock.module('../core/exec.js', {
           return { exitCode: 1, stderr: String(failure), stdout };
         }
       }
+      if (checkerOutput !== undefined) return { exitCode, stderr: '', stdout: checkerOutput };
       return {
         exitCode,
         stderr: '',
@@ -139,8 +142,7 @@ test('a refused receipt names its checklist step, status and command', async (t)
     code: 'deterministic-stale',
     prerequisite: 'deterministic',
     reference: 'checks.unit',
-    message:
-      'CHECKLIST.md step 9 (checks.unit) is stale. Rerun step 9 (`true`) to record a current receipt.',
+    message: `CHECKLIST.md step 9 (checks.unit) is stale. Mark it again with \`${taskDir}/mark --checklist CHECKLIST.md --signal SIGNAL.json 9\` (it runs \`true\`) to record a current receipt.`,
     actionId: 'hold',
   };
   status = 'stale';
@@ -149,11 +151,25 @@ test('a refused receipt names its checklist step, status and command', async (t)
     exitCode = code;
     await assert.rejects(validateDeterministicChecksForRun(run), (error: unknown) => {
       assert.ok(error instanceof DeterministicGateBlockedError);
-      assert.match(error.message, /^Deterministic CI gate blocked/);
+      assert.match(
+        error.message,
+        code
+          ? /^Deterministic CI gate blocked: 1 declared check\(s\) have no current passing receipt\.$/
+          : /^Deterministic CI gate blocked: no verified receipts were returned for .*worker-terminal-contract\.json/,
+      );
       assert.deepEqual(error.reasons, [stale]);
       return true;
     });
   }
+  // A checker that returned nothing names no check, so readiness keeps its generic reason.
+  checkerOutput = 'not json';
+  await assert.rejects(validateDeterministicChecksForRun(run), (error: unknown) => {
+    assert.ok(error instanceof DeterministicGateBlockedError);
+    assert.deepEqual(error.reasons, []);
+    assert.equal(error.message, 'Deterministic CI gate blocked: not json');
+    return true;
+  });
+  checkerOutput = undefined;
   // A failed check is not a mark to rerun: it holds for a person.
   status = 'failed';
   await assert.rejects(validateDeterministicChecksForRun(run), (error: unknown) => {

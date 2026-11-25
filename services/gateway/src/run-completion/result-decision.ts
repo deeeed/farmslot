@@ -22,10 +22,7 @@ import {
   type RunGatePrerequisiteReason,
   supersedePendingResultDecisions,
 } from '@farmslot/protocol';
-import {
-  normalizeReviewSeverity,
-  type ReviewSeverity,
-} from '@farmslot/protocol/review-approval-policy.cjs';
+import { reviewSeverityCounts } from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { findingsDigest } from '../core/findings-digest.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
@@ -43,7 +40,7 @@ import {
   RunTransitionRefusedError,
 } from '../run-lifecycle/transition-router.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
-import { currentSessionPrincipal } from '../security/work-originator.js';
+import { currentSessionPrincipal, runWithSystemOriginator } from '../security/work-originator.js';
 
 import { retainFinalRunArtifacts } from './output.js';
 
@@ -105,14 +102,15 @@ function refusal(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionPayload
   // refused publish package only says why.
   const step = run.steps.find((entry) => entry.name === stoppedAt && entry.status === 'failed');
   if (!step) return undefined;
-  const readiness = (
-    step.outputs?.gatePrerequisiteRefusal as
-      | { readiness?: { reasons?: RunGatePrerequisiteReason[] } }
-      | undefined
-  )?.readiness;
+  const refused = step.outputs?.gatePrerequisiteRefusal as
+    | {
+        reasons?: RunGatePrerequisiteReason[];
+        readiness?: { reasons?: RunGatePrerequisiteReason[] };
+      }
+    | undefined;
   return {
     message: step.detail ?? run.error ?? 'A completion prerequisite was refused.',
-    reasons: readiness?.reasons ?? [],
+    reasons: refused?.reasons ?? refused?.readiness?.reasons ?? [],
   };
 }
 
@@ -152,13 +150,23 @@ function acceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionAct
     : { id: 'accept-result', available: true, requiresReason: true };
 }
 
-/** Findings per severity; one without a severity counts as major (the review policy default). */
-export function reviewSeverityCounts(
-  issues: readonly ReviewIssue[],
-): Record<ReviewSeverity, number> {
-  const counts: Record<ReviewSeverity, number> = { blocker: 0, major: 0, minor: 0, nit: 0 };
-  for (const issue of issues) counts[normalizeReviewSeverity(issue.severity)]++;
-  return counts;
+/**
+ * Why review stopped with findings open, so Send back is an informed click (961d55d3):
+ * spent fix rounds, a spent review round budget, the no-verdict cap, or fixing that is
+ * off or stopped. An undelivered fix says so on its own.
+ */
+function reviewStopText(review: Record<string, unknown> | undefined): string {
+  if (review?.verdict !== 'issues' || typeof review.fixDeliveryFailure === 'string') return '';
+  const { retryCount, maxRetries, reason } = review;
+  const because = typeof reason === 'string' ? `: ${reason}` : '.';
+  if (typeof maxRetries === 'number' && maxRetries <= 0)
+    return ' Automatic fix rounds are off for this run.';
+  if (typeof retryCount === 'number' && typeof maxRetries === 'number' && retryCount >= maxRetries)
+    return ' The fix rounds are spent.';
+  if (review.maxRetriesExhausted === true) return ` The review rounds are spent${because}`;
+  return typeof reason === 'string'
+    ? ` Automatic reviews stopped before the fix rounds were spent${because}`
+    : ' Automatic fixing stopped before the fix rounds were spent.';
 }
 
 /** One line on why the run stopped; the findings or refused prerequisites follow it. */
@@ -185,15 +193,7 @@ function decisionReason(
       .filter(([, count]) => count > 0)
       .map(([severity, count]) => `${count} ${severity}`);
     const severities = counts.length ? ` (${counts.join(', ')})` : '';
-    // A no-verdict cap stop leaves fix rounds unspent (961d55d3); say which stop this was.
-    const stop =
-      review?.verdict !== 'issues'
-        ? ''
-        : review.maxRetriesExhausted === true
-          ? ' The fix rounds are spent.'
-          : typeof review.reason === 'string'
-            ? ` Automatic reviews stopped before the fix rounds were spent: ${review.reason}`
-            : '';
+    const stop = reviewStopText(review);
     return `Review found ${plural(findings?.length ?? 0, 'issue')}${severities}${attempts}.${stop}${undelivered}`;
   }
   const step = stoppedAt === 'complete' ? 'COMPLETE' : 'FINALIZE';
@@ -260,7 +260,7 @@ export async function holdRunForResultDecision(
   runId: string,
   stoppedAt: ResultDecisionStop,
   reason: string,
-  options: { settlingStatus?: Run['status']; patch?: Partial<Run> } = {},
+  options: { settlingStatus?: Run['status']; patch?: Partial<Run>; announce?: boolean } = {},
 ): Promise<Run | null> {
   const run = getRun(runId);
   if (!run) return null;
@@ -297,7 +297,9 @@ export async function holdRunForResultDecision(
         },
         ...(options.settlingStatus ? { settlingStatus: options.settlingStatus } : {}),
         persist: (next) => persistRunNow(next, 'held for a result decision'),
-        collaborators: operatorCompletionCollaborators((next) => publishDecision(next, decision)),
+        collaborators: operatorCompletionCollaborators((next) =>
+          publishDecision(next, options.announce === false ? undefined : decision),
+        ),
       }),
     );
     held = result.run;
@@ -438,7 +440,12 @@ function adoptedAcceptState(
 /** Settle a held run through one result-decision action (ADR-065 Amendment 7). */
 export async function resolveResultDecision(
   params: ResolveResultDecisionParams,
-  options: { releaseSlot?: boolean; adoptedPublication?: AdoptedPublicationAcceptance } = {},
+  options: {
+    releaseSlot?: boolean;
+    adoptedPublication?: AdoptedPublicationAcceptance;
+    /** The engine's one automatic send-back for stale CI receipts. */
+    staleReceiptSendBack?: true;
+  } = {},
 ): Promise<Run> {
   const actionId = params.actionId;
   if (!isResultDecisionActionId(actionId))
@@ -549,6 +556,14 @@ export async function resolveResultDecision(
         const updated = updateRun(params.runId, {
           decisions: resolveDecisions(null),
           resultDecisionReceipt: receipt,
+          ...(options.staleReceiptSendBack
+            ? {
+                engineState: {
+                  ...getRun(params.runId)?.engineState,
+                  staleReceiptSendBack: { decisionId: decision.id, sentAt: now },
+                },
+              }
+            : {}),
           error: undefined,
           // Whatever the run ends as next gets its own analytics record.
           analyticsEmittedAt: undefined,
@@ -639,31 +654,37 @@ function staleReceiptRefusal(decision: RunDecision): boolean {
 }
 
 /**
- * A stale CI receipt is the worker's to rerun: the held run sends it back once with
- * the step and command, and a second stale refusal waits for a person (961d55d3).
+ * A stale CI receipt is the worker's to rerun: a held run sends it back once with the
+ * steps to mark again, and any later stale refusal waits for a person (961d55d3).
+ * The marker lives in engineState because a completion replay drops resolved decisions.
+ * Returns whether it sent the run back.
  */
-export async function sendBackStaleReceiptOnce(run: Run): Promise<void> {
+export async function sendBackStaleReceiptOnce(run: Run): Promise<boolean> {
   const decision = pendingResultDecision(run);
-  if (
-    !decision ||
-    !staleReceiptRefusal(decision) ||
-    run.decisions.some(
-      (entry) => entry.resolvedAction === 'send-back' && staleReceiptRefusal(entry),
-    )
-  )
-    return;
+  if (!decision || !staleReceiptRefusal(decision) || run.engineState?.staleReceiptSendBack)
+    return false;
   try {
-    await resolveResultDecision({
-      runId: run.id,
-      decisionId: decision.id,
-      actionId: 'send-back',
-      reason: 'Sent back automatically: a CI receipt is stale. Rerun its mark step.',
-    });
+    // The engine decides this, not the person whose session started the run.
+    await runWithSystemOriginator(() =>
+      resolveResultDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'send-back' },
+        { staleReceiptSendBack: true },
+      ),
+    );
+    return true;
   } catch (error) {
     console.warn(
-      `[result-decision] automatic send-back for ${run.id.slice(0, 8)} failed; the decision waits for a person: ${(error as Error).message}`,
+      `[result-decision] automatic send-back for ${run.id.slice(0, 8)} did not complete: ${(error as Error).message}`,
     );
+    return false;
   }
+}
+
+/** Announce the run's pending result decision, after a quiet hold the engine did not settle. */
+export async function announcePendingResultDecision(runId: string): Promise<void> {
+  const run = getRun(runId);
+  const decision = run && pendingResultDecision(run);
+  if (run && decision) await publishDecision(run, decision);
 }
 
 /** A recapture replaced the output snapshot the decision was presented on. */

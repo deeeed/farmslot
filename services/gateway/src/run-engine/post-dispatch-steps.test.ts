@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   type CompleteStepOutput,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type PublicationReviewLaunchRejection,
   type RecipeRepairScope,
   type ReviewRequestContext,
@@ -3217,6 +3218,67 @@ test('spent fix rounds with only minor and nit findings still reach the publicat
   );
   assert.equal(io.outputs?.verdict, 'issues');
   assert.equal(io.outputs?.maxRetriesExhausted, true);
+});
+
+// B2: a publishing run whose review rounds are spent with a blocker open holds with the
+// budget stop, so Accept and the budget text are there (ADR-065 Amendment 13).
+test('961d55d3: a spent review budget with an open blocker holds a publishing run with its budget stop', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  updateRun(runId, {
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `spent-severe-${i}`)),
+  });
+  const held = await heldReview(
+    runId,
+    reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true }),
+  );
+  const rejection = held.stepOutputs.reviewLaunchRejection as PublicationReviewLaunchRejection;
+  assert.equal(rejection.code, PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached);
+  const latest = getRun(runId)!;
+  const decision = await buildResultDecision(
+    {
+      ...latest,
+      steps: latest.steps.map((step) =>
+        step.name === 'review' ? { ...step, status: 'failed', outputs: held.stepOutputs } : step,
+      ),
+    },
+    'review',
+  );
+  assert(decision.payload?.kind === 'result-decision');
+  assert.equal(decision.payload.reason, rejection.message);
+  assert.deepEqual(decision.payload.findings, severeFindings);
+  assert.equal(
+    decision.payload.actions.find((action) => action.id === 'accept-result')?.available,
+    true,
+  );
+});
+
+// M3: a replayed REVIEW whose launch the spent budget refuses still sees the last open blocker.
+test('961d55d3: a refused review launch with a recorded open blocker holds instead of reaching COMPLETE', async (t) => {
+  const recorded: ReviewStatus = {
+    id: 'pipeline-review-1',
+    source: 'human-gate',
+    mode: 'cold',
+    verdict: 'issues',
+    reviewedHeadSha: rowOneHead,
+    loopNumber: 2,
+    unresolvedCount: 2,
+    retryCount: 1,
+    maxRetries: 2,
+    issues: severeFindings,
+  };
+  const runId = await publicationGateRun(t, { reviews: [recorded] });
+  updateRun(runId, {
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `refused-severe-${i}`)),
+  });
+  const held = await heldReview(runId, {
+    ...restartReplayContext(),
+    executeReviewForRun: async () => {
+      await assertReviewRoundAvailable(getRun(runId)!);
+      assert.fail('a spent budget refuses the launch');
+    },
+  });
+  assert.deepEqual(held.stepOutputs.issues, severeFindings);
+  assert.ok(held.stepOutputs.reviewLaunchRejection);
 });
 
 test('an undelivered fix becomes a visible result decision with its findings preserved', async (t) => {

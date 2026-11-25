@@ -3510,6 +3510,11 @@ export interface RunTaskExecution {
 export interface RunEngineState {
   slotCapabilityRequirements?: RunSlotCapabilityRequirements;
   /**
+   * The one automatic COMPLETE send-back a run gets for stale CI receipts
+   * (961d55d3). A completion replay drops resolved decisions; this survives it.
+   */
+  staleReceiptSendBack?: { decisionId: string; sentAt: string };
+  /**
    * The engine generation a workspace review's DISPATCH admitted its reviewer
    * round under, so its MONITOR settles that attempt after a monitor-only replay
    * (ADR-063 Amendment 2).

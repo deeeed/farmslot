@@ -11,11 +11,13 @@ import {
   isLightweightInteractiveDevRun,
   isPublishEvidenceArtifact,
   isReviewValidationDepth,
+  latestReview,
   pipelineReviewOffReason,
   PipelineSteps,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReadyGatePrPackage,
   reviewFixRetriesExhausted,
+  type ReviewIssue,
   reviewPolicySatisfied,
   type ReviewSelection,
   type ReviewValidationDepth,
@@ -58,6 +60,7 @@ import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { readPRCompletionHead } from '../review/acceptance-coverage.js';
+import { blockingReviewFindings } from '../review/approval-policy.js';
 import {
   executeReview,
   pipelineReviewSelection,
@@ -91,7 +94,6 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import {
   ResultDecisionHoldError,
-  reviewSeverityCounts,
   runDeliveredResult,
   takeSendBackReview,
 } from '../run-completion/result-decision.js';
@@ -939,7 +941,12 @@ export async function executeReviewStep(
       const latest = getRun(runId);
       const budget = latest && (await runReviewRoundBudget(latest));
       if (budget?.remaining === 0) {
-        if (latest && requiresPublicationApproval(latest) && !reviewed.fixDeliveryFailure) {
+        if (
+          latest &&
+          requiresPublicationApproval(latest) &&
+          !reviewed.fixDeliveryFailure &&
+          !blockingReviewFindings(reviewed.issues ?? []).length
+        ) {
           publicationReviewBudgetSpent = true;
           return reviewed;
         }
@@ -1009,7 +1016,17 @@ export async function executeReviewStep(
         PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached
     ) {
       // A budget stop is not a new review verdict. The publication gate checks the retained
-      // reviews and every hard prerequisite before offering a person any override.
+      // reviews and every hard prerequisite before offering a person any override, unless the
+      // last review left a blocker or major open: that holds here (961d55d3).
+      const recorded = isReviewIssueList(error.stepOutputs.issues)
+        ? error.stepOutputs.issues
+        : (latestReview(getRun(runId)?.engineState?.publishGate?.reviews)?.issues ?? []);
+      if (blockingReviewFindings(recorded).length)
+        throw new ResultDecisionHoldError(error.message, inputs, {
+          ...error.stepOutputs,
+          verdict: 'issues',
+          issues: recorded,
+        });
       stepPartialIO.delete(runId);
       return { inputs, outputs: { ...error.stepOutputs, cliCommand } };
     }
@@ -1116,8 +1133,7 @@ export async function executeReviewStep(
         issues: result.issues,
         retryCount: result.retryCount,
         maxRetries: result.maxRetries,
-        // The round budget stop records it; the review result type does not declare it.
-        maxRetriesExhausted: 'maxRetriesExhausted' in result && result.maxRetriesExhausted === true,
+        maxRetriesExhausted: result.maxRetriesExhausted === true,
       });
       // Persist review outputs (verdict, retryCount, maxRetries, issues) so
       // the failure step in the UI can render "MAX RETRIES" + the residual issues
@@ -1136,10 +1152,9 @@ export async function executeReviewStep(
           ? ` after ${result.retryCount}/${result.maxRetries} fix attempts`
           : '';
       const reason = `Review found ${issueCount || 'one or more'} issue(s)${retriesLabel} in ${location}: ${message}`;
-      const severity = reviewSeverityCounts(result.issues ?? []);
       if (
         requiresPublicationApproval(getRun(runId) ?? current) &&
-        severity.blocker + severity.major === 0
+        !blockingReviewFindings(result.issues ?? []).length
       ) {
         // The review completed with issues, not a pass. Publication still requires an explicit
         // person choice at the human gate, including when the review budget is spent.
@@ -1166,6 +1181,19 @@ export async function executeReviewStep(
     inputs: { ...inputs, enabled: !result.skipped },
     outputs: { ...result, cliCommand, ...(interactiveRetry ? { interactiveRetry: true } : {}) },
   };
+}
+
+function isReviewIssueList(value: unknown): value is ReviewIssue[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (issue) =>
+        typeof issue === 'object' &&
+        issue !== null &&
+        typeof issue.file === 'string' &&
+        typeof issue.description === 'string',
+    )
+  );
 }
 
 /** Keep the worker tmux session alive while the publication human gate is open. */

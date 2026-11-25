@@ -1,0 +1,1 @@
+- `RunEngineState.staleReceiptSendBack` records the one automatic COMPLETE send-back a run gets for stale deterministic CI receipts. `review-approval-policy.cjs` exports `reviewSeverityCounts`, the per-severity count `reviewRecommendation` uses.

@@ -1083,7 +1083,7 @@ export class RunGateNotReadyError extends GatewayMethodError {
       'RUN_GATE_NOT_READY',
       reasons.map((reason) => reason.message).join(' ') || 'Run work is still progressing.',
       {
-        details: { readiness },
+        details: { readiness, reasons },
         userAction: 'Resolve the listed prerequisites, then refresh the gate.',
       },
     );

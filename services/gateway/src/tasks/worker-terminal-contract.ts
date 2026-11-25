@@ -38,6 +38,7 @@ import {
 
 import { AcceptanceReadError, handoffListsAcceptanceCriteria } from './acceptance-status.js';
 import { agentRuntimeScriptForSlot } from './agent-runtime-script.js';
+import { checklistMarkerCommand, targetForChecklistBasename } from './checklist-target.js';
 import { completingParentSignal, subtaskTerminalRefusal } from './subtasks.js';
 import { isNoCodeTerminalDisposition, releasedNoChangeChecks } from './worker-signals.js';
 
@@ -663,19 +664,26 @@ export class DeterministicGateBlockedError extends Error {
   }
 }
 
-/** What the worker reruns for a check that has no current passing receipt. */
+/**
+ * What the worker reruns for a check that has no current passing receipt: its mark
+ * on the check's own checklist. Running the command alone records no receipt, and
+ * after a fix pass a bare `mark` targets the primary checklist (961d55d3).
+ */
 function owedCheckReason(
   check: Pick<
     DeterministicChecklistCheck,
     'checklist' | 'stepNumber' | 'reference' | 'command' | 'status' | 'message'
   >,
+  taskDir: string,
 ): RunGatePrerequisiteReason {
   const why = check.message ? `: ${check.message}` : '';
+  const mark = checklistMarkerCommand(taskDir, targetForChecklistBasename(check.checklist));
+  const runs = check.command ? ` (it runs \`${check.command}\`)` : '';
   return {
     code: `deterministic-${check.status}`,
     prerequisite: 'deterministic',
     reference: check.reference,
-    message: `${check.checklist} step ${check.stepNumber} (${check.reference}) is ${check.status}${why}. Rerun step ${check.stepNumber} (\`${check.command}\`) to record a current receipt.`,
+    message: `${check.checklist} step ${check.stepNumber} (${check.reference}) is ${check.status}${why}. Mark it again with \`${mark} ${check.stepNumber}\`${runs} to record a current receipt.`,
     actionId: 'hold',
   };
 }
@@ -784,32 +792,38 @@ export async function validateDeterministicChecksForRun(
     if (result.exitCode === 0) throw error;
   }
   const checks = evaluated?.flatMap((item) => item.checks) ?? [];
-  const owed = [
-    ...checks.filter(
-      (check) =>
-        check.status !== 'passed' &&
-        !(noCodeExit && deterministicChecks.isMissingLocalCheck(check)),
-    ),
-    ...declaredChecks
-      .filter(
-        (expected) =>
-          !checks.some(
-            (check) =>
-              check.checklist === expected.checklist &&
-              check.stepNumber === expected.stepNumber &&
-              check.reference === expected.reference &&
-              check.command === expected.command,
-          ),
-      )
-      .map((expected) => ({
-        ...expected,
-        status: 'missing' as const,
-        message: 'No receipt was returned',
-      })),
-  ].map(owedCheckReason);
+  // A checker that returned no result (a dropped connection, a timeout) names no check.
+  const owed = !evaluated
+    ? []
+    : [
+        ...checks.filter(
+          (check) =>
+            check.status !== 'passed' &&
+            !(noCodeExit && deterministicChecks.isMissingLocalCheck(check)),
+        ),
+        ...declaredChecks
+          .filter(
+            (expected) =>
+              !checks.some(
+                (check) =>
+                  check.checklist === expected.checklist &&
+                  check.stepNumber === expected.stepNumber &&
+                  check.reference === expected.reference &&
+                  check.command === expected.command,
+              ),
+          )
+          .map((expected) => ({
+            ...expected,
+            status: 'missing' as const,
+            message: 'No receipt was returned',
+          })),
+      ].map((check) => owedCheckReason(check, taskDir.replace(/\/+$/, '')));
   if (result.exitCode !== 0)
     throw new DeterministicGateBlockedError(
-      `Deterministic CI gate blocked: ${result.stderr || result.stdout}`,
+      // The reasons name each check; the checker's raw JSON would lead the worker's message.
+      owed.length
+        ? `Deterministic CI gate blocked: ${owed.length} declared check(s) have no current passing receipt.`
+        : `Deterministic CI gate blocked: ${result.stderr || result.stdout}`,
       owed,
     );
   if (!checks.length || evaluated!.some((item) => item.issues.length > 0) || owed.length) {

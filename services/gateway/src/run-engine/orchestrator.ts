@@ -67,6 +67,7 @@ import {
 } from '../review-workspaces/pipeline.js';
 import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
 import {
+  announcePendingResultDecision,
   holdRunForResultDecision,
   ResultDecisionHoldError,
   runDeliveredResult,
@@ -514,9 +515,14 @@ async function retainCompletionPrerequisiteFailure(
         runId,
         stepName === S.COMPLETE ? 'complete' : 'finalize',
         error.message,
-        { patch: { metrics: { ...current!.metrics, outcome: 'partial' } } },
+        {
+          patch: { metrics: { ...current!.metrics, outcome: 'partial' } },
+          // A stale-receipt refusal may be sent back at once; no card for that.
+          announce: stepName !== S.COMPLETE,
+        },
       );
-      if (held && stepName === S.COMPLETE) await sendBackStaleReceiptOnce(held);
+      if (held && stepName === S.COMPLETE && !(await sendBackStaleReceiptOnce(held)))
+        await announcePendingResultDecision(runId);
       return;
     } catch (holdError) {
       // Never left `completing`: an unrecorded hold falls back to Amendment 6.

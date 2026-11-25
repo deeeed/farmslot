@@ -217,7 +217,7 @@ test('8cff6e80: review findings on a pushed comparison result need a decision, n
   assert.equal(payload.stoppedAt, 'review');
   assert.equal(
     payload.reason,
-    'Review found 2 issues (2 major) after 1/2 fix attempts. The fix rounds are spent.',
+    'Review found 2 issues (2 major) after 1/2 fix attempts. The review rounds are spent.',
   );
   assert.deepEqual(payload.findings, opusFindings);
   assert.deepEqual(payload.delivered, {
@@ -440,14 +440,14 @@ const staleReason = {
   prerequisite: 'deterministic' as const,
   reference: 'ci.local_check',
   message:
-    'REVIEW-FIX.md step 4 (ci.local_check) is stale: Command or publishable inputs changed; rerun this mark step. Rerun step 4 (`yarn ci:local`) to record a current receipt.',
+    'REVIEW-FIX.md step 4 (ci.local_check) is stale: Command or publishable inputs changed; rerun this mark step. Mark it again with `/task/mark --checklist REVIEW-FIX.md --signal REVIEW-FIX-SIGNAL.json 4` (it runs `yarn ci:local`) to record a current receipt.',
   actionId: 'hold',
 };
 const failedReason = {
   ...staleReason,
   code: 'deterministic-failed',
   message:
-    'REVIEW-FIX.md step 4 (ci.local_check) is failed: Command did not pass, exit 1. Rerun step 4 (`yarn ci:local`) to record a current receipt.',
+    'REVIEW-FIX.md step 4 (ci.local_check) is failed: Command did not pass, exit 1. Mark it again with `/task/mark --checklist REVIEW-FIX.md --signal REVIEW-FIX-SIGNAL.json 4` (it runs `yarn ci:local`) to record a current receipt.',
 };
 const gateBlocked = (reasons: (typeof staleReason)[]) => async () => {
   const { DeterministicGateBlockedError } = await import('../tasks/worker-terminal-contract.js');
@@ -461,6 +461,9 @@ const gateBlocked = (reasons: (typeof staleReason)[]) => async () => {
 function backAtComplete() {
   run.status = 'completing';
   run.error = undefined;
+  // A completion replay drops resolved decisions (replay-step.ts), so the once-marker
+  // cannot live there.
+  run.decisions = run.decisions.filter((entry) => !entry.resolvedAt);
   const steps = FLOW_STEPS[run.flowType];
   for (const step of run.steps) {
     const index = steps.findIndex((name) => name === step.name);
@@ -486,13 +489,17 @@ test('961d55d3: a stale CI receipt at COMPLETE sends the worker back once to rer
   await completeRefused([staleReason]);
 
   assert.equal(sendBacks.length, 1, 'one send-back');
-  assert.match(sendBacks[0]!.feedback, /Rerun step 4 \(`yarn ci:local`\)/);
+  assert.match(
+    sendBacks[0]!.feedback,
+    /Mark it again with `\/task\/mark --checklist REVIEW-FIX\.md .* 4`/,
+  );
+  assert.equal(sendBacks[0]!.note, undefined, 'no operator note: the engine sent it');
   const decision = run.decisions.find((entry) => entry.payload?.kind === 'result-decision');
   assert.ok(decision);
   assert.equal(decision.resolvedAction, 'send-back');
   assert.deepEqual((decision.payload as ResultDecisionPayload).refusal?.reasons, [staleReason]);
-  assert.equal(pendingResultDecision(run), undefined, 'nothing waits for a person');
-  assert.notEqual(run.status, 'failed');
+  assert.equal(run.engineState?.staleReceiptSendBack?.decisionId, decision.id);
+  assert.equal(run.resultDecisionReceipt?.principalId, 'system', 'recorded as the engine');
 });
 
 test('961d55d3: a second stale receipt holds for a person instead of sending back again', async () => {
@@ -551,6 +558,6 @@ test('961d55d3: a readiness refusal of only stale receipts sends the worker back
   }
 
   assert.equal(sendBacks.length, 1);
-  assert.match(sendBacks[0]!.feedback, /Rerun step 4/);
+  assert.match(sendBacks[0]!.feedback, /Mark it again with/);
   assert.equal(pendingResultDecision(run), undefined);
 });

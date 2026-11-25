@@ -156,10 +156,13 @@ resume on the same run; it does not start work by itself. Named-slot re-binding
 remains only a fallback for historical failed runs that already lost ownership.
 
 A publishing run whose review ends with an open blocker or major finding (a finding
-without a severity counts as major) waits at the same result decision instead of
-reaching COMPLETE. Minor and nit findings still go to the publication gate. The
-decision names the stop: spent fix rounds, or the no-verdict cap, which stops
-automatic reviews before the fix rounds are spent.
+without a severity counts as major) does not reach COMPLETE. With its result
+delivered it waits at the same result decision; a spent review budget keeps its
+budget stop, so Accept stays available. Without a delivered result it fails. A
+refused review launch checks the last recorded review the same way. Minor and nit
+findings still go to the publication gate. The decision names the stop: spent fix
+rounds, a spent review budget, the no-verdict cap (which stops automatic reviews
+before the fix rounds are spent), fix rounds that are off, or fixing that stopped.
 
 ### Scoped extension
 
