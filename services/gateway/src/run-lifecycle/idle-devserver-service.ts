@@ -440,6 +440,19 @@ const idleDevServers = new IdleDevServerReaper({
           : 'slot row unavailable';
         if (kept) logDecision(slotId, undefined, `kept prepare scope: ${kept}`);
         else if (row) await stopPrepareScope(slotId, vars, identityPath, scopeBefore, row, true);
+      } else if (!currentOwner) {
+        // No recorded scope: the stopped server was the last warm thing on a quiet slot.
+        const row = await readSlotRow(slotId);
+        if (
+          row?.warm === true &&
+          !scopeQuietBlocker(row, slotId, liveRunSlots()) &&
+          !(await devServersBlocker(slotId))
+        )
+          await updateSlotStatusIf(
+            slotId,
+            (current) => current.slot_epoch === row.slot_epoch && !current.current_run_id,
+            { warm: false },
+          );
       }
       return true;
     } finally {
@@ -477,6 +490,8 @@ function idleScopeOf(row: SlotRow): IdleScope | null {
     : null;
 }
 
+const SLOT_RELEASING_BLOCKER = 'slot releasing';
+
 /** Slots any non-terminal run names: built once per pass, not per slot. */
 function liveRunSlots(): Set<string> {
   return new Set(
@@ -491,8 +506,9 @@ function liveRunSlots(): Set<string> {
  * handoff, recovery, working agent or live run. The callers hold or check prepare's guard.
  */
 function scopeQuietBlocker(row: SlotRow, slotId: string, live: Set<string>): string | null {
+  // First: parked-work retention marks ready slots releasing too, which is no run activity.
+  if (row.phase === 'releasing') return SLOT_RELEASING_BLOCKER;
   if (row.lifecycle !== 'ready') return `slot ${String(row.lifecycle)}`;
-  if (row.phase === 'releasing') return 'slot releasing';
   if (row.current_run_id || row.cleanup_run_id || row.handoff_run_id || row.workspace_recovery)
     return 'slot owned';
   if (row.agent === 'working') return 'slot agent working';
@@ -507,15 +523,16 @@ function scopeQuietBlocker(row: SlotRow, slotId: string, live: Set<string>): str
 async function devServersBlocker(
   slotId: string,
 ): Promise<{ reason: string; definite: boolean } | null> {
-  for (const resource of await resolveSlotResources(slotId))
-    if (resource.definition.type === 'dev-server' && resource.status !== 'stopped')
-      return {
-        reason: `dev server ${resource.id} ${resource.status}`,
-        definite: resource.status !== 'unknown',
-      };
-  return (await capabilityRetains(slotId))
-    ? { reason: 'retained by a capability lease', definite: true }
-    : null;
+  const up = (await resolveSlotResources(slotId)).filter(
+    (resource) => resource.definition.type === 'dev-server' && resource.status !== 'stopped',
+  );
+  // Definite activity first, so an unreported server listed before a running one or a lease
+  // does not hide it. A failed probe (`error`) is no more an answer than `unknown`.
+  const active = up.find((resource) => resource.status === 'running' || resource.status === 'stale');
+  if (active) return { reason: `dev server ${active.id} ${active.status}`, definite: true };
+  if (await capabilityRetains(slotId))
+    return { reason: 'retained by a capability lease', definite: true };
+  return up[0] ? { reason: `dev server ${up[0].id} ${up[0].status}`, definite: false } : null;
 }
 
 /**
@@ -538,7 +555,7 @@ async function stopPrepareScope(
   }
   let claimed = false;
   let stopped = false;
-  // A reap that threw keeps the window, so the next pass retries it.
+  // A reap that threw restarts the window: retried after a full one, not fenced every sweep.
   let settled = false;
   const free = (current: SlotRow) =>
     current.slot_epoch === row.slot_epoch &&
@@ -569,8 +586,10 @@ async function stopPrepareScope(
           phase: row.phase,
           [SLOT_RELEASING_SINCE]: null,
           [SLOT_RELEASE_GATEWAY_INSTANCE]: null,
-          ...(settled ? { [IDLE_SCOPE_FIELD]: null } : {}),
-          ...(stopped ? { warm: false } : {}),
+          // Settled, the slot keeps nothing warm, whether or not anything was left to stop.
+          ...(settled
+            ? { [IDLE_SCOPE_FIELD]: null, warm: false }
+            : { [IDLE_SCOPE_FIELD]: { scope, epoch: row.slot_epoch, since: Date.now() } }),
         },
       );
   }
@@ -678,8 +697,10 @@ export async function reapIdlePrepareScopes(
       const servers =
         quiet || activePrepareSlots.has(slotId) ? null : await devServersBlocker(slotId);
       if (quiet || activePrepareSlots.has(slotId) || servers) {
-        // A prepare or an unreported status says nothing about the scope: keep its window.
-        if ((quiet || servers?.definite) && idleScopeOf(row))
+        // A prepare, a retention fence or an unreported status says nothing about the scope:
+        // keep its window.
+        const definite = (quiet && quiet !== SLOT_RELEASING_BLOCKER) || servers?.definite;
+        if (definite && idleScopeOf(row))
           await updateSlotStatusIf(slotId, (current) => current.slot_epoch === row.slot_epoch, {
             [IDLE_SCOPE_FIELD]: null,
           });

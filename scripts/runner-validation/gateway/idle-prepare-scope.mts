@@ -72,12 +72,14 @@ let cleaning: Promise<void> | undefined;
 /** Signal only the process groups this proof started, stop its own tmux server, remove files. */
 function cleanup(): Promise<void> {
   cleaning ??= (async () => {
+    // Every step runs; the first failure is reported once all of them have.
+    const failures: unknown[] = [];
     for (const pid of started) {
       try {
         process.kill(-pid, 'SIGKILL');
       } catch (error) {
         // ESRCH: the group is already gone, which the proof expects for the scope.
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') failures.push(error);
       }
     }
     if (existsSync(socket)) {
@@ -86,23 +88,30 @@ function cleanup(): Promise<void> {
       } catch (error) {
         // A server that already exited leaves its socket behind; anything else fails cleanup.
         const stderr = String((error as { stderr?: unknown }).stderr ?? '');
-        if (!/no server running|error connecting to/u.test(stderr)) throw error;
+        if (!/no server running|error connecting to/u.test(stderr)) failures.push(error);
       }
     }
     await rm(scratch, { recursive: true, force: true });
     await rm(socketDir, { recursive: true, force: true });
+    if (failures.length) throw new AggregateError(failures, 'idle-prepare-scope cleanup failed');
   })();
   return cleaning;
 }
+/** Stop on a signal or the deadline: clean up, print any cleanup failure, then exit 1. */
+function abort(reason: string): void {
+  process.stderr.write(`${reason}\n`);
+  cleanup().then(
+    () => process.exit(1),
+    (error: unknown) => {
+      process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+      process.exit(1);
+    },
+  );
+}
 // A cancelled or timed-out recipe still stops what the proof started.
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
-  process.once(signal, () => {
-    void cleanup().finally(() => process.exit(1));
-  });
-const deadline = setTimeout(() => {
-  process.stderr.write('idle-prepare-scope proof timed out\n');
-  void cleanup().finally(() => process.exit(1));
-}, 50_000);
+  process.once(signal, () => abort(`idle-prepare-scope proof stopped by ${signal}`));
+const deadline = setTimeout(() => abort('idle-prepare-scope proof timed out'), 50_000);
 deadline.unref();
 
 try {
@@ -123,7 +132,20 @@ try {
   await mkdir(path.join(scratch, 'other'), { recursive: true });
   await writeFile(
     path.join(scratch, 'root', 'projects', project, 'project.json'),
-    JSON.stringify({ name: project, default_branch: 'main', paths: { runtime_dir: runtimeDir } }),
+    JSON.stringify({
+      name: project,
+      default_branch: 'main',
+      paths: { runtime_dir: runtimeDir },
+      // A dev server whose watch never answers here: its status is what the proof sets.
+      resources: {
+        server: {
+          type: 'dev-server',
+          label: 'Proof server',
+          watch: { type: 'port-listen', port: '1' },
+          hooks: { boot: 'true', health: 'false' },
+        },
+      },
+    }),
   );
   await writeFile(
     path.join(scratch, 'root', 'pool', 'proof.json'),
@@ -133,7 +155,16 @@ try {
       ssh_user: os.userInfo().username,
       os: process.platform,
       project,
-      slots: [{ id: slotId, repo, session: slotId, enabled: true, mode: 'dispatch' }],
+      slots: [
+        {
+          id: slotId,
+          repo,
+          session: slotId,
+          enabled: true,
+          mode: 'dispatch',
+          resources: { server: {} },
+        },
+      ],
     }),
   );
   // An unrelated tmux session: its pane is outside the slot and must not block the stop.
@@ -148,6 +179,13 @@ try {
     await import('../../../services/gateway/src/run-lifecycle/idle-devserver-service.js');
   const { DEVSERVER_IDLE_LIMIT_MS } =
     await import('../../../services/gateway/src/run-lifecycle/idle-devserver.js');
+  const { rewriteStatusFile } = await import('../../../services/gateway/src/core/state.js');
+  const { buildFleetRefreshSnapshot } =
+    await import('../../../services/gateway/src/methods/fleet.js');
+  const { setCachedResourceStatus } =
+    await import('../../../services/gateway/src/fleet/resource-manager.js');
+  const serverIs = (status: 'stopped' | 'unknown') =>
+    setCachedResourceStatus(slotId, 'server', status, { broadcast: false });
 
   // The real prepare wrapper in keep-alive mode, with a provider child holding the scope.
   const scope = spawn(
@@ -191,8 +229,9 @@ try {
   assert.equal((await readSlotRow(slotId))?.idle_prepare_scope ?? null, null);
   assert.ok(await groupAlive(Number(pgid)), 'an owned slot keeps its scope');
 
-  // Ownerless: the first pass records the window on the slot row.
+  // Ownerless, dev server stopped: the first pass records the window on the slot row.
   await updateSlotStatusIf(slotId, () => true, { current_run_id: null });
+  serverIs('stopped');
   await reapIdlePrepareScopes([fleetSlot]);
   const timed = await readSlotRow(slotId);
   const window = timed?.idle_prepare_scope;
@@ -202,7 +241,36 @@ try {
   );
   assert.ok(await groupAlive(Number(pgid)), 'inside the window the scope stays');
 
-  // The persisted window ended (as after a gateway restart): the next pass stops the scope.
+  // A full fleet refresh rebuilds the row from its field list: the window must survive it.
+  await rewriteStatusFile((current) =>
+    buildFleetRefreshSnapshot(
+      current?.slots ?? [],
+      [
+        {
+          slot: slotId,
+          machine: os.hostname(),
+          platform: 'cli',
+          project,
+          ssh: 'LOCAL',
+          dev: '-',
+          devserver: 'OFF',
+          device: '-',
+          cdp: '-',
+          fixtures: '-',
+          branch: 'main',
+          agent: 'idle',
+          enabled: true,
+          mode: 'dispatch',
+          dispatchable: true,
+        },
+      ],
+      [],
+      new Date().toISOString(),
+    ),
+  );
+  assert.deepEqual((await readSlotRow(slotId))?.idle_prepare_scope, window, 'refresh keeps it');
+
+  // The persisted window ended (as after a gateway restart)...
   await updateSlotStatusIf(slotId, () => true, {
     idle_prepare_scope: {
       scope: token,
@@ -210,6 +278,13 @@ try {
       since: Date.now() - DEVSERVER_IDLE_LIMIT_MS - 1,
     },
   });
+  // ...but the dev server's status is not reported yet: no stop, and the window is kept.
+  serverIs('unknown');
+  await reapIdlePrepareScopes([fleetSlot]);
+  assert.ok(await groupAlive(Number(pgid)), 'an unreported status stops nothing');
+  assert.ok((await readSlotRow(slotId))?.idle_prepare_scope, 'and keeps the window');
+  // Reported stopped: the next pass stops the scope.
+  serverIs('stopped');
   await reapIdlePrepareScopes([fleetSlot]);
   for (let i = 0; (await groupAlive(Number(pgid))) && i < 50; i++) await pause(100);
   assert.equal(await groupAlive(Number(pgid)), false, 'the scope group is gone');

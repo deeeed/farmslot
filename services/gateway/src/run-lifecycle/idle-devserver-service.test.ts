@@ -41,7 +41,8 @@ let slotRunsGone = false;
 let identityReads = 0;
 let identityReadFails = false;
 let siblingStatus: 'running' | 'stopped' | undefined;
-let serverStatus: 'unknown' | undefined;
+let serverStatus: 'unknown' | 'error' | undefined;
+let reapFindsNothing = false;
 let simulatorUp = false;
 let reapThrows = false;
 // A real prepare scope token: 32 hex characters.
@@ -373,7 +374,7 @@ mock.module('../methods/slot/prepare-command.js', {
       if (reapThrows) throw new Error('Prepare scope cleanup failed: group survived');
       scopeReaps.push(options.identityPath ?? '');
       scopeReapScopes.push(options.expectedScope);
-      return true;
+      return !reapFindsNothing;
     },
   },
 });
@@ -428,6 +429,7 @@ beforeEach(() => {
   serverStatus = undefined;
   simulatorUp = false;
   reapThrows = false;
+  reapFindsNothing = false;
   recordedScope = '0123456789abcdef0123456789abcdef';
 });
 
@@ -642,20 +644,61 @@ test('an unrecorded worker pane found at expiry keeps the scope and restarts its
 });
 
 // A gateway restart or node reconnect reports every resource unknown until its watch answers.
-test('an unreported dev server status keeps a timed window; only activity clears it', async () => {
+test('an unreported or failed dev server probe keeps a timed window; only activity clears it', async () => {
   alive = false;
   slotRunsGone = true;
   row = ownerless();
   await scopePass();
   const window = row.idle_prepare_scope;
   clock += DEVSERVER_IDLE_LIMIT_MS;
-  serverStatus = 'unknown';
-  await scopePass();
-  assert.deepEqual(row.idle_prepare_scope, window, 'kept while unknown');
-  assert.deepEqual(scopeReaps, [], 'but not stopped');
+  for (const status of ['unknown', 'error'] as const) {
+    serverStatus = status;
+    await scopePass();
+    assert.deepEqual(row.idle_prepare_scope, window, `kept while ${status}`);
+  }
+  // Parked-work retention's fence marks a ready slot releasing: no run activity either.
   serverStatus = undefined;
+  row = { ...row, phase: 'releasing' };
+  await scopePass();
+  assert.deepEqual(row.idle_prepare_scope, window, 'kept through a retention fence');
+  assert.deepEqual(scopeReaps, [], 'but not stopped');
+  row = { ...row, phase: null };
   await scopePass();
   assert.deepEqual(scopeReapScopes, [SCOPE], 'the original window, not a new one');
+});
+
+test('a running dev server clears the window even when an unreported one is listed first', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  serverStatus = 'unknown';
+  siblingStatus = 'running';
+  await scopePass();
+  assert.equal(row.idle_prepare_scope, null);
+});
+
+test('warm clears when the cap stops the last dev server with no recorded scope or nothing left', async () => {
+  pidFileWatch = true;
+  slotRunsGone = true;
+  recordedScope = '';
+  row = ownerless({ warm: true });
+  await reapIdleDevServers('slot-a');
+  clock += WARM_DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  assert.deepEqual(scopeReaps, [], 'no scope recorded');
+  assert.equal(row.warm, false);
+
+  alive = false;
+  recordedScope = SCOPE;
+  reapFindsNothing = true;
+  row = ownerless({ warm: true, slot_epoch: epoch + 1 });
+  await scopePass();
+  clock += WARM_DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  assert.deepEqual(scopeReapScopes, [SCOPE]);
+  assert.equal(row.warm, false, 'a reap that found nothing left still ends warm');
 });
 
 test('a simulator or browser left up does not keep a run-less scope', async () => {
@@ -669,7 +712,7 @@ test('a simulator or browser left up does not keep a run-less scope', async () =
   assert.deepEqual(scopeReapScopes, [SCOPE]);
 });
 
-test('a scope stop that keeps failing is warned on every pass', async (t) => {
+test('a scope stop that keeps failing backs off a full window and is warned per attempt', async (t) => {
   const warn = t.mock.method(console, 'warn', () => {});
   t.mock.method(console, 'info', () => {});
   alive = false;
@@ -679,11 +722,14 @@ test('a scope stop that keeps failing is warned on every pass', async (t) => {
   clock += DEVSERVER_IDLE_LIMIT_MS;
   reapThrows = true;
   await scopePass();
+  assert.deepEqual(row.idle_prepare_scope, { scope: SCOPE, epoch, since: clock }, 'restarted');
+  await scopePass();
+  assert.equal(warn.mock.callCount(), 1, 'no fence again inside the new window');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
   await scopePass();
   const warned = warn.mock.calls.map((call) => String(call.arguments[0]));
   assert.equal(warned.length, 2);
   assert.match(warned[1]!, /slot-a: Prepare scope cleanup failed: group survived/);
-  assert.ok(row.idle_prepare_scope, 'the window stays for the retry');
 });
 
 test('a PID file older than the process it names grants no stop authority', async () => {
