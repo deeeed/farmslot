@@ -847,8 +847,8 @@ test('a charge read while a bundle and its usage record are staged for archive w
   forgetRunBundleStoreChargeCache();
   const staged = (await runBundleAdmissionUsage(f.store, f.root)).store;
   await assert.rejects(stat(usage), { code: 'ENOENT' }, 'no orphan usage record');
-  assert.ok(staged > 0, 'the staged bundle is still charged until it leaves');
-  assert.ok(staged <= before, `${staged} > ${before}`);
+  // Measured from its files, the staged bundle charges exactly what its record said.
+  assert.equal(staged, before, 'the staged bundle is still charged until it leaves');
 });
 
 test('a cached manifest cannot hide loss of the retained bundle directory', async (t) => {
