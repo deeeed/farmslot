@@ -77,10 +77,12 @@ interface Pass {
 
 async function reconcile(pass: Pass) {
   const owners = pass.fences.map((fence, index) =>
-    makeRun({
-      id: `cancelled-${index}`,
-      status: fence.ownerStatus ?? 'cancelled',
-      slotId: fence.ownerSlot ?? fence.slot ?? 'cancel-slot',
+    ({
+      ...makeRun({
+        id: `cancelled-${index}`,
+        status: fence.ownerStatus ?? 'cancelled',
+        slotId: fence.ownerSlot ?? fence.slot ?? 'cancel-slot',
+      }),
       ...(fence.native ? { transport: 'native' as const } : {}),
     }),
   );

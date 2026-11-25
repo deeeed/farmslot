@@ -81,7 +81,10 @@ type Intent = Observed['intent'];
 const SINCE = '2026-11-25T10:26:33.000Z';
 
 async function seed(intent: Intent, run: Partial<Run> = {}, row: Record<string, unknown> = {}) {
-  const cancelled = makeRun({ id: 'cancelled-run', status: 'cancelled', slotId: SLOT, ...run });
+  const cancelled: Run = {
+    ...makeRun({ id: 'cancelled-run', status: 'cancelled', slotId: SLOT }),
+    ...run,
+  };
   await writeFile(path.join(root, 'runs', `${cancelled.id}.json`), JSON.stringify(cancelled));
   await store.loadAllRuns();
   const token = state.runCleanupToken(intent, 'fence');
