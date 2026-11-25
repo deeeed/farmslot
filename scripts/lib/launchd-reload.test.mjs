@@ -51,7 +51,7 @@ function runScript(script, bin, shell = 'eval', env = {}) {
 
 function launchdFixture(
   t,
-  { newNodeLogs = [registered(NEW_PID)], ignoreTerm = true, loaded = true } = {},
+  { newNodeLogs = [registered(NEW_PID)], ignoreTerm = true, loaded = true, restartedPid } = {},
 ) {
   const root = mkdtempSync(path.join(tmpdir(), 'launchd-reload-'));
   const bin = path.join(root, 'bin');
@@ -87,10 +87,12 @@ function launchdFixture(
     `#!/bin/bash
 state=${JSON.stringify(state)}
 case "$1" in
-  print) [ -s "$state" ] || exit 113; printf '\\tstate = running\\n\\tpid = %s\\n' "$(cat "$state")" ;;
+  print) [ -s "$state" ] || exit 113; printf '\\tstate = running\\n\\tpid = %s\\n' "$(cat "$state")"
+    # A node that crashed at boot comes back under a new pid on the next look.
+    if [ -s "$state.next" ]; then mv "$state.next" "$state"; fi ;;
   bootout) pid=$(cat "$state"); : > "$state"; [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null || true ;;
   enable) ;;
-  bootstrap) echo ${NEW_PID} > "$state"; printf '%s\\n' ${newNodeLogs.map((line) => JSON.stringify(line)).join(' ')} >> ${JSON.stringify(log)} ;;
+  bootstrap) echo ${NEW_PID} > "$state"; ${restartedPid ? `echo ${restartedPid} > "$state.next"; ` : ''}printf '%s\\n' ${newNodeLogs.map((line) => JSON.stringify(line)).join(' ')} >> ${JSON.stringify(log)} ;;
   *) echo "unexpected launchctl $*" >&2; exit 2 ;;
 esac
 `,
@@ -191,6 +193,17 @@ test("a refusal of a longer pid that starts with the new node's pid does not fai
   const f = launchdFixture(t, {
     ignoreTerm: false,
     newNodeLogs: [refused(Number(`${NEW_PID}1`)), registered(NEW_PID)],
+  });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /node registered with the gateway/);
+});
+
+test('a node restarted at boot under a new pid is matched by that pid', (t) => {
+  const f = launchdFixture(t, {
+    ignoreTerm: false,
+    restartedPid: 88888,
+    newNodeLogs: [registered(88888)],
   });
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);

@@ -1,7 +1,11 @@
 process.env.NODE_TEST_CONTEXT = '1';
-// A short admission probe budget keeps the silent cases fast.
-process.env.FARMSLOT_NODE_ADMISSION_PROBE_MS = '200';
+// A short admission probe budget keeps the silent cases fast; the others keep the 3 s default,
+// so a stalled test process cannot make an answering node look silent.
 const PROBE_MS = 200;
+function shortProbe(t: { after: (fn: () => void) => void }): void {
+  process.env.FARMSLOT_NODE_ADMISSION_PROBE_MS = String(PROBE_MS);
+  t.after(() => delete process.env.FARMSLOT_NODE_ADMISSION_PROBE_MS);
+}
 
 // node.connect through the real WebSocket server: a second process for a connected machine is
 // refused while the connected node answers its health check (any reply, a node error included);
@@ -26,8 +30,9 @@ const { createWebSocketServer } = await import('../server.js');
 
 type Answer = 'ok' | 'error' | 'stopping' | 'silent';
 
-/** A node client that answers the gateway's requests on its socket the given way. */
+/** Node clients the gateway has sent an admission health check. */
 const probed = new WeakSet<WebSocket>();
+/** A node client that answers the gateway's requests on its socket the given way. */
 async function nodeClient(url: string, answer: Answer): Promise<WebSocket> {
   const ws = await connect(url);
   ws.on('message', (data) => {
@@ -99,7 +104,8 @@ test('a stopping connected node is replaced and keeps its socket', { timeout: 80
 test(
   'a silent connected node is replaced and its socket closed without unregistering the new one',
   { timeout: 10000 },
-  async () => {
+  async (t) => {
+    shortProbe(t);
     const harness = await startServer();
     try {
       const machine = 'single-silent';
@@ -120,7 +126,8 @@ test(
 test(
   'a newcomer that closes while it is admitted is not registered',
   { timeout: 10000 },
-  async () => {
+  async (t) => {
+    shortProbe(t);
     const harness = await startServer();
     try {
       const machine = 'single-closed-newcomer';

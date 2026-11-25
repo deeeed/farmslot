@@ -72,7 +72,7 @@ attempt=1; until launchctl bootstrap "\$domain" "\$plist"; do \\
   if [ "\$attempt" -ge 5 ]; then echo '[deploy] ERROR: launchd bootstrap failed after 5 attempts' >&2; exit 1; fi; \\
   attempt=\$((attempt + 1)); sleep 1; \\
 done; \\
-new_pid=''; wait_count=0; while [ -z "\$new_pid" ] && [ "\$wait_count" -lt 20 ]; do new_pid=\$(job_pid); [ -n "\$new_pid" ] || { wait_count=\$((wait_count + 1)); sleep 0.25; }; done; \
+new_pid=''; wait_count=0; while [ -z "\$new_pid" ] && [ "\$wait_count" -lt 20 ]; do new_pid=\$(job_pid); [ -n "\$new_pid" ] || { wait_count=\$((wait_count + 1)); sleep 0.25; }; done; \\
 current_pid() { p=\$(job_pid); [ -n "\$p" ] && echo "\$p" || echo "\$new_pid"; }; \\
 $(node_registration_check_fragment) )
 SCRIPT
@@ -87,7 +87,7 @@ log_offset=0; if [ -f "\$log" ]; then log_offset=\$(wc -c < "\$log" | tr -d ' ')
 systemctl --user daemon-reload; \\
 systemctl --user enable $unit; \\
 systemctl --user restart $unit; \\
-main_pid() { p=\$(systemctl --user show -p MainPID --value $unit 2>/dev/null || true); [ "\$p" != 0 ] || p=''; echo "\$p"; }; \
+main_pid() { p=\$(systemctl --user show -p MainPID --value $unit 2>/dev/null || true); [ "\$p" != 0 ] || p=''; echo "\$p"; }; \\
 new_pid=\$(main_pid); current_pid() { p=\$(main_pid); [ -n "\$p" ] && echo "\$p" || echo "\$new_pid"; }; \\
 $(node_registration_check_fragment) )
 SCRIPT
