@@ -178,7 +178,16 @@ export async function runProofs(options: {
   onCheck: (check: CheckResult) => void;
 }): Promise<void> {
   let current: { pid: number | undefined; tmp: string } | undefined;
-  options.onCleanup(async () => (current ? killProofTree(current.pid, current.tmp) : []));
+  options.onCleanup(async () => {
+    if (!current) return [];
+    const { pid, tmp } = current;
+    const errors = await killProofTree(pid, tmp);
+    // The reaper is dismissed after a clean stop, so the TMPDIR goes here.
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(
+      (error: unknown) => errors.push(`could not remove ${tmp}: ${String(error)}`),
+    );
+    return errors;
+  });
   for (const proof of options.proofs ?? PROOFS) {
     if (options.cleaning()) return;
     const dir = path.join(options.evidence, 'proofs', proof);
