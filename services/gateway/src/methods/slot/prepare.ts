@@ -173,8 +173,8 @@ import {
 import {
   scrubTempForRun,
   shouldScrubTempForRun,
-  type TempScrubReceipt,
   tempScrubLines,
+  type TempScrubReceipt,
   tempScrubReceipt,
 } from './temp-scrub.js';
 import { assertPublishedPrepareBranchContained } from './unmerged-work.js';

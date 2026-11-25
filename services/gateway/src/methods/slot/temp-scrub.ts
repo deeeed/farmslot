@@ -248,7 +248,9 @@ export function tempScrubReceipt(outcome: TempScrubOutcome): TempScrubReceipt {
 export function tempScrubLines(receipt: TempScrubReceipt): string[] {
   const unlisted = (count: number, listed: number, what: string) => {
     const rest = count - listed;
-    return rest > 0 ? [`${rest} more ${what} temp/ entr${rest === 1 ? 'y' : 'ies'} not listed`] : [];
+    return rest > 0
+      ? [`${rest} more ${what} temp/ entr${rest === 1 ? 'y' : 'ies'} not listed`]
+      : [];
   };
   return [
     ...receipt.removed.map((entry) =>

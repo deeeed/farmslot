@@ -356,7 +356,10 @@ test('a warm handoff, a replay or a resumed task keeps temp/; a failed handoff d
 test('the clear-out names every entry it removed or kept, up to the cap, then counts the rest', () => {
   const checkout = { path: 'temp/tasks/goal3-clone', kind: 'clone' };
   const taskDir = { path: 'temp/tasks/feat/old-1124-090000', kind: 'dir' };
-  const others = Array.from({ length: 60 }, (_, i) => ({ path: `temp/probe-${i}.json`, kind: 'file' }));
+  const others = Array.from({ length: 60 }, (_, i) => ({
+    path: `temp/probe-${i}.json`,
+    kind: 'file',
+  }));
   const outcome = {
     removed: [taskDir, checkout, ...others],
     kept: [{ path: 'temp/link', reason: 'holds temp/farmslot' }],
@@ -387,5 +390,8 @@ test('the clear-out names every entry it removed or kept, up to the cap, then co
   assert.equal(lines[50], '12 more removed temp/ entries not listed');
   assert.equal(lines[51], 'Left temp/link: holds temp/farmslot');
   assert.equal(lines.length, 52);
-  assert.deepEqual(tempScrubLines({ ...receipt, removedCount: 51 }).at(50), '1 more removed temp/ entry not listed');
+  assert.deepEqual(
+    tempScrubLines({ ...receipt, removedCount: 51 }).at(50),
+    '1 more removed temp/ entry not listed',
+  );
 });
