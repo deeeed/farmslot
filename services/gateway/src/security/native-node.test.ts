@@ -74,11 +74,6 @@ test('native node declarations require an issued credential for that exact machi
       () => nativeNodeDeclaration({ ...declaration, supportsEnsure }, 'node-a', principal, true),
       /supportsEnsure must be boolean/,
     );
-  // The gateway sends a release list only to a node that declared it reads one.
-  assert.deepEqual(
-    nativeNodeDeclaration({ ...declaration, supportsHostRefresh: true }, 'node-a', principal, true),
-    { ...declaration, supportsHostRefresh: true },
-  );
 });
 
 test('native node declarations keep every declared boolean capability', () => {
@@ -91,6 +86,7 @@ test('native node declarations keep every declared boolean capability', () => {
     supportsProfiles: true,
     supportsObservations: true,
     supportsStructuredResults: true,
+    supportsHostRefresh: true,
   } satisfies Required<
     Omit<NativeExecutionNodeDeclaration, 'ownerPrincipalId' | 'conversationStreaming'>
   >;
