@@ -77,6 +77,7 @@ import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
   FETCH_MAINTENANCE_COMMAND,
+  gitMaintenanceNotes,
   recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
@@ -443,6 +444,10 @@ async function slotPrepareInner(
   };
 
   const step = stream.step.bind(stream);
+  /** A kept or removed tmp pack, or auto-maintenance left on, is a prepare step, not a silent fact. */
+  const noteGitMaintenance = (output: string) => {
+    for (const note of gitMaintenanceNotes(output)) step('branch', `Git maintenance: ${note}`);
+  };
   const timeGit = createPrepareGitTimer((record) =>
     stream.step(record.name, record.detail, record),
   );
@@ -1099,9 +1104,10 @@ async function slotPrepareInner(
         'fetch-replay-default',
         vars,
         withFarmGitConfig(
-          `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+          `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
         ),
       );
+      noteGitMaintenance(fetch.stdout);
       if (fetch.exitCode !== 0)
         throw new Error(`Replay base fetch failed: ${fetch.stderr || fetch.stdout}`);
       await resolveRequestedStartRef();
@@ -1149,10 +1155,11 @@ async function slotPrepareInner(
                 'fetch-replay-base',
                 vars,
                 withFarmGitConfig(
-                  `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+                  `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
                 ),
               )
             : null;
+        if (fetchBase) noteGitMaintenance(fetchBase.stdout);
         if (fetchBase?.exitCode === 0) await advanceEmptyWorkBranch();
         else if (remote.exitCode !== 0 && remote.exitCode !== 2)
           step('branch', `Replay kept ${branch} as is: could not tell whether origin has it`);
@@ -1190,6 +1197,7 @@ async function slotPrepareInner(
           `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(branch))}`,
         ),
       );
+      noteGitMaintenance(fetchBranchR.stdout);
       if (fetchBranchR.exitCode === 0) {
         workBranchPublished = true;
         const refreshCurrentBranchR = await mutateGit(
@@ -1282,6 +1290,7 @@ async function slotPrepareInner(
           `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
         ),
       );
+      noteGitMaintenance(fetchDefaultR.stdout);
       if (fetchDefaultR.exitCode !== 0)
         throw new Error(
           `git fetch origin ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${fetchDefaultR.stderr.slice(-200) || fetchDefaultR.stdout.slice(-200)}`,

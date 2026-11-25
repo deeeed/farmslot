@@ -36,6 +36,7 @@ import { mutateSlotGit } from '../../run-lifecycle/validation-run-commits.js';
 
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
+  gitMaintenanceNotes,
   PRE_FETCH_CLEANUP_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
@@ -252,6 +253,8 @@ export async function resetSlotRepoToIdle(
       `cd ${repo} && { ${PRE_FETCH_CLEANUP_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
     ),
   );
+  for (const note of gitMaintenanceNotes(fetched.stdout))
+    console.log(`[slot] ${vars.slotId}: git maintenance: ${note}`);
   if (fetched.exitCode !== 0)
     throw new Error(
       `git fetch origin ${defaultBranch} failed on ${vars.slotId}: ${fetched.stderr || fetched.stdout}`,

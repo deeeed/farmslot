@@ -33,7 +33,7 @@ import {
 import { getAllRuns, getRunWithArchived } from '../../runs/store.js';
 import { isActiveSlotHolder, slotPinIsRequestOnly } from '../dispatch/slot-scoring.js';
 
-import { PRE_FETCH_CLEANUP_COMMAND } from './git-cleanup-commands.js';
+import { gitMaintenanceNotes, PRE_FETCH_CLEANUP_COMMAND } from './git-cleanup-commands.js';
 import { readMergedPreparePullRequests, refIncludedInMergedPullRequest } from './unmerged-work.js';
 import {
   invalidatePassiveDefaultAncestry,
@@ -158,6 +158,8 @@ export async function inspectSlotWorkspace(
       ),
       { timeout: 120_000, noRetry: true },
     );
+    for (const note of gitMaintenanceNotes(fetched.stdout))
+      console.log(`[slot] ${vars.slotId}: git maintenance: ${note}`);
     if (fetched.exitCode !== 0)
       throw new Error(`Cannot fetch the default branch (exit ${fetched.exitCode})`);
   }
