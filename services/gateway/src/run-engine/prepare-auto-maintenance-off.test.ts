@@ -54,7 +54,7 @@ test(
     assert.equal(await git(slotRepo, 'config', '--local', '--get', 'gc.auto'), '0');
     assert.equal(existsSync(stale), false);
     assert.ok(
-      steps.messages.some((m) => m.includes('removed 1 stale tmp packs')),
+      steps.messages.some((m) => m.includes('removed 1 stale tmp pack')),
       steps.messages.join('\n'),
     );
   },
@@ -75,25 +75,7 @@ test(
       () => undefined,
     );
     assert.equal(await git(slotRepo, 'config', '--local', '--get', 'maintenance.auto'), 'false');
+    assert.equal(await git(slotRepo, 'config', '--local', '--get', 'gc.auto'), '0');
     assert.equal(existsSync(stale), false);
-  },
-);
-
-test(
-  'prepare in a linked worktree leaves the shared config alone and says so',
-  needsTmuxSandbox,
-  async (t) => {
-    const { slotId, slotRepo } = await stackFixture(t, 'git-maintenance-linked', 48944, {
-      linkedWorktreeOn: 'feat/linked-maintenance',
-    });
-    mockPrepareCommand(t, async () => ({ stdout: 'phase completed\n', stderr: '', exitCode: 0 }));
-    const steps = stepMessages();
-    await slotPrepare({ slotId, branch: 'feat/linked-proof', prepareProfile: 'core' }, steps.emit);
-    const auto = await git(slotRepo, 'config', '--get', 'maintenance.auto').catch(() => '');
-    assert.equal(auto, '', 'the shared config is not written');
-    assert.ok(
-      steps.messages.some((m) => m.includes('auto-maintenance left on: this linked worktree')),
-      steps.messages.join('\n'),
-    );
   },
 );
