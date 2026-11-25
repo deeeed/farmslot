@@ -166,7 +166,8 @@ try {
     writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
   });
   await log('node restarted');
-  // The restarted node starts its host on demand; until then a read reports it unavailable.
+  // The node starts its native observation after it connects; until then a read can report
+  // the source unavailable.
   await poll(
     'worker readable after node restart',
     async () =>
