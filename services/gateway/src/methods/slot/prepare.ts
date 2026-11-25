@@ -129,7 +129,7 @@ import {
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
-import { withRunPrepareContext } from './prepare-run-context.js';
+import { assertRunMatchesSlotProject, withRunPrepareContext } from './prepare-run-context.js';
 import { syncPrepareFixtures } from './prepare-runtime-context.js';
 import {
   acquirePrepareSentinel,
@@ -200,8 +200,12 @@ export async function slotPrepare(
   opts?: SlotPrepareInternalOptions,
 ): Promise<SlotPrepareResult> {
   await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
-  const runId = params.runId ?? params.bindRunId;
-  const forRun = withRunPrepareContext(params, runId ? getRun(runId) : undefined);
+  // A prepare for a run takes that run's context: the first of runId / bindRunId naming a live run.
+  const run = [params.runId, params.bindRunId]
+    .map((id) => (id ? getRun(id) : undefined))
+    .find((found) => found !== undefined);
+  if (run) assertRunMatchesSlotProject(run, params.slotId, (await loadSlotVars(params.slotId)).projectName);
+  const forRun = withRunPrepareContext(params, run);
   return withSlotSources(params.slotId, () => slotPrepareWithSources(forRun, emit, signal, opts));
 }
 
@@ -245,7 +249,8 @@ async function slotPrepareWithSources(
     }
     // The engine prepares only a slot its run still holds: a cancel may already have released
     // it, and the picker may have handed it to another run. Other callers (load-run binding)
-    // pass runId as a label and keep their existing checks.
+    // name the run for its context (flow, domain, app; see slotPrepare) and keep their existing
+    // ownership checks.
     if (params.runId && opts?.requireRunOwnership) {
       const row = await readSlotRow(params.slotId);
       // A run evicted from the live store is read from the archive: it has ended too.

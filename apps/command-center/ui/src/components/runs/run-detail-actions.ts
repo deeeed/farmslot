@@ -453,9 +453,6 @@ export interface SwitchSlotToRunBranchOptions {
   strictProfile?: boolean;
   /** Run full checkout even when the slot is already on the run branch. */
   forcePrepare?: boolean;
-  /** The run's flow type and domain, which prepare reads for the run's context. */
-  flowType?: string;
-  domain?: string;
 }
 
 export async function switchSlotToRunBranch(
@@ -483,8 +480,6 @@ export async function switchSlotToRunBranch(
     prepareProfile: options.prepareProfile,
     strictProfile: options.strictProfile,
     forcePrepare: options.forcePrepare,
-    flowType: options.flowType,
-    domain: options.domain,
     rebind,
   });
   navigateToPreparedSlot(slotId, runId);

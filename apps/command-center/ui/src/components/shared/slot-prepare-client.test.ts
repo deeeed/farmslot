@@ -19,8 +19,8 @@ mock.module('./slot-prepare-tracker.js', {
 });
 const { runSlotPrepareForRun } = await import('./slot-prepare-client.js');
 
-// A prepare for a run carries the run's flow type and domain, which prepare reads for start refs,
-// lockfile drift, requirement selection and the hook env.
+// A prepare for a run carries the run's flow type and domain: prepare reads its run context from
+// them (gateway prepare-run-context.ts).
 test('a prepare for a run sends the run flow type and domain', async () => {
   requests.length = 0;
   await runSlotPrepareForRun({

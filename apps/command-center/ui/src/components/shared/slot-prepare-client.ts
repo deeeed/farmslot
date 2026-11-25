@@ -60,7 +60,7 @@ export interface RunSlotPrepareForRunInput {
   forcePrepare?: boolean;
   rebind?: boolean;
   label?: string;
-  /** The run's flow type and domain: prepare decides start refs, lockfile drift and the hook env by them. */
+  /** The run's flow type and domain: prepare reads its run context from them (gateway prepare-run-context.ts). */
   flowType?: string;
   domain?: string;
 }
