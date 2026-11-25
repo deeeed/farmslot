@@ -23,7 +23,12 @@ import {
 import { probeResourceProcess } from '../fleet/resource-process.js';
 import { ensureResourceReady } from '../fleet/runtime-ready.js';
 import { getRuntimeCapabilityRegistry } from '../methods/runtime-capabilities.js';
-import { prepareIdentityPath, reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
+import {
+  prepareIdentityPath,
+  readRecordedPrepareScope,
+  reapSlotPrepareScope,
+  resolvePrepareRuntimeDir,
+} from '../methods/slot/prepare-command.js';
 import { activePrepareAborts } from '../methods/slot/shared.js';
 import { readRunProgress } from '../runners/run-progress.js';
 import { probeRunnerDescendantPid } from '../runners/session-process.js';
@@ -31,9 +36,11 @@ import { contextPaneId } from '../runners/session-record.js';
 import { getAllRuns } from '../runs/store.js';
 
 import {
+  DEVSERVER_IDLE_LIMIT_MS,
   type IdleDevServerPointer,
   IdleDevServerReaper,
   slotWorkerRuns,
+  WARM_DEVSERVER_IDLE_LIMIT_MS,
 } from './idle-devserver.js';
 import {
   isTmuxProcess,
@@ -389,9 +396,11 @@ const idleDevServers = new IdleDevServerReaper({
       // No run owns the slot, so nothing else ends the preflight scope that kept this server
       // (its holders, log tail and recipe providers): stop it here, by its recorded identity.
       if (!currentOwner) {
-        const projectVars = await loadProjectVars(vars.projectName);
         await reapSlotPrepareScope(vars, {
-          identityPath: prepareIdentityPath(vars.remoteRepo, projectVars.runtimeDir ?? ''),
+          identityPath: prepareIdentityPath(
+            vars.remoteRepo,
+            await resolvePrepareRuntimeDir(vars.projectName),
+          ),
         });
       }
       return true;
@@ -412,10 +421,75 @@ export function forgetIdleDevServers(slotId: string): void {
   idleDevServers.forget(slotId);
 }
 
+/** Why a slot's recorded prepare scope is not idle, or null when no run or prepare holds it. */
+function prepareScopeBlocker(row: Readonly<Record<string, unknown>>, slotId: string) {
+  if (row.current_run_id) return 'slot owned';
+  if (row.phase === 'releasing') return 'slot releasing';
+  if (row.lifecycle === 'manual') return 'manual slot';
+  if (row.handoff_run_id) return 'slot handoff in progress';
+  if (activePrepareSlots.has(slotId)) return 'slot preparing';
+  if (slotWorkerRuns(getAllRuns(), slotId, null).length) return 'slot has a live run';
+  return null;
+}
+
+const idleScopes = new Map<string, { scope: string; epoch: unknown; since: number }>();
+
+/**
+ * A prepare scope on a slot no run owns, whose dev server is gone or was never watched: the
+ * dev-server cap never reaches it (mini-mmt-3 kept one for two days). One identity read per
+ * idle slot; the scope stops after the dev-server idle window (keep-warm: 2 h), fenced to the
+ * scope that was timed.
+ */
+async function reapIdlePrepareScope(slotId: string): Promise<void> {
+  const row = await readSlotRow(slotId);
+  if (!row || prepareScopeBlocker(row, slotId)) {
+    idleScopes.delete(slotId);
+    return;
+  }
+  const vars = await loadSlotVars(slotId);
+  const identityPath = prepareIdentityPath(
+    vars.remoteRepo,
+    await resolvePrepareRuntimeDir(vars.projectName),
+  );
+  const scope = await readRecordedPrepareScope(vars, identityPath);
+  const timed = idleScopes.get(slotId);
+  if (!scope) {
+    idleScopes.delete(slotId);
+    return;
+  }
+  if (!timed || timed.scope !== scope || timed.epoch !== row.slot_epoch) {
+    idleScopes.set(slotId, { scope, epoch: row.slot_epoch, since: Date.now() });
+    return;
+  }
+  const limit = row.warm === true ? WARM_DEVSERVER_IDLE_LIMIT_MS : DEVSERVER_IDLE_LIMIT_MS;
+  if (Date.now() - timed.since < limit) return;
+  const current = await readSlotRow(slotId);
+  const late = current
+    ? (prepareScopeBlocker(current, slotId) ??
+      (current.slot_epoch !== timed.epoch ? 'slot epoch changed' : null))
+    : 'slot row unavailable';
+  if (late) {
+    idleScopes.delete(slotId);
+    logDecision(slotId, undefined, `skip scope stop: ${late}`);
+    return;
+  }
+  // Same exclusion as the dev-server stop: a prepare cannot start while the scope is signalled.
+  activePrepareSlots.add(slotId);
+  try {
+    await reapSlotPrepareScope(vars, { identityPath, expectedScope: scope });
+  } finally {
+    activePrepareSlots.delete(slotId);
+  }
+  idleScopes.delete(slotId);
+  logDecision(slotId, undefined, 'stopped an idle prepare scope with no run');
+}
+
 /** Runs on the idle sweep, serialized with run resume and machine parking. */
 export async function reapIdleDevServers(slotId: string): Promise<void> {
-  // No quiet checks or transition lock for a slot without a dev server the cap may stop.
-  if (!(await idleDevServers.eligible(slotId)).length) return;
+  // No quiet checks or transition lock for a slot without a dev server the cap may stop;
+  // only a prepare scope no run owns is left to time.
+  if (!(await idleDevServers.eligible(slotId)).length) return reapIdlePrepareScope(slotId);
+  idleScopes.delete(slotId);
   const owner = (await readSlotRow(slotId))?.current_run_id;
   if (typeof owner !== 'string') return idleDevServers.sweep(slotId);
   const swept = await tryWithRunTransition(owner, async () => {

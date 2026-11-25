@@ -37,6 +37,8 @@ let listenerGroup = '101';
 let closedHistory = false;
 let realStatus = false;
 let promptDelivered = false;
+let slotRunsGone = false;
+let identityReads = 0;
 const run: Run = {
   id: 'run-a',
   familyId: 'family-a',
@@ -140,6 +142,10 @@ const fixtureExec = async (_vars: unknown, command: string) => {
   }
   if (command.startsWith('lsof -a'))
     return { stdout: `p101\nn${foreign ? '/foreign' : '/fixture'}\n`, stderr: '', exitCode: 0 };
+  if (command === "cat '/fixture/.agent/preflight.identity' 2>/dev/null; true") {
+    identityReads++;
+    return { stdout: '500\t501\tscope-a\n', stderr: '', exitCode: 0 };
+  }
   if (command.startsWith('ps -p'))
     return {
       stdout: `101 101 Mon Jan 1 00:00:${foreign ? '02' : '00'} 2024`,
@@ -271,6 +277,7 @@ mock.module('../runners/session-process.js', {
   },
 });
 function fixtureRuns() {
+  if (slotRunsGone) return [];
   return [
     run,
     ...(closedHistory
@@ -298,12 +305,17 @@ function fixtureRuns() {
 }
 const realRuns = await import('../runs/store.js');
 const scopeReaps: string[] = [];
+const scopeReapScopes: Array<string | undefined> = [];
 const realPrepareCommand = await import('../methods/slot/prepare-command.js');
 mock.module('../methods/slot/prepare-command.js', {
   namedExports: {
     ...realPrepareCommand,
-    reapSlotPrepareScope: async (_vars: unknown, options: { identityPath?: string }) => {
+    reapSlotPrepareScope: async (
+      _vars: unknown,
+      options: { identityPath?: string; expectedScope?: string },
+    ) => {
       scopeReaps.push(options.identityPath ?? '');
+      scopeReapScopes.push(options.expectedScope);
       return true;
     },
   },
@@ -320,7 +332,8 @@ mock.module('../runs/store.js', {
 const { withRunTransitionWhileMachineHeld } = await import('./transition-coordinator.js');
 const { reapIdleDevServers, restoreIdleDevServers } = await import('./idle-devserver-service.js');
 mock.method(Date, 'now', () => clock);
-const { DEVSERVER_IDLE_LIMIT_MS } = await import('./idle-devserver.js');
+const { DEVSERVER_IDLE_LIMIT_MS, WARM_DEVSERVER_IDLE_LIMIT_MS } =
+  await import('./idle-devserver.js');
 
 beforeEach(() => {
   clock += DEVSERVER_IDLE_LIMIT_MS;
@@ -348,6 +361,9 @@ beforeEach(() => {
   pidFilePort = '{{port}}';
   listenerGroup = '101';
   scopeReaps.length = 0;
+  scopeReapScopes.length = 0;
+  slotRunsGone = false;
+  identityReads = 0;
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -386,6 +402,45 @@ test('a pid-file dev server on an ownerless ready slot is reaped', async () => {
   // mini-mmt-3: no run owns the slot, so the preflight scope that kept the server goes too.
   assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
   assert.equal(stops, 1);
+});
+
+// mini-mmt-3: a run-less prepare scope outlives its dev server, which the cap no longer sees.
+test('a run-less prepare scope whose dev server already died stops after the idle window', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = { current_run_id: null, slot_epoch: epoch, lifecycle: 'ready' };
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS - 1;
+  await reapIdleDevServers('slot-a');
+  assert.deepEqual(scopeReaps, [], 'kept inside the idle window');
+  clock += 1;
+  await reapIdleDevServers('slot-a');
+  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
+  assert.deepEqual(scopeReapScopes, ['scope-a'], 'fenced to the scope that was timed');
+  assert.equal(stops, 0);
+});
+
+test('a keep-warm run-less prepare scope gets the warm window', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = { current_run_id: null, slot_epoch: epoch, lifecycle: 'ready', warm: true };
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.deepEqual(scopeReaps, [], 'kept past the plain idle limit');
+  clock += WARM_DEVSERVER_IDLE_LIMIT_MS - DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
+});
+
+test("an owned slot's prepare scope is never read by the cap", async () => {
+  alive = false;
+  slotRunsGone = true; // the owner alone keeps it, not a listed run
+  await reapIdleDevServers('slot-a');
+  clock += WARM_DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(identityReads, 0);
+  assert.deepEqual(scopeReaps, []);
 });
 
 test('a PID file older than the process it names grants no stop authority', async () => {

@@ -455,6 +455,20 @@ export function prepareIdentityPath(remoteRepo: string, runtimeDir: string): str
   return path.posix.join(remoteRepo, runtimeDir || '.agent', 'preflight.identity');
 }
 
+/** The scope token of the slot's recorded prepare, or undefined when none is recorded. */
+export async function readRecordedPrepareScope(
+  vars: SlotVars,
+  identityPath: string,
+): Promise<string | undefined> {
+  const read = await execOnSlot(vars, `cat ${shellQuote(identityPath)} 2>/dev/null; true`, {
+    cwd: '/',
+    timeout: 5_000,
+  });
+  if (read.exitCode !== 0)
+    throw new Error(`Prepare scope cleanup failed: identity unreadable (exit ${read.exitCode})`);
+  return read.stdout.trim().split('\t')[PREPARE_IDENTITY_SCOPE_FIELD] || undefined;
+}
+
 /**
  * Stop a slot's recorded prepare scope: the preflight process group and its
  * nohup'd `farmslot-prepare-scope` holder, which outlive an aborted or
@@ -480,13 +494,7 @@ export async function reapSlotPrepareScope(
     prepareIdentityPath(vars.remoteRepo, await resolvePrepareRuntimeDir(vars.projectName));
   let expectedScope = opts.expectedScope;
   if (opts.stillOwned) {
-    const read = await execOnSlot(vars, `cat ${shellQuote(identityPath)} 2>/dev/null; true`, {
-      cwd: '/',
-      timeout: 5_000,
-    });
-    if (read.exitCode !== 0)
-      throw new Error(`Prepare scope cleanup failed: identity unreadable (exit ${read.exitCode})`);
-    const recorded = read.stdout.trim().split('\t')[PREPARE_IDENTITY_SCOPE_FIELD];
+    const recorded = await readRecordedPrepareScope(vars, identityPath);
     if (!recorded || !(await opts.stillOwned())) return false;
     expectedScope = recorded;
   }

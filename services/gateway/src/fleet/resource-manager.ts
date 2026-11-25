@@ -906,15 +906,14 @@ async function sweepIdleDevServers(): Promise<void> {
   idleSweepInFlight = true;
   try {
     const { forgetIdleDevServers, reapIdleDevServers } = await loadIdleDevServer();
-    const slotIds = (await loadFleetStatus()).slots
-      .map((s) => s.slot)
-      .filter((id) => {
-        const live = [...(statusCache.get(id)?.values() ?? [])].some(
-          (status) => status === 'running' || status === 'stale',
-        );
-        if (!live) forgetIdleDevServers(id);
-        return live;
-      });
+    // Every slot: one without a live dev server may still hold a prepare scope no run owns.
+    const slotIds = (await loadFleetStatus()).slots.map((s) => s.slot);
+    for (const id of slotIds) {
+      const live = [...(statusCache.get(id)?.values() ?? [])].some(
+        (status) => status === 'running' || status === 'stale',
+      );
+      if (!live) forgetIdleDevServers(id);
+    }
     const failures: string[] = [];
     await mapWithConcurrency(slotIds, RESOURCE_POLL_CONCURRENCY, async (id) => {
       if (!idleSweepTimer) return; // Stopped (shutdown): queued slots do not start.
