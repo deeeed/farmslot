@@ -634,6 +634,7 @@ export class SlotHistoryModal extends LitElement {
                           project=${run.project || this.project}
                           run-id=${run.runId}
                           run-branch=${run.branch}
+                          run-flow-type=${run.flowType}
                           button-label="Load this slot with run →"
                           button-class="shm-retry"
                           .slotHealth=${this.slotHealth}

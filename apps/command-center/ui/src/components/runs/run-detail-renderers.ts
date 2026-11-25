@@ -1599,6 +1599,8 @@ function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail:
               project=${r.project}
               run-id=${r.id}
               run-branch=${r.branch}
+              run-flow-type=${r.flowType}
+              run-domain=${r.domain ?? ''}
               button-label="Load ${boundSlotId} with this run →"
               button-style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
               .slotHealth=${ctx._slotHealthForRun(r)}

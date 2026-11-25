@@ -1,0 +1,1 @@
+- A prepare for a run takes that run's flow type, domain and app when the caller leaves them out. That covers the Command Center load-run modal, prepare popover and run detail, which now also send the run's flow type and domain. Start-ref policy, lockfile-drift handling, requirement selection, fixtures and the hook env then follow the run, not the slot's defaults.

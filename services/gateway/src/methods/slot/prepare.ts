@@ -129,6 +129,7 @@ import {
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
+import { withRunPrepareContext } from './prepare-run-context.js';
 import { syncPrepareFixtures } from './prepare-runtime-context.js';
 import {
   acquirePrepareSentinel,
@@ -199,7 +200,9 @@ export async function slotPrepare(
   opts?: SlotPrepareInternalOptions,
 ): Promise<SlotPrepareResult> {
   await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
-  return withSlotSources(params.slotId, () => slotPrepareWithSources(params, emit, signal, opts));
+  const runId = params.runId ?? params.bindRunId;
+  const forRun = withRunPrepareContext(params, runId ? getRun(runId) : undefined);
+  return withSlotSources(params.slotId, () => slotPrepareWithSources(forRun, emit, signal, opts));
 }
 
 async function slotPrepareWithSources(
