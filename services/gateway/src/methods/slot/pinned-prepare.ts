@@ -5,16 +5,17 @@ import { slotDeletePath, slotFileExists, type SlotLocality } from '../../core/sl
 import { shellQuote } from '../../core/tmux.js';
 import { FULL_COMMIT } from '../../evals/blind-inputs.js';
 
+export {
+  PINNED_SKIP_PREPARE_REFUSAL,
+  projectPinsPrepare,
+} from '../../projects/pinned-prepare-policy.js';
+
 /**
  * Pinned prepare: a comparison run with a start commit must run on a build of that
  * commit, or fail before its worker starts. The project's preflight installs the
  * build and reports what it installed in this receipt, in the slot runtime dir.
  */
 export const PREPARE_ARTIFACT_RECEIPT = 'prepare-artifact.json';
-
-/** Every refusal of `skipPrepare` for a pinned run says this. */
-export const PINNED_SKIP_PREPARE_REFUSAL =
-  'A pinned comparison run cannot skip prepare; prepare installs the build of its start commit.';
 
 /** The build a pinned prepare installed, as its receipt reported it. */
 export interface PinnedPrepareArtifact {
@@ -23,18 +24,6 @@ export interface PinnedPrepareArtifact {
   runId?: string;
   revision: string;
   platform: string;
-}
-
-/**
- * A project takes part in pinned prepare when it can install a build of a given
- * commit (it declares an `artifact_check` probe) or says how (`pinned_profiles`).
- * Its comparison runs with a start commit are then pinned; other projects prepare
- * them as before.
- */
-export function projectPinsPrepare(projectJson: RawProjectJson): boolean {
-  return (
-    Boolean(projectJson.hooks?.artifact_check) || projectJson.prepare?.pinned_profiles !== undefined
-  );
 }
 
 /**

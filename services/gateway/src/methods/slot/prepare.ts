@@ -1981,7 +1981,6 @@ async function slotPrepareInner(
     return resolvedStartRef.resolvedSha;
   };
   const readReceipt = (): Promise<string | null> => slotReadFileIfExists(vars, receiptPath);
-  // A remote slot's fs.delete refuses a missing file, so delete only what is there.
   if (pinned) await deleteStaleReceipt(vars, receiptPath);
   if (preflightHook) {
     const preflightPidPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.pid');
@@ -2154,7 +2153,16 @@ async function slotPrepareInner(
   let prepareArtifact: SlotPrepareResult['prepareArtifact'];
   if (pinned) {
     const baseSha = pinnedBaseSha();
-    const receiptLog = preflightHook ? ` — log: ${phaseLog('preflight')}` : '';
+    const receiptLogPath = preflightHook ? phaseLog('preflight') : undefined;
+    const receiptRejection = (message: string, cause?: unknown): PrepareCommandError => {
+      const error: PrepareCommandError = new Error(
+        `${message}${receiptLogPath ? ` — log: ${receiptLogPath}` : ''}`,
+        cause === undefined ? undefined : { cause },
+      );
+      if (receiptLogPath) error.failedLogPath = receiptLogPath;
+      error.failedPhase = 'preflight';
+      return error;
+    };
     let artifact: ReturnType<typeof checkPrepareArtifactReceipt>;
     try {
       artifact = checkPrepareArtifactReceipt(await readReceipt(), {
@@ -2163,17 +2171,17 @@ async function slotPrepareInner(
         platform: vars.platform,
       });
     } catch (error) {
-      throw new Error(`${error instanceof Error ? error.message : String(error)}${receiptLog}`);
+      throw receiptRejection(error instanceof Error ? error.message : String(error), error);
     }
     // A prepare replay keeps the worker's commits, so a source build may sit on a
     // descendant of the start; anything else is a build of some other commit.
     const sourceRefusal =
       artifact.kind === 'source'
         ? await sourceBuildRefusal(vars.remoteRepo, baseSha, artifact.revision, (command) =>
-            execGit('merge-base --is-ancestor', vars, withFarmGitConfig(command)),
+            execGit('verify-source-build', vars, withFarmGitConfig(command)),
           )
         : undefined;
-    if (sourceRefusal) throw new Error(`${sourceRefusal}${receiptLog}`);
+    if (sourceRefusal) throw receiptRejection(sourceRefusal);
     prepareArtifact = { ...artifact, installedAt: new Date().toISOString() };
     step(
       'preflight',

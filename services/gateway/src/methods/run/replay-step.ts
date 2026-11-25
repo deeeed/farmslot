@@ -1630,7 +1630,6 @@ async function replayRunStep(
     replayStepName !== PS.FIND_SLOT &&
     shouldReroutePinnedReplayToPrepare({
       pinned: pinnedRun,
-      adoptedLiveWorker: Boolean(adoptedTaskSignal || blockedAttempt),
       liveNativeWorker:
         pinnedRun &&
         replayResumesNativeWorker(existing, {

@@ -272,7 +272,15 @@ test('a receipt left by an earlier prepare does not count', needsTmuxSandbox, as
     }),
   );
   preflight = async () => ({ stdout: '', stderr: '', exitCode: 0 });
-  await assert.rejects(pinnedPrepare(slotId), /wrote no prepare-artifact\.json/);
+  await assert.rejects(pinnedPrepare(slotId), (error: Error & { failedLogPath?: string }) => {
+    assert.match(error.message, /wrote no prepare-artifact\.json.* — log: .*preflight\.log/);
+    assert.match(
+      error.failedLogPath ?? '',
+      /preflight\.log$/,
+      'the log is kept with the failed step',
+    );
+    return true;
+  });
   await assert.rejects(readFile(path.join(slotRepo, RUNTIME_DIR, 'prepare-artifact.json')));
 });
 

@@ -2,48 +2,25 @@ import {
   isEvalRun,
   isRecord,
   nativeWorkerBindingIsHeld,
+  primaryRoleForFlow,
   type Run,
   type RunPrepareArtifact,
-  workerRoleForFlow,
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
 import type { RawProjectJson } from '../core/index.js';
 import { FULL_COMMIT } from '../evals/blind-inputs.js';
-import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
-import { projectPinsPrepare, resolvePinnedProfile } from '../methods/slot/pinned-prepare.js';
+import { resolvePinnedProfile } from '../methods/slot/pinned-prepare.js';
+import {
+  isPinnedPrepareRun,
+  type PinnedRunFields,
+  prepareIsPinned,
+  projectPinsPrepare,
+} from '../projects/pinned-prepare-policy.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';
 
-type PinnedRunFields = Pick<Run, 'lane' | 'startRef' | 'flowType' | 'engineState'>;
-
-/**
- * A run whose prepare must install a build of its start commit: a comparison-lane
- * dev or fix-bug run with a start ref (start-ref-policy.ts limits a user start ref
- * to these flows). Blind capsule trials keep their own isolated base, so they are
- * excluded; QA proof trials, comparison-lane QA runs, are excluded by flow. Both
- * record the build they ran on instead (`prepareObservesBuild`).
- */
-export function isPinnedPrepareRun(run: PinnedRunFields): boolean {
-  return (
-    isEvalRun(run) &&
-    Boolean(run.startRef) &&
-    (run.flowType === 'dev' || run.flowType === 'fix-bug') &&
-    !usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
-  );
-}
-
-/**
- * Whether this run's prepare is pinned: the run qualifies and its project takes
- * part. An unreadable project config (`undefined`) counts as taking part, so the
- * prepare refuses instead of running on whatever build the slot has.
- */
-export function prepareIsPinned(
-  run: PinnedRunFields,
-  projectJson: RawProjectJson | undefined,
-): boolean {
-  return isPinnedPrepareRun(run) && (projectJson ? projectPinsPrepare(projectJson) : true);
-}
+export { isPinnedPrepareRun, prepareIsPinned } from '../projects/pinned-prepare-policy.js';
 
 export async function runPrepareIsPinned(
   run: PinnedRunFields & Pick<Run, 'project' | 'id'>,
@@ -54,12 +31,13 @@ export async function runPrepareIsPinned(
 }
 
 /**
- * The profile a pinned run activated on a slot prepares with: the pinned default
- * for that slot's platform, whatever the run stored. Refuses when the project
- * config is unreadable or names no profile for the platform.
+ * The profile a pinned run activated on a slot prepares with: the one it stored,
+ * when that is listed for the slot's platform (a run sent to `full` because no
+ * Runway build matches stays there), otherwise the platform's pinned default.
+ * Refuses when the project config is unreadable or names no profile for it.
  */
 export async function pinnedActivationProfile(
-  run: Pick<Run, 'project' | 'id'>,
+  run: Pick<Run, 'project' | 'id' | 'prepareProfile'>,
   platform: string,
 ): Promise<string> {
   const projectVars = await loadProjectVarsOrNull(run.project, 'pinned activation', run.id);
@@ -67,7 +45,15 @@ export async function pinnedActivationProfile(
     throw new Error(
       `A pinned comparison run cannot be activated: the config of project ${run.project} failed to load`,
     );
-  return resolvePinnedProfile(projectVars.projectJson, platform).name;
+  const { projectJson } = projectVars;
+  if (run.prepareProfile) {
+    try {
+      return resolvePinnedProfile(projectJson, platform, run.prepareProfile).name;
+    } catch {
+      // Not listed for this platform: the default below.
+    }
+  }
+  return resolvePinnedProfile(projectJson, platform).name;
 }
 
 /**
@@ -108,18 +94,18 @@ export function assertPinnedRunDispatchable(
 /**
  * A replay of a pinned run restarts from prepare when its target lies after prepare
  * and at or before dispatch, so a slot whose app changed since (a bulk Runway update)
- * gets the pinned build again. Later targets keep the running worker; so does a live
- * native worker, which a second prepare and dispatch would launch over.
+ * gets the pinned build again. Later targets keep the running worker (an adopted task
+ * signal already moves the replay to monitor); so does a live native worker, which a
+ * second prepare and dispatch would launch over.
  */
 export function shouldReroutePinnedReplayToPrepare(input: {
   pinned: boolean;
-  adoptedLiveWorker: boolean;
   liveNativeWorker: boolean;
   targetIdx: number;
   prepareIdx: number;
   dispatchIdx: number;
 }): boolean {
-  if (!input.pinned || input.adoptedLiveWorker || input.liveNativeWorker) return false;
+  if (!input.pinned || input.liveNativeWorker) return false;
   return (
     input.prepareIdx >= 0 &&
     input.dispatchIdx >= 0 &&
@@ -139,8 +125,8 @@ export function replayResumesNativeWorker(
 ): boolean {
   if (run.transport !== 'native' || replay.freshDispatch || replay.workerRunnerOverride)
     return false;
-  if (!workerRoleForFlow(run.flowType)) return false;
-  const primary = selectAgentContext(run);
+  // Only pinned runs ask, and their dev/fix-bug flows always have a worker role.
+  const primary = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
   return Boolean(
     primary?.nativeSession &&
     nativeWorkerBindingIsHeld(primary.nativeSession) &&

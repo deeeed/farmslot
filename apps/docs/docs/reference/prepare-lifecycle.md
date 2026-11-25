@@ -178,13 +178,13 @@ config that fails to load refuses a run that would otherwise be pinned.
   probe; any other requirement still applies. Every listed profile declares
   `pinned_kind`: `runway` (a prebuilt artifact of the start commit) or `source` (a
   build of the checked-out commit).
-- **Preflight installs the build.** Prepare exports the resolved 40-hex start commit
+- **Preflight installs the build.** Prepare exports the resolved start commit (a full commit id)
   as `FARMSLOT_PREPARE_BASE_SHA`. The preflight writes
   `<runtime_dir>/prepare-artifact.json`, on success and on refusal:
   `{ status: "ok" | "failed", reason?, kind, baseSha, runId?, revision, platform }`.
   Prepare deletes the file before preflight and reads it after. A missing or malformed
   receipt, a `kind` or `platform` that does not match, a `baseSha` other than the
-  start, or a `revision` that is not 40-hex fails the prepare. A `source` revision may
+  start, or a `revision` that is not a full commit id fails the prepare. A `source` revision may
   descend from the start (a prepare replay keeps worker commits). A refusal's
   `reason` becomes the prepare error, flattened to one line.
 - **The record.** `run.prepareArtifact` holds

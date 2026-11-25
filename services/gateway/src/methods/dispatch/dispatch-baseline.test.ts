@@ -519,3 +519,83 @@ for (const scenario of [
     assert.equal(prepares, 0);
   });
 }
+
+test('a pinned native run with a held worker reaches reconciliation, not the missing-record refusal', async (t) => {
+  // Deployed while a native comparison run was dispatching: its worker predates the
+  // record, and recovery sends it back through dispatch to reconcile, not relaunch.
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'pinned-native-owner';
+  const task = path.join(root, 'PINNED-NATIVE-TASK.md');
+  await writeFile(task, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');
+  const run = createRun(
+    {
+      flowType: 'dev',
+      project: vars.projectName,
+      ticketOrPr: 'TAT-4617',
+      slotId: vars.slotId,
+      transport: 'native',
+      mode: 'autonomous',
+    },
+    { nativeOwnerPrincipalId: 'pinned-native-owner' },
+  );
+  updateRun(run.id, {
+    lane: 'comparison',
+    startRef: { requestedRef: '260bd3a5', resolvedSha: PINNED_BASE },
+    agentContexts: [
+      {
+        id: 'dev',
+        role: 'dev',
+        label: 'Dev',
+        status: 'working',
+        slotId: vars.slotId,
+        runId: run.id,
+        nativeSession: {
+          sessionId: 'session',
+          executionNodeId: 'node',
+          ownerPrincipalId: 'pinned-native-owner',
+          leaseId: 'lease',
+          commandId: 'command',
+          launchRequestedAt: '2026-11-25T10:00:00.000Z',
+        },
+      },
+    ],
+  });
+  const previous = projectJson;
+  projectJson = { hooks: { artifact_check: 'probe' } };
+  t.after(async () => {
+    projectJson = previous;
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+    const current = getRun(run.id)!;
+    // The store keeps a held native binding; close it so the fixture can go.
+    updateRun(run.id, {
+      agentContexts: current.agentContexts?.map((context) =>
+        context.nativeSession
+          ? {
+              ...context,
+              nativeSession: { ...context.nativeSession, closedAt: new Date().toISOString() },
+            }
+          : context,
+      ),
+    });
+    await persistRunNow(updateRun(run.id, { status: 'done' }));
+    await deleteRun(run.id);
+  });
+  const error = await dispatchExecute(
+    {
+      slotId: vars.slotId,
+      runId: run.id,
+      taskFile: task,
+      runner: 'claude',
+      model: 'opus',
+      mode: 'autonomous',
+      skipPrepare: true,
+    },
+    () => {},
+  ).then(
+    () => undefined,
+    (failure: unknown) => failure,
+  );
+  assert.ok(error instanceof Error);
+  assert.doesNotMatch(error.message, /no record of the build/, 'the live worker was not refused');
+});

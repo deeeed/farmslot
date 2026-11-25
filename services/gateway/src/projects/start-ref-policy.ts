@@ -10,10 +10,9 @@ import { execOnSlot } from '../core/exec.js';
 import { withFarmGitConfig } from '../core/farm-git.js';
 import { loadSlotVars } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
-import { PINNED_SKIP_PREPARE_REFUSAL } from '../methods/slot/pinned-prepare.js';
-import { prepareIsPinned } from '../run-engine/pinned-prepare.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 
+import { PINNED_SKIP_PREPARE_REFUSAL, prepareIsPinned } from './pinned-prepare-policy.js';
 import { resolveStartRefInRepo, sanitizeStartRef } from './start-ref-resolution.js';
 
 type UnsupportedStartRefSource = { kind: 'prior-run'; runId?: string };

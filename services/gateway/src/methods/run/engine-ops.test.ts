@@ -38,8 +38,9 @@ writeFileSync(
       profiles: {
         attach: { phases: ['health'] },
         full: { phases: ['git', 'deps', 'preflight'], pinned_kind: 'source' },
+        runway: { phases: ['git', 'deps', 'preflight'], pinned_kind: 'runway' },
       },
-      pinned_profiles: { cli: ['full'] },
+      pinned_profiles: { cli: ['runway', 'full'] },
     },
   }),
 );
@@ -159,32 +160,39 @@ for (const fails of [false, true]) {
   });
 }
 
-test('activating a pinned run prepares with the pinned default for the target slot, not a stored profile', async (t) => {
-  const previousPressure = process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
-  process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'off';
-  t.after(() => {
-    if (previousPressure === undefined) delete process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
-    else process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = previousPressure;
+for (const [stored, expected] of [
+  ['attach', 'runway'],
+  ['full', 'full'],
+] as const) {
+  test(`activating a pinned run stored with ${stored} prepares with ${expected}`, async (t) => {
+    // A listed profile stays (a run sent to full because no Runway build matches);
+    // anything else takes the platform's pinned default.
+    const previousPressure = process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+    process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'off';
+    t.after(() => {
+      if (previousPressure === undefined) delete process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+      else process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = previousPressure;
+    });
+    const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: `PROJ-384-${stored}` });
+    t.after(() => cleanupRun(run.id));
+    updateRun(run.id, {
+      status: 'failed',
+      lane: 'comparison',
+      completionPolicy: 'artifact-only',
+      startRef: { requestedRef: '260bd3a5' },
+      slotId: 'move-b',
+      requestedSlotId: 'move-b',
+      prepareProfile: stored,
+    });
+    let requested: string | undefined;
+    replay = async (params) => {
+      requested = params.prepareProfile;
+      return { run: getRun(run.id)! };
+    };
+    await runActivateOnSlot({ runId: run.id }, () => {});
+    assert.equal(requested, expected);
   });
-  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'PROJ-384-pinned' });
-  t.after(() => cleanupRun(run.id));
-  updateRun(run.id, {
-    status: 'failed',
-    lane: 'comparison',
-    startRef: { requestedRef: '260bd3a5' },
-    slotId: 'move-a',
-    requestedSlotId: 'move-a',
-    // Stored before the move (or before this build): it installs nothing.
-    prepareProfile: 'attach',
-  });
-  let requested: string | undefined;
-  replay = async (params) => {
-    requested = params.prepareProfile;
-    return { run: getRun(run.id)! };
-  };
-  await runActivateOnSlot({ runId: run.id, slotId: 'move-b' }, () => {});
-  assert.equal(requested, 'full');
-});
+}
 
 async function retainedTask(t: TestContext, slotId = 'move-b', originSlot = 'move-b') {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'RESTORE-1' });

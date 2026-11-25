@@ -1136,10 +1136,6 @@ export async function dispatchExecute(
     updateRun: updateRunStore,
   } = await import('../../runs/store.js');
   const currentRun = params.runId ? getRun(params.runId) : null;
-  // Prepare refuses a build that does not match. This covers every path that
-  // reaches dispatch without that prepare (skipPrepare, restart recovery), before
-  // the slot is claimed; a config that failed to load counts as pinned.
-  if (currentRun) assertPinnedRunDispatchable(currentRun, projectVars?.projectJson);
   const nativeDispatchBoundary = currentRun?.steps.find(
     (entry) => entry.name === 'dispatch',
   )?.startedAt;
@@ -1426,6 +1422,11 @@ export async function dispatchExecute(
       );
     }
   }
+  // Prepare refuses a build that does not match. This covers every path that
+  // reaches a new launch without that prepare (skipPrepare, restart recovery),
+  // before the slot is claimed; a native worker reconciled above keeps running.
+  // A config that failed to load counts as pinned.
+  if (currentRun) assertPinnedRunDispatchable(currentRun, projectVars?.projectJson);
 
   step(
     'info',

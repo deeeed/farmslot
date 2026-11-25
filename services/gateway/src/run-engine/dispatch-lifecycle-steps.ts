@@ -1,12 +1,6 @@
 import path from 'node:path';
 
-import {
-  Events,
-  isRecord,
-  isTerminalRunStatus,
-  type Run,
-  type RunPrepareArtifact,
-} from '@farmslot/protocol';
+import { Events, isTerminalRunStatus, type Run, type RunPrepareArtifact } from '@farmslot/protocol';
 
 import { loadSlotVars, resolveProjectRuntimeDir, type SlotVars } from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
@@ -21,7 +15,7 @@ import {
   slotClaimBlockedByRelease,
 } from '../methods/dispatch/slot-scoring.js';
 import { slotPrepare } from '../methods/slot.js';
-import { PINNED_SKIP_PREPARE_REFUSAL } from '../methods/slot/pinned-prepare.js';
+import { parseJsonObject, PINNED_SKIP_PREPARE_REFUSAL } from '../methods/slot/pinned-prepare.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
 import {
   BEFORE_WORKER_LAUNCH,
@@ -177,16 +171,12 @@ async function readSlotJsonObject(
     maxBuffer: 256 * 1024,
   });
   if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch (error) {
+  const record = parseJsonObject(result.stdout);
+  if (!record)
     console.warn(
-      `[run-engine] ignoring malformed optional prepare record ${path.basename(file)}: ${(error as Error).message}`,
+      `[run-engine] ignoring optional prepare record ${path.basename(file)}: not a JSON object`,
     );
-    return undefined;
-  }
-  return isRecord(parsed) ? parsed : undefined;
+  return record;
 }
 
 async function readPrepareProvenance(slotId: string, project: string): Promise<PrepareProvenance> {

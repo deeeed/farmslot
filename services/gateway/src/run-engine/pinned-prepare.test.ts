@@ -137,7 +137,6 @@ const reroute = (
 ) =>
   shouldReroutePinnedReplayToPrepare({
     pinned: true,
-    adoptedLiveWorker: false,
     liveNativeWorker: false,
     targetIdx,
     ...steps,
@@ -150,7 +149,6 @@ test('a pinned replay that would re-dispatch restarts from prepare', () => {
   assert.equal(reroute(5), false, 'a replay from monitor keeps the running worker');
   assert.equal(reroute(2), false, 'prepare itself needs no reroute');
   assert.equal(reroute(4, { pinned: false }), false);
-  assert.equal(reroute(4, { adoptedLiveWorker: true }), false, 'an adopted live worker wins');
   assert.equal(
     reroute(4, { liveNativeWorker: true }),
     false,
@@ -217,7 +215,7 @@ test('only a held, launched primary native worker counts as live', () => {
   assert.equal(
     replayResumesNativeWorker({ ...native(launched), flowType: 'pr-complete' }, plain),
     false,
-    'a flow with no worker role has no primary worker',
+    'a flow whose primary context is not the dev worker',
   );
 });
 
