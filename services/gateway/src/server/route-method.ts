@@ -256,13 +256,13 @@ import {
   type NodeProbeVerdict,
   registerNode,
 } from '../fleet/machine-registry.js';
+import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
 import {
   isNodeRequestNotAcceptedError,
   isNodeSocketStopping,
   isNodeTransportUnavailableError,
   sendNodeRequest,
 } from '../fleet/node-rpc.js';
-import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
 import { pairingCandidates, pairingCreate } from '../fleet/pairing.js';
 import { gatewayPeerVersions } from '../fleet/peer-versions.js';
 import {
@@ -659,7 +659,6 @@ async function refreshConnectedNodeBranches(
   });
   if (refreshError) throw refreshError;
 }
-
 
 /** How the connected node answers a health check on its own socket (see NodeProbeVerdict). */
 async function probeConnectedNode(node: ConnectedNode): Promise<NodeProbeVerdict> {
@@ -1584,7 +1583,10 @@ async function routeAuthorizedMethod(
         });
       admission.release();
       if (state.ws.readyState !== WebSocket.OPEN)
-        throw new GatewayMethodError('INVALID_PARAMS', `Node ${machine} closed while it was admitted`);
+        throw new GatewayMethodError(
+          'INVALID_PARAMS',
+          `Node ${machine} closed while it was admitted`,
+        );
       requireNodeSession(authRuntime, state);
       const admitted = authRuntime.resolver.resolveSessionPrincipal(state);
       assertNativeMachineAssignment(

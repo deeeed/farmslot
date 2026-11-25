@@ -65,6 +65,7 @@ const deployFixture = (t, prefix) => {
     'scripts/lib/tmux-bin.sh',
     'scripts/lib/node-cli-refresh.sh',
     'scripts/lib/node-token.sh',
+    'scripts/lib/launchd-reload.sh',
     'scripts/lib/deploy-paths.mts',
     'services/node/package.json',
   ])

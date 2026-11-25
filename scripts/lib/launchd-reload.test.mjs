@@ -11,7 +11,10 @@ import { fileURLToPath } from 'node:url';
 
 const lib = fileURLToPath(new URL('./launchd-reload.sh', import.meta.url));
 
-function fixture(t, { newNodeLogs = 'Registered with gateway as "m" (protocol 1)', ignoreTerm = true } = {}) {
+function fixture(
+  t,
+  { newNodeLogs = 'Registered with gateway as "m" (protocol 1)', ignoreTerm = true } = {},
+) {
   const root = mkdtempSync(path.join(tmpdir(), 'launchd-reload-'));
   const bin = path.join(root, 'bin');
   mkdirSync(bin);
@@ -22,7 +25,10 @@ function fixture(t, { newNodeLogs = 'Registered with gateway as "m" (protocol 1)
   const pid = Number(
     execFileSync(
       'bash',
-      ['-c', `(${ignoreTerm ? 'trap "" TERM; ' : ''}exec -a node-under-test bash -c 'while :; do sleep 0.1; done') </dev/null >/dev/null 2>&1 & echo $!`],
+      [
+        '-c',
+        `(${ignoreTerm ? 'trap "" TERM; ' : ''}exec -a node-under-test bash -c 'while :; do sleep 0.1; done') </dev/null >/dev/null 2>&1 & echo $!`,
+      ],
       { encoding: 'utf8' },
     ).trim(),
   );
@@ -30,7 +36,9 @@ function fixture(t, { newNodeLogs = 'Registered with gateway as "m" (protocol 1)
   t.after(() => {
     try {
       process.kill(old.pid, 'SIGKILL');
-    } catch {}
+    } catch {
+      // Already gone: the reload killed it.
+    }
     rmSync(root, { recursive: true, force: true });
   });
   const state = path.join(root, 'loaded');
@@ -54,7 +62,12 @@ esac
   const run = (env = {}) => {
     const script = execFileSync(
       'bash',
-      ['-c', `source ${JSON.stringify(lib)}; launchd_reload_script com.example.node Library/LaunchAgents/x.plist "$1"`, '_', log],
+      [
+        '-c',
+        `source ${JSON.stringify(lib)}; launchd_reload_script com.example.node Library/LaunchAgents/x.plist "$1"`,
+        '_',
+        log,
+      ],
       { encoding: 'utf8' },
     );
     return spawnSync('bash', ['-c', script], {
@@ -84,7 +97,10 @@ test('a previous node that outlives bootout is killed before the new job starts'
   const f = fixture(t);
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, new RegExp(`previous node pid ${f.old.pid} outlived launchd bootout; killing it`));
+  assert.match(
+    result.stderr,
+    new RegExp(`previous node pid ${f.old.pid} outlived launchd bootout; killing it`),
+  );
   assert.match(result.stdout, /node registered with the gateway/);
   // SIGKILL lands asynchronously; the script only continued once the pid was gone.
   assert.equal(f.alive(), false);
@@ -120,12 +136,17 @@ test('a new node the gateway refuses as a duplicate fails the deploy, quoting th
   });
   const result = f.run();
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /the gateway refused the new node: .*NODE_ALREADY_CONNECTED.*pid 86713/);
+  assert.match(
+    result.stderr,
+    /the gateway refused the new node: .*NODE_ALREADY_CONNECTED.*pid 86713/,
+  );
 });
 
 test('an earlier refusal in the log does not fail this deploy', (t) => {
   const f = fixture(t, { ignoreTerm: false });
-  writeFileSync(f.log, 'Gateway node.connect failed [NODE_ALREADY_CONNECTED]: old\n', { flag: 'a' });
+  writeFileSync(f.log, 'Gateway node.connect failed [NODE_ALREADY_CONNECTED]: old\n', {
+    flag: 'a',
+  });
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /node registered with the gateway/);

@@ -28,7 +28,10 @@ function socket(open = true) {
   return { ws, state };
 }
 
-function deps(verdict: NodeProbeVerdict | (() => Promise<NodeProbeVerdict>), extra: Partial<NodeAdmissionDeps> = {}) {
+function deps(
+  verdict: NodeProbeVerdict | (() => Promise<NodeProbeVerdict>),
+  extra: Partial<NodeAdmissionDeps> = {},
+) {
   const calls: ConnectedNode[] = [];
   const value: NodeAdmissionDeps = {
     probe: async (node) => {
@@ -79,7 +82,10 @@ test('a second process is refused while the connected node answers, naming both 
   assert.match(admission.message, /already connected \(pid 100\); refused pid 200/);
   assert.equal(getNode(machine)?.ws, incumbent.ws, 'the connected node keeps the machine');
   assert.equal(incumbent.state.terminated, false);
-  assert.equal(getAllNodes().find((node) => node.machine === machine)?.lastRefusedDuplicate?.pid, 200);
+  assert.equal(
+    getAllNodes().find((node) => node.machine === machine)?.lastRefusedDuplicate?.pid,
+    200,
+  );
 });
 
 test('a connected node that is shutting down is replaced without closing its socket', async (t) => {
@@ -145,7 +151,9 @@ test('a stopping answer wins over frames seen during the probe', async (t) => {
 test('a second newcomer during a probe is refused at once with a transient code', async (t) => {
   const { machine } = connected(t, 100);
   let answer: (verdict: NodeProbeVerdict) => void = () => {};
-  const slow = deps(() => new Promise<NodeProbeVerdict>((resolve) => (answer = resolve)), { budgetMs: 5_000 });
+  const slow = deps(() => new Promise<NodeProbeVerdict>((resolve) => (answer = resolve)), {
+    budgetMs: 5_000,
+  });
   const first = admitNodeConnection(machine, 200, socket().ws, slow.value);
   await new Promise((resolve) => setImmediate(resolve));
   const second = await admitNodeConnection(machine, 300, socket().ws, deps('answered').value);
@@ -154,7 +162,10 @@ test('a second newcomer during a probe is refused at once with a transient code'
   answer('answered');
   assert.equal((await first).kind, 'refused');
   // The guard is released: the next newcomer is probed again.
-  assert.equal((await admitNodeConnection(machine, 400, socket().ws, deps('answered').value)).kind, 'refused');
+  assert.equal(
+    (await admitNodeConnection(machine, 400, socket().ws, deps('answered').value)).kind,
+    'refused',
+  );
 });
 
 test('the same process reconnecting during another newcomer probe is still admitted', async (t) => {

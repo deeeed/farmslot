@@ -75,7 +75,12 @@ export interface NodeAdmissionDeps {
 
 export type NodeAdmission =
   | { kind: 'admitted'; release: () => void; terminateAfterRegister?: WebSocket }
-  | { kind: 'refused'; code: 'NODE_ALREADY_CONNECTED' | 'NODE_ADMISSION_IN_PROGRESS'; incumbentPid?: number; message: string };
+  | {
+      kind: 'refused';
+      code: 'NODE_ALREADY_CONNECTED' | 'NODE_ADMISSION_IN_PROGRESS';
+      incumbentPid?: number;
+      message: string;
+    };
 
 /**
  * One live node per machine. A second process for a connected machine is refused while the
@@ -122,7 +127,8 @@ export async function admitNodeConnection(
     // A reply already received but not yet read must not lose to the timer.
     await new Promise((resolve) => setImmediate(resolve));
     if (deps.isStopping(existing.ws)) verdict = 'stopping';
-    else if (verdict === 'silent' && (lastFrameAt.get(existing.ws) ?? 0) >= started) verdict = 'answered';
+    else if (verdict === 'silent' && (lastFrameAt.get(existing.ws) ?? 0) >= started)
+      verdict = 'answered';
     if (nodes.get(machine) !== existing) {
       release();
       return {
@@ -150,7 +156,9 @@ export async function admitNodeConnection(
         message: `Node ${machine} is already connected (pid ${existing.pid}); refused pid ${pid}`,
       };
     }
-    console.warn(`[node] replacing node ${machine} pid ${existing.pid} (${verdict}) with pid ${pid}`);
+    console.warn(
+      `[node] replacing node ${machine} pid ${existing.pid} (${verdict}) with pid ${pid}`,
+    );
     return {
       kind: 'admitted',
       release,
@@ -283,7 +291,9 @@ export function getAllNodes(): NodeInfo[] {
     ...(node.observationCapabilities
       ? { observationCapabilities: { ...node.observationCapabilities } }
       : {}),
-    ...(node.lastRefusedDuplicate ? { lastRefusedDuplicate: { ...node.lastRefusedDuplicate } } : {}),
+    ...(node.lastRefusedDuplicate
+      ? { lastRefusedDuplicate: { ...node.lastRefusedDuplicate } }
+      : {}),
     uptime: (Date.now() - new Date(node.connectedAt).getTime()) / 1000,
   }));
 }
