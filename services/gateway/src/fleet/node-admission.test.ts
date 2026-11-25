@@ -135,15 +135,31 @@ test('a connected node that sends frames during a slow probe counts as alive', a
 });
 
 test('a stopping answer wins over frames seen during the probe', async (t) => {
-  const { machine } = connected(t, 100);
+  const { machine, incumbent } = connected(t, 100);
   let stopping = false;
   const probe = deps(
     async () => {
+      // The NODE_SHUTTING_DOWN reply is itself a frame on the connected node's socket.
+      noteNodeFrame(incumbent.ws);
       stopping = true;
       return 'silent';
     },
     { isStopping: () => stopping },
   );
+  const admission = await admitNodeConnection(machine, 200, socket().ws, probe.value);
+  assert.equal(admission.kind, 'admitted');
+  assert.deepEqual(admission.kind === 'admitted' ? admission.replaced : undefined, {
+    pid: 100,
+    verdict: 'stopping',
+  });
+});
+
+test('a connected node that leaves during the probe lets the newcomer in', async (t) => {
+  const { machine, incumbent } = connected(t, 100);
+  const probe = deps(async () => {
+    unregisterByWs(incumbent.ws);
+    return 'silent';
+  });
   const admission = await admitNodeConnection(machine, 200, socket().ws, probe.value);
   assert.equal(admission.kind, 'admitted');
 });

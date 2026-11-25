@@ -804,7 +804,6 @@ PLIST
   echo "[deploy] reloading launchd service..."
   # Re-bootstrap the job, and stop a previous node that outlives bootout (lib/launchd-reload.sh).
   run "$(launchd_reload_script "$PLIST_NAME" "$PLIST_REL" "$REMOTE_DIR/node.log")"
-  sleep 2
   echo "[deploy] verifying..."
   run "launchctl print gui/\$(id -u)/$PLIST_NAME | grep -E 'state = running|pid ='"
   echo ""
@@ -849,7 +848,6 @@ UNIT
 
   echo "[deploy] reloading systemd service..."
   run "$(systemd_restart_script "$UNIT_NAME" "$REMOTE_DIR/node.log")"
-  sleep 2
   echo "[deploy] verifying..."
   run "systemctl --user is-active --quiet $UNIT_NAME && systemctl --user show $UNIT_NAME --property=ActiveState --property=SubState --property=MainPID"
   echo ""

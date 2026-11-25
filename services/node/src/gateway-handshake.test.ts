@@ -296,3 +296,11 @@ test('a refusal because another process holds the machine retries at the ceiling
   );
   assert.equal(isDeterministicHandshakeRejection(refused), true);
 });
+
+test('a refusal while another connection for the machine is being admitted retries quickly', () => {
+  const busy = new GatewayRequestError(
+    'NODE_ADMISSION_IN_PROGRESS',
+    'Another connection for node m is being admitted; refused pid 2',
+  );
+  assert.equal(isDeterministicHandshakeRejection(busy), false);
+});

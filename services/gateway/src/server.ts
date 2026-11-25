@@ -275,8 +275,8 @@ export function createWebSocketServer(
     }
 
     ws.on('message', (raw: Buffer, isBinary: boolean) => {
-      // Any frame counts as a sign of life when node admission probes this socket.
-      noteNodeFrame(ws);
+      // A node's frames are its signs of life when admission probes its socket.
+      if (state.clientKind === 'node') noteNodeFrame(ws);
       try {
         // Handle binary frames from nodes (screen capture relay)
         if (isBinary && raw.length > 7 && raw[0] === NODE_FRAME_MAGIC) {

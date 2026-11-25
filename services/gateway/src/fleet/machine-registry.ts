@@ -43,7 +43,8 @@ export interface ConnectedNode extends PeerVersionDeclaration {
   observationAuthority?: () => boolean;
   /** The last connection refused because this node already held the machine. */
   lastRefusedDuplicate?: { pid: number; at: string };
-  lastRefusalWarnAt?: number;
+  /** When a refusal was last logged and published, and for which pid. */
+  lastRefusalWarned?: { pid: number; at: number };
 }
 
 const nodes = new Map<string, ConnectedNode>();
@@ -74,7 +75,13 @@ export interface NodeAdmissionDeps {
 }
 
 export type NodeAdmission =
-  | { kind: 'admitted'; release: () => void; terminateAfterRegister?: WebSocket }
+  | {
+      kind: 'admitted';
+      release: () => void;
+      /** The connected node this one replaces after a probe; logged once registration succeeds. */
+      replaced?: { pid: number; verdict: 'stopping' | 'silent' };
+      terminateAfterRegister?: WebSocket;
+    }
   | {
       kind: 'refused';
       code: 'NODE_ALREADY_CONNECTED' | 'NODE_ADMISSION_IN_PROGRESS';
@@ -129,6 +136,8 @@ export async function admitNodeConnection(
     if (deps.isStopping(existing.ws)) verdict = 'stopping';
     else if (verdict === 'silent' && (lastFrameAt.get(existing.ws) ?? 0) >= started)
       verdict = 'answered';
+    // The connected node left during the probe: nothing to replace.
+    if (!nodes.has(machine)) return { kind: 'admitted', release };
     if (nodes.get(machine) !== existing) {
       release();
       return {
@@ -141,8 +150,10 @@ export async function admitNodeConnection(
       release();
       const now = Date.now();
       existing.lastRefusedDuplicate = { pid, at: new Date(now).toISOString() };
-      if (now - (existing.lastRefusalWarnAt ?? 0) >= REFUSAL_WARN_INTERVAL_MS) {
-        existing.lastRefusalWarnAt = now;
+      const warned = existing.lastRefusalWarned;
+      // Throttled per pid: a different duplicate is logged and published at once.
+      if (!warned || warned.pid !== pid || now - warned.at >= REFUSAL_WARN_INTERVAL_MS) {
+        existing.lastRefusalWarned = { pid, at: now };
         console.warn(
           `[node] refused a second connection for ${machine}: pid ${pid} while pid ${existing.pid} is connected and answering`,
         );
@@ -156,12 +167,10 @@ export async function admitNodeConnection(
         message: `Node ${machine} is already connected (pid ${existing.pid}); refused pid ${pid}`,
       };
     }
-    console.warn(
-      `[node] replacing node ${machine} pid ${existing.pid} (${verdict}) with pid ${pid}`,
-    );
     return {
       kind: 'admitted',
       release,
+      replaced: { pid: existing.pid, verdict },
       ...(verdict === 'silent' ? { terminateAfterRegister: existing.ws } : {}),
     };
   } catch (error) {
@@ -222,9 +231,20 @@ export function registerNode(
   );
   const previous = nodes.get(machine);
   if (previous) revokeNodeFileObservations(previous.ws);
+  // The same process reconnecting keeps the record of the duplicates it refused.
+  const refusals =
+    previous?.pid === pid
+      ? {
+          ...(previous.lastRefusedDuplicate
+            ? { lastRefusedDuplicate: previous.lastRefusedDuplicate }
+            : {}),
+          ...(previous.lastRefusalWarned ? { lastRefusalWarned: previous.lastRefusalWarned } : {}),
+        }
+      : {};
   nodes.set(machine, {
     machine,
     pid,
+    ...refusals,
     ...(versions?.nodeLink ? { nodeLink: versions.nodeLink } : {}),
     ...(versions?.nodePrincipal ? { nodePrincipal: versions.nodePrincipal } : {}),
     ...(versions?.taskRuntime === 1 ? { taskRuntime: 1 } : {}),

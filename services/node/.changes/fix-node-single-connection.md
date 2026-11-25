@@ -1,1 +1,2 @@
-- A node refused as a duplicate of the machine's connected node retries at the slow backoff. A launchd redeploy no longer runs `kickstart -k`. It stops a previous node that outlives bootout, matched by pid and start time, and fails when the gateway refuses the new node as a duplicate.
+- A node refused because another process already holds its machine id at the gateway retries at the slow backoff, and its registered line names its pid.
+- A launchd redeploy no longer runs `kickstart -k`, stops a previous node that outlives bootout (matched by pid and start time), and fails when the gateway refuses the new node as a duplicate; a systemd redeploy runs the same check.

@@ -315,7 +315,10 @@ async function handshake(socket: WebSocket): Promise<void> {
     // regression earns a fresh hint.
     backoff = 500;
     lastAuthHint = null;
-    console.log(`Registered with gateway as "${MACHINE_NAME}" (protocol ${PROTOCOL_VERSION})`);
+    // The deploy matches this line by pid (scripts/lib/launchd-reload.sh).
+    console.log(
+      `Registered with gateway as "${MACHINE_NAME}" (protocol ${PROTOCOL_VERSION}, pid ${process.pid})`,
+    );
   } catch (err) {
     const failure = describeHandshakeFailure(err);
     console.error(`Gateway ${step} failed [${failure.code}]: ${failure.message}`);

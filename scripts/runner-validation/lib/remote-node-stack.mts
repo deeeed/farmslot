@@ -419,6 +419,8 @@ export async function startRemoteNodeStack(
   };
   let gateway: ChildProcess | undefined;
   let node: ChildProcess | undefined;
+  /** Extra node processes a proof started (startExtraNode): stopped with the stack. */
+  const extraNodes: ChildProcess[] = [];
   let connection: GatewayConnection | undefined;
   const nativeHostDirectories = () =>
     [nodeNativeRoot, gatewayNativeRoot].flatMap((rootDir) => {
@@ -441,6 +443,8 @@ export async function startRemoteNodeStack(
     connection?.close();
     connection = undefined;
     await attempt('node', () => stopProcess(node));
+    for (const extra of extraNodes)
+      await attempt(`extra node ${extra.pid}`, () => stopProcess(extra));
     await attempt('node proxy', async () => options.nodeProxy?.stop());
     const nativeDirectories = nativeHostDirectories();
     for (const directory of nativeDirectories) {
@@ -885,7 +889,11 @@ export async function startRemoteNodeStack(
       },
       call,
       waitForNode,
-      startExtraNode: (name) => spawnNode(name),
+      startExtraNode: (name) => {
+        const extra = spawnNode(name);
+        extraNodes.push(extra);
+        return extra;
+      },
       async restartNode(whileStopping) {
         const info = (
           await call<{ nodes: Array<{ machine: string; pid: number }> }>('nodes.list')

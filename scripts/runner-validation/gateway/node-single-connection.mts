@@ -95,18 +95,28 @@ try {
     lastRefusedDuplicate: afterRefusal.lastRefusedDuplicate,
   });
 
-  // No flapping: the registered pid stays the first one through a later retry of the duplicate.
+  // No flapping: the registered pid stays the first one through the duplicate's next retry
+  // (event-driven: wait for its next refusal, sampling the registered pid on every poll).
+  const refusalCount = async () =>
+    (await readFile(secondLog, 'utf8')).split('NODE_ALREADY_CONNECTED').length - 1;
+  const firstRefusals = await refusalCount();
   const samples: number[] = [];
-  for (let i = 0; i < 20; i++) {
-    samples.push((await registered())?.pid ?? 0);
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-  }
+  const retried = Date.now();
+  await poll(
+    "the duplicate's next refusal",
+    async () => {
+      samples.push((await registered())?.pid ?? 0);
+      return (await refusalCount()) > firstRefusals ? true : undefined;
+    },
+    90_000,
+  );
   if (samples.some((pid) => pid !== first))
     throw new Error(`registered pid flapped: ${samples.join(',')}`);
-  const refusals = (await readFile(secondLog, 'utf8')).split('NODE_ALREADY_CONNECTED').length - 1;
-  await step('no flapping over 40 s', {
+  await step('no flapping through a retry', {
     samples: [...new Set(samples)],
-    duplicateRefusals: refusals,
+    sampleCount: samples.length,
+    retrySeconds: Math.round((Date.now() - retried) / 1000),
+    duplicateRefusals: await refusalCount(),
   });
 
   // A silent first node (SIGSTOP) is replaced by the duplicate on its next retry.

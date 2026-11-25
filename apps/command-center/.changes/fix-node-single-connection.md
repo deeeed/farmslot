@@ -1,0 +1,1 @@
+- The offline-runs proof's replaced node peer answers `NODE_SHUTTING_DOWN` before its replacement connects, as a stopping node does, now that the gateway refuses a second live node for a machine.
