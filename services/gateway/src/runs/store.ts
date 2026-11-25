@@ -2214,7 +2214,9 @@ export async function timeRunSlotRelease<T extends { released: boolean }>(
   slotId: string,
   release: () => Promise<T>,
   /** Read after `release` settles: where the release spent its time, when it measured that. */
-  breakdown?: () => Pick<NonNullable<Run['slotRelease']>, 'phasesMs' | 'bundleLock'> | undefined,
+  breakdown?: () =>
+    | Pick<NonNullable<Run['slotRelease']>, 'phasesMs' | 'bundleLock' | 'exec'>
+    | undefined,
 ): Promise<T> {
   const startedAt = Date.now();
   const result = await release();

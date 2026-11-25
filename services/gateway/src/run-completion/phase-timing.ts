@@ -72,8 +72,8 @@ export async function measureCompleteStep<T>(
 
 /**
  * The same measurement for other lifecycle work (a finished run's slot release). A measurement
- * started inside another one keeps its own phases; its lock time and processes count in the
- * outer one's record.
+ * started inside another one keeps its own phases and processes, and its processes and lock
+ * time also count in the outer one's record.
  */
 export const measurePhases = measureCompleteStep;
 export const timePhase = timeCompletePhase;

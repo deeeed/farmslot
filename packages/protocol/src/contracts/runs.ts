@@ -3215,13 +3215,12 @@ export interface Run {
     slotId: string;
     startedAt: string;
     durationMs: number;
-    /**
-     * A finished-run release's wall time per phase (`queue` is the wait for the slot's teardown
-     * registry). Phases can nest and need not add up to `durationMs`.
-     */
+    /** A finished-run release's wall time per phase; phases need not add up to `durationMs`. */
     phasesMs?: Record<string, number>;
     /** Run-bundle lock time the release itself took, when it measured its own. */
     bundleLock?: import('../recipes/step-io.js').CompleteStepTiming['bundleLock'];
+    /** Processes the release started, by kind. */
+    exec?: import('../recipes/step-io.js').CompleteStepTiming['exec'];
   };
   /** Explicit workspace placement, mutually exclusive with a slot binding. */
   reviewWorkspaceTarget?: import('./review-workspace.js').ReviewWorkspaceTarget;

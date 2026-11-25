@@ -369,22 +369,16 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
     run.id,
     slotId,
     async () => {
-      const measured = await measurePhases(async () => {
-        const queued = performance.now();
-        let started = queued;
-        const result = await withTerminalTeardown(slotId, () => {
-          started = performance.now();
-          return releaseCompletedRunSlotOnce(run);
-        });
-        return { result, queueMs: Math.round(started - queued) };
-      });
+      const measured = await measurePhases(() =>
+        withTerminalTeardown(slotId, () => releaseCompletedRunSlotOnce(run)),
+      );
       timing = measured.timing;
-      timing.phasesMs.queue = measured.value.queueMs;
-      return measured.value.result;
+      return measured.value;
     },
     () =>
       timing && {
         phasesMs: timing.phasesMs,
+        exec: timing.exec,
         ...(timing.bundleLock.acquisitions ? { bundleLock: timing.bundleLock } : {}),
       },
   );
