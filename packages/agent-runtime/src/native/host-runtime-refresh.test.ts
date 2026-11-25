@@ -508,7 +508,7 @@ test('a node launch refused for a busy session refreshes at the next launch once
 
     await assert.rejects(launchReleasing(client, fixture, [session.id]), {
       code: 'NATIVE_HOST_VERSION_SKEW',
-      message: new RegExp(`refreshed at a later launch.*Busy: ${session.id} \\(running\\)`),
+      message: new RegExp(`A launch refreshes it once.*Busy: ${session.id} \\(running\\)`),
     });
     assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
     await fixture.completeTurn();
@@ -579,7 +579,7 @@ test('a node launch stops no more idle runners than its limit', async () => {
     const before = skew(fixture);
 
     await assert.rejects(launchReleasing(client, fixture, [session.id]), {
-      message: /Busy: 1 idle runners, more than the 0 a launch may stop/,
+      message: /Busy: 1 idle runner, more than the 0 a launch may stop: close some/,
     });
     assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
     await client.close('owner', session.id);
@@ -609,6 +609,57 @@ test('a launch to an older-runtime host that also lacks a capability is refused 
     await fixture.completeTurn();
     await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
     await client.close('owner', session.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('two node launches at once share one refresh and both start on the new host', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = nodeClient(fixture);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const before = skew(fixture);
+
+    const [first, second] = await Promise.all([
+      launchReleasing(client, fixture, [session.id]),
+      launchReleasing(client, fixture, [session.id]),
+    ]);
+
+    assert.notEqual(first.id, second.id);
+    assert.notEqual(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    await client.close('owner', first.id);
+    await client.close('owner', second.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a node launch that waited for another refresh is refused rather than use its older list', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = nodeClient(fixture);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const before = skew(fixture);
+
+    const [keeping, waiting] = await Promise.allSettled([
+      launchReleasing(client, fixture, []),
+      launchReleasing(client, fixture, [session.id]),
+    ]);
+    assert.equal(keeping.status, 'rejected');
+    assert.match(String(keeping.reason), /not released by the gateway/);
+    assert.equal(waiting.status, 'rejected');
+    assert.match(String(waiting.reason), /another refresh ran while this launch waited/);
+    assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+
+    // The next launch sends a fresh list.
+    const launched = await launchReleasing(client, fixture, [session.id]);
+    assert.notEqual(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    await client.close('owner', launched.id);
   } finally {
     await stopNativeStack(fixture);
   }

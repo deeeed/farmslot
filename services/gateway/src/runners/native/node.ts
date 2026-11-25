@@ -23,6 +23,7 @@ import {
   type ExecResult,
   Methods,
   type NativeSessionInfo,
+  type NativeNodeSessionEnvelope,
   type NativeSessionListResult,
   type NativeSessionReadResult,
   type NativeSessionRequester,
@@ -47,15 +48,16 @@ import {
 import { ownsLocalNativeProfile } from '../../security/native-owner.js';
 
 import { knownNativeExecutionNodes } from './execution-nodes.js';
-import { nodeReleasedSessions } from './host-refresh.js';
+import { nodeLaunchRelease } from './host-refresh.js';
 import { nativeSessionManager, validateNativeRunner } from './manager.js';
 
 // Both modules route through this one (a cycle).
 const loadNativeObservations = lazyImport(() => import('../../resources/native-observations.js'));
 const loadNativeWorkspace = lazyImport(() => import('../../methods/native-workspace.js'));
+// Loaded once a node refuses a launch as skewed, for the release list.
 const loadRunStore = lazyImport(() => import('../../runs/store.js'));
 
-/** Launches that may refresh a node's host on another runtime first. */
+/** Launches a node may refresh its host on another runtime for. */
 const NODE_ADMISSION_METHODS: readonly string[] = [
   Methods.NATIVE_SESSION_CREATE,
   Methods.NATIVE_SESSION_ENSURE,
@@ -259,8 +261,6 @@ export async function routeNativeExecution(
         : routeNativeSession(nativeSessionManager, owner, method, params, requester);
     });
   }
-  const admission = NODE_ADMISSION_METHODS.includes(method);
-  const runStore = admission ? await loadRunStore() : undefined;
   const resolved = resolveAfterNodeReconnect(executionNodeId, () =>
     resolveNativeExecutionNode(owner, executionNodeId),
   );
@@ -297,33 +297,44 @@ export async function routeNativeExecution(
       'NATIVE_SESSION_ERROR',
       'Native execution node upgrade required for worker launch configuration',
     );
-  // Read with no await before the send, so the node gets the current run census.
-  const hostRelease =
-    runStore && node.nativeSessions.supportsHostRefresh
-      ? nodeReleasedSessions(runStore.getAllRuns(), executionNodeId, owner)
-      : undefined;
+  const send = (hostRelease?: string[]) => {
+    const envelope: NativeNodeSessionEnvelope = {
+      owner,
+      method,
+      params,
+      ...(requester ? { requester } : {}),
+      ...(isNativeObservedRead() ? { observe: true as const } : {}),
+      ...(hostRelease ? { hostRelease } : {}),
+    };
+    return sendNodeRequest(node, 'native.session', envelope, {
+      timeout: hostRelease
+        ? NATIVE_NODE_ADMISSION_TIMEOUT_MS
+        : method === NATIVE_WORKER_COMPACT
+          ? 185_000
+          : 60_000,
+      requireSameConnection: true,
+    });
+  };
   let result: unknown;
   try {
-    result = await sendNodeRequest(
-      node,
-      'native.session',
-      {
-        owner,
-        method,
-        params,
-        ...(requester ? { requester } : {}),
-        ...(isNativeObservedRead() ? { observe: true } : {}),
-        ...(hostRelease ? { hostRelease } : {}),
-      },
-      {
-        timeout: hostRelease
-          ? NATIVE_NODE_ADMISSION_TIMEOUT_MS
-          : method === NATIVE_WORKER_COMPACT
-            ? 185_000
-            : 60_000,
-        requireSameConnection: true,
-      },
-    );
+    try {
+      result = await send();
+    } catch (error) {
+      // A skew refusal comes before the host gets the launch, so it is sent once more with the
+      // sessions the node may stop to refresh that host.
+      if (
+        !(error instanceof Error) ||
+        !('code' in error) ||
+        error.code !== 'NATIVE_HOST_VERSION_SKEW' ||
+        !node.nativeSessions.supportsHostRefresh ||
+        !NODE_ADMISSION_METHODS.includes(method)
+      )
+        throw error;
+      const { getAllRuns } = await loadRunStore();
+      assertNativeConnection(owner, executionNodeId, node);
+      // Read with no await before the send, so the node gets the current run census.
+      result = await send(nodeLaunchRelease(getAllRuns(), executionNodeId, owner, method, params));
+    }
   } catch (error) {
     // A timeout is retryable only while the same issued owner still has authority.
     // Structured node/protocol failures remain terminal regardless of connection state.

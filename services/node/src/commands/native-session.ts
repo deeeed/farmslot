@@ -20,6 +20,7 @@ import type {
   NativeConversationCursor,
   NativeConversationUpdate,
   NativeExecutionNodeDeclaration,
+  NativeNodeSessionEnvelope,
 } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
@@ -71,8 +72,9 @@ export class NativeNodeSessions {
         error.code !== 'NATIVE_HOST_VERSION_SKEW'
       )
         throw error;
-      // Keep reads and cleanup available. The client refuses new admissions until a later
-      // node restart can refresh the idle host; never kill a busy reviewer to deploy.
+      // Keep reads and cleanup available. New admissions are refused until a launch carrying
+      // the gateway's release list finds every live session idle and released, or a later
+      // node start finds every runner stopped; never kill a busy reviewer to deploy.
       console.warn(error.message);
     }
   }
@@ -195,7 +197,10 @@ export class NativeNodeSessions {
     });
   }
 
-  async route(value: Record<string, unknown>): Promise<unknown> {
+  /** The gateway's `native.session` request; its fields are checked here. */
+  async route(
+    value: Partial<Record<keyof NativeNodeSessionEnvelope, unknown>>,
+  ): Promise<unknown> {
     if (!this.declaration || value.owner !== this.declaration.ownerPrincipalId)
       throw Object.assign(new Error('Native profile is not owned by this principal'), {
         code: 'AUTH_FORBIDDEN',

@@ -12,11 +12,13 @@ A native host is the detached supervisor and host process that runs native runne
 ## Automatic refresh
 
 - **Node start.** A node refreshes its host before it registers, if every runner has stopped.
-- **A launch, resume or transfer on a node host on another runtime.** The gateway sends the launch with its release list: the node owner's sessions bound there in runs that no longer keep them, by the same rules as below. The node refreshes its host before the launch when every live session is idle and released:
-  - It stops idle runners only on a host with the idle-runner fence, and at most 6 of them, so the launch finishes within its timeout. An older host waits until every runner has stopped.
+- **A launch, resume or transfer on a node host on another runtime.** The node refuses the launch as skewed. The gateway then sends it once more with its release list: the node owner's sessions bound there in runs that no longer keep them, by the same rules as below. An ensure's own session is never on it. The node refreshes its host before the launch when every live session is idle and released:
+  - It stops idle runners only on a host with the idle-runner fence, and at most 6 of them, so the launch normally finishes within its 160 s timeout. With more idle runners, or on a host without the fence, every launch is refused until you close sessions or refresh the host by hand (below); the error says which.
   - A session the list doesn't name keeps the host: another owner's, a Command Center chat or standalone session, one started after the list, and an active run's own worker or static review workspace. The error names each with its reason.
+  - A launch that waited for another refresh is refused rather than use its older list; the next one sends a fresh list.
   - Only nodes that declare `supportsHostRefresh` get the list. An older node refreshes only at its own start.
-- **Gateway start, and any launch on a host on another runtime.** The gateway refreshes its local host when every live session is idle:
+  - Residual risks: a session released when the list was sent can be claimed by a run before the stop, and is stopped anyway; its next use resumes it. The host's fence checks busy state, not the list, so a launch the host held from before a node restart that finishes in between leaves an idle unlisted session that is stopped too.
+- **Gateway start, and any launch on the gateway's local host on another runtime.** The gateway refreshes its local host when every live session is idle:
   - Idle runners are stopped, and their journals and saved runner identities are kept. At startup the gateway then starts the current host.
   - The next host marks those sessions for resume. Warm reviewers, review fixes and messages to a worker then resume them on their own. A Command Center chat shows its resume action. The Co-Pilot starts again from Command Center.
   - Some idle sessions of an active run count as busy, because their next step would need a person: its own worker (`primary`, `dev`, `fix-bug`), a CI fix and a static review workspace.
@@ -26,7 +28,9 @@ A native host is the detached supervisor and host process that runs native runne
 
 After a checkout update, a gateway that hasn't restarted yet runs older code than its checkout (it reads its own build when it starts). It refuses to refresh then, because a host started from the checkout would be skewed against it too, and the error says to restart the gateway.
 
-A host with a busy session keeps running. New launches fail, and the error lists the busy sessions. Once they finish, the next launch, or the next gateway start, refreshes the host. That holds for node hosts too: nothing refreshes one between launches, so a node host stays on the old runtime until its next launch or node start. A live dev worker of an active run keeps a node host for as long as it runs.
+A host with a busy session keeps running. New launches fail, and the error lists the busy sessions. Once they finish, the next launch, or the next gateway start, refreshes the host. A node host is refreshed the same way at its next launch, within the limits above. Nothing refreshes a host between launches, and a node start that found busy runners doesn't check again later, so a node host stays on the old runtime until its next launch or node start. A live dev worker of an active run keeps a node host for as long as it runs.
+
+A launch that refreshes a host takes longer than usual: up to a minute plus 15 s per idle runner. Command Center (15 s) and Companion resume (30 s) can time out first and show an error for a session that was in fact created; refresh the view before retrying.
 
 ## Manual refresh
 

@@ -88,7 +88,9 @@ export function withNativeHostRefreshPolicy<T>(
 
 /**
  * A node's policy for one launch: it may stop only its owner's sessions that the gateway's run
- * census released. Any other live session keeps the host, so a stale list can only over-keep.
+ * census released. Any other live session keeps the host. A session released when the list was
+ * sent and claimed by a run before the stop is still stopped; a launch that waited for another
+ * refresh is refused rather than use its older list.
  */
 export function releasedSessionsPolicy(
   owner: string,
@@ -108,11 +110,20 @@ export function releasedSessionsPolicy(
 
 /**
  * An execution node stops idle runners only under a host's idle-runner fence, and at most this
- * many, so a launch that refreshes its host finishes within its gateway's timeout.
+ * many, so a launch that refreshes its host normally finishes within its gateway's timeout.
  */
 export interface NativeIdleStopLimits {
   maxRunners: number;
 }
+
+/** The policy a refresh runs under, and whether it is one launch's own. */
+interface RefreshScope {
+  policy?: NativeHostRefreshPolicy;
+  perLaunch: boolean;
+}
+
+/** A launch waited for another refresh; its release list may no longer match the runs. */
+const STALE_RELEASE_LIST = 'another refresh ran while this launch waited: retry with a fresh list';
 
 /** How long a busy census answers launches before the host is asked again. */
 const NATIVE_REFRESH_BUSY_REUSE_MS = 5_000;
@@ -364,29 +375,31 @@ export class NativeSessionClient {
    * retired once its runners have all stopped, or, under a refresh policy, when every live
    * session is idle and the policy keeps none: those runners are stopped, their journals kept,
    * and the next host reports them for resume. Returns the sessions that keep it running.
-   * Never starts a host. Concurrent callers share one refresh; a caller's own `policy` waits for
-   * it and then runs its own.
+   * Never starts a host. Concurrent callers share one refresh. A launch's own `policy` never
+   * shares one: if another refresh runs, it waits and is refused, since its list may be stale.
+   * A call without one (warm, or the client's policy) joins whichever refresh runs, a launch's
+   * included; no caller today mixes the two on one client.
    */
   refreshStaleHost(
     policy?: NativeHostRefreshPolicy,
   ): Promise<{ refreshed: boolean; busy: string[] }> {
     if (policy) return this.refreshUnder(policy);
-    this.refreshing ??= this.refreshOnce(this.refreshPolicy, false).finally(() => {
+    this.refreshing ??= this.refreshOnce({ policy: this.refreshPolicy, perLaunch: false }).finally(() => {
       this.refreshing = undefined;
     });
     return this.refreshing;
   }
 
-  /**
-   * A refresh under a caller's own policy runs after any other and answers from a fresh census,
-   * never from another policy's result.
-   */
+  /** A refresh under one launch's own policy, from a fresh census, never another's result. */
   private async refreshUnder(
     policy: NativeHostRefreshPolicy,
   ): Promise<{ refreshed: boolean; busy: string[] }> {
-    // A refresh's outcome belongs to the caller that asked for it; a failure only ends this wait.
-    while (this.refreshing) await this.refreshing.catch(() => undefined);
-    this.refreshing = this.refreshOnce(policy, true).finally(() => {
+    if (this.refreshing) {
+      // A refresh's outcome belongs to the caller that asked for it; a failure only ends this wait.
+      while (this.refreshing) await this.refreshing.catch(() => undefined);
+      return { refreshed: false, busy: [STALE_RELEASE_LIST] };
+    }
+    this.refreshing = this.refreshOnce({ policy, perLaunch: true }).finally(() => {
       this.refreshing = undefined;
     });
     return this.refreshing;
@@ -434,26 +447,27 @@ export class NativeSessionClient {
 
   /** The version-skew error, saying when the host is refreshed. */
   private skew(host: HostIdentity, busy: readonly string[], capability?: string): Error {
+    // The capability a launch lacks too; the host it is refreshed to has it.
+    const lacks = capability
+      ? ` ${capability.replace(/; existing sessions remain (?:available|readable)$/, '')}.`
+      : '';
     if (this.olderThanCheckout())
       return nativeHostVersionSkew(
         host,
         [],
-        'This service runs older code than its checkout: restart it to take the new runtime and refresh the host.',
+        'This service runs older code than its checkout: restart it to take the new runtime and refresh the host.' +
+          lacks,
       );
-    return nativeHostVersionSkew(
-      host,
-      busy,
-      (this.refreshPolicy || requestRefreshPolicies.getStore()
+    const refreshes = this.idleStopLimits
+      ? 'A launch refreshes it once every live session is idle and released by the gateway, and a node start once every runner has stopped.'
+      : this.refreshPolicy
         ? 'It is refreshed at a later launch or service restart once no live session is busy.'
-        : 'It is refreshed when its service next starts, once every runner has stopped.') +
-        (capability ? ` ${capability}.` : ''),
-    );
+        : 'It is refreshed when its service next starts, once every runner has stopped.';
+    return nativeHostVersionSkew(host, busy, refreshes + lacks);
   }
 
-  private async refreshOnce(
-    policy: NativeHostRefreshPolicy | undefined,
-    requestPolicy: boolean,
-  ): Promise<{ refreshed: boolean; busy: string[] }> {
+  private async refreshOnce(scope: RefreshScope): Promise<{ refreshed: boolean; busy: string[] }> {
+    const { policy } = scope;
     let host: HostIdentity;
     try {
       host = this.existingHost();
@@ -465,7 +479,7 @@ export class NativeSessionClient {
     }
     if (nativeHostRunsCurrentRuntime(host)) return { refreshed: false, busy: [] };
     if (
-      !requestPolicy &&
+      !scope.perLaunch &&
       this.lastBusy?.hostPid === host.pid &&
       Date.now() - this.lastBusy.at < NATIVE_REFRESH_BUSY_REUSE_MS
     )
@@ -494,25 +508,28 @@ export class NativeSessionClient {
               : kept.get(session.id);
       return reason ? [`${session.id} (${reason})`] : [];
     });
-    if (busy.length) return this.busy(host, busy, requestPolicy);
+    if (busy.length) return this.busy(host, busy, scope);
     if (this.idleStopLimits) {
       // The unfenced stop of an older host relies on this process's admission lock alone, and a
-      // restarted node can't see launches the host still holds from before.
+      // restarted node can't see launches the host still holds from before. The fence itself
+      // checks busy state, not this census: such a launch finishing between the two leaves an
+      // idle session the list didn't release, and it is stopped too.
       if (!host.supportsIdleRunnerUpgrade)
         return this.busy(
           host,
           [
-            'the host predates the idle-runner fence: it is refreshed once every runner has stopped',
+            'the host predates the idle-runner fence: close its idle sessions, or refresh it by hand',
           ],
-          requestPolicy,
+          scope,
         );
-      if (live.length > this.idleStopLimits.maxRunners)
+      const { maxRunners } = this.idleStopLimits;
+      if (live.length > maxRunners)
         return this.busy(
           host,
           [
-            `${live.length} idle runners, more than the ${this.idleStopLimits.maxRunners} a launch may stop`,
+            `${live.length} idle runner${live.length === 1 ? '' : 's'}, more than the ${maxRunners} a launch may stop: close some, or refresh the host by hand`,
           ],
-          requestPolicy,
+          scope,
         );
     }
     const stopped = await stopIdleSessionsNativeHost(this.root, host, live.length);
@@ -520,7 +537,7 @@ export class NativeSessionClient {
     return this.busy(
       host,
       stopped.busy.length ? stopped.busy : ['the host process identity could not be verified'],
-      requestPolicy,
+      scope,
     );
   }
 
@@ -528,10 +545,10 @@ export class NativeSessionClient {
   private busy(
     host: HostIdentity,
     busy: string[],
-    requestPolicy: boolean,
+    scope: RefreshScope,
   ): { refreshed: false; busy: string[] } {
     const result = { refreshed: false as const, busy };
-    if (!requestPolicy) this.lastBusy = { at: Date.now(), hostPid: host.pid, result };
+    if (!scope.perLaunch) this.lastBusy = { at: Date.now(), hostPid: host.pid, result };
     return result;
   }
 
@@ -551,9 +568,12 @@ export class NativeSessionClient {
       // it must not hold that host's refresh, nor another launch's. A refresh's outcome
       // belongs to the caller that asked for it, so its error is not this launch's; the
       // launch reads the host again below.
+      const waited = this.refreshing !== undefined;
       while (this.refreshing) await this.refreshing.catch(() => undefined);
       host = await this.host();
       if (!nativeHostRunsCurrentRuntime(host)) {
+        // A launch's own list predates the refresh it waited for: refuse it rather than use it.
+        if (requestPolicy && waited) return this.dispatch<T>(request, host, [STALE_RELEASE_LIST]);
         const refresh = await this.refreshStaleHost(requestPolicy);
         // A stopped or vanished host is replaced by a current one; a skewed host refuses
         // before any request reaches it.

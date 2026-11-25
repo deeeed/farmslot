@@ -294,17 +294,28 @@ test('older node decoders cannot silently drop an explicit approval mode before 
   }
 });
 
-test('a launch to a node that refreshes its host carries the gateway’s release list', async () => {
+test('a launch a node refuses as skewed is sent once more with the gateway’s release list', async () => {
   const machine = 'native-host-refresh-node';
   const owner = 'native-owner';
   const frames: Array<{ method: string; hostRelease?: unknown }> = [];
+  let refuse = 0;
   const session = { id: 'session', ownerPrincipalId: owner, executionNodeId: machine };
   const ws = {
     readyState: WebSocket.OPEN,
     send(raw: string) {
       const frame = JSON.parse(raw);
       frames.push({ method: frame.params.method, hostRelease: frame.params.hostRelease });
-      handleNodeResponse(frame.id, true, { session }, undefined, undefined, ws);
+      if (refuse > 0) {
+        refuse -= 1;
+        handleNodeResponse(
+          frame.id,
+          false,
+          undefined,
+          'Native host runtime version skew',
+          'NATIVE_HOST_VERSION_SKEW',
+          ws,
+        );
+      } else handleNodeResponse(frame.id, true, { session }, undefined, undefined, ws);
     },
   } as WebSocket;
   registerNode(
@@ -313,17 +324,30 @@ test('a launch to a node that refreshes its host carries the gateway’s release
     ws,
     undefined,
     undefined,
-    { ownerPrincipalId: owner },
+    { ownerPrincipalId: owner, supportsEnsure: true },
     { principalId: 'node-test', valid: () => true },
   );
-  const params = { executionNodeId: machine, runner: 'codex', cwd: '/tmp' };
+  const create = { executionNodeId: machine, runner: 'codex', cwd: '/tmp' };
+  const skewed = { code: 'NATIVE_HOST_VERSION_SKEW' };
   try {
-    await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, params);
+    // A current host: one send, no list.
+    await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create);
+    // An older node gets no list, so its refusal stands.
+    refuse = 1;
+    await assert.rejects(routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create), skewed);
     getNode(machine)!.nativeSessions!.supportsHostRefresh = true;
-    await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, params);
+    // A node that reads one gets it on the second send; a refusal then stands.
+    refuse = 1;
+    await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create);
+    refuse = 2;
+    await assert.rejects(routeNativeExecution(owner, Methods.NATIVE_SESSION_ENSURE, { ...create, sessionId: 'session' }), skewed);
     assert.deepEqual(frames, [
       { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
+      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
+      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
       { method: Methods.NATIVE_SESSION_CREATE, hostRelease: [] },
+      { method: Methods.NATIVE_SESSION_ENSURE, hostRelease: undefined },
+      { method: Methods.NATIVE_SESSION_ENSURE, hostRelease: [] },
     ]);
   } finally {
     unregisterByWs(ws);
