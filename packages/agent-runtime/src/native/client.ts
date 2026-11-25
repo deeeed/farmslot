@@ -367,7 +367,9 @@ export class NativeSessionClient {
    * Never starts a host. Concurrent callers share one refresh; a caller's own `policy` waits for
    * it and then runs its own.
    */
-  refreshStaleHost(policy?: NativeHostRefreshPolicy): Promise<{ refreshed: boolean; busy: string[] }> {
+  refreshStaleHost(
+    policy?: NativeHostRefreshPolicy,
+  ): Promise<{ refreshed: boolean; busy: string[] }> {
     if (policy) return this.refreshUnder(policy);
     this.refreshing ??= this.refreshOnce(this.refreshPolicy, false).finally(() => {
       this.refreshing = undefined;
@@ -499,7 +501,9 @@ export class NativeSessionClient {
       if (!host.supportsIdleRunnerUpgrade)
         return this.busy(
           host,
-          ['the host predates the idle-runner fence: it is refreshed once every runner has stopped'],
+          [
+            'the host predates the idle-runner fence: it is refreshed once every runner has stopped',
+          ],
           requestPolicy,
         );
       if (live.length > this.idleStopLimits.maxRunners)
@@ -539,7 +543,10 @@ export class NativeSessionClient {
       return this.dispatch<T>(request, await this.host(), []);
     let host: HostIdentity | undefined;
     const requestPolicy = requestRefreshPolicies.getStore();
-    if ((requestPolicy ?? this.refreshPolicy) && NATIVE_ADMISSION_METHODS.includes(request.method)) {
+    if (
+      (requestPolicy ?? this.refreshPolicy) &&
+      NATIVE_ADMISSION_METHODS.includes(request.method)
+    ) {
       // A launch checks the host before it counts itself: it never goes to an old host, so
       // it must not hold that host's refresh, nor another launch's. A refresh's outcome
       // belongs to the caller that asked for it, so its error is not this launch's; the

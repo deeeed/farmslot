@@ -114,12 +114,15 @@ test('a node launch may stop its owner’s bound sessions there that no active r
   otherOwner.nativeSession!.ownerPrincipalId = 'someone-else';
   const foreign = run({ status: 'blocked' }, { agentContexts: [otherOwner] });
 
-  assert.deepEqual(
-    nodeReleasedSessions([active, done, foreign], 'macpro', 'farm-automation'),
-    ['reviewer', 'old-worker'],
-  );
+  assert.deepEqual(nodeReleasedSessions([active, done, foreign], 'macpro', 'farm-automation'), [
+    'reviewer',
+    'old-worker',
+  ]);
   // A session an active run keeps is kept even when a finished run also bound it.
-  const reused = run({ status: 'done' }, { agentContexts: [context('review', 'worker', 'macpro')] });
+  const reused = run(
+    { status: 'done' },
+    { agentContexts: [context('review', 'worker', 'macpro')] },
+  );
   assert.deepEqual(nodeReleasedSessions([reused, active], 'macpro', 'farm-automation'), [
     'reviewer',
   ]);

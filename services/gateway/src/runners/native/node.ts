@@ -12,11 +12,11 @@ import {
   NATIVE_WORKER_STATE,
   NATIVE_WORKER_TRANSFER,
 } from '@farmslot/agent-runtime/native';
+import { NATIVE_NODE_ADMISSION_TIMEOUT_MS } from '@farmslot/agent-runtime/native/host-runtime';
 import {
   NATIVE_PROFILE_METHODS,
   validateNativeProfileParams,
 } from '@farmslot/agent-runtime/native/profile-service';
-import { NATIVE_NODE_ADMISSION_TIMEOUT_MS } from '@farmslot/agent-runtime/native/host-runtime';
 import { routeNativeSession } from '@farmslot/agent-runtime/native/service';
 import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-service';
 import {
