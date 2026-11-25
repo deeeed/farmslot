@@ -245,6 +245,9 @@ test('a loop that enters the gate after its release is not held', async (t) => {
   const runId = preparingGate();
   let engine: Promise<void> | undefined;
   t.after(async () => {
+    // Releases a gate the loop is held in, should the sticky release ever stop working, so this
+    // test fails on its assertion instead of hanging its teardown.
+    releaseGate();
     await engine;
     updateRun(runId, {
       status: 'failed',
