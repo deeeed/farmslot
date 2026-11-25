@@ -66,7 +66,6 @@ import {
   cleanupSlotStorage,
   normalizeTaskRelativeDir,
   parkTaskScratch,
-  removeRetainedTaskDirs,
 } from '../../fleet/slot-storage-cleanup.js';
 import { publicationStatusForRun } from '../../run-completion/publication-status.js';
 import {
@@ -123,7 +122,7 @@ import {
   detachRunsForReleasedSlot,
   markCompletionFailureDiscarded,
 } from './release-run-ownership.js';
-import { retainedPriorTaskDirs, runOutputRetained } from './retained-task-dirs.js';
+import { scrubTempForRun, taskBundleConfirmed, TEMP_TASK_ROOT } from './temp-scrub.js';
 import {
   activePrepareAborts,
   applySelectedApp,
@@ -1162,7 +1161,18 @@ async function slotReleaseImpl(
       }
       await refreshRetention(moved);
     }
-    if (taskRel) {
+    // The temp/tasks layout: clear temp/ only once the bundle is confirmed to hold this run's
+    // task dir. Delete rather than park (a park across devices fails on an external drive, and
+    // a parked copy still sits on the node). Unconfirmed, temp/ stays for the next prepare.
+    const tempScrub = !preserveAgents && taskDirName === TEMP_TASK_ROOT;
+    const releasing = tempScrub && releaseRunId ? await getRunWithArchived(releaseRunId) : undefined;
+    const bundleConfirmed = Boolean(releasing && (await taskBundleConfirmed(releasing)));
+    if (tempScrub && !bundleConfirmed)
+      step(
+        'storage-clean',
+        `Kept temp/: ${releasing ? `run ${releasing.id.slice(0, 8)}'s bundle is not confirmed` : 'no finished run'}; the next prepare clears it`,
+      );
+    if (taskRel && (!tempScrub || bundleConfirmed)) {
       await execOnSlot(
         vars,
         `rm -rf ${shellQuote(`${vars.remoteRepo}/${taskDirName}/${taskRel}`)}`,
@@ -1176,17 +1186,24 @@ async function slotReleaseImpl(
     // release only: a preserveAgents release keeps workers that may still own it.
     let scratchKeep: string[] = [];
     let scratchFailed = false;
-    if (!preserveAgents) {
+    if (tempScrub && bundleConfirmed) {
       await assertReleaseClaim();
       try {
-        // Scratch is deleted once the releasing run's bundle retains its output; it is
-        // parked off the checkout otherwise, so a later run never sees it either way.
-        const releasing = releaseRunId ? await getRunWithArchived(releaseRunId) : undefined;
-        const scratch = await parkTaskScratch(vars, projectJson, {
-          remove: Boolean(releasing && runOutputRetained(releasing)),
-        });
+        const scrub = await scrubTempForRun(vars, projectJson, releasing, { keepOwn: false });
+        if (scrub?.removed.length)
+          step('storage-clean', `Removed ${scrub.removed.length} entries from temp/`);
+        for (const entry of scrub?.refused ?? [])
+          step('storage-clean', `Left ${entry.path}: ${entry.reason}`);
+      } catch (err) {
+        // The next prepare clears temp/ and fails loudly if it cannot; release goes on.
+        step('storage-clean', `temp/ scrub failed: ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
+    if (!preserveAgents && !tempScrub) {
+      await assertReleaseClaim();
+      try {
+        const scratch = await parkTaskScratch(vars, projectJson);
         scratchKeep = scratch.refused.map((entry) => entry.path);
-        for (const entry of scratch.removed) step('storage-clean', `Removed scratch ${entry.path}`);
         for (const entry of scratch.parked)
           step('storage-clean', `Parked scratch ${entry.path} at ${entry.to}`);
         for (const entry of scratch.refused)
@@ -1194,29 +1211,6 @@ async function slotReleaseImpl(
       } catch (err) {
         scratchFailed = true;
         step('storage-clean', `Scratch parking failed: ${(err as Error).message.slice(0, 200)}`);
-      }
-    }
-
-    // Earlier runs' task dirs go as soon as their bundles hold them, not after the age prune:
-    // a held-out trial on this slot must not find another run's task or answers.
-    if (!preserveAgents) {
-      await assertReleaseClaim();
-      try {
-        const removed = await removeRetainedTaskDirs(
-          vars,
-          projectJson,
-          retainedPriorTaskDirs(
-            listRunsForSlotHistory(params.slotId, { limit: 100 }).runs,
-            vars.remoteRepo,
-            taskDirName,
-          ),
-        );
-        for (const entry of removed.removed)
-          step('storage-clean', `Removed retained task dir ${entry.path}`);
-        for (const entry of removed.refused)
-          step('storage-clean', `Left task dir ${entry.path}: ${entry.reason}`);
-      } catch (err) {
-        step('storage-clean', `Task dir removal failed: ${(err as Error).message.slice(0, 200)}`);
       }
     }
 

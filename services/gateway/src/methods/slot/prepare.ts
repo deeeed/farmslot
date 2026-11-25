@@ -17,7 +17,6 @@ import {
 import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
 
-import { resolveProjectTaskDirName } from '../../core/config.js';
 import { withFarmGitConfig } from '../../core/farm-git.js';
 import {
   execOnSlot,
@@ -43,7 +42,6 @@ import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { farmCommandRootsForSlot } from '../../fleet/farm-paths.js';
 import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
-import { parkTaskScratch, removeRetainedTaskDirs } from '../../fleet/slot-storage-cleanup.js';
 import { waitForSlotGitIndex } from '../../host-services/parked-work.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
@@ -70,7 +68,7 @@ import {
   retireNativeWorkersForSlot,
 } from '../../runners/native/worker.js';
 import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
-import { getRun, getRunWithArchived, listRunsForSlotHistory } from '../../runs/store.js';
+import { getRun, getRunWithArchived } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withSlotSources } from '../../sources/runtime.js';
 
@@ -118,6 +116,7 @@ import {
   selectPrepareProfile,
 } from './prepare-profile.js';
 import { syncPrepareFixtures } from './prepare-runtime-context.js';
+import { scrubTempForRun, shouldScrubTempForRun } from './temp-scrub.js';
 import {
   acquirePrepareSentinel,
   type PrepareSentinelLock,
@@ -138,7 +137,6 @@ import {
   type TrackedFilesSnapshot,
 } from './prepare-tracked-files.js';
 import { checkProjectPrerequisites } from './prerequisites.js';
-import { retainedPriorTaskDirs } from './retained-task-dirs.js';
 import {
   activePrepareAborts,
   activePrepareSessions,
@@ -747,28 +745,29 @@ async function slotPrepareInner(
 
   await excludeSlotScaffolding(vars, projectJson);
 
-  // 1b. No earlier run's work in the task root: a new run (a held-out trial above all) must not
-  // read another run's task or scratch. Retained task dirs are deleted, other scratch is parked
-  // off the checkout. A warm handoff keeps its parent's live worker files.
-  const preparingRun = params.runId ? getRun(params.runId) : undefined;
-  if (!preparingRun?.engineState?.flags?.warmSessionReuse) {
-    const scratch = await parkTaskScratch(vars, projectJson);
-    for (const entry of scratch.parked)
-      step('clean', `Parked an earlier run's scratch ${entry.path} at ${entry.to}`);
-    const removed = await removeRetainedTaskDirs(
-      vars,
-      projectJson,
-      retainedPriorTaskDirs(
-        listRunsForSlotHistory(params.slotId, { limit: 100 }).runs.filter(
-          (run) => run.id !== preparingRun?.parentRunId,
-        ),
-        vars.remoteRepo,
-        resolveProjectTaskDirName(projectJson),
-        params.runId,
-      ),
-    );
-    for (const entry of removed.removed)
-      step('clean', `Removed an earlier run's task dir ${entry.path}`);
+  // 1c. A new run starts on a temp/ holding nothing of another run's: a held-out trial must not
+  // read an earlier task, its scratch or its traces. Farm state, this run's own and its parent
+  // chain's task dirs, and live runs' stay. A warm handoff, a replay or a resumed task keeps
+  // its files. Anything that cannot be removed fails prepare, by name.
+  const scrubbingRun = params.runId ? getRun(params.runId) : undefined;
+  if (shouldScrubTempForRun(scrubbingRun)) {
+    checkAborted();
+    const scrub = await scrubTempForRun(vars, projectJson, scrubbingRun, { keepOwn: true });
+    if (scrub) {
+      for (const dir of scrub.taskDirs)
+        step(
+          'clean',
+          `Removed earlier task dir ${dir.path} (${dir.runId ? `run ${dir.runId.slice(0, 8)}, ${dir.bundled ? 'in its bundle' : 'NOT in a bundle'}` : 'no run record'})`,
+        );
+      const other = scrub.removed.length - scrub.taskDirs.length;
+      if (other > 0) step('clean', `Removed ${other} other entr${other === 1 ? 'y' : 'ies'} from temp/`);
+      if (scrub.refused.length)
+        throw new Error(
+          `temp/ still holds another run's files: ${scrub.refused
+            .map((entry) => `${entry.path} (${entry.reason})`)
+            .join('; ')}`,
+        );
+    }
   }
 
   // 2. Verify clean state / checkout branch

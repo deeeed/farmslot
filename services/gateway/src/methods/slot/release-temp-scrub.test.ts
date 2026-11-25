@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, mock, test } from 'node:test';
@@ -8,12 +16,13 @@ import { after, beforeEach, mock, test } from 'node:test';
 import type { RunOutput } from '@farmslot/protocol';
 
 // A held-out trial must not find earlier runs' tasks or scratch in temp/. Release runs for
-// real against a temp repo (its Git and the scratch/task-dir commands); the slot row lives in
-// memory and tmux, process and runtime probes stay inert. Mocks load before release.js.
+// real against a temp repo (its Git and the temp/ scrub); the slot row lives in memory, the
+// bundle store is a dir per run, and tmux, process and runtime probes stay inert.
 const root = mkdtempSync(path.join(tmpdir(), 'release-temp-scrub-'));
 const runRoot = path.join(root, 'runs');
 const parkHome = path.join(root, 'park-home');
-for (const dir of [runRoot, path.join(root, 'home'), path.join(root, 'pool'), parkHome])
+const bundles = path.join(root, 'bundles');
+for (const dir of [runRoot, path.join(root, 'home'), path.join(root, 'pool'), parkHome, bundles])
   mkdirSync(dir);
 process.env.FARMSLOT_RUNS_DIR = runRoot;
 process.env.FARMSLOT_HOME = path.join(root, 'home');
@@ -93,7 +102,7 @@ mock.module('../../core/index.js', {
     }),
     loadProjectVars: async () => ({
       runtimeDir: '.agent',
-      projectJson: { default_branch: 'main', task_dir: 'temp/tasks' },
+      projectJson: { default_branch: 'main', task_dir: 'temp/tasks', runtime_dir: 'temp/farmslot' },
     }),
     readSlotField: async (_slotId: string, field: string) => slotRow[field] ?? null,
     readSlotRow: async () => slotRow,
@@ -134,6 +143,14 @@ mock.module('../terminal-attachment.js', {
   namedExports: { ...realAttachments, terminalAttachmentCleanup: async () => ({ removed: [] }) },
 });
 
+const realRetained = await import('../../run-completion/retained-artifacts.js');
+mock.module('../../run-completion/retained-artifacts.js', {
+  namedExports: {
+    ...realRetained,
+    retainedRunTaskDirectory: async (run: { id: string }) => path.join(bundles, run.id),
+  },
+});
+
 const realRuns = await import('../../runs/store.js');
 const { slotRelease } = await import('./release.js');
 
@@ -141,21 +158,15 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-C', cwd, ...args], { env: gitEnv, encoding: 'utf8' }).trim();
 }
 
-const bundle = {
-  storeId: 'local',
-  bundleDigest: 'sha256:retained',
-  taskKey: 'task',
-  manifestDigest: 'sha256:manifest',
-};
-const failedCapture: RunOutput = {
+const captured: RunOutput = {
   capturedAt: '2026-11-25T00:00:00.000Z',
   workerFinished: true,
-  artifactManifest: [],
-  manifestDigest: 'sha256:empty',
-  captureError: 'store full',
+  artifactManifest: [{ path: 'artifacts/fix.diff', purpose: 'patch' }],
+  manifestDigest: 'sha256:m',
+  artifactBundle: { storeId: 'local', bundleDigest: 'sha256:b', taskKey: 't', manifestDigest: 'sha256:m' },
 };
 
-/** A slot repo on main whose temp/ holds earlier runs' task dirs and scratch. */
+/** A slot repo on main whose temp/ holds earlier runs' task dirs, scratch and traces. */
 function slotWithLeftovers(label: string) {
   const dir = path.join(root, label);
   repo = path.join(dir, 'repo');
@@ -173,61 +184,81 @@ function slotWithLeftovers(label: string) {
   git(repo, 'remote', 'add', 'origin', upstream);
   git(repo, 'push', '-q', 'origin', 'main');
   git(repo, 'fetch', '-q', 'origin');
-  const write = (rel: string) => {
+  for (const rel of [
+    'temp/farmslot/deps.lock-hash',
+    'temp/tasks/feat/tat-4752-1123-101010/TASK.md',
+    'temp/tasks/fix/tat-4591-1111-173307/TASK.md',
+    'temp/tasks/feat/tat-4801-1124-100000/TASK.md',
+    'temp/scratch-tat4752/fix-notes.md',
+    'temp/tat4505-trace.json',
+  ]) {
     mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
     writeFileSync(path.join(repo, rel), 'answer');
-  };
-  write('temp/tasks/feat/tat-4752-1123-101010/TASK.md');
-  write('temp/tasks/feat/tat-4752-1123-101010/artifacts/fix.diff');
-  write('temp/tasks/fix/tat-4591-1111-173307/TASK.md');
-  write('temp/scratch-tat4752/fix-notes.md');
+  }
+  slotRow = { ...slotRow, task_file: 'temp/tasks/feat/tat-4801-1124-100000/TASK.md' };
 }
 
-function finishedRun(ticket: string, task: string, retained: boolean) {
+/** The releasing run, its orchestrator task path, and (when `bundled`) its bundle copy. */
+function releasingRun(bundled: boolean) {
   const run = realRuns.createRun(
-    { flowType: 'dev', project: 'fixture', ticketOrPr: ticket, slotId: SLOT_ID },
+    { flowType: 'dev', project: 'fixture', ticketOrPr: 'TAT-4801', slotId: SLOT_ID },
     { deferBackgroundPersist: true },
   );
   realRuns.updateRun(run.id, {
     status: 'done',
-    taskFile: path.join(repo, 'temp/tasks', task, 'TASK.md'),
-    ...(retained ? { artifactBundle: bundle } : { output: failedCapture }),
+    taskFile: '/farm/projects/fixture/tasks/feat/tat-4801-1124-100000/TASK.md',
+    output: captured,
   });
+  if (bundled)
+    for (const rel of ['TASK.md', 'artifacts/fix.diff']) {
+      mkdirSync(path.dirname(path.join(bundles, run.id, rel)), { recursive: true });
+      writeFileSync(path.join(bundles, run.id, rel), 'x');
+    }
   return run.id;
 }
 
-const parked = () =>
-  existsSync(path.join(parkHome, 'parked-scratch')) ? readdirSync(parkHome) : [];
+const tempEntries = () => {
+  const out: string[] = [];
+  const walk = (rel: string) => {
+    for (const name of readdirSync(path.join(repo, rel))) {
+      const child = path.join(rel, name);
+      if (lstatSync(path.join(repo, child)).isDirectory()) walk(child);
+      else out.push(child);
+    }
+  };
+  walk('temp');
+  return out.sort();
+};
 
 beforeEach(() => {
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 9 };
-  rmSync(path.join(parkHome, 'parked-scratch'), { recursive: true, force: true });
 });
 
-test("release leaves no earlier run's retained task dir or scratch in temp/", async () => {
-  slotWithLeftovers('retained');
-  finishedRun('TAT-4752', 'feat/tat-4752-1123-101010', true);
-  const notRetained = finishedRun('TAT-4591', 'fix/tat-4591-1111-173307', false);
-  finishedRun('TAT-4800', 'feat/tat-4800-1124-090000', true);
+test('a release whose bundle holds its task dir leaves only farm state in temp/', async () => {
+  slotWithLeftovers('confirmed');
+  releasingRun(true);
 
   const result = await slotRelease({ slotId: SLOT_ID, forceReset: true }, () => {});
 
   assert.deepEqual(result, { released: true });
-  assert.equal(existsSync(path.join(repo, 'temp/tasks/feat/tat-4752-1123-101010')), false);
-  assert.equal(existsSync(path.join(repo, 'temp/scratch-tat4752')), false);
-  assert.deepEqual(parked(), [], 'scratch is deleted, not parked, once the bundle has the run');
-  // A run whose bundle copy failed keeps its task dir.
-  assert.equal(realRuns.getRun(notRetained)?.output?.captureError, 'store full');
-  assert.equal(existsSync(path.join(repo, 'temp/tasks/fix/tat-4591-1111-173307/TASK.md')), true);
+  assert.deepEqual(tempEntries(), ['temp/farmslot/deps.lock-hash']);
+  assert.equal(existsSync(path.join(parkHome, 'parked-scratch')), false, 'deleted, not parked');
 });
 
-test("when the releasing run's bundle copy failed, its scratch is kept off the checkout", async () => {
-  slotWithLeftovers('capture-failed');
-  finishedRun('TAT-4801', 'feat/tat-4801-1124-100000', false);
+test('a release whose bundle is not confirmed leaves temp/ for the next prepare', async () => {
+  slotWithLeftovers('unconfirmed');
+  releasingRun(false);
 
   const result = await slotRelease({ slotId: SLOT_ID, forceReset: true }, () => {});
 
   assert.deepEqual(result, { released: true });
-  assert.equal(existsSync(path.join(repo, 'temp/scratch-tat4752')), false);
-  assert.deepEqual(parked(), ['parked-scratch'], 'parked, not deleted');
+  assert.deepEqual(tempEntries(), [
+    'temp/farmslot/deps.lock-hash',
+    'temp/scratch-tat4752/fix-notes.md',
+    'temp/tasks/feat/tat-4752-1123-101010/TASK.md',
+    'temp/tasks/feat/tat-4801-1124-100000/TASK.md',
+    'temp/tasks/fix/tat-4591-1111-173307/TASK.md',
+    'temp/tat4505-trace.json',
+  ]);
+  assert.equal(existsSync(path.join(parkHome, 'parked-scratch')), false, 'nothing parked');
 });
