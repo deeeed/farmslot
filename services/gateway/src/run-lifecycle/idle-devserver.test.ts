@@ -206,7 +206,11 @@ test('a keep-warm slot with no run keeps its dev server for the warm window, the
   f.advance();
   await f.reaper.sweep('slot-a');
   assert.equal(f.stopped(), 0, 'kept past the plain idle limit');
-  for (let spent = DEVSERVER_IDLE_LIMIT_MS; spent < WARM_DEVSERVER_IDLE_LIMIT_MS; spent += DEVSERVER_IDLE_LIMIT_MS)
+  for (
+    let spent = DEVSERVER_IDLE_LIMIT_MS;
+    spent < WARM_DEVSERVER_IDLE_LIMIT_MS;
+    spent += DEVSERVER_IDLE_LIMIT_MS
+  )
     f.advance();
   await f.reaper.sweep('slot-a');
   assert.equal(f.stopped(), 1, 'stopped at the warm limit');
