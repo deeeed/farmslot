@@ -280,6 +280,7 @@ function initialAgentContextsForRun(
       runnerSessionId: run.metrics.runnerSessionId,
       runnerSessionPath: run.metrics.runnerSessionPath,
       runnerSessionArchive: run.metrics.runnerSessionArchive,
+      runnerSessionArchives: run.metrics.runnerSessionArchives,
       nudgeCount: run.metrics.nudgeCount,
       updatedAt: run.updatedAt,
     },
@@ -2213,6 +2214,10 @@ export async function timeRunSlotRelease<T extends { released: boolean }>(
   runId: string,
   slotId: string,
   release: () => Promise<T>,
+  /** Read after `release` settles: where the release spent its time, when it measured that. */
+  breakdown?: () =>
+    | Pick<NonNullable<Run['slotRelease']>, 'phasesMs' | 'bundleLock' | 'exec'>
+    | undefined,
 ): Promise<T> {
   const startedAt = Date.now();
   const result = await release();
@@ -2222,6 +2227,7 @@ export async function timeRunSlotRelease<T extends { released: boolean }>(
         slotId,
         startedAt: new Date(startedAt).toISOString(),
         durationMs: Date.now() - startedAt,
+        ...breakdown?.(),
       },
     });
   return result;

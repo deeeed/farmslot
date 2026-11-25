@@ -511,6 +511,62 @@ test(
   },
 );
 
+// A held PR (wait at inline_fix_blocked while it offered a dispatch, run fcfb5124)
+// gets no new inline fix: the fix prompt rebases and pushes, which is an
+// update-branch without a child run. It returns null, not "blocked", so it cannot
+// re-raise the gate the operator just answered.
+const HELD = [
+  {
+    id: 'hold',
+    type: 'ci_inline_fix_blocked' as const,
+    title: 'inline fix blocked',
+    description: 'inline fix blocked',
+    actions: [
+      { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'primary' as const },
+      { id: 'wait', label: 'Keep watching CI', style: 'secondary' as const },
+    ],
+    createdAt: '2026-11-24T13:28:57.000Z',
+    resolvedAt: '2026-11-24T13:28:57.000Z',
+    resolvedAction: 'wait',
+  },
+];
+
+test('a held PR starts no new inline fix', { timeout: 2000 }, async () => {
+  const run = fixture();
+  run.decisions = HELD;
+  const result = await tryInlineCIFix(
+    run.id,
+    'fixture-slot',
+    [],
+    ['lint'],
+    42,
+    'example/product',
+    AbortSignal.timeout(1500),
+  );
+  assert.equal(result, null, 'not attempted, and not "blocked"');
+  assert.equal(deliveries, 0, 'no fix prompt was delivered');
+  assert.equal(files.size, 0);
+});
+
+test('a hold lets an inline fix already in flight finish', { timeout: 2000 }, async () => {
+  // A delivery in flight is recovered rather than abandoned: it passes the hold and
+  // reaches its own scope check, which here reports the missing scope.
+  const run = recoverFixture();
+  run.decisions = HELD;
+  scopeMissing = true;
+  const result = await tryInlineCIFix(
+    run.id,
+    'fixture-slot',
+    [],
+    ['lint'],
+    42,
+    'example/product',
+    AbortSignal.timeout(1500),
+  );
+  assert.notEqual(result, null, 'the hold did not stop the in-flight delivery');
+  assert.equal(result?.blockedReason, 'Cannot recover CI fix scope: CI_FIX_SCOPE_MISSING');
+});
+
 test('recovery with missing scope blocks before a new nudge', { timeout: 2000 }, async () => {
   const run = recoverFixture();
   scopeMissing = true;

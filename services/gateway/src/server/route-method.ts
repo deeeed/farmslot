@@ -825,6 +825,8 @@ async function routeAuthorizedMethod(
   const runRoute = await routeRunMethod(method, p, {
     authorizeReviewBudgetExtension: () =>
       authorizeGatewayMethod(authRuntime, attestationSession, Methods.RUN_EXTEND_REVIEW_BUDGET),
+    authorizeTraceRecord: (traceMethod) =>
+      authorizeGatewayMethod(authRuntime, attestationSession, traceMethod),
     broadcast,
     emit,
     authorizeEvidenceAttestation: (action) =>

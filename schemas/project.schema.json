@@ -264,9 +264,25 @@
               "fallback": {
                 "type": "string",
                 "description": "Profile to run instead when any 'requires' check fails. Required when 'requires' is non-empty; chains must be acyclic."
+              },
+              "pinned_kind": {
+                "type": "string",
+                "enum": ["runway", "source"],
+                "description": "What this profile installs for a pinned comparison run: 'runway', a prebuilt Runway artifact of the run's start commit; 'source', a build of the checked-out commit. Required on every profile pinned_profiles lists."
               }
             }
           }
+        },
+        "pinned_profiles": {
+          "description": "Profiles a pinned comparison run (a comparison run with a startRef) may prepare with: one list for every platform, or an object with one list per platform. The first entry is the default, an explicit choice must be listed, and selection never walks a fallback. Every listed profile declares pinned_kind.",
+          "oneOf": [
+            { "$ref": "#/$defs/prepare_pinned_profile_list" },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": { "$ref": "#/$defs/prepare_pinned_profile_list" }
+            }
+          ]
         }
       }
     },
@@ -1083,6 +1099,14 @@
             }
           }
         }
+      }
+    },
+    "traces": {
+      "type": "object",
+      "description": "Run traces as private training data (ADR-039 Amendment 10). enabled: false opts the project out: transcripts are archived only at slot release, for History, and export skips its runs.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true }
       }
     },
     "static_review": {
@@ -2218,6 +2242,12 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "prepare_pinned_profile_list": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "prepare_core": {
       "type": "object",
       "additionalProperties": false,

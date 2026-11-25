@@ -215,6 +215,7 @@ test('synthesizeRawSnapshotFromGraphQL emits a single TSV line for prState with 
     mergeStateStatus: 'DIRTY',
     reviewDecision: '',
     headRefName: 'feat/y',
+    headRefOid: 'c'.repeat(40),
     title: 'PR with\ttab in title',
     statusCheckRollup: { contexts: { nodes: [] } },
     comments: { nodes: [] },
@@ -233,6 +234,7 @@ test('synthesizeRawSnapshotFromGraphQL emits a single TSV line for prState with 
   assert.equal(parts[8], '');
   // Title may contain tabs; consumers slice(9).join('\t') to recover it.
   assert.equal(parts.slice(9).join('\t'), 'PR with\ttab in title');
+  assert.equal(snap.headSha, 'c'.repeat(40), 'the batched read carries the PR head');
 });
 
 test('synthesizeRawSnapshotFromGraphQL → parseJsonLines truncates body and tags Bot authors with [bot] suffix', () => {

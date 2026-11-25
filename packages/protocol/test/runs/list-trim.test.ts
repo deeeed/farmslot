@@ -892,3 +892,18 @@ test('a row that left out a heavy detail key reads as trimmed; small keys stay a
   assert.equal('detailTrimmed' in plain, false);
   assert.equal(runHasTrimmedDetail(plain), false);
 });
+
+test('list rows leave out the per-session archive ref lists', () => {
+  const run = richRun();
+  const session = {
+    status: 'captured' as const,
+    sessionKey: 's1',
+    originalPath: '/home/w/s1.jsonl',
+  };
+  run.metrics.runnerSessionArchives = [session];
+  run.agentContexts![0]!.runnerSessionArchives = [session];
+  const row = runListRow(run);
+  assert.equal('runnerSessionArchives' in row.metrics, false);
+  assert.equal('runnerSessionArchives' in row.agentContexts![0]!, false);
+  assert.equal(row.detailTrimmed, true);
+});

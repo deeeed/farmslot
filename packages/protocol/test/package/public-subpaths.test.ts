@@ -291,6 +291,9 @@ for (const [name, actual, expected] of [
       backfillSummaries: Methods.RUN_BACKFILL_SUMMARIES,
       recipeRunsForSlot: Methods.RUN_RECIPE_RUNS_FOR_SLOT,
       recipeRunsForRun: Methods.RUN_RECIPE_RUNS_FOR_RUN,
+      recordExternalGrade: Methods.RUN_GRADE_EXTERNAL_RECORD,
+      recordInterview: Methods.RUN_INTERVIEW_RECORD,
+      recaptureEpisodes: Methods.RUN_EPISODE_RECAPTURE,
     },
   ],
   [
