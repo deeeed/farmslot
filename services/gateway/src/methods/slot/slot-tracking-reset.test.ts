@@ -278,6 +278,6 @@ test('idle refresh narrows the fetch refspec to the default branch and prunes st
   );
   assert.equal(
     git(repo, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin'),
-    'refs/remotes/origin/main',
+    'refs/remotes/origin/HEAD\nrefs/remotes/origin/main',
   );
 });
