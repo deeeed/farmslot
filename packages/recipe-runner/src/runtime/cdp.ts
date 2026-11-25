@@ -341,6 +341,13 @@ const isolatedWorldContexts = new WeakMap<
   Map<string, { executionContextId: number }>
 >();
 
+// Call options whose timeout counts down from now: each call gets what is left.
+function remainingCallOptions(options: CdpCallOptions): () => CdpCallOptions {
+  if (options.timeoutMs === undefined) return () => options;
+  const deadline = Date.now() + options.timeoutMs;
+  return () => ({ ...options, timeoutMs: Math.max(1, deadline - Date.now()) });
+}
+
 async function evaluateCdpSessionInIsolatedWorld<T>(
   session: CdpCallSession,
   expression: string,
@@ -348,11 +355,7 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
   options: CdpCallOptions = {},
 ): Promise<T> {
   // One timeout for the whole evaluation, however many CDP calls it takes.
-  const deadline = options.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
-  const callOptions = (): CdpCallOptions =>
-    deadline === undefined
-      ? options
-      : { ...options, timeoutMs: Math.max(1, deadline - Date.now()) };
+  const callOptions = remainingCallOptions(options);
   let contexts = isolatedWorldContexts.get(session);
   if (!contexts) {
     contexts = new Map();
@@ -732,11 +735,7 @@ export class CdpWebPage {
     options: CdpCallOptions = {},
   ): Promise<T> {
     // The retry after a navigation shares the caller's timeout, never a fresh one.
-    const deadline = options.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
-    const remaining = (): CdpCallOptions =>
-      deadline === undefined
-        ? options
-        : { ...options, timeoutMs: Math.max(1, deadline - Date.now()) };
+    const remaining = remainingCallOptions(options);
     try {
       return await evaluateCdpSessionInIsolatedWorld<T>(
         this.session,
