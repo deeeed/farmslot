@@ -6,9 +6,17 @@
 //
 // Real: authenticated gateway socket and `run.resolveDecision`, the run engine (CI-watch step,
 // CI monitor with the GitHub client pointed at a local GitHub stand-in, chaining, the done
-// transition and slot release), C's dispatch step and warm handoff, the run store and the slot
-// status file. Scripted: P's publication prerequisites (no real package or PR), C's task text
-// (write-task), and the runner layer (worker liveness, retained pane lookup, the prompt send).
+// transition and slot release), C's dispatch step and warm handoff, worker liveness (a process
+// named claude in a tmux pane on a private server), the PR-head baseline on a git checkout, the
+// run store and the slot status file. Scripted: P's publication prerequisites (no real package or
+// PR), C's task text (write-task) and its hosted-task check, the retained pane lookup and session
+// binding, the nudge prompt text, the launch-ack read, and the prompt send. A fresh dispatch
+// would throw: the proof passes only through the warm handoff.
+//
+// Run from the repository root:
+//   TSX_TSCONFIG_PATH=services/gateway/tsconfig.json \
+//     node --import tsx --experimental-test-module-mocks \
+//     scripts/runner-validation/gateway/warm-handoff-gate.mts
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
@@ -17,6 +25,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { mock } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { cleanupOnExit, startReaper } from '../lib/isolated-stack.mjs';
 
 const code = fileURLToPath(new URL('../../../', import.meta.url));
 const root = await mkdtemp(path.join(os.tmpdir(), 'warm-gate-proof-'));
@@ -33,9 +43,16 @@ Object.assign(process.env, {
   FARMSLOT_DISPATCH_PRESSURE_ADMISSION: 'off',
   TMUX_TMPDIR: path.join(root, 'tmux'),
 });
+// Inside tmux these name the operator's server and pane, and win over TMUX_TMPDIR.
 delete process.env.TMUX;
+delete process.env.TMUX_PANE;
 const tmux = (...args: string[]) =>
   execFileSync('tmux', args, { env: process.env, encoding: 'utf8' }).trim();
+// If this process dies, the reaper removes the fixture and stops only this proof's tmux server
+// (its socket is under the fixture's TMUX_TMPDIR) and the worker pid recorded below.
+const reaper = startReaper();
+reaper.path(root);
+reaper.command(['tmux', 'kill-server'], { ...process.env });
 for (const dir of ['pool', 'projects/proof', 'repo', 'tmux', 'tasks'])
   await mkdir(path.join(root, dir), { recursive: true });
 await mkdir(output, { recursive: true });
@@ -175,7 +192,7 @@ mock.module(sourceFile('run-engine/task-steps.ts'), {
 await stub('tasks/hosted-task-init.ts', { verifyHostedTaskOnSlot: async () => undefined });
 // The runner layer: the retained worker's pane lookup and the prompt send. Its liveness is real:
 // a process named claude in a tmux pane on a private server.
-const sends: Array<{ runId: unknown; owner: unknown }> = [];
+const sends: Array<{ slotOwner: unknown; cleanupRun: unknown }> = [];
 await stub('runners/session-process.ts', {
   resolveRetainedRunnerPane: async () => ({ target: 'proof:dev.0', window: 'dev', pane: '0' }),
   resolvePersistedRunnerSessionBinding: () => ({ ok: true, binding: null }),
@@ -187,12 +204,21 @@ await stub('runners/worker-prompt.ts', { resolveWorkerNudgePrompt: async () => '
 await stub('runners/session-reactivation.ts', {
   deliverPromptWithRetainedFallback: async () => {
     const row = await (await load('services/gateway/src/core/state.ts')).readSlotRow(slotId);
-    sends.push({ runId: row?.current_run_id ?? null, owner: row?.cleanup_run_id ?? null });
+    sends.push({ slotOwner: row?.current_run_id ?? null, cleanupRun: row?.cleanup_run_id ?? null });
     return { delivered: true };
   },
 });
 // P has no real publication package or PR: its prerequisites pass as published.
 await stub('run-engine/publication-finalization.ts', { assertPublicationFinalization: () => {} });
+// The fresh-dispatch fallback must not launch anything: the proof passes only through the warm
+// handoff. Last, so the dispatch modules it loads already see the stubs above.
+await stub('methods/dispatch.ts', {
+  dispatchExecute: async () => {
+    throw new Error(
+      'fresh dispatch is not part of this proof: the warm handoff must claim the slot',
+    );
+  },
+});
 
 const store = await load('services/gateway/src/runs/store.ts');
 const state = await load('services/gateway/src/core/state.ts');
@@ -213,6 +239,27 @@ const server = createServer();
 const wss = createWebSocketServer(server, auth);
 const log = (line: string) => console.log(`[proof] ${line}`);
 let client;
+const cleanup = cleanupOnExit(async () => {
+  client?.close();
+  for (const connection of wss.clients) connection.terminate();
+  await new Promise<void>((resolve) => wss.close(() => resolve()));
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  for (const run of store.getAllRuns()) {
+    engine.cancelRunEngine(run.id);
+    store.updateRun(run.id, { status: 'done' });
+    await store.deleteRun(run.id);
+  }
+  await github.close();
+  // Only this proof's private tmux server (its socket lives under TMUX_TMPDIR).
+  try {
+    tmux('kill-server');
+  } catch (error) {
+    // A server that never started, or already exited, leaves nothing to stop.
+    if (!String(error).includes('no server running')) console.warn(String(error));
+  }
+  await rm(root, { recursive: true, force: true });
+  reaper.done();
+});
 const until = async <T,>(
   read: () => T | Promise<T>,
   accept: (value: T) => boolean,
@@ -318,6 +365,7 @@ try {
   execFileSync('cc', ['-o', path.join(bin, 'claude'), path.join(root, 'claude.c')]);
   tmux('new-session', '-d', '-s', 'proof', '-n', 'worker', '-c', repo, path.join(bin, 'claude'));
   const workerPid = tmux('display-message', '-p', '-t', 'proof:worker', '#{pane_pid}');
+  reaper.command(['kill', workerPid], { ...process.env });
   log(`parent worker: pid ${workerPid} in proof:worker`);
   void engine.startRun(parent.id).catch((error: Error) => log(`parent engine: ${error.message}`));
   const decision = await until(
@@ -345,8 +393,11 @@ try {
     () => state.readSlotRow(slotId),
     (row: Record<string, unknown> | null) => row?.lifecycle === 'held' && row.phase === 'occupied',
     "the parent's hold",
-  ).catch(() => null);
-  if (heldFor) log(`slot after parent done: held/occupied, reason="${heldFor.held_reason}"`);
+  );
+  log(`slot after parent done: held/occupied, reason="${heldFor.held_reason}"`);
+  assert.equal(heldFor.held_reason, `Another active run ${child.id} uses this slot`);
+  assert.equal(heldFor.current_run_id ?? null, null);
+  assert.equal(heldFor.cleanup_run_id, parent.id);
   const settled = await until(
     () => store.getRun(child.id),
     (run: { status: string; steps: Array<{ name: string; status: string }> }) =>
@@ -361,39 +412,31 @@ try {
   log(`parent status: ${store.getRun(parent.id)?.status}`);
   log(`child dispatch: ${dispatch?.status}${dispatch?.detail ? ` — ${dispatch.detail}` : ''}`);
   log(
-    `prompts sent: ${sends.length}${sends[0] ? ` (slot at the send: owner=${sends[0].runId}, cleanup=${sends[0].owner === parent.id ? 'parent' : sends[0].owner})` : ''}`,
+    `prompts sent: ${sends.length}${sends[0] ? ` (slot at the send: owner=${sends[0].slotOwner}, cleanup=${sends[0].cleanupRun === parent.id ? 'parent' : sends[0].cleanupRun})` : ''}`,
   );
   log(
     `slot after child: lifecycle=${row?.lifecycle} owner=${row?.current_run_id === child.id ? 'child' : row?.current_run_id} held_reason=${row?.held_reason ?? null}`,
   );
   const result = {
-    pass: dispatch?.status === 'done' && row?.current_run_id === child.id,
-    heldBeforeClaim: Boolean(heldFor),
+    hold: heldFor.held_reason,
     sends: sends.length,
+    slotAtSend: sends[0] ?? null,
     childDispatch: dispatch?.status,
     detail: dispatch?.detail ?? null,
+    slotOwnerAfter: row?.current_run_id === child.id ? 'child' : (row?.current_run_id ?? null),
   };
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result));
-  assert.equal(result.pass, true, 'the child claims the slot after its prompt');
+  assert.equal(sends.length, 1, 'one prompt reaches the worker');
+  assert.deepEqual(
+    sends[0],
+    { slotOwner: null, cleanupRun: parent.id },
+    "the send runs on P's hold",
+  );
+  assert.equal(dispatch?.status, 'done', "the child's warm handoff completes");
+  assert.equal(row?.current_run_id, child.id, 'the child claims the slot after its prompt');
+  assert.equal(row?.held_reason ?? null, null);
 } finally {
-  client?.close();
-  for (const connection of wss.clients) connection.terminate();
-  await new Promise<void>((resolve) => wss.close(() => resolve()));
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  for (const run of store.getAllRuns()) {
-    engine.cancelRunEngine(run.id);
-    store.updateRun(run.id, { status: 'done' });
-    await store.deleteRun(run.id);
-  }
-  await github.close();
-  // Only this proof's private tmux server (its socket lives under TMUX_TMPDIR).
-  try {
-    tmux('kill-server');
-  } catch (error) {
-    // A server that never started, or already exited, leaves nothing to stop.
-    if (!String(error).includes('no server running')) console.warn(String(error));
-  }
-  await rm(root, { recursive: true, force: true });
+  await cleanup();
 }
 process.exit(0);
