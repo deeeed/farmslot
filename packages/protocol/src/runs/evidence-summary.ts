@@ -288,6 +288,12 @@ export function inferRunArtifactPurpose(path: string): string {
   return 'artifact';
 }
 
+/**
+ * Output fields whose paths are never the run's artifacts, skipped at any depth: `tempScrub` lists
+ * files a prepare deleted from the slot's temp/.
+ */
+const NON_ARTIFACT_OUTPUT_KEYS: ReadonlySet<string> = new Set(['tempScrub']);
+
 function collectRunArtifactEntries(value: unknown, entries: RunArtifactManifestEntry[]): void {
   if (value == null) return;
   if (typeof value === 'string') {
@@ -324,9 +330,6 @@ function collectRunArtifactEntries(value: unknown, entries: RunArtifactManifestE
   for (const [key, item] of Object.entries(record))
     if (!NON_ARTIFACT_OUTPUT_KEYS.has(key)) collectRunArtifactEntries(item, entries);
 }
-
-/** Step output fields whose paths are not the run's artifacts: files a prepare deleted. */
-const NON_ARTIFACT_OUTPUT_KEYS: ReadonlySet<string> = new Set(['tempScrub']);
 
 function looksLikeRunArtifactEntry(record: Record<string, unknown>): boolean {
   const path = record.path;

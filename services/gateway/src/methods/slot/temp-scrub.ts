@@ -237,18 +237,29 @@ function reasons(entries: TempScrubReasonEntry[]): TempScrubReasonEntry[] {
 }
 
 /**
- * The bounded record of one clear-out. A checkout that is also a task dir is listed once, as a
- * checkout, and nothing under a listed checkout or task dir is listed again.
+ * The bounded record of one clear-out. A task dir that is also a checkout, or sits inside a
+ * removed checkout or another removed task dir, is not listed again; nor is anything else under
+ * a listed one. A checkout inside a task dir is still listed, as its own deletion.
  */
 export function tempScrubReceipt(outcome: TempScrubOutcome): TempScrubReceipt {
-  const checkoutPaths = new Set(outcome.checkouts.map((entry) => entry.path));
-  const taskDirs = outcome.taskDirs.filter((dir) => !checkoutPaths.has(dir.path));
-  const roots = [...checkoutPaths, ...taskDirs.map((dir) => dir.path)];
-  const listedAbove = (entry: string) =>
+  const checkoutPaths = outcome.checkouts.map((entry) => entry.path);
+  const within = (entry: string, roots: readonly string[]) =>
     roots.some((root) => entry === root || entry.startsWith(`${root}/`));
+  const taskDirPaths = outcome.taskDirs.map((dir) => dir.path);
+  const taskDirs = outcome.taskDirs.filter(
+    (dir) =>
+      !within(dir.path, checkoutPaths) &&
+      !taskDirPaths.some((other) => dir.path.startsWith(`${other}/`)),
+  );
+  const roots = [...checkoutPaths, ...taskDirs.map((dir) => dir.path)];
+  const listedAbove = (entry: string) => within(entry, roots);
   const removed: TempScrubRemovedEntry[] = [
     ...outcome.checkouts.map(
-      ({ path, kind }): TempScrubRemovedEntry => ({ type: 'checkout', path: clip(path), kind }),
+      ({ path, kind }): TempScrubRemovedEntry => ({
+        type: 'checkout',
+        path: clip(path),
+        kind: clip(kind),
+      }),
     ),
     ...taskDirs.map(
       (dir): TempScrubRemovedEntry => ({
@@ -260,7 +271,13 @@ export function tempScrubReceipt(outcome: TempScrubOutcome): TempScrubReceipt {
     ),
     ...outcome.removed
       .filter((entry) => !listedAbove(entry.path))
-      .map(({ path, kind }): TempScrubRemovedEntry => ({ type: 'entry', path: clip(path), kind })),
+      .map(
+        ({ path, kind }): TempScrubRemovedEntry => ({
+          type: 'entry',
+          path: clip(path),
+          kind: clip(kind),
+        }),
+      ),
   ];
   return {
     removed: removed.slice(0, TEMP_SCRUB_LISTED),
@@ -299,8 +316,16 @@ export function tempScrubLines(receipt: TempScrubReceipt): string[] {
   ];
 }
 
-/** The one prepare step the clear-out reports; its lines go out as one output chunk. */
-export function tempScrubSummary(receipt: TempScrubReceipt): string {
+/**
+ * The one prepare step the clear-out reports (its lines go out as one output chunk), or null
+ * when it found nothing to remove, keep or refuse.
+ */
+export function tempScrubSummary(receipt: TempScrubReceipt): string | null {
+  const { removedCount, keptCount, refusedCount } = receipt;
+  if (removedCount + keptCount + refusedCount === 0) return null;
   const plural = (count: number) => `${count} entr${count === 1 ? 'y' : 'ies'}`;
-  return `Cleared temp/ for this run: removed ${plural(receipt.removedCount)}, kept ${plural(receipt.keptCount)}`;
+  const done = `removed ${plural(removedCount)}, kept ${plural(keptCount)}`;
+  return refusedCount > 0
+    ? `temp/ clear-out refused ${plural(refusedCount)}; ${done}`
+    : `Cleared temp/ for this run: ${done}`;
 }

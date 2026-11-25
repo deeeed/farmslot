@@ -7,6 +7,7 @@ import {
   extractRunArtifactManifest,
   isRunArtifactImagePath,
   isRunArtifactMediaPath,
+  listStepArtifactPaths,
   runEvidenceArtifacts,
   type RunEvidenceSummary,
   runListEvidenceSummary,
@@ -227,6 +228,8 @@ test("files a prepare deleted from temp/ are not the run's artifacts", () => {
   assert.equal(summary.videoCount, 0);
   assert.equal(summary.visualPairCount, 0);
   assert.equal(summary.artifactCount, 1);
+  assert.equal(summary.diffArtifactPath, undefined, 'a deleted .patch is not the run diff');
+  assert.deepEqual([...listStepArtifactPaths(prepared.steps[0]?.outputs)], ['artifacts/proof.md']);
 });
 
 test('a gate keeps the frozen metadata of a file the run output recaptured', () => {

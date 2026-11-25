@@ -442,6 +442,46 @@ test('the clear-out names every entry it removed or kept, up to the cap, then co
     tempScrubSummary({ ...receipt, removedCount: 1, keptCount: 0 }),
     'Cleared temp/ for this run: removed 1 entry, kept 0 entries',
   );
+  assert.equal(
+    tempScrubSummary({ ...receipt, removedCount: 0, keptCount: 0, refusedCount: 1 }),
+    'temp/ clear-out refused 1 entry; removed 0 entries, kept 0 entries',
+  );
+  assert.equal(
+    tempScrubSummary({ ...receipt, removedCount: 0, keptCount: 0 }),
+    null,
+    'nothing to report',
+  );
+});
+
+test('a task dir inside a removed checkout or another task dir is not listed again', () => {
+  const clone = { path: 'temp/tasks/other-clone', kind: 'clone' };
+  const nested = { path: 'temp/tasks/flat/inner-clone', kind: 'clone' };
+  const receipt = tempScrubReceipt({
+    removed: [
+      clone,
+      { path: 'temp/tasks/flat', kind: 'dir' },
+      { path: 'temp/tasks/flat/notes.md', kind: 'file' },
+      nested,
+    ],
+    kept: [],
+    refused: [],
+    checkouts: [clone, nested],
+    taskDirs: [
+      { path: 'temp/tasks/other-clone/sub', runId: null, bundle: 'no run record' },
+      { path: 'temp/tasks/flat', runId: null, bundle: 'no run record' },
+      { path: 'temp/tasks/flat/sub', runId: null, bundle: 'no run record' },
+    ],
+  });
+  assert.deepEqual(
+    receipt.removed.map((entry) => `${entry.type} ${entry.path}`),
+    [
+      'checkout temp/tasks/other-clone',
+      // A checkout inside a task dir is its own deletion.
+      'checkout temp/tasks/flat/inner-clone',
+      'task-dir temp/tasks/flat',
+    ],
+  );
+  assert.equal(receipt.removedCount, 3);
 });
 
 test('the clear-out record clips a long path or reason', () => {
@@ -455,8 +495,68 @@ test('the clear-out record clips a long path or reason', () => {
   });
   const [entry] = receipt.removed;
   assert.equal(entry?.path.length, 300);
+  const kinded = tempScrubReceipt({
+    removed: [],
+    kept: [],
+    refused: [],
+    checkouts: [{ path: 'temp/wt', kind: `linked worktree (branch ${'b'.repeat(400)} kept)` }],
+    taskDirs: [],
+  });
+  const [linked] = kinded.removed;
+  assert.equal(
+    linked?.type === 'checkout' ? linked.kind.length : 0,
+    300,
+    'a long branch name is clipped too',
+  );
   assert.ok(entry?.path.endsWith('…'));
   assert.equal(receipt.refused[0]?.reason.length, 300);
+});
+
+test('a task dir inside a refused checkout is not recorded as removed', async () => {
+  const clone = path.join(repo, 'temp/tasks/held-clone');
+  mkdirSync(clone, { recursive: true });
+  git(clone, 'init', '-q', '-b', 'main');
+  git(
+    clone,
+    '-c',
+    'user.name=t',
+    '-c',
+    'user.email=t@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'base',
+  );
+  // A worktree outside temp/ makes the scrub refuse the repository and leave it whole.
+  const outside = mkdtempSync(path.join(tmpdir(), 'temp-scrub-outside-wt-'));
+  git(clone, 'worktree', 'add', '-q', '-b', 'held', path.join(outside, 'wt'));
+  mkdirSync(path.join(clone, 'sub'), { recursive: true });
+  writeFileSync(path.join(clone, 'sub/TASK.md'), '# a task inside the clone\n');
+  const run = slotRun('TAT-5400', 'feat', 'new-1125-130000');
+  try {
+    const outcome = await scrubTempForRun(vars, terminalProject, run);
+    assert.ok(outcome);
+    assert.deepEqual(
+      outcome.refused.map((entry) => entry.path),
+      ['temp/tasks/held-clone'],
+    );
+    assert.deepEqual(
+      outcome.taskDirs.map((dir) => dir.path),
+      [],
+      'the task dir inside stayed',
+    );
+    assert.equal(present('temp/tasks/held-clone/sub/TASK.md'), true);
+    const receipt = tempScrubReceipt(outcome);
+    assert.ok(!receipt.removed.some((entry) => entry.path.startsWith('temp/tasks/held-clone')));
+    assert.equal(receipt.refusedCount, 1);
+  } finally {
+    rmSync(clone, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+    finish(run);
+  }
 });
 
 test('a refused temp/ records no task dir under it as removed', async () => {

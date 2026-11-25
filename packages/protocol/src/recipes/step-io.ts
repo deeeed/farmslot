@@ -292,7 +292,10 @@ export interface TempScrubReasonEntry {
  * records it. Each list holds at most 50 entries, beside its full count; long text is clipped.
  */
 export interface TempScrubReceipt {
-  /** Nested checkouts, then task dirs, then other top-level entries, none under another. */
+  /**
+   * Nested checkouts, then task dirs, then other removed entries. Nothing under a listed task dir
+   * or checkout is listed again, except a checkout inside a task dir (its own deletion).
+   */
   removed: TempScrubRemovedEntry[];
   removedCount: number;
   kept: TempScrubReasonEntry[];

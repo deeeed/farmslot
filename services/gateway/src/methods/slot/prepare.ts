@@ -810,7 +810,8 @@ async function slotPrepareInner(
       opts?.onTempScrubbed?.(tempScrub);
       const lines = tempScrubLines(tempScrub);
       if (lines.length) stream.output('stdout', lines.map((line) => `[clean] ${line}\n`).join(''));
-      step('clean', tempScrubSummary(tempScrub));
+      const summary = tempScrubSummary(tempScrub);
+      if (summary) step('clean', summary);
       if (scrub.refused.length)
         throw new Error(
           `temp/ still holds another run's files: ${scrub.refused

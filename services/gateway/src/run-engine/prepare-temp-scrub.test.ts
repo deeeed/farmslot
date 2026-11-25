@@ -90,6 +90,11 @@ test(
     assert.match(JSON.stringify(events), /Removed dir temp\/scratch-tat4752/);
     assert.match(JSON.stringify(events), /Removed file temp\/tat4505-trace.json/);
     assert.equal(recorded.length, 1, 'the run step is handed the clear-out once');
+    // One step event for the whole clear-out; its lines ride one output chunk.
+    const cleanSteps = events.filter(
+      (payload) => (payload as { name?: unknown } | null)?.name === 'clean',
+    );
+    assert.equal(cleanSteps.length, 1, JSON.stringify(cleanSteps));
     const [receipt] = recorded;
     assert.ok(receipt);
     assert.deepEqual(result.tempScrub, receipt);
