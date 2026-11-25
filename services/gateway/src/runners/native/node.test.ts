@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import { WebSocket } from 'ws';
 
@@ -17,7 +17,11 @@ import {
   registerNode,
   unregisterByWs,
 } from '../../fleet/machine-registry.js';
-import { handleNodeResponse, withNodeReconnectWait } from '../../fleet/node-rpc.js';
+import {
+  handleNodeResponse,
+  NodeRpcTimeoutError,
+  withNodeReconnectWait,
+} from '../../fleet/node-rpc.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { nativeNodeSessionTimeout, routeNativeExecution } from './node.js';
@@ -300,7 +304,7 @@ test('older node decoders cannot silently drop an explicit approval mode before 
   }
 });
 
-/** A node that declares host refresh and refuses the next `refuse` requests as skewed. */
+/** A node that may declare host refresh and refuses the next `refuse` requests as skewed. */
 function skewRefusingNode(machine: string, owner: string, supportsHostRefresh: boolean) {
   const frames: Array<{ method: string; hostRelease?: unknown }> = [];
   const state = { refuse: 0, onSend: () => {} };
@@ -470,4 +474,49 @@ test('launches and messages to a node that refreshes its host wait long enough f
   assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_CREATE, false), 60_000);
   assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_READ, true), 60_000);
   assert.equal(nativeNodeSessionTimeout(NATIVE_WORKER_COMPACT, true), 185_000);
+});
+
+test('a launch to a node that refreshes its host waits past 60 s for its answer', async () => {
+  const machine = 'native-host-refresh-timeout';
+  const owner = 'native-owner';
+  let sent = 0;
+  // The node never answers.
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send() {
+      sent++;
+    },
+  } as WebSocket;
+  registerNode(
+    machine,
+    1,
+    ws,
+    undefined,
+    undefined,
+    { ownerPrincipalId: owner, supportsHostRefresh: true },
+    { principalId: 'node-test', valid: () => true },
+  );
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    let settled = false;
+    const launch = routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, {
+      executionNodeId: machine,
+      runner: 'codex',
+      cwd: '/tmp',
+    }).finally(() => (settled = true));
+    launch.catch(() => undefined);
+    while (!sent) await new Promise((resolve) => setImmediate(resolve));
+    mock.timers.tick(60_001);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false, 'still waiting after the usual 60 s');
+    mock.timers.tick(NATIVE_NODE_ADMISSION_TIMEOUT_MS - 60_001);
+    await assert.rejects(
+      launch,
+      (error: unknown) =>
+        error instanceof NodeRpcTimeoutError && error.timeoutMs === NATIVE_NODE_ADMISSION_TIMEOUT_MS,
+    );
+  } finally {
+    mock.timers.reset();
+    unregisterByWs(ws);
+  }
 });

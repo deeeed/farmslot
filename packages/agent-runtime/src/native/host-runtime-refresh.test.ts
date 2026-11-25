@@ -663,8 +663,8 @@ test('a node launch that waited for another refresh is refused rather than use i
       () => client.create('owner', { runner: 'codex', cwd: fixture.cwd }),
     );
     await inCensus;
+    // It reads the running refresh in the same tick, so it is already waiting.
     const waiting = launchReleasing(client, fixture, [session.id]);
-    await new Promise((resolve) => setTimeout(resolve, 50));
     release();
 
     await assert.rejects(keeping, { message: /not released by the gateway/ });
