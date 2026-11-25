@@ -1,1 +1,0 @@
-- mm-harness 0.96.43 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0, and consumes adapter-web 0.19.32: the Terminal login with the injected test wallet starts again.
