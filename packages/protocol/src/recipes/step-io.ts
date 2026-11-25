@@ -276,6 +276,31 @@ export interface PrepareStepInput {
   flowType: string;
 }
 
+/** One temp/ entry a new run's prepare removed. Never an artifact of the run. */
+export type TempScrubRemovedEntry =
+  | { type: 'checkout'; path: string; kind: string }
+  | { type: 'task-dir'; path: string; run: string | null; bundle: string }
+  | { type: 'entry'; path: string; kind: string };
+
+export interface TempScrubReasonEntry {
+  path: string;
+  reason: string;
+}
+
+/**
+ * What a new run's temp/ clear-out removed, kept and could not remove, as its prepare step
+ * records it. Each list holds at most 50 entries, beside its full count; long text is clipped.
+ */
+export interface TempScrubReceipt {
+  /** Nested checkouts, then task dirs, then other top-level entries, none under another. */
+  removed: TempScrubRemovedEntry[];
+  removedCount: number;
+  kept: TempScrubReasonEntry[];
+  keptCount: number;
+  refused: TempScrubReasonEntry[];
+  refusedCount: number;
+}
+
 export interface PrepareStepOutput {
   success: boolean;
   subSteps: SubStepRecord[];
@@ -286,6 +311,12 @@ export interface PrepareStepOutput {
   referenceRepoProvenance?: Record<string, unknown>;
   healthValue?: string;
   cliCommand?: string;
+  /** Lockfiles the deps phase rewrote for a drifted PR branch; the worker must commit them. */
+  lockfilesRewritten?: string[];
+  /** Branches prepare created to keep unpushed commits of a branch it deleted or reset. */
+  keptBranches?: string[];
+  /** The new run's temp/ clear-out, recorded as soon as it ends. */
+  tempScrub?: TempScrubReceipt;
 }
 
 // ─── dispatch ───

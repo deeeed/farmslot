@@ -1,4 +1,4 @@
-import type { PrepareStepRecord } from '@farmslot/protocol';
+import type { PrepareStepRecord, TempScrubReceipt } from '@farmslot/protocol';
 
 import {
   type ProjectVars,
@@ -10,7 +10,6 @@ import type { StartRefResolution } from '../../projects/start-ref-resolution.js'
 
 import type { PinnedPrepareArtifact } from './pinned-prepare.js';
 import type { PrepareProfileFallback } from './prepare-profile.js';
-import type { TempScrubReceipt } from './temp-scrub.js';
 
 /** Names the supported exit from a held slot whose workspace recovery failed. */
 export const RECOVER_HINT =

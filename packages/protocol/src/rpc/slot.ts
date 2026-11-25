@@ -169,6 +169,10 @@ export interface SlotPrepareResult {
     resolvedSha: string;
     resolvedAt: string;
   };
+  lockfilesRewritten?: string[];
+  keptBranches?: string[];
+  /** The new run's temp/ clear-out, when prepare ran for a run. */
+  tempScrub?: import('../recipes/step-io.js').TempScrubReceipt;
 }
 
 export interface SlotReleaseParams {

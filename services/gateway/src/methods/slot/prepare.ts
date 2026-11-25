@@ -13,6 +13,7 @@ import {
   type ReadinessRecord,
   SLOT_DESTRUCTIVE_OPS,
   type SlotPrepareParams,
+  type TempScrubReceipt,
 } from '@farmslot/protocol';
 import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
@@ -174,8 +175,8 @@ import {
   scrubTempForRun,
   shouldScrubTempForRun,
   tempScrubLines,
-  type TempScrubReceipt,
   tempScrubReceipt,
+  tempScrubSummary,
 } from './temp-scrub.js';
 import { assertPublishedPrepareBranchContained } from './unmerged-work.js';
 
@@ -796,8 +797,9 @@ async function slotPrepareInner(
   // its parent chain and runs still bound to the slot stay. A nested Git checkout is deleted
   // and named. A warm handoff, a replay or a resumed task keeps its files. Anything that cannot
   // be deleted fails prepare, by name.
-  // Every entry it removed or kept is named (capped) in the output and recorded on the run's
-  // prepare step, which outlives this stream.
+  // The clear-out's receipt goes to the run's prepare step first, which outlives this stream, so
+  // a refusal below still leaves it. Its lines (up to 50 removed and 50 kept, then counts; this
+  // cap also covers the checkout and task-dir lines) go out as one output chunk under one step.
   const scrubbingRun = params.runId ? getRun(params.runId) : undefined;
   let tempScrub: TempScrubReceipt | undefined;
   if (shouldScrubTempForRun(scrubbingRun)) {
@@ -806,7 +808,9 @@ async function slotPrepareInner(
     if (scrub) {
       tempScrub = tempScrubReceipt(scrub);
       opts?.onTempScrubbed?.(tempScrub);
-      for (const line of tempScrubLines(tempScrub)) step('clean', line);
+      const lines = tempScrubLines(tempScrub);
+      if (lines.length) stream.output('stdout', lines.map((line) => `[clean] ${line}\n`).join(''));
+      step('clean', tempScrubSummary(tempScrub));
       if (scrub.refused.length)
         throw new Error(
           `temp/ still holds another run's files: ${scrub.refused

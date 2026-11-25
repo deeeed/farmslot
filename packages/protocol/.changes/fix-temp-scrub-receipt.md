@@ -1,0 +1,1 @@
+- `PrepareStepOutput.tempScrub` and `SlotPrepareResult.tempScrub` (`TempScrubReceipt`): the files a new run's prepare cleared from `temp/`. The run evidence summary never counts them as artifacts.

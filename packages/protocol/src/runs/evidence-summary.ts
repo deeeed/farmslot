@@ -321,8 +321,12 @@ function collectRunArtifactEntries(value: unknown, entries: RunArtifactManifestE
     });
   }
 
-  Object.values(record).forEach((item) => collectRunArtifactEntries(item, entries));
+  for (const [key, item] of Object.entries(record))
+    if (!NON_ARTIFACT_OUTPUT_KEYS.has(key)) collectRunArtifactEntries(item, entries);
 }
+
+/** Step output fields whose paths are not the run's artifacts: files a prepare deleted. */
+const NON_ARTIFACT_OUTPUT_KEYS: ReadonlySet<string> = new Set(['tempScrub']);
 
 function looksLikeRunArtifactEntry(record: Record<string, unknown>): boolean {
   const path = record.path;

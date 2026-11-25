@@ -281,7 +281,7 @@ test('a kept branch stays in the prepare outputs through later progress, for a p
   assert.deepEqual(step(run.id, 'prepare').outputs?.keptBranches, ['TAT-1-fix-kept-0123456789ab']);
 });
 
-test('the temp/ clear-out stays in the prepare outputs through later progress, for a prepare that then fails', (t) => {
+test('the temp/ clear-out stays in the prepare outputs through later progress', (t) => {
   const run = devRun(t);
   updateRunStep(run.id, 'prepare', { status: 'running', startedAt: iso(T0) });
   const stepPartialIO = new Map<string, StepIO>();
@@ -295,7 +295,7 @@ test('the temp/ clear-out stays in the prepare outputs through later progress, f
     broadcastFn: () => {},
   });
   const receipt = {
-    removed: [{ path: 'temp/scratch', kind: 'dir' }],
+    removed: [{ type: 'entry' as const, path: 'temp/scratch', kind: 'dir' }],
     removedCount: 1,
     kept: [],
     keptCount: 0,

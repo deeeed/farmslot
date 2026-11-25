@@ -1,6 +1,12 @@
 import path from 'node:path';
 
-import { Events, isTerminalRunStatus, type Run, type RunPrepareArtifact } from '@farmslot/protocol';
+import {
+  Events,
+  isTerminalRunStatus,
+  type Run,
+  type RunPrepareArtifact,
+  type TempScrubReceipt,
+} from '@farmslot/protocol';
 
 import { loadSlotVars, resolveProjectRuntimeDir, type SlotVars } from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
@@ -16,7 +22,6 @@ import {
 } from '../methods/dispatch/slot-scoring.js';
 import { slotPrepare } from '../methods/slot.js';
 import { parseJsonObject } from '../methods/slot/pinned-prepare.js';
-import type { TempScrubReceipt } from '../methods/slot/temp-scrub.js';
 import { PINNED_SKIP_PREPARE_REFUSAL } from '../projects/pinned-prepare-policy.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
 import {
@@ -535,7 +540,6 @@ export async function executePrepareStep(
   let selectedPrepareProfile: import('../methods/slot/shared.js').SlotPrepareResult['profile'];
   let lockfilesRewritten: string[] | undefined;
   let keptBranches: string[] | undefined;
-  let tempScrub: TempScrubReceipt | undefined;
   try {
     const prepareResult = await slotPrepare(
       {
@@ -623,7 +627,6 @@ export async function executePrepareStep(
     selectedPrepareProfile = prepareResult.profile;
     lockfilesRewritten = prepareResult.lockfilesRewritten;
     keptBranches = prepareResult.keptBranches;
-    tempScrub = prepareResult.tempScrub;
     if (current.startRef) {
       if (!prepareResult.startRef) {
         throw new Error('startRef prepare completed without structured resolved provenance');
@@ -727,7 +730,8 @@ export async function executePrepareStep(
       // Lockfiles prepare rewrote for a drifted PR branch: the worker must commit them.
       ...(lockfilesRewritten?.length ? { lockfilesRewritten } : {}),
       ...(keptBranches?.length ? { keptBranches } : {}),
-      ...(tempScrub ? { tempScrub } : {}),
+      // Recorded once, as the clear-out ended (tempScrubRecorder).
+      ...(prepareOutputs.tempScrub ? { tempScrub: prepareOutputs.tempScrub } : {}),
       ...(preparedRun?.startRef ? { startRef: preparedRun.startRef } : {}),
       ...(lastOutput ? { lastOutput } : {}),
     },

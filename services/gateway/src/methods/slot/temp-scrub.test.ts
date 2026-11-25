@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
@@ -54,6 +64,7 @@ const {
   TEMP_SCRUB_LISTED,
   tempScrubLines,
   tempScrubReceipt,
+  tempScrubSummary,
   tempStatePaths,
 } = await import('./temp-scrub.js');
 
@@ -355,43 +366,125 @@ test('a warm handoff, a replay or a resumed task keeps temp/; a failed handoff d
 
 test('the clear-out names every entry it removed or kept, up to the cap, then counts the rest', () => {
   const checkout = { path: 'temp/tasks/goal3-clone', kind: 'clone' };
+  const linked = {
+    path: 'temp/tasks/feat/wt-1125-070000/wt',
+    kind: 'linked worktree (branch wt kept)',
+  };
   const taskDir = { path: 'temp/tasks/feat/old-1124-090000', kind: 'dir' };
+  // A checkout with its own TASK.md is a task dir too: it is listed once, as a checkout.
+  const checkoutTask = { path: 'temp/tasks/feat/clone-1124-080000', kind: 'clone' };
   const others = Array.from({ length: 60 }, (_, i) => ({
-    path: `temp/probe-${i}.json`,
+    path: `temp/probe-${String(i).padStart(2, '0')}.json`,
     kind: 'file',
   }));
+  const kept = Array.from({ length: 52 }, (_, i) => ({
+    path: `temp/link-${i}`,
+    reason: 'a symlink holding a kept path',
+  }));
   const outcome = {
-    removed: [taskDir, checkout, ...others],
-    kept: [{ path: 'temp/link', reason: 'holds temp/farmslot' }],
+    // The scrub reports the children of a dir it walked, as well as the dir.
+    removed: [
+      taskDir,
+      { path: `${taskDir.path}/TASK.md`, kind: 'file' },
+      checkout,
+      linked,
+      checkoutTask,
+      ...others,
+    ],
+    kept,
     refused: [],
-    checkouts: [checkout],
-    taskDirs: [{ path: taskDir.path, runId: 'abcdef1234567890', bundle: 'in its bundle' }],
+    checkouts: [checkout, linked, checkoutTask],
+    taskDirs: [
+      { path: taskDir.path, runId: 'abcdef1234567890', bundle: 'in its bundle' },
+      { path: checkoutTask.path, runId: null, bundle: 'no run record' },
+    ],
   };
 
   const receipt = tempScrubReceipt(outcome);
 
   assert.equal(TEMP_SCRUB_LISTED, 50);
-  assert.equal(receipt.removedCount, 62);
+  assert.equal(
+    receipt.removedCount,
+    64,
+    '3 checkouts, 1 task dir, 60 files; no child, no duplicate',
+  );
   assert.equal(receipt.removed.length, 50);
-  assert.deepEqual(receipt.removed.slice(0, 3), [
-    { path: 'temp/tasks/goal3-clone', kind: 'clone' },
-    { path: taskDir.path, kind: 'task dir', note: 'run abcdef12, in its bundle' },
-    { path: 'temp/probe-0.json', kind: 'file' },
+  assert.deepEqual(receipt.removed.slice(0, 5), [
+    { type: 'checkout', path: 'temp/tasks/goal3-clone', kind: 'clone' },
+    { type: 'checkout', path: linked.path, kind: linked.kind },
+    { type: 'checkout', path: checkoutTask.path, kind: 'clone' },
+    { type: 'task-dir', path: taskDir.path, run: 'abcdef1234567890', bundle: 'in its bundle' },
+    { type: 'entry', path: 'temp/probe-00.json', kind: 'file' },
   ]);
-  assert.deepEqual(receipt.kept, [{ path: 'temp/link', reason: 'holds temp/farmslot' }]);
-  assert.equal(receipt.keptCount, 1);
+  assert.equal(receipt.keptCount, 52);
+  assert.equal(receipt.kept.length, 50);
   assert.equal(receipt.refusedCount, 0);
 
   const lines = tempScrubLines(receipt);
   assert.equal(lines[0], 'Deleted nested clone temp/tasks/goal3-clone');
-  assert.equal(lines[1], `Removed earlier task dir ${taskDir.path} (run abcdef12, in its bundle)`);
-  assert.equal(lines[2], 'Removed file temp/probe-0.json');
-  assert.equal(lines[49], 'Removed file temp/probe-47.json');
-  assert.equal(lines[50], '12 more removed temp/ entries not listed');
-  assert.equal(lines[51], 'Left temp/link: holds temp/farmslot');
-  assert.equal(lines.length, 52);
-  assert.deepEqual(
+  assert.equal(lines[1], `Deleted nested linked worktree (branch wt kept) ${linked.path}`);
+  assert.equal(lines[3], `Removed earlier task dir ${taskDir.path} (run abcdef12, in its bundle)`);
+  assert.equal(lines[4], 'Removed file temp/probe-00.json');
+  assert.equal(lines[49], 'Removed file temp/probe-45.json');
+  assert.equal(lines[50], '14 more removed temp/ entries not listed');
+  assert.equal(lines[51], 'Left temp/link-0: a symlink holding a kept path');
+  assert.equal(lines[101], '2 more kept temp/ entries not listed');
+  assert.equal(lines.length, 102);
+  assert.equal(
     tempScrubLines({ ...receipt, removedCount: 51 }).at(50),
     '1 more removed temp/ entry not listed',
   );
+  assert.equal(
+    tempScrubSummary(receipt),
+    'Cleared temp/ for this run: removed 64 entries, kept 52 entries',
+  );
+  assert.equal(
+    tempScrubSummary({ ...receipt, removedCount: 1, keptCount: 0 }),
+    'Cleared temp/ for this run: removed 1 entry, kept 0 entries',
+  );
+});
+
+test('the clear-out record clips a long path or reason', () => {
+  const long = `temp/${'x'.repeat(400)}`;
+  const receipt = tempScrubReceipt({
+    removed: [{ path: long, kind: 'file' }],
+    kept: [],
+    refused: [{ path: long, reason: 'y'.repeat(400) }],
+    checkouts: [],
+    taskDirs: [],
+  });
+  const [entry] = receipt.removed;
+  assert.equal(entry?.path.length, 300);
+  assert.ok(entry?.path.endsWith('…'));
+  assert.equal(receipt.refused[0]?.reason.length, 300);
+});
+
+test('a refused temp/ records no task dir under it as removed', async () => {
+  const outside = mkdtempSync(path.join(tmpdir(), 'temp-scrub-outside-'));
+  mkdirSync(path.join(outside, 'tasks/feat/old-1124-090000'), { recursive: true });
+  writeFileSync(path.join(outside, 'tasks/feat/old-1124-090000/TASK.md'), '# earlier task\n');
+  const temp = path.join(repo, 'temp');
+  const parked = path.join(root, 'temp-parked-for-symlink');
+  const hadTemp = existsSync(temp);
+  if (hadTemp) renameSync(temp, parked);
+  symlinkSync(outside, temp);
+  const run = slotRun('TAT-5300', 'feat', 'new-1125-120000');
+  try {
+    const outcome = await scrubTempForRun(vars, terminalProject, run);
+    assert.ok(outcome);
+    assert.deepEqual(
+      outcome.refused.map((entry) => entry.path),
+      ['temp'],
+    );
+    assert.deepEqual(outcome.taskDirs, [], 'nothing under a refused temp/ went');
+    const receipt = tempScrubReceipt(outcome);
+    assert.equal(receipt.removedCount, 0);
+    assert.equal(receipt.refusedCount, 1);
+    assert.equal(existsSync(path.join(outside, 'tasks/feat/old-1124-090000/TASK.md')), true);
+  } finally {
+    unlinkSync(temp);
+    if (hadTemp) renameSync(parked, temp);
+    rmSync(outside, { recursive: true, force: true });
+    finish(run);
+  }
 });

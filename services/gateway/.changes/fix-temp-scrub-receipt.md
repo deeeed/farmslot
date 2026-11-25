@@ -1,1 +1,1 @@
-- Prepare's temp/ clear-out for a new run names every entry it removed or kept, up to 50 with a count of the rest, not only nested checkouts and task dirs. The run's prepare step keeps the same list in its outputs, so it can still be read after the prepare, including one that failed later.
+- Prepare's `temp/` clear-out also names each other entry it removes and each one it keeps, up to 50 of each list plus a count of the rest. It records the list on the run's prepare step, so `run.get` still shows it after the prepare, including one that failed.

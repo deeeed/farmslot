@@ -187,6 +187,48 @@ test('step output prose and host paths are not run artifacts', () => {
   );
 });
 
+test("files a prepare deleted from temp/ are not the run's artifacts", () => {
+  const prepared = run({
+    steps: [
+      {
+        name: 'prepare',
+        status: 'done',
+        outputs: {
+          artifacts: [{ path: 'artifacts/proof.md', purpose: 'proof' }],
+          tempScrub: {
+            removed: [
+              { type: 'entry', path: 'temp/old-fix.patch', kind: 'file' },
+              { type: 'entry', path: 'temp/before.png', kind: 'file' },
+              { type: 'entry', path: 'temp/after.png', kind: 'file' },
+              { type: 'entry', path: 'temp/demo.mov', kind: 'file' },
+              {
+                type: 'task-dir',
+                path: 'temp/tasks/feat/old/notes.md',
+                run: null,
+                bundle: 'no run record',
+              },
+            ],
+            removedCount: 5,
+            kept: [{ path: 'temp/link.json', reason: 'a symlink holding a kept path' }],
+            keptCount: 1,
+            refused: [],
+            refusedCount: 0,
+          },
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    extractRunArtifactManifest(prepared).map((artifact) => artifact.path),
+    ['artifacts/proof.md'],
+  );
+  const summary = summarizeRunEvidence(prepared);
+  assert.equal(summary.videoCount, 0);
+  assert.equal(summary.visualPairCount, 0);
+  assert.equal(summary.artifactCount, 1);
+});
+
 test('a gate keeps the frozen metadata of a file the run output recaptured', () => {
   const [video] = extractRunArtifactManifest(
     run({
