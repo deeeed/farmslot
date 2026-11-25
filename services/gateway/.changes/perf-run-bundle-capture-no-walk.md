@@ -1,0 +1,1 @@
+- COMPLETE's artifact capture no longer runs the full run and capture-intent housekeeping inventory under the store lock on every capture, only near capacity, and no longer walks the whole bundle store for each capacity check. On the live farm those cost 5-84 s and 4-66 s per fix-bug COMPLETE.

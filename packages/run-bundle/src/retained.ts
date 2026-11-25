@@ -213,6 +213,13 @@ export interface MaterializeRunBundleRequest {
   acquisitionTaskDirs?: AcquisitionTaskDirClassifier;
   /** Owning gateway's run archive root; media is moved here before capacity can defer it. */
   archiveRoot?: string;
+  /**
+   * Store housekeeping (archiving inactive reservations, abandoned stages and superseded
+   * bundles). It walks every run and capture intent, so the capture runs it only when its own
+   * admission could need the room: at the archive threshold, or when this capture would cross
+   * the cap. It takes the store lock itself and must not throw.
+   */
+  housekeepBeforeCapture?: () => Promise<void>;
   assertArchiveWriteRoom?: RunBundleMediaArchiveRequest['assertArchiveWriteRoom'];
   onMediaArchived?: (result: RunBundleMediaArchiveResult) => void;
   /** Inventory is frozen before metadata commits; media transport writes only admitted bytes. */
@@ -1052,7 +1059,67 @@ function bundleUsagePath(store: RunBundleStore, digest: string): string {
 }
 
 async function recordBundleBytes(store: RunBundleStore, digest: string, bytes: number) {
+  const stamps = stableStoreCharges.has(stableChargeKey(store))
+    ? await storeStamps(store)
+    : undefined;
+  const previous = await readBundleRecord(store, digest);
+  // The stable charge counts a record only for a bundle present in sha256/; one present
+  // without a record was measured by a walk, so its new record cannot be applied as a delta.
+  const counted = existsSync(bundleDirectory(store, digest));
   await atomicJson(bundleUsagePath(store, digest), { bytes });
+  await adjustStableStoreCharge(
+    store,
+    'usage',
+    counted && previous === undefined ? undefined : stamps,
+    counted ? bytes - (previous ?? 0) : 0,
+  );
+}
+
+/**
+ * Moves a staged bundle into `sha256/` (its byte record already written) and adds that record
+ * to the stable store charge: the walk would now count it. The stage leaves `staging/`, which
+ * is walked on every read, so it needs no adjustment.
+ */
+async function publishBundleDirectory(
+  store: RunBundleStore,
+  digest: string,
+  stage: string,
+  destination: string,
+): Promise<void> {
+  const stamps = stableStoreCharges.has(stableChargeKey(store))
+    ? await storeStamps(store)
+    : undefined;
+  await rename(stage, destination);
+  await syncPath(path.dirname(destination));
+  const recorded = await readBundleRecord(store, digest);
+  await adjustStableStoreCharge(
+    store,
+    'sha256',
+    recorded === undefined ? undefined : stamps,
+    recorded ?? 0,
+  );
+}
+
+/** Rewrites a bundle's availability record, keeping the stable store charge current. */
+async function writeAvailabilityRecord(
+  store: RunBundleStore,
+  file: string,
+  availability: RunBundleAvailability,
+): Promise<void> {
+  const stamps = stableStoreCharges.has(stableChargeKey(store))
+    ? await storeStamps(store)
+    : undefined;
+  const sizeOf = async () => {
+    try {
+      return (await stat(file)).size;
+    } catch (error) {
+      if (!hasCode(error, 'ENOENT')) throw error;
+      return 0;
+    }
+  };
+  const before = await sizeOf();
+  await atomicJson(file, availability);
+  await adjustStableStoreCharge(store, 'availability', stamps, (await sizeOf()) - before);
 }
 
 async function readBundleRecord(store: RunBundleStore, digest: string) {
@@ -1088,11 +1155,57 @@ async function movedBundleBytes(store: RunBundleStore, directory: string): Promi
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
-async function chargedStoreBytesUntimed(
+/**
+ * The part of the store charge that changes only through renames in four directories: the
+ * recorded bytes of `sha256/` bundles (including ones moved aside as `.retention-*`),
+ * `availability/` and other root entries. It is kept per process and reused while the root,
+ * `sha256/`, `usage/` and `availability/` keep the stamps they had when it was walked. Any
+ * writer, this process or another, an older gateway or an operator restore, changes one of
+ * them, so the next read walks again. `reservations/` and `staging/` change inside their
+ * subdirectories and in place, so they are walked on every read (they hold a few entries).
+ */
+interface StableStoreCharge {
+  stamps: string[];
+  bytes: number;
+  retentionCharges: [string, number][];
+}
+
+const STAMPED_STORE_DIRS = ['', 'sha256', 'usage', 'availability'] as const;
+const stableStoreCharges = new Map<string, StableStoreCharge>();
+let stableStoreWalks = 0;
+
+const stableChargeKey = (store: RunBundleStore) => `${store.id}\0${store.root}`;
+
+async function storeStamps(store: RunBundleStore): Promise<string[]> {
+  return Promise.all(
+    STAMPED_STORE_DIRS.map(async (name) => {
+      try {
+        const info = await stat(path.join(store.root, name), { bigint: true });
+        return `${info.ino}:${info.mtimeNs}:${info.ctimeNs}`;
+      } catch (error) {
+        if (!hasCode(error, 'ENOENT')) throw error;
+        return 'missing';
+      }
+    }),
+  );
+}
+
+/** Full walks of the stable part since this process started; tests read it. */
+export function runBundleStableChargeWalks(): number {
+  return stableStoreWalks;
+}
+
+/** Forgets every cached store charge, so the next read walks; tests compare against it. */
+export function forgetRunBundleStoreChargeCache(): void {
+  stableStoreCharges.clear();
+}
+
+async function walkStableStoreCharge(
   store: RunBundleStore,
-  stagedCharges?: Map<string, number>,
-): Promise<number> {
+): Promise<Omit<StableStoreCharge, 'stamps'>> {
+  stableStoreWalks += 1;
   let bytes = 0;
+  const retentionCharges: [string, number][] = [];
   for (const entry of await readdir(store.root, { withFileTypes: true })) {
     const file = path.join(store.root, entry.name);
     if (entry.name === 'sha256' && entry.isDirectory()) {
@@ -1102,27 +1215,79 @@ async function chargedStoreBytesUntimed(
           ? await recordedBundleBytes(store, name)
           : await movedBundleBytes(store, directory);
         bytes += charged;
-        if (name.startsWith('.retention-')) stagedCharges?.set(directory, charged);
+        if (name.startsWith('.retention-')) retentionCharges.push([directory, charged]);
       }
       continue;
     }
     // Records (and the kept acquisition footprints) are bookkeeping, not stored payload.
     if (entry.name === 'usage') continue;
-    if (entry.name !== 'staging' || !entry.isDirectory()) {
-      const hooks: WalkHooks | undefined =
-        entry.name === 'reservations' && stagedCharges
-          ? {
-              file: (source, depth, charged) => {
-                if (depth === 0 && path.basename(source).startsWith('.retention-'))
-                  stagedCharges.set(source, charged);
-              },
-            }
-          : undefined;
-      bytes += entry.isDirectory()
-        ? await physicalBytes(file, undefined, hooks)
-        : (await stat(file)).size;
+    if ((entry.name === 'reservations' || entry.name === 'staging') && entry.isDirectory())
+      continue;
+    bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
+  }
+  return { bytes, retentionCharges };
+}
+
+async function stableStoreCharge(store: RunBundleStore): Promise<StableStoreCharge> {
+  const key = stableChargeKey(store);
+  const before = await storeStamps(store);
+  const cached = stableStoreCharges.get(key);
+  if (cached && cached.stamps.every((stamp, i) => stamp === before[i])) return cached;
+  stableStoreCharges.delete(key);
+  const walked = await walkStableStoreCharge(store);
+  const after = await storeStamps(store);
+  const charge = { ...walked, stamps: after };
+  // Something changed a stamped directory during the walk: use this answer once, keep nothing.
+  if (after.every((stamp, i) => stamp === before[i])) stableStoreCharges.set(key, charge);
+  return charge;
+}
+
+/**
+ * This process just changed one stamped directory by `delta` bytes, under the store lock. If
+ * the cache was current and only that directory's stamp moved, apply the delta and take its
+ * new stamp; otherwise forget the cache, and the next read walks.
+ */
+async function adjustStableStoreCharge(
+  store: RunBundleStore,
+  directory: (typeof STAMPED_STORE_DIRS)[number],
+  stampsBefore: string[] | undefined,
+  delta: number,
+): Promise<void> {
+  const key = stableChargeKey(store);
+  const cached = stableStoreCharges.get(key);
+  if (!cached || !stampsBefore || !cached.stamps.every((stamp, i) => stamp === stampsBefore[i]))
+    return void stableStoreCharges.delete(key);
+  const after = await storeStamps(store);
+  const changed = STAMPED_STORE_DIRS.indexOf(directory);
+  if (!after.every((stamp, i) => i === changed || stamp === cached.stamps[i]))
+    return void stableStoreCharges.delete(key);
+  stableStoreCharges.set(key, { ...cached, bytes: cached.bytes + delta, stamps: after });
+}
+
+async function chargedStoreBytesUntimed(
+  store: RunBundleStore,
+  stagedCharges?: Map<string, number>,
+): Promise<number> {
+  const stable = await stableStoreCharge(store);
+  let bytes = stable.bytes;
+  for (const [directory, charged] of stable.retentionCharges)
+    stagedCharges?.set(directory, charged);
+  for (const entry of await readdir(store.root, { withFileTypes: true })) {
+    const file = path.join(store.root, entry.name);
+    if (!entry.isDirectory()) continue;
+    if (entry.name === 'reservations') {
+      const hooks: WalkHooks | undefined = stagedCharges
+        ? {
+            file: (source, depth, charged) => {
+              if (depth === 0 && path.basename(source).startsWith('.retention-'))
+                stagedCharges.set(source, charged);
+            },
+          }
+        : undefined;
+      bytes += await physicalBytes(file, undefined, hooks);
       continue;
     }
+    if (entry.name !== 'staging') continue;
     for (const stage of await readdir(file)) {
       const directory = path.join(file, stage);
       const actual = await physicalBytes(directory);
@@ -1162,7 +1327,14 @@ interface SettledTaskDirs {
 const keptFootprints = new Map<string, Promise<Map<string, KeptFootprint>>>();
 
 // Under usage/, which capacity accounting skips, so neither the file nor its temporary is charged.
+// In its own subdirectory: scans save it outside the store lock, and a write directly in usage/
+// would move the stamp the store charge cache checks.
 function footprintFile(store: RunBundleStore): string {
+  return path.join(store.root, 'usage', 'acquisition', 'footprints.json');
+}
+
+/** Where the footprints lived before they moved into `usage/acquisition/`; read once, never written. */
+function legacyFootprintFile(store: RunBundleStore): string {
   return path.join(store.root, 'usage', 'acquisition-footprints.json');
 }
 
@@ -1173,7 +1345,11 @@ function loadKeptFootprints(store: RunBundleStore) {
     kept = (async () => {
       const footprints = new Map<string, KeptFootprint>();
       try {
-        const parsed: unknown = JSON.parse((await readOptional(footprintFile(store))) ?? '{}');
+        const parsed: unknown = JSON.parse(
+          (await readOptional(footprintFile(store))) ??
+            (await readOptional(legacyFootprintFile(store))) ??
+            '{}',
+        );
         const dirs = (parsed as { v?: unknown; dirs?: unknown }).dirs;
         if ((parsed as { v?: unknown }).v === 1 && dirs && typeof dirs === 'object')
           for (const [directory, entry] of Object.entries(dirs)) {
@@ -1800,7 +1976,7 @@ async function completeRetainedPayloadsUntimed(
       const availability: RunBundleAvailability = prior
         ? JSON.parse(prior)
         : { revision: 0, prunedPaths: [] };
-      await atomicJson(file, {
+      await writeAvailabilityRecord(request.store, file, {
         ...availability,
         revision: availability.revision + 1,
         prunedPaths: availability.prunedPaths.filter((key) => !restored.has(key)),
@@ -2007,6 +2183,32 @@ async function fileStamp(file: string, now: number): Promise<{ key: string; racy
   return statsStamp(stats, now);
 }
 
+/**
+ * Capture intents by path, reused while their file keeps its stamp: housekeeping reads every
+ * intent on each pass, and almost all of them are committed and never change again.
+ */
+const intentCache = new Map<string, { stamp: string; intent: CaptureIntent }>();
+
+/** An intent removed while the pass lists the directory is skipped, like a moved run record. */
+async function cachedCaptureIntent(file: string, now: number): Promise<CaptureIntent | undefined> {
+  const stamp = await fileStamp(file, now);
+  if (stamp.key === 'missing') return undefined;
+  const cached = intentCache.get(file);
+  if (cached && cached.stamp === stamp.key) return cached.intent;
+  let raw: string;
+  try {
+    raw = await readFile(file, 'utf8');
+  } catch (error) {
+    if (!hasCode(error, 'ENOENT')) throw error;
+    return undefined;
+  }
+  const intent: CaptureIntent = JSON.parse(raw);
+  // A file written within the stamp's racy window can change again without a new stamp.
+  if (stamp.racy) intentCache.delete(file);
+  else intentCache.set(file, { stamp: stamp.key, intent });
+  return intent;
+}
+
 async function runInventoryEntry(file: string, journal: string): Promise<RunInventoryEntry | null> {
   const run = parseRunRecordFile(path.basename(file), await readFile(file, 'utf-8'));
   if (!run) return null;
@@ -2100,10 +2302,13 @@ async function runBundleHousekeepingInventoryUntimed(store: RunBundleStore, now:
   const captureRuns = new Set<string>();
   const committedIntents = new Map<string, string[]>();
   const newestCommitted = new Map<string, CaptureIntent>();
+  const listedIntents = new Set<string>();
   for (const file of await readdir(intentsDir)) {
     if (!file.endsWith('.json')) continue;
     const intentPath = path.join(intentsDir, file);
-    const intent: CaptureIntent = JSON.parse(await readFile(intentPath, 'utf8'));
+    listedIntents.add(intentPath);
+    const intent = await cachedCaptureIntent(intentPath, now);
+    if (!intent) continue;
     // A prepared package can outlive the current output pointer before its gate is recorded.
     // Only the run's current generation, or its newest capture, can still be that package.
     if (intent.committed && intent.bundleDigest && activeRuns.has(intent.runId)) {
@@ -2133,6 +2338,9 @@ async function runBundleHousekeepingInventoryUntimed(store: RunBundleStore, now:
       if (intent.bundleDigest) pinned.add(intent.bundleDigest);
     }
   }
+  for (const intentPath of intentCache.keys())
+    if (path.dirname(intentPath) === intentsDir && !listedIntents.has(intentPath))
+      intentCache.delete(intentPath);
   for (const intent of newestCommitted.values()) pinned.add(intent.bundleDigest!);
   const reservations = path.join(store.root, 'reservations');
   await mkdir(reservations, { recursive: true });
@@ -2322,7 +2530,7 @@ async function archiveRunBundleMediaLockedUntimed(
       availability.archivedPaths = { ...availability.archivedPaths, [key]: destination };
       availability.prunedPaths = availability.prunedPaths.filter((file) => file !== key);
       availability.revision++;
-      await atomicJson(availabilityFile, availability);
+      await writeAvailabilityRecord(store, availabilityFile, availability);
       await rm(source);
       await syncPath(path.dirname(source));
       bundleBytes -= meta.bytes;
@@ -2490,6 +2698,24 @@ export async function materializeRunBundle(
     },
   );
   const acquisitionSize = acquisitionScan.bytes;
+  if (request.housekeepBeforeCapture) {
+    // The archiver's own pressure test (archiveRunBundleMediaLocked), with this capture's
+    // declared bytes and its manifest reserve as the required room. Read outside the lock: a
+    // stale charge only decides whether to tidy first, and admission checks again under it.
+    const declared =
+      request.artifacts.reduce((total, artifact) => total + (artifact.sizeBytes ?? 0), 0) +
+      Buffer.byteLength(JSON.stringify(request.artifacts)) +
+      request.artifacts.length * 300 +
+      4096 +
+      policy.metadataReserveBytes;
+    const charged =
+      (await chargedStoreBytes(store)) + (await reservedMetadataBytes(store)) + acquisitionSize;
+    if (
+      charged >= policy.maxStoreBytes * RUN_BUNDLE_ARCHIVE_HIGH_RATIO ||
+      charged + declared > policy.maxStoreBytes
+    )
+      await request.housekeepBeforeCapture();
+  }
   const capture = { label: `capture of run ${run.id}` };
   const captured = await withBundleLock(store, STORE_LOCK, capture, async () => {
     await archiveCaptureMedia(request, acquisitionSize);
@@ -2564,8 +2790,7 @@ export async function materializeRunBundle(
         if (sha256Text(raw) !== intent.bundleDigest)
           throw new Error('Interrupted retained capture is corrupt.');
         await recordBundleBytes(store, intent.bundleDigest, await physicalBytes(stage));
-        await rename(stage, destination);
-        await syncPath(path.dirname(destination));
+        await publishBundleDirectory(store, intent.bundleDigest, stage, destination);
       }
       const retained = await readRetainedRunBundle(store, ref, run.id);
       const missingData = await commitRetainedPayloads(request, ref, retained.manifest);
@@ -2747,8 +2972,7 @@ export async function materializeRunBundle(
       intent.bundleDigest = bundleDigest;
       await atomicJson(intentPath, intent);
       await recordBundleBytes(store, bundleDigest, stagedBytes + Buffer.byteLength(raw));
-      await rename(stage, destination);
-      await syncPath(path.dirname(destination));
+      await publishBundleDirectory(store, bundleDigest, stage, destination);
       const ref: RunArtifactBundleRef = {
         storeId: store.id,
         bundleDigest,
