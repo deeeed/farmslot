@@ -1,1 +1,0 @@
-- The hourly retention pass now cleans review execution caches (as `run.cleanup` does) and moves slot scaffolding collected without an owning run to the run archive once it is older than `runRetentionDays`, with a restore manifest per slot. An unavailable archive root skips the move with a gateway warning instead of failing the pass.

@@ -1,2 +1,0 @@
-- A worker's terminal signal is refused only by its own open child units, not by a parallel or stopped reviewer's unit in the same task directory (run 961d55d3).
-- Task progress marks an unsettled child unit `ownerEnded` when the context owning its checklist has completed or failed, or the run is over, so a stopped reviewer's unit stops reading as live work.

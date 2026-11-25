@@ -1,1 +1,0 @@
-- `NodeInfo.observationCapabilities` reports what a node declared at connect. `NODE_FS_READ_FILES_MAX_FILES` caps one `fs.readFiles` request at 64 files.

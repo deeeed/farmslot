@@ -1,1 +1,0 @@
-- Settled-run retention and bundle housekeeping move a run bundle's usage and availability records to the archive with the bundle. Housekeeping stages its selection with one archive journal write per archive key.

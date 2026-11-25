@@ -1,1 +1,0 @@
-- A gate whose review failed no longer sits with no decision after a gateway restart. Recovery kept polling a failed reviewer that could not finish, for up to six hours, and the operator could only cancel. When no recoverable reviewer can still finish and the gate shows no decision, recovery now re-enters the gate so it presents one.

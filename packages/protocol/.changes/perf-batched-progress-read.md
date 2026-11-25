@@ -1,1 +1,0 @@
-- `NodeFsReadFilesParams`/`NodeFsReadFilesResult` describe the node `fs.readFiles` method, and `NodeObservationCapabilities.batchReads` declares it.

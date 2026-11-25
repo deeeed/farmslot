@@ -1,1 +1,0 @@
-- A warm-handoff child (a CI-watch chain started before its parent finished) now sends its prompt and then claims the slot hold its parent's teardown left for it, instead of failing with "mid-release; warm handoff cannot claim it".

@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-node` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.8.35 - 2026-11-25
+
+- Republished in the 25 Nov cohort release with the other @farmslot packages, so an install resolves one copy of each.
+
 ## 0.8.34 - 2026-11-23
 
 - Pin the Recipe Runner 0.52.2 cohort.

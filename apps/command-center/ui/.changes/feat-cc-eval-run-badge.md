@@ -1,1 +1,0 @@
-- Eval and comparison runs carry an EVAL badge with their variant on run list rows and in the run detail header, and list after product runs (eval-only families after product families). The lane filter adds Hide evals.

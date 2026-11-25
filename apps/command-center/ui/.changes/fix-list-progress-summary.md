@@ -1,1 +1,0 @@
-- The run list and the fleet canvas read the task progress summary (done/total and the current step) instead of the full checklist. The fleet canvas expanded run panel reads the full checklist for that one slot, with the same slot and run as its row.

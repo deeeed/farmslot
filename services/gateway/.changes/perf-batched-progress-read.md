@@ -1,1 +1,0 @@
-- A task progress read of a remote slot fetches its checklist and the files beside it (signal, child-unit index and units, acceptance ledger, handoff and projection) in batched `fs.readFiles` requests when the node declares `batchReads`: 3 node requests instead of 9 in the test fixture, and 1 for a list summary. Nodes without it keep the per-file reads.

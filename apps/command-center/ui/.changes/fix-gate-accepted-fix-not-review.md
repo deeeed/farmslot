@@ -1,1 +1,0 @@
-- The publish gate labels a fix the gateway accepted without a reviewer "fix accepted without re-review" instead of showing it as a pass.
