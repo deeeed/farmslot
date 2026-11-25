@@ -1142,7 +1142,8 @@ async function recordedBundleBytes(store: RunBundleStore, digest: string): Promi
 /**
  * Retention moves a bundle aside (`.retention-<uuid>`) while it archives it, and those bytes
  * stay charged until the archive removes them. Its manifest still names the bundle, so the
- * record applies; only a directory without one is measured.
+ * record applies; only a directory without one is measured. Archival stages a bundle's usage
+ * record with it, so that measurement is not written back: it would be an orphan record.
  */
 async function movedBundleBytes(store: RunBundleStore, directory: string): Promise<number> {
   const manifest = await readOptional(path.join(directory, 'manifest.json'));
@@ -1150,10 +1151,8 @@ async function movedBundleBytes(store: RunBundleStore, directory: string): Promi
   const digest = sha256Text(manifest);
   const recorded = await readBundleRecord(store, digest);
   if (recorded !== undefined) return recorded;
-  // Moved aside before it had a record (published before records existed): measured once.
-  const measured = await physicalBytes(directory);
-  await recordBundleBytes(store, digest, measured);
-  return measured;
+  // Moved aside with its record, or before records existed.
+  return physicalBytes(directory);
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
@@ -2511,8 +2510,8 @@ async function runBundleHousekeepingInventoryUntimed(store: RunBundleStore, now:
     // Intents first: a host interrupted between entries leaves the bundle to select again.
     for (const intent of committedIntents.get(digest) ?? [])
       archivable.push({ path: intent, runId, store: 'bundle-intents' });
-    // The directory before its records: a staged bundle keeps its usage record charged until it
-    // leaves, and records a crash leaves behind are the orphans selected below.
+    // The directory before its records: a crash between them leaves records with no bundle, which
+    // the orphan rule below archives, never a live bundle without its availability record.
     archivable.push({ path: directory, runId, store: 'run-bundles' });
     for (const record of runBundleRecordPaths(store.root, digest))
       if (records.has(record)) archivable.push({ path: record, runId, store: 'bundle-records' });

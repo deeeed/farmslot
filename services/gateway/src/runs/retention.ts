@@ -326,6 +326,10 @@ export async function diskBytes(file: string): Promise<number> {
   return bytes;
 }
 
+/** Whether `file` counts as an entry of `store`: a run bundle's records travel with it. */
+export const countsAsRetentionEntry = (store: RunRetentionStore, file: string): boolean =>
+  store !== 'run-bundles' || path.basename(path.dirname(file)) === 'sha256';
+
 /** Keep the paths that exist and count their entries and bytes per store. */
 export async function measureRetention(
   runs: Run[],
@@ -343,12 +347,10 @@ export async function measureRetention(
       bytes += await diskBytes(file);
     }
     paths[store] = present;
-    // A run bundle is one entry: its usage and availability records travel with it.
-    const entries =
-      store === 'run-bundles'
-        ? present.filter((file) => path.basename(path.dirname(file)) === 'sha256').length
-        : present.length;
-    stores[store] = { entries, bytes };
+    stores[store] = {
+      entries: present.filter((file) => countsAsRetentionEntry(store, file)).length,
+      bytes,
+    };
   }
   return { runs: runs.map((run) => run.id), held, paths, stores };
 }

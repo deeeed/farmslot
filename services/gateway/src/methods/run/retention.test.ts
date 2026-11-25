@@ -627,6 +627,7 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
       path.join(roots.bundles!.root, 'sha256', run.id),
     ])
       await file(path.join(directory, 'bytes'));
+    await file(path.join(roots.bundles!.root, 'usage', `${run.id}.json`));
     await symlink('bytes', path.join(task, 'linked'));
     await pin(roots, run.id, task, NOW - RUN_RETENTION_AGE_MS - 60000);
   }
@@ -641,6 +642,8 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
   );
   assert.deepEqual(new Set(result.runs), new Set(runIds));
   assert.deepEqual(events, [], 'storage archival does not announce run deletion');
+  assert.equal(result.stores['run-bundles'].entries, 2, 'one entry per bundle, not per record');
+  assert.equal(result.paths['run-bundles'].length, 4, 'each bundle moved with its usage record');
   for (const [index, id] of runIds.entries()) {
     assert.ok(
       existsSync(originals[index]),
@@ -669,7 +672,8 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
       }
       assert.ok(existsSync(entry.destination));
       assert.ok(entry.destination.endsWith(entry.source));
-      if (entry.store !== 'task-pins')
+      // A bundle's usage record is a file; every other archived entry here is a directory.
+      if (entry.store !== 'task-pins' && !entry.source.endsWith('.json'))
         assert.equal(
           await readFile(path.join(entry.destination, 'bytes'), 'utf8'),
           'x'.repeat(4096),

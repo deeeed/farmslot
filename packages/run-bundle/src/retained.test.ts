@@ -28,6 +28,7 @@ import { importBundle } from './import.js';
 import {
   collectRunBundleGarbage,
   forgetAcquisitionFootprints,
+  forgetRunBundleStoreChargeCache,
   materializeRunBundle,
   type MaterializeRunBundleRequest,
   openRunBundleStore,
@@ -601,7 +602,7 @@ test('a bundle retention has moved aside stays charged until archived, without a
   await reserveRunBundleMetadata(f.store, f.run.id, policy);
 });
 
-test('a bundle retention has moved aside is charged its record, measured once if it had none', async (t) => {
+test('a bundle retention has moved aside is charged its record, or measured if it has none', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);
   const aside = path.join(f.store.root, 'sha256', '.retention-1a2b3c4d');
@@ -615,14 +616,16 @@ test('a bundle retention has moved aside is charged its record, measured once if
   };
   const admitted = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee';
   await reserveRunBundleMetadata(f.store, admitted, policy);
-  // Moved aside before it had a record: measured once, then charged from the new record.
+  // Moved aside without its record (archival stages the record too): measured on each read.
   await rm(path.join(f.store.root, 'reservations', `${admitted}.json`));
   await rm(path.join(aside, 'unrecorded.bin'));
   await rm(path.join(f.store.root, 'usage', `${result.ref.bundleDigest}.json`));
   await reserveRunBundleMetadata(f.store, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee', policy);
   await rm(path.join(f.store.root, 'reservations', 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee.json'));
   await writeFile(path.join(aside, 'unrecorded.bin'), Buffer.alloc(60_000));
-  await reserveRunBundleMetadata(f.store, 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee', policy);
+  await assert.rejects(
+    reserveRunBundleMetadata(f.store, 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee', policy),
+  );
 });
 
 test('capacity usage reads store accounting under the store lock', async (t) => {
@@ -823,6 +826,21 @@ test('an archived bundle takes its usage and availability records, and records a
   for (const record of records(superseded.ref.bundleDigest))
     await assert.rejects(stat(record), { code: 'ENOENT' });
   await stat(records(live.ref.bundleDigest)[1]);
+});
+
+test('a charge read while a bundle and its usage record are staged for archive writes no record', async (t) => {
+  const f = await fixture(t);
+  const captured = await materializeRunBundle(f.request);
+  const usage = path.join(f.store.root, 'usage', `${captured.ref.bundleDigest}.json`);
+  // Archive staging renames the bundle and its records aside in one locked turn.
+  await rename(
+    path.join(f.store.root, 'sha256', captured.ref.bundleDigest),
+    path.join(f.store.root, 'sha256', '.retention-staged'),
+  );
+  await rename(usage, path.join(f.store.root, 'usage', '.retention-staged'));
+  forgetRunBundleStoreChargeCache();
+  await runBundleAdmissionUsage(f.store, f.root);
+  await assert.rejects(stat(usage), { code: 'ENOENT' }, 'no orphan usage record');
 });
 
 test('a cached manifest cannot hide loss of the retained bundle directory', async (t) => {
