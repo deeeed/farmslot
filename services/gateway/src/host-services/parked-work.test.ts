@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { execFile, execFileSync, spawn } from 'node:child_process';
+import {
+  execFile,
+  execFileSync,
+  spawn,
+  spawnSync,
+  type SpawnSyncOptions,
+} from 'node:child_process';
 import { existsSync, watch } from 'node:fs';
 import {
   chmod,
@@ -577,7 +583,7 @@ test('a Git call that outlives the parking budget is stopped and named', async (
   await writeFile(path.join(bin, 'git'), '#!/bin/sh\nexec sleep 30\n');
   await chmod(path.join(bin, 'git'), 0o755);
   const envelope = await runProgram(
-    { op: 'list', repo: os.tmpdir(), slotId: 'proof', budgetMs: 1000 },
+    { op: 'list', repo: os.tmpdir(), slotId: 'proof', budgetMs: 500 },
     { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` },
   );
   assert.equal(envelope.code, 'GIT_TIMEOUT');
@@ -590,19 +596,59 @@ test('a Git call that outlives the parking budget is stopped and named', async (
 test('a mutation that ends after the step budget still reports its own result', async (t) => {
   const { vars, repo, options } = await fixture(t);
   const capture = await parkGitWork(vars, options, localExec);
-  // The command outlives the steps' budget but not the caller's timeout.
-  const envelope = await runProgram({
-    op: 'mutate',
-    repo,
-    slotId: 'proof',
-    expectedFingerprint: capture.fingerprint,
-    saved: capture.receipts,
-    command: 'sleep 0.8',
-    budgetMs: 600,
+  // A virtual clock: the mutation's command takes a minute, past the 1 s step budget but
+  // inside the caller's 120 s timeout. Git steps take no virtual time.
+  let clock = 0;
+  class ClockDate extends Date {
+    static now() {
+      return clock;
+    }
+  }
+  const realRequire = createRequire(import.meta.url);
+  const requireInProgram = (name: string): unknown =>
+    name === 'node:child_process'
+      ? {
+          spawnSync: (command: string, args: readonly string[], spawnOptions: SpawnSyncOptions) => {
+            if (command === 'bash') clock += 60_000;
+            return spawnSync(command, args, spawnOptions);
+          },
+        }
+      : realRequire(name);
+  let output = '';
+  vm.runInNewContext(PARKED_WORK_PROGRAM, {
+    require: requireInProgram,
+    Buffer,
+    Date: ClockDate,
+    Atomics,
+    SharedArrayBuffer,
+    process: {
+      argv: [
+        'node',
+        JSON.stringify({
+          op: 'mutate',
+          repo,
+          slotId: 'proof',
+          expectedFingerprint: capture.fingerprint,
+          saved: capture.receipts,
+          command: 'true',
+          budgetMs: 1000,
+        }),
+      ],
+      env: process.env,
+      stdout: {
+        write: (text: string) => {
+          output += text;
+        },
+      },
+      stderr: { write: () => {} },
+    },
   });
+  const envelope: unknown = JSON.parse(output);
+  assert.ok(isRecord(envelope));
   assert.equal(envelope.ok, true, String(envelope.message));
   assert.ok(isRecord(envelope.value));
   assert.equal(envelope.value.exitCode, 0);
+  assert.equal(clock, 60_000);
 });
 
 test('restore evaluates ignored paths before and after checkout without sharing temporary rule state', async (t) => {
