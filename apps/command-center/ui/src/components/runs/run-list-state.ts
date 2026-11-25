@@ -8,7 +8,7 @@ import type {
   QueueItem,
   RunCleanupResult,
   RunFamilyReadinessSummary,
-  RunLane,
+  RunListLaneFilter,
   RunListResult,
   RunListRow,
   RunListSummaryMeta,
@@ -24,6 +24,8 @@ import { resourcePresentationChanged } from '../../utils/resource-presentation.j
 
 export type TabFilter = 'active' | 'history' | 'all';
 export type StatusFilter = RunStatus | 'all';
+/** A run lane, or `product`: every lane except the eval/comparison lane. */
+export type RunLaneFilter = RunListLaneFilter | '';
 export type SortOption =
   | 'newest'
   | 'oldest'
@@ -60,11 +62,12 @@ export const FLOW_OPTIONS: { label: string; value: FlowType | '' }[] = [
   { label: 'PR Complete', value: 'pr-complete' },
 ];
 
-export const LANE_OPTIONS: { label: string; value: RunLane | '' }[] = [
+export const LANE_OPTIONS: { label: string; value: RunLaneFilter }[] = [
   { label: 'All lanes', value: '' },
+  { label: 'Hide evals', value: 'product' },
   { label: 'Production', value: 'production' },
   { label: 'Validation', value: 'validation' },
-  { label: 'Comparison', value: 'comparison' },
+  { label: 'Comparison (evals)', value: 'comparison' },
 ];
 
 export const SORT_OPTIONS: { label: string; value: SortOption }[] = [
@@ -91,7 +94,9 @@ export const SORT_OPTIONS: { label: string; value: SortOption }[] = [
 const TAB_VALUES: TabFilter[] = ['active', 'history', 'all'];
 const STATUS_VALUES: StatusFilter[] = STATUS_PILLS.map((p) => p.value);
 const FLOW_VALUES = FLOW_OPTIONS.map((o) => o.value).filter((v): v is FlowType => v !== '');
-const LANE_VALUES = LANE_OPTIONS.map((o) => o.value).filter((v): v is RunLane => v !== '');
+const LANE_VALUES = LANE_OPTIONS.map((o) => o.value).filter(
+  (v): v is Exclude<RunLaneFilter, ''> => v !== '',
+);
 const SORT_VALUES: SortOption[] = SORT_OPTIONS.map((o) => o.value);
 
 export abstract class RunListState extends LitElement {
@@ -110,7 +115,7 @@ export abstract class RunListState extends LitElement {
   @state() tab: TabFilter = 'active';
   @state() statusFilter: StatusFilter = 'all';
   @state() flowFilter: FlowType | '' = '';
-  @state() laneFilter: RunLane | '' = '';
+  @state() laneFilter: RunLaneFilter = '';
   @state() familyFilter = '';
   @state() tagFilter = '';
   @state() tagRuns: RunListRow[] | null = null;
@@ -151,7 +156,7 @@ export abstract class RunListState extends LitElement {
     this.flowFilter = FLOW_VALUES.includes(parsed.flow as FlowType)
       ? (parsed.flow as FlowType)
       : '';
-    this.laneFilter = LANE_VALUES.includes(parsed.lane as RunLane) ? (parsed.lane as RunLane) : '';
+    this.laneFilter = LANE_VALUES.find((lane) => lane === parsed.lane) ?? '';
     this.sortBy = SORT_VALUES.includes(parsed.sort as SortOption)
       ? (parsed.sort as SortOption)
       : 'newest';

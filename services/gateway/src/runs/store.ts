@@ -2132,6 +2132,31 @@ export async function claimReviewWorkspaceTransfer(
   );
 }
 
+/**
+ * A continuation that never launched gives the workspace it claimed back to the live run it came
+ * from, so that run's retained checkout and reviewer stay continuable.
+ */
+export async function returnReviewWorkspaceTransfer(
+  predecessorId: string,
+  successorId: string,
+): Promise<Run> {
+  return commitRetainedRunMutation(
+    predecessorId,
+    (run) => {
+      const { transferredTo: _returned, ...workspace } = run.reviewWorkspace!;
+      return { ...run, reviewWorkspace: workspace };
+    },
+    (run) => {
+      // Only a live predecessor takes it back: an archived one has nothing to reclaim it.
+      assertRunNotArchiving(predecessorId);
+      if (getRun(predecessorId) !== run)
+        throw new Error('An archived review cannot take its workspace back');
+      if (run.reviewWorkspace?.transferredTo?.runId !== successorId)
+        throw new Error('Retained review workspace is not held by this continuation');
+    },
+  );
+}
+
 /** Retention records the restore manifest without evicting live or archived history. */
 export async function recordRunStorageArchive(id: string, manifest: string): Promise<void> {
   const url = pathToFileURL(manifest).href;
@@ -2177,6 +2202,29 @@ export async function recordParkedRunCommits(
     // A parking receipt grants no lifecycle authority; the release claim checks ownership.
     () => undefined,
   );
+}
+
+/**
+ * Runs a release of `slotId` for run `runId` and, when it frees the slot, records how long it
+ * took on the run. A run already archived keeps its record as it was: the timing is an
+ * observation, not part of the archived execution.
+ */
+export async function timeRunSlotRelease<T extends { released: boolean }>(
+  runId: string,
+  slotId: string,
+  release: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  const result = await release();
+  if (result.released && getRun(runId))
+    updateRun(runId, {
+      slotRelease: {
+        slotId,
+        startedAt: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+      },
+    });
+  return result;
 }
 
 /** Ownership release records its checkout without rewriting archived execution. */

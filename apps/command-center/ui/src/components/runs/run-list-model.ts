@@ -2,7 +2,6 @@ import {
   deriveRunLifecycleView,
   type FlowType,
   type Run,
-  type RunLane,
   type RunListDecision,
   type RunListProjection,
   type RunListQuery,
@@ -12,7 +11,12 @@ import {
   slotMachineMap,
   type SlotStatus,
 } from '@farmslot/protocol';
-import { isSettledBlockedRun, selectRunList, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
+import {
+  isSettledBlockedRun,
+  productRunsFirst,
+  selectRunList,
+  TERMINAL_RUN_STATUSES,
+} from '@farmslot/protocol';
 import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
 
 import type { GlobalFilters } from '../../state.js';
@@ -21,7 +25,7 @@ import { compareInventoryValues, sortInventoryRows } from '../shared/work-invent
 
 import { familyLearningTimeAgo } from './family-observability-run-detail-renderers.js';
 import { type RunInventorySortKey, runInventorySortValue } from './run-list-inventory.js';
-import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
+import type { RunLaneFilter, SortOption, StatusFilter, TabFilter } from './run-list-state.js';
 import { formatElapsed } from './run-utils.js';
 
 /** Runs the gateway lets `run.archive` evict: terminal, or blocked with nothing left to advance. */
@@ -199,7 +203,7 @@ export interface FilterRunListInput {
   tab: TabFilter;
   statusFilter: StatusFilter;
   flowFilter: FlowType | '';
-  laneFilter: RunLane | '';
+  laneFilter: RunLaneFilter;
   searchQuery: string;
   sortBy: SortOption;
 }
@@ -262,9 +266,16 @@ export function filterRunList(input: FilterRunListInput): readonly RunListRow[] 
       : input.runs;
   result = selectRunList(result, runListQuery(input));
   if (input.familyFilter) {
-    result = result.filter((run) => run.familyId === input.familyFilter);
+    return sortRunList(
+      result.filter((run) => run.familyId === input.familyFilter),
+      input.sortBy,
+    );
   }
-  switch (input.sortBy) {
+  return productRunsFirst(sortRunList(result, input.sortBy));
+}
+
+function sortRunList(result: readonly RunListRow[], sortBy: SortOption): readonly RunListRow[] {
+  switch (sortBy) {
     case 'oldest':
       return [...result].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     case 'duration':
@@ -276,8 +287,8 @@ export function filterRunList(input: FilterRunListInput): readonly RunListRow[] 
     case 'status':
     case 'status-desc': {
       // Preserve main's recency-aware secondary order (newest first on ties).
-      const inventoryKey = inventoryKeyForSortOption(input.sortBy);
-      const multiplier = input.sortBy.endsWith('-desc') ? -1 : 1;
+      const inventoryKey = inventoryKeyForSortOption(sortBy);
+      const multiplier = sortBy.endsWith('-desc') ? -1 : 1;
       return [...result].sort((a, b) => {
         const primary = compareInventoryValues(
           runInventorySortValue(a, inventoryKey),
@@ -295,8 +306,8 @@ export function filterRunList(input: FilterRunListInput): readonly RunListRow[] 
     case 'runner-desc':
     case 'updated':
     case 'updated-desc': {
-      const inventoryKey = inventoryKeyForSortOption(input.sortBy);
-      const direction = input.sortBy.endsWith('-desc') ? 'desc' : 'asc';
+      const inventoryKey = inventoryKeyForSortOption(sortBy);
+      const direction = sortBy.endsWith('-desc') ? 'desc' : 'asc';
       return sortInventoryRows(
         result,
         (run) => runInventorySortValue(run, inventoryKey),

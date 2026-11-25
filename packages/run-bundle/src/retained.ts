@@ -309,7 +309,7 @@ async function readOptional(file: string): Promise<string | undefined> {
   }
 }
 
-async function syncPath(file: string): Promise<void> {
+async function syncPathUntimed(file: string): Promise<void> {
   const handle = await open(file, 'r');
   try {
     await handle.sync();
@@ -318,7 +318,7 @@ async function syncPath(file: string): Promise<void> {
   }
 }
 
-async function atomicJson(file: string, value: unknown): Promise<void> {
+async function atomicJsonUntimed(file: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const temp = `${file}.${randomUUID()}.tmp`;
   const handle = await open(temp, 'wx', 0o600);
@@ -445,6 +445,75 @@ interface BundleLockWaitBudget {
 }
 
 const lockWaitBudgets = new AsyncLocalStorage<BundleLockWaitBudget>();
+
+/** Time an operation spent queued for and holding bundle locks, summed per acquisition. */
+export interface RunBundleLockTime {
+  acquisitions: number;
+  waitMs: number;
+  heldMs: number;
+  /** Waits and holds by kind of holder (`capture`, `media admission`, `repair`, ...). */
+  holds?: Record<string, { count: number; waitMs: number; heldMs: number }>;
+  /**
+   * Self time of the store operations the measured caller ran, by name, held or not: each name
+   * excludes the timed operations it ran inside, so the values do not overlap.
+   */
+  opsMs?: Record<string, { count: number; ms: number }>;
+}
+
+/** A holder label without its run id or bundle digest, so holds of one kind add up. */
+function holdKind(label: string): string {
+  if (label.startsWith('bundle-repair-')) return 'repair';
+  return label.replace(/ of run \S+$/u, '').replace(/\.lock$/u, '') || label;
+}
+
+interface BundleOpFrame {
+  /** Wall time of the timed operations this one awaited directly. */
+  childMs: number;
+}
+
+const bundleOps = new AsyncLocalStorage<BundleOpFrame>();
+
+/**
+ * Adds `operation`'s self time (its wall time minus the timed operations it ran inside) to the
+ * measured caller's `opsMs[name]`, so the names do not count the same time twice. Outside a
+ * measured operation it only runs it. Concurrent children can exceed their parent's wall time;
+ * the parent's self time then reads 0. Times are summed unrounded, so many sub-millisecond
+ * calls (fsyncs, record writes) still add up; a reader rounds once.
+ *
+ * Public through the package index; store code here calls it through the wrappers at the end
+ * of this file.
+ */
+export async function timeBundleOp<T>(name: string, operation: () => Promise<T>): Promise<T> {
+  const time = lockTimes.getStore();
+  if (!time) return operation();
+  const parent = bundleOps.getStore();
+  const frame: BundleOpFrame = { childMs: 0 };
+  const start = performance.now();
+  try {
+    return await bundleOps.run(frame, operation);
+  } finally {
+    const elapsed = performance.now() - start;
+    if (parent) parent.childMs += elapsed;
+    const ops = (time.opsMs ??= {});
+    const entry = (ops[name] ??= { count: 0, ms: 0 });
+    entry.count += 1;
+    entry.ms += Math.max(0, elapsed - frame.childMs);
+  }
+}
+
+const lockTimes = new AsyncLocalStorage<RunBundleLockTime>();
+
+/**
+ * Adds the bundle-lock waits and holds `operation` causes to `time`. A nested call shares its
+ * caller's record; a lock taken inside another lock's hold counts in both holds.
+ */
+export function withRunBundleLockTime<T>(
+  time: RunBundleLockTime,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (lockTimes.getStore()) return operation();
+  return lockTimes.run(time, operation);
+}
 
 /** Bound cumulative queue waits without interrupting a holder or admitting a timed-out writer. */
 export function withRunBundleLockWaitBudget<T>(
@@ -581,24 +650,38 @@ async function withBundleLock<T>(
       holdLimitMs: hold.holdLimitMs ?? STORE_LOCK_HOLD_LIMIT_MS,
     };
     const waited = holder.since - enqueuedAt;
+    const time = lockTimes.getStore();
+    const kind = holdKind(holder.label);
+    if (time) {
+      time.acquisitions += 1;
+      time.waitMs += waited;
+      const entry = ((time.holds ??= {})[kind] ??= { count: 0, waitMs: 0, heldMs: 0 });
+      entry.count += 1;
+      entry.waitMs += waited;
+    }
     if (waited >= SLOW_LOCK_WAIT_MS)
       console.warn(
         `[run-bundle] ${holder.label} waited ${(waited / 1000).toFixed(1)}s for ${name}`,
       );
     bundleLockHolders.set(options.lockfilePath, holder);
     try {
-      if (checkPairing && name === STORE_LOCK) {
-        const migration = await readMigration(store.runsDir);
-        if (migration?.phase === 'verified') await finishRunBundleMigration(migration);
-        const current: RunBundleStore = JSON.parse(
-          await readFile(path.join(store.runsDir, 'bundle-store.json'), 'utf8'),
-        );
-        if (current.id !== store.id || current.root !== store.root)
-          throw new Error('Run bundle store pairing changed; reopen the store.');
-      }
+      if (checkPairing && name === STORE_LOCK)
+        await timeBundleOp('pairingCheck', async () => {
+          const migration = await readMigration(store.runsDir);
+          if (migration?.phase === 'verified') await finishRunBundleMigration(migration);
+          const current: RunBundleStore = JSON.parse(
+            await readFile(path.join(store.runsDir, 'bundle-store.json'), 'utf8'),
+          );
+          if (current.id !== store.id || current.root !== store.root)
+            throw new Error('Run bundle store pairing changed; reopen the store.');
+        });
       return await fn();
     } finally {
       const heldMs = Date.now() - holder.since;
+      if (time) {
+        time.heldMs += heldMs;
+        time.holds![kind]!.heldMs += heldMs;
+      }
       if (heldMs >= SLOW_LOCK_WAIT_MS)
         console.warn(
           `[run-bundle] ${holder.label} held ${name} for ${(heldMs / 1000).toFixed(1)}s`,
@@ -1005,7 +1088,7 @@ async function movedBundleBytes(store: RunBundleStore, directory: string): Promi
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
-async function chargedStoreBytes(
+async function chargedStoreBytesUntimed(
   store: RunBundleStore,
   stagedCharges?: Map<string, number>,
 ): Promise<number> {
@@ -1158,7 +1241,7 @@ export async function forgetAcquisitionFootprints(
  * Share only an in-flight scan. Live task dirs are walked on every read; with a classifier,
  * a settled one is charged the footprint kept for its token.
  */
-async function acquisitionBytes(
+async function acquisitionBytesUntimed(
   root: string,
   settled?: { store: RunBundleStore; classify: AcquisitionTaskDirClassifier },
 ): Promise<AcquisitionScan> {
@@ -1273,7 +1356,10 @@ async function chargedCaptureBytes(
   );
 }
 
-async function reservedMetadataBytes(store: RunBundleStore, exceptRunId?: string): Promise<number> {
+async function reservedMetadataBytesUntimed(
+  store: RunBundleStore,
+  exceptRunId?: string,
+): Promise<number> {
   const root = path.join(store.root, 'reservations');
   await mkdir(root, { recursive: true });
   let bytes = 0;
@@ -1407,7 +1493,7 @@ function assertPolicy(policy: RunBundleRetentionPolicy): void {
     throw new Error('Invalid runBundleRetention capacity policy.');
 }
 
-async function copyHashed(
+async function copyHashedUntimed(
   source: string,
   dest: string | null,
   maxBytes: number,
@@ -1538,7 +1624,7 @@ async function cloneRetainedPayload(
   return undefined;
 }
 
-async function completeRetainedPayloads(
+async function completeRetainedPayloadsUntimed(
   request: MaterializeRunBundleRequest,
   ref: RunArtifactBundleRef,
   directory: string,
@@ -1767,7 +1853,7 @@ export async function readRunBundleAvailability(
  * A published bundle's manifest, digest-checked on every read; parsed metadata is cached.
  * Rejects with `ENOENT` once the bundle has left the store.
  */
-async function readRetainedManifest(
+async function readRetainedManifestUntimed(
   store: RunBundleStore,
   digest: string,
 ): Promise<{ directory: string; manifest: RunBundleManifest }> {
@@ -1992,7 +2078,7 @@ async function runInventoryEntries(runsDir: string): Promise<RunInventoryEntry[]
 }
 
 /** Metadata/staging selection shared by the standalone collector and archive-only gateway. Caller holds the bundle lock. */
-async function runBundleHousekeepingInventory(store: RunBundleStore, now: number) {
+async function runBundleHousekeepingInventoryUntimed(store: RunBundleStore, now: number) {
   const cleanup: RunBundleHousekeepingPath[] = [];
   const referenced = new Set<string>();
   const activeRuns = new Map<string, number | undefined>();
@@ -2090,7 +2176,7 @@ async function runBundleHousekeepingInventory(store: RunBundleStore, now: number
 }
 
 /** Store lock held throughout selection, verified copy, location journal and source removal. */
-async function archiveRunBundleMediaLocked(
+async function archiveRunBundleMediaLockedUntimed(
   input: RunBundleMediaArchiveRequest,
   acquisitionSize: number,
   requiredBytes = 0,
@@ -2705,4 +2791,74 @@ export async function materializeRunBundle(
       return { ...captured, missingData, acquisitionScan };
     });
   });
+}
+
+// Each store operation reports its wall time to a measured caller (`opsMs`).
+function chargedStoreBytes(
+  ...args: Parameters<typeof chargedStoreBytesUntimed>
+): ReturnType<typeof chargedStoreBytesUntimed> {
+  return timeBundleOp('storeWalk', () => chargedStoreBytesUntimed(...args)) as ReturnType<
+    typeof chargedStoreBytesUntimed
+  >;
+}
+function reservedMetadataBytes(
+  ...args: Parameters<typeof reservedMetadataBytesUntimed>
+): ReturnType<typeof reservedMetadataBytesUntimed> {
+  return timeBundleOp('reservationsRead', () =>
+    reservedMetadataBytesUntimed(...args),
+  ) as ReturnType<typeof reservedMetadataBytesUntimed>;
+}
+function runBundleHousekeepingInventory(
+  ...args: Parameters<typeof runBundleHousekeepingInventoryUntimed>
+): ReturnType<typeof runBundleHousekeepingInventoryUntimed> {
+  return timeBundleOp('housekeepingInventory', () =>
+    runBundleHousekeepingInventoryUntimed(...args),
+  ) as ReturnType<typeof runBundleHousekeepingInventoryUntimed>;
+}
+function archiveRunBundleMediaLocked(
+  ...args: Parameters<typeof archiveRunBundleMediaLockedUntimed>
+): ReturnType<typeof archiveRunBundleMediaLockedUntimed> {
+  return timeBundleOp('mediaArchive', () =>
+    archiveRunBundleMediaLockedUntimed(...args),
+  ) as ReturnType<typeof archiveRunBundleMediaLockedUntimed>;
+}
+function completeRetainedPayloads(
+  ...args: Parameters<typeof completeRetainedPayloadsUntimed>
+): ReturnType<typeof completeRetainedPayloadsUntimed> {
+  return timeBundleOp('payloadCompletion', () =>
+    completeRetainedPayloadsUntimed(...args),
+  ) as ReturnType<typeof completeRetainedPayloadsUntimed>;
+}
+function copyHashed(
+  ...args: Parameters<typeof copyHashedUntimed>
+): ReturnType<typeof copyHashedUntimed> {
+  return timeBundleOp('payloadCopy', () => copyHashedUntimed(...args)) as ReturnType<
+    typeof copyHashedUntimed
+  >;
+}
+function syncPath(...args: Parameters<typeof syncPathUntimed>): ReturnType<typeof syncPathUntimed> {
+  return timeBundleOp('fsync', () => syncPathUntimed(...args)) as ReturnType<
+    typeof syncPathUntimed
+  >;
+}
+function atomicJson(
+  ...args: Parameters<typeof atomicJsonUntimed>
+): ReturnType<typeof atomicJsonUntimed> {
+  return timeBundleOp('recordWrite', () => atomicJsonUntimed(...args)) as ReturnType<
+    typeof atomicJsonUntimed
+  >;
+}
+function acquisitionBytes(
+  ...args: Parameters<typeof acquisitionBytesUntimed>
+): ReturnType<typeof acquisitionBytesUntimed> {
+  return timeBundleOp('acquisitionScan', () => acquisitionBytesUntimed(...args)) as ReturnType<
+    typeof acquisitionBytesUntimed
+  >;
+}
+function readRetainedManifest(
+  ...args: Parameters<typeof readRetainedManifestUntimed>
+): ReturnType<typeof readRetainedManifestUntimed> {
+  return timeBundleOp('manifestRead', () => readRetainedManifestUntimed(...args)) as ReturnType<
+    typeof readRetainedManifestUntimed
+  >;
 }

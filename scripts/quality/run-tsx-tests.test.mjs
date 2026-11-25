@@ -32,11 +32,13 @@ import {
   resolveWorkers,
   selectShard,
   SERIAL_PRAGMA,
+  sharedPoolFailure,
   summaryLines,
   TEST_STATUS_ENV,
   testCommand,
   tmpdirLeakFailure,
   verifyAssignment,
+  watchSharedPool,
   WORKERS_ENV,
 } from './run-tsx-tests.mjs';
 
@@ -1342,5 +1344,39 @@ test('CI selection runs the affected file and excludes an unrelated failing file
     assert.doesNotMatch(result.stdout + result.stderr, /unrelated file ran/);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the shared pool watch reports a pool file a test created during the run', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'shared-pool-'));
+  try {
+    writeFileSync(path.join(directory, 'farm.json'), '{}');
+    const watched = watchSharedPool(directory);
+    writeFileSync(path.join(directory, 'fixture-a.json'), '{}');
+    writeFileSync(path.join(directory, 'fixture-b.json'), '{}');
+    rmSync(path.join(directory, 'fixture-b.json'));
+    // Let the directory events arrive; fixture-a is caught by the final listing either way.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const touched = watched.stop();
+    assert.ok(touched.includes('fixture-a.json'), touched.join(', '));
+    assert.ok(!touched.includes('farm.json'), 'a file that was already there is not reported');
+    assert.match(
+      sharedPoolFailure(touched, directory),
+      /shared pool directory .* gained entries during the run/,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a run that leaves the shared pool alone passes the pool watch', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'shared-pool-'));
+  try {
+    const watched = watchSharedPool(directory);
+    assert.deepEqual(watched.stop(), []);
+    assert.equal(sharedPoolFailure([], directory), null);
+    assert.deepEqual(watchSharedPool(path.join(directory, 'absent')).stop(), []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

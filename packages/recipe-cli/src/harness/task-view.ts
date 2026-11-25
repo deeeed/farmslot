@@ -19,6 +19,7 @@ import {
   isSettledSubtaskStatus,
   isTerminalWorkerSignalStatus,
   READINESS_RECORD,
+  signalFileForChecklist,
   SUBTASK_INDEX_FILE,
   subtaskPaths,
   SUBTASKS_DIR,
@@ -134,7 +135,7 @@ export interface TaskViewSubtaskSource {
 /**
  * A child checklist unit registered on one parent row (ADR-060). Its rows are
  * enumerated by the same protocol parser as the parent checklist, so a row here
- * is the box `mark sub <id> <n>` ticks.
+ * is a box `mark sub <id> <rows>` ticks.
  */
 export interface TaskViewSubtask {
   id: string;
@@ -604,7 +605,9 @@ function readChecklistRows(file: string): TaskViewRow[] {
 // Child units come from the registry `mark` maintains; their paths, their
 // settled rule and their row enumeration are all the protocol's, so this view
 // shows the same child progress the gateway and Command Center project. A task
-// directory with no child unit has no index and reports none.
+// directory with no child unit has no index and reports none. Only the worker
+// checklist's own units: a reviewer's unit on REVIEW.<context>.md step N is not
+// child work of the worker's step N.
 function readSubtasks(taskDir: string): TaskViewSubtask[] {
   const index = readJsonObject(path.join(taskDir, SUBTASKS_DIR, SUBTASK_INDEX_FILE));
   if (!index) return [];
@@ -615,7 +618,9 @@ function readSubtasks(taskDir: string): TaskViewSubtask[] {
     const unit = asObject(entry);
     const id = pickString(unit, 'id');
     const parentStep = pickNumber(asObject(unit?.parent), 'stepNumber');
-    if (id === undefined || parentStep === undefined) continue;
+    const parentChecklist = pickString(asObject(unit?.parent), 'checklist');
+    if (id === undefined || parentStep === undefined || parentChecklist === undefined) continue;
+    if (signalFileForChecklist(parentChecklist) !== WORKER_SIGNAL_FILE) continue;
     // Trust the registry for the id only: the pair's paths are derived, so a
     // rewritten `checklist`/`signal` field cannot point this reader elsewhere.
     const paths = subtaskPaths(id);

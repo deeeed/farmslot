@@ -505,6 +505,8 @@ const {
   shutdownRunSlotResources,
 } = await import('./slot-teardown.js');
 const { replaySlotReclaimCheck } = await import('../methods/run/replay-step.js');
+const { activeRunOnSlotReason, parentHoldForWarmChild } =
+  await import('../methods/dispatch/slot-scoring.js');
 const { buildFleetRefreshSnapshot } = await import('../methods/fleet.js');
 const { defaultCancelCollaborators } = await import('./cancel-transition.js');
 const { reclaimCancelledSlot, cancelledSlotReplayRefusal } =
@@ -1842,6 +1844,27 @@ test('another active run on the slot still keeps it on cancel', async () => {
     runUpdates.at(-1)?.slotTeardownSkipped,
     'Another active run run-active uses this slot',
   );
+});
+
+test('a warm child already active on the slot gets a hold it can claim', async () => {
+  // 12afdc85 chained c616be16, which was writing its task when the parent's cleanup ran.
+  slotRow = { ...slotRow, slot: SLOT_ID };
+  const child: Run = {
+    ...run,
+    id: 'warm-child',
+    status: 'writing-task',
+    parentRunId: RUN_ID,
+    engineState: { generation: 0, flags: { warmSessionReuse: true } },
+  };
+  otherRuns = [child];
+  const cancel = defaultCancelCollaborators();
+
+  await cancel.releaseCapabilities(run);
+  await cancel.releaseSlot(run);
+
+  assert.equal(slotRow?.lifecycle, 'held');
+  assert.equal(slotRow?.held_reason, activeRunOnSlotReason(child.id));
+  assert.equal(parentHoldForWarmChild(slotRow, child), true);
 });
 
 test('cancel retains replay until a pinned new request needs the slot, preserving checkout and evidence', async () => {

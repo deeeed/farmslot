@@ -799,6 +799,7 @@ test('projection counts match what the run list itself selects from the same run
     { ...base, globalFilters: { projects: [], machines: ['mini'] } },
     { ...base, flowFilter: 'qa' as const },
     { ...base, laneFilter: 'comparison' as const },
+    { ...base, laneFilter: 'product' as const },
     { ...base, searchQuery: 'flaky' },
   ]) {
     const rows = filter({ ...filters, runs, familyRuns: filters.familyFilter ? runs : null });
@@ -898,4 +899,30 @@ test('run progress leaves operator waits and terminal outcomes alone', () => {
     assert.equal(summarize(run(status, { status }), now).kind, 'gate');
   for (const status of ['done', 'cancelled', 'failed'] as const)
     assert.equal(runProgressSummary(run(status, { status }), now), null);
+});
+
+test('eval runs list after product runs by default and Hide evals drops them', () => {
+  const runs = [
+    run('eval-new', { lane: 'comparison', variant: 'glm-c3b', familyId: 'family-e' }),
+    run('product-mid', { familyId: 'family-p' }),
+    run('eval-old', { lane: 'comparison', variant: 'ds41-t2', familyId: 'family-e' }),
+    run('validation-old', { lane: 'validation', familyId: 'family-v' }),
+  ];
+  assert.deepEqual(
+    filter({ runs }).map((item) => item.id),
+    ['product-mid', 'validation-old', 'eval-new', 'eval-old'],
+  );
+  assert.deepEqual(
+    filter({ runs, laneFilter: 'product' }).map((item) => item.id),
+    ['product-mid', 'validation-old'],
+  );
+  assert.deepEqual(
+    filter({ runs, laneFilter: 'comparison' }).map((item) => item.id),
+    ['eval-new', 'eval-old'],
+  );
+  // A family view keeps its runs in their own order.
+  assert.deepEqual(
+    filter({ runs, familyFilter: 'family-e', familyRuns: runs }).map((item) => item.id),
+    ['eval-new', 'eval-old'],
+  );
 });

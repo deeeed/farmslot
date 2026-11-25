@@ -101,6 +101,14 @@ import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-d
 import { createPrepareGitTimer } from './prepare-git-timing.js';
 import { verifyPrepareHealth } from './prepare-health.js';
 import {
+  isLockfile,
+  LOCKFILE_DRIFT_FALLBACK_MARKER,
+  lockfileDrift,
+  lockfileDriftAllowed,
+  lockfileRewrittenCommand,
+  readLogTail,
+} from './prepare-lockfile-drift.js';
+import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
   expandPrepareProfileHook,
@@ -390,6 +398,11 @@ async function slotPrepareInner(
   let resolvedStartRef: StartRefResolution | undefined;
   let resolvedStackBase: StartRefResolution | undefined;
   let branchCreatedFromBase = false;
+  // The work branch was on origin when prepare checked it out: an existing PR branch.
+  let workBranchPublished = false;
+  let replayBranchOnOrigin: boolean | undefined;
+  // Lockfiles the deps phase rewrote on a PR branch, for the worker to commit.
+  let lockfilesRewritten: string[] = [];
   const runtimeDir = projectVars?.runtimeDir || '.agent';
   const effectiveDomain = resolveEffectiveDomain(params.domain, vars.domain);
   const applyCommandEnv = (command: string) =>
@@ -529,6 +542,7 @@ async function slotPrepareInner(
     baseline: TrackedFilesSnapshot | null,
     phase: string,
     command: string,
+    allowed?: (file: string) => Promise<boolean>,
   ): Promise<TrackedFilesSnapshot | null> => {
     if (!baseline) return null;
     const after = await snapshotTrackedFiles(baseline);
@@ -565,7 +579,24 @@ async function slotPrepareInner(
         ...changedSubmodules(baseline, after),
       ]),
     ].sort();
-    const message = trackedFilesChangedMessage(phase, command, vars.slotId, baseline, after, files);
+    const kept = allowed
+      ? (await Promise.all(files.map(async (file) => ((await allowed(file)) ? [file] : [])))).flat()
+      : [];
+    if (kept.length) {
+      lockfilesRewritten = kept;
+      step(
+        'tracked-files',
+        `LOCKFILE DRIFT: prepare ${phase} rewrote ${kept.join(', ')} on this PR branch; the worker must commit it`,
+      );
+    }
+    const message = trackedFilesChangedMessage(
+      phase,
+      command,
+      vars.slotId,
+      baseline,
+      after,
+      files.filter((file) => !kept.includes(file)),
+    );
     if (message) fail(message);
     return after;
   };
@@ -949,11 +980,55 @@ async function slotPrepareInner(
   // the frozen validation head the gateway derived from the PR: the slot lands
   // on that exact commit, on the PR branch, and nothing is pushed.
   const startRefPolicyApplies = params.flowType === 'dev' || params.flowType === 'fix-bug';
+  // Release keeps a work branch that holds unpushed commits, so a new run of the ticket finds
+  // it (dropParkedBranch). Before prepare deletes or resets a branch, those commits get a
+  // branch of their own: the guard's parked ref alone is pruned after the retention window.
+  // `name` defaults to the run's branch; `null` means whatever branch the checkout is on.
+  // `target` is where the branch moves; commits it still reaches are not stranded. One command:
+  // probe, keep and report, so a re-prepare pays one round trip per site.
+  const keptBranches: string[] = [];
+  const keepUnpushedBranch = async ({
+    name = branch,
+    target,
+  }: { name?: string | null; target?: string } = {}) => {
+    if (name === undefined) return;
+    const which = name === null ? '$(git symbolic-ref -q --short HEAD)' : shellQuote(name);
+    const keep = await execGit(
+      'keep-unpushed-branch',
+      vars,
+      withFarmGitConfig(
+        [
+          `cd ${shellQuote(vars.remoteRepo)} || exit 2`,
+          `b=${which}; [ -n "$b" ] || exit 0`,
+          // show-ref exits 1 for a missing ref; anything else is a failed check.
+          'git show-ref --verify --quiet "refs/heads/$b"; found=$?; [ "$found" -eq 1 ] && exit 0; [ "$found" -eq 0 ] || exit 2',
+          'head=$(git rev-parse --verify "refs/heads/$b") || exit 2',
+          `stranded=$(git rev-list --max-count=1 "$head" --not --remotes ${target ? shellQuote(target) : ''}) || exit 2`,
+          '[ -n "$stranded" ] || exit 0',
+          // A kept branch that is itself about to move gets a second suffix: naming the copy
+          // after the moving branch would leave its commits nowhere.
+          `kept="$b-kept-$(printf '%.12s' "$head")"`,
+          '[ "$(git rev-parse --verify --quiet "refs/heads/$kept")" = "$head" ] || git branch "$kept" "$head" || exit 3',
+          `printf '%s\\n' "$b" "$kept"`,
+        ].join('\n'),
+      ),
+    );
+    if (keep.exitCode !== 0)
+      throw new Error(
+        `${keep.exitCode === 3 ? 'Cannot keep' : 'Cannot check'} the unpushed commits of ${name ?? 'the current branch'} on ${vars.slotId}; the branch was not changed: ${(keep.stderr || keep.stdout).trim().slice(-200)}`,
+      );
+    const [source, kept] = keep.stdout.trim().split('\n');
+    if (!source || !kept) return;
+    keptBranches.push(kept);
+    opts?.onBranchKept?.(kept);
+    step('branch', `Kept unpushed commits of ${source} on ${kept}`);
+  };
   // Whatever path put the slot on the branch, the provenance must describe the
   // tree the run executes on: with a start ref the branch is reset to the
   // resolved commit, never left at whatever origin or the local branch holds.
   const resetBranchToStartRef = async () => {
     if (!resolvedStartRef) return;
+    await keepUnpushedBranch({ target: resolvedStartRef.resolvedSha });
     // The same index refresh every other reset --hard in this file runs first,
     // so a stale index.lock cannot fail it (the flag sweep runs as its own
     // command on the paths that need it: it ends with exit).
@@ -1066,6 +1141,7 @@ async function slotPrepareInner(
             `git -C ${shellQuote(vars.remoteRepo)} ls-remote --exit-code --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
           ),
         );
+        replayBranchOnOrigin = remote.exitCode === 0;
         const fetchBase =
           remote.exitCode === 2
             ? await execGit(
@@ -1085,6 +1161,23 @@ async function slotPrepareInner(
     }
   }
   if (branch && opts?.preserveBranch) {
+    // A replay keeps its branch: it is a PR branch when origin has it. Only a flow whose
+    // permission depends on that (dev) needs to ask origin.
+    if (
+      replayBranchOnOrigin === undefined &&
+      lockfileDriftAllowed(params.flowType, true) !== lockfileDriftAllowed(params.flowType, false)
+    )
+      replayBranchOnOrigin =
+        (
+          await execGit(
+            'probe-replay-published',
+            vars,
+            withFarmGitConfig(
+              `git -C ${shellQuote(vars.remoteRepo)} ls-remote --exit-code --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
+            ),
+          )
+        ).exitCode === 0;
+    workBranchPublished = replayBranchOnOrigin === true;
     await resolveRequestedStartRef();
   } else if (branch) {
     step('branch', `Checking out ${branch}...`);
@@ -1097,6 +1190,7 @@ async function slotPrepareInner(
         ),
       );
       if (fetchBranchR.exitCode === 0) {
+        workBranchPublished = true;
         const refreshCurrentBranchR = await mutateGit(
           'clear-current-index-flags',
           `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
@@ -1106,6 +1200,7 @@ async function slotPrepareInner(
             `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${refreshCurrentBranchR.stderr.slice(-200) || refreshCurrentBranchR.stdout.slice(-200)}`,
           );
         }
+        await keepUnpushedBranch();
         const resetBranchR = await mutateGit(
           'reset-current-branch',
           `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(`origin/${branch}`)} && git clean -fd`,
@@ -1282,6 +1377,7 @@ async function slotPrepareInner(
       if (linkedWorktree) {
         // Git worktrees cannot checkout `main` when it is active in the primary clone.
         // Reset the current worktree branch directly to the resolved base commit instead.
+        await keepUnpushedBranch({ name: null, target: baseResetRef });
         const ffR = await mutateGit(
           'reset-linked-base',
           `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseResetRef)}; }`,
@@ -1342,6 +1438,8 @@ async function slotPrepareInner(
       // The work-branch fetch above already answered whether origin has the branch: it
       // succeeded, or it failed only because the ref is absent (any other failure threw).
       const remoteExists = fetchBranchR.exitCode === 0;
+      // A forced new branch replaces the published one with a fresh branch from the base.
+      workBranchPublished = remoteExists && !forceNewBranch;
       const newBranchBase =
         resolvedStartRef?.resolvedSha ??
         resolvedStackBase?.resolvedSha ??
@@ -1364,6 +1462,7 @@ async function slotPrepareInner(
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
           );
         }
+        await keepUnpushedBranch({ target: newBranchBase });
         await mutateGit(
           'delete-local-branch',
           `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
@@ -1394,6 +1493,7 @@ async function slotPrepareInner(
             )
           ).exitCode === 0;
         if (localExists) {
+          await keepUnpushedBranch();
           const coR = await mutateGit(
             'reset-tracking-branch',
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} && git reset --hard ${shellQuote(`origin/${branch}`)}`,
@@ -1432,6 +1532,7 @@ async function slotPrepareInner(
         if (localExists) {
           if (forceNewBranch) {
             branchCreatedFromBase = true;
+            await keepUnpushedBranch({ target: newBranchBase });
             if (linkedWorktree) {
               await mutateGit(
                 'delete-local-replay-branch',
@@ -1636,6 +1737,10 @@ async function slotPrepareInner(
     step('deps', `Deps install skipped (profile ${profileName()})`);
   } else {
     const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
+    // A run on an existing PR branch must start even when that branch's lockfile drifted: fixing
+    // it may be the run's job. The install hook reads the flag and may update the lockfile.
+    const driftAllowed = lockfileDriftAllowed(params.flowType, workBranchPublished);
+    const driftEnv = driftAllowed ? 'export FARMSLOT_PREPARE_LOCKFILE_DRIFT=allow; ' : '';
     checkAborted();
     step('deps', `Installing deps: ${installCmd}`);
     const depsLogPath = phaseLog('deps');
@@ -1649,7 +1754,9 @@ async function slotPrepareInner(
       installR = await runPrepareCommand(
         vars,
         depsLogPath,
-        withProfileEnv(`cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`),
+        withProfileEnv(
+          `cd ${shellQuote(vars.remoteRepo)} && ${driftEnv}${applyCommandEnv(installCmd)}`,
+        ),
         {
           cwd: vars.remoteRepo,
           timeout: depsTimeoutMs,
@@ -1665,21 +1772,45 @@ async function slotPrepareInner(
     } finally {
       clearInterval(depsHeartbeat);
     }
+    // A hook prints LOCKFILE_DRIFT_FALLBACK_MARKER once it updated the lockfile: a failure after
+    // that is not drift. A lockfile change is accepted only when drift is in the log.
+    const depsLog = driftAllowed || installR.exitCode !== 0 ? await readLogTail(depsLogPath) : '';
+    const fellBack = depsLog.includes(LOCKFILE_DRIFT_FALLBACK_MARKER);
+    const drift = installR.exitCode !== 0 && !fellBack ? lockfileDrift(depsLog) : null;
+    const driftSeen = fellBack || lockfileDrift(depsLog) !== null;
     if (installR.exitCode !== 0) {
       const setupDetail = installR.stderr.trim();
       const setupFailed = /^(tmux |stage prepare)/.test(setupDetail);
       const err: PrepareCommandError = new Error(
         setupFailed
           ? `prepare deps setup failed: ${setupDetail} — log: ${depsLogPath}`
-          : `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
+          : drift
+            ? `lockfile drift${driftAllowed ? ' on PR branch' : ''}: ${drift.package ?? 'a dependency'} in package.json does not match the lockfile (${installCmd} failed, exit ${installR.exitCode}); ${driftAllowed ? `commit the updated lockfile on ${branch ?? 'the branch'}` : `a ${params.flowType ?? 'prepare'} run on ${workBranchPublished ? 'a published' : 'a new'} branch may not update it, so fix the lockfile on the branch`} — log: ${depsLogPath}`
+            : `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
       );
       err.failedCommand = installCmd;
       err.failedLogPath = depsLogPath;
+      if (drift && !setupFailed) err.failureKind = 'lockfile-drift';
       throw err;
     }
     // Record the lockfile hash so deps_current precondition checks can prove
     // the installed tree matches the checked-out lockfiles.
-    trackedBaseline = await checkTrackedFiles(trackedBaseline, 'deps', installCmd);
+    trackedBaseline = await checkTrackedFiles(
+      trackedBaseline,
+      'deps',
+      installCmd,
+      driftAllowed && driftSeen
+        ? async (file) =>
+            isLockfile(file) &&
+            (
+              await execGit(
+                'probe-rewritten-lockfile',
+                vars,
+                withFarmGitConfig(lockfileRewrittenCommand(vars.remoteRepo, file)),
+              )
+            ).exitCode === 0
+        : undefined,
+    );
     await execOnSlot(vars, buildDepsSentinelWriteCommand(vars.remoteRepo, runtimeDir));
     step('deps', `Dependencies installed (log: ${depsLogPath})`);
   }
@@ -1933,6 +2064,7 @@ async function slotPrepareInner(
           ? [path.join(vars.remoteRepo, runtimeDir, 'ios-expo-build.log')]
           : [path.join(vars.remoteRepo, runtimeDir, 'android-build.log')]),
       ];
+      err.relatedLogsOnGateway = slotIsLocal;
       throw err;
     }
     const phaseSuffix = currentPreflightPhase ? ` after ${currentPreflightPhase}` : '';
@@ -2008,6 +2140,8 @@ async function slotPrepareInner(
     },
     ...(resolvedStartRef ? { startRef: resolvedStartRef } : {}),
     ...(resolvedStackBase ? { stackBase: resolvedStackBase } : {}),
+    ...(lockfilesRewritten.length ? { lockfilesRewritten } : {}),
+    ...(keptBranches.length ? { keptBranches } : {}),
   };
 }
 

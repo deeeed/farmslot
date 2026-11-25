@@ -4,6 +4,8 @@ import test from 'node:test';
 
 import { PipelineSteps, type Run } from '@farmslot/protocol';
 
+import '../../core/private-pool.test-support.js';
+
 import { canCollectRecipeArtifacts } from '../../run-lifecycle/recipe-artifacts.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 

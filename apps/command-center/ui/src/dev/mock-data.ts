@@ -714,8 +714,8 @@ function mockSubtaskUnit(
 
 /**
  * Mid-run parent progress whose steps own child units in every state a client
- * has to draw: running mid-progress, blocked, complete, and the gateway's
- * `stale` projection. Parent counts stay parent-only — attaching a child never
+ * has to draw: running mid-progress, blocked, complete, the gateway's `stale`
+ * projection, and a unit whose owner ended. Parent counts stay parent-only — attaching a child never
  * changes `completedSteps` / `totalSteps`.
  */
 export function mockStructuredProgressWithSubtasks(): TaskProgressStructured {
@@ -743,6 +743,22 @@ export function mockStructuredProgressWithSubtasks(): TaskProgressStructured {
       '2026-09-19T10:42:00Z',
     ),
   );
+  // A stopped reviewer's unit (run 961d55d3): still `running`, but its owning context failed.
+  attach(4, {
+    ...mockSubtaskUnit(
+      'perps-review-6447b8cd',
+      'running',
+      { kind: 'skill', ref: '.agents/skills/mms-perps-review-pr/skill.md' },
+      mockChildProgress(
+        'Perps review (stopped reviewer)',
+        ['Read the diff end to end', 'Check the state derivation', 'Run the recipe'],
+        1,
+        true,
+      ),
+      '2026-09-19T10:20:00Z',
+    ),
+    ownerEnded: true,
+  });
   attach(
     6,
     mockSubtaskUnit(

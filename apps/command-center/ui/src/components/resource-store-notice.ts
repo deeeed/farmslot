@@ -75,18 +75,21 @@ export class ResourceStoreNotice extends LitElement {
     );
   }
   static styles = css`
+    /* A status row below the app in normal flow (start.ts appends it to body after farm-app),
+       so it never covers the bottom of a view such as a chat composer or approval. */
     :host {
-      position: fixed;
-      left: 12px;
-      bottom: 8px;
-      z-index: 200;
+      flex: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 2px 12px;
       pointer-events: none;
-      max-width: calc(100vw - 24px);
     }
     .sync {
       color: #999;
-      background: #12121a;
+      background: transparent;
       border-color: transparent;
+      padding: 0 8px;
     }
     div {
       padding: 4px 8px;

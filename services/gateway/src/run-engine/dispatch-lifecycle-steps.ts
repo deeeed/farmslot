@@ -7,7 +7,11 @@ import { shellQuote } from '../core/tmux.js';
 import { prepareBlindTrialGit } from '../evals/blind-trial.js';
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
-import { slotClaimBlockedByRelease } from '../methods/dispatch/slot-scoring.js';
+import {
+  PARENT_HOLD_CLAIM_FIELDS,
+  parentHoldForWarmChild,
+  slotClaimBlockedByRelease,
+} from '../methods/dispatch/slot-scoring.js';
 import { slotPrepare } from '../methods/slot.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
 import {
@@ -50,7 +54,7 @@ import { createSubStepCollector, type SubStepCollector } from './sub-step-collec
 import { completeRunTaskInitialization } from './task-sync.js';
 import { WorkerLaunchInputsChangedError } from './worker-launch-preflight.js';
 
-interface StepIO {
+export interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
@@ -257,6 +261,26 @@ export function createPrepareProgressEmitter(params: {
   };
 }
 
+/**
+ * Records each branch prepare keeps in the step's outputs as it happens, so a prepare that fails
+ * later still names it. `baseOutputs` is the progress emitter's: every later event keeps it.
+ */
+export function keptBranchRecorder(
+  runId: string,
+  inputs: Record<string, unknown>,
+  baseOutputs: Record<string, unknown>,
+  stepPartialIO: Map<string, StepIO>,
+): (kept: string) => void {
+  return (kept) => {
+    const recorded = Array.isArray(baseOutputs.keptBranches) ? baseOutputs.keptBranches : [];
+    baseOutputs.keptBranches = [...recorded, kept];
+    stepPartialIO.set(runId, {
+      inputs,
+      outputs: { ...stepPartialIO.get(runId)?.outputs, keptBranches: baseOutputs.keptBranches },
+    });
+  };
+}
+
 export interface PrepareStepContext {
   activeMonitors: Map<string, AbortController>;
   broadcastFn: BroadcastFn;
@@ -364,10 +388,12 @@ export async function executePrepareStep(
 
   // Collect sub-step events and broadcast live progress
   const collector = createSubStepCollector();
+  // Shared with the progress emitter, which rebuilds the step's outputs from it on every event.
+  const prepareOutputs: Record<string, unknown> = { cliCommand, hostLoad };
   const emitWithBroadcast = createPrepareProgressEmitter({
     runId,
     inputs,
-    baseOutputs: { cliCommand, hostLoad },
+    baseOutputs: prepareOutputs,
     collector,
     stepPartialIO,
     broadcastFn,
@@ -435,6 +461,8 @@ export async function executePrepareStep(
   }
   activeMonitors.set(runId, prepareController);
   let selectedPrepareProfile: import('../methods/slot/shared.js').SlotPrepareResult['profile'];
+  let lockfilesRewritten: string[] | undefined;
+  let keptBranches: string[] | undefined;
   try {
     const prepareResult = await slotPrepare(
       {
@@ -486,6 +514,8 @@ export async function executePrepareStep(
               await prepareBlindTrialGit(runId, prepareController.signal);
             }
           : undefined,
+        // Recorded as it happens, so a prepare that fails later still names the kept branch.
+        onBranchKept: keptBranchRecorder(runId, inputs, prepareOutputs, stepPartialIO),
         // A replay re-resolves against the commit the run already recorded: a
         // branch or tag name would otherwise move the recorded base under the
         // preserved branch's commits.
@@ -516,6 +546,8 @@ export async function executePrepareStep(
       },
     );
     selectedPrepareProfile = prepareResult.profile;
+    lockfilesRewritten = prepareResult.lockfilesRewritten;
+    keptBranches = prepareResult.keptBranches;
     if (current.startRef) {
       if (!prepareResult.startRef) {
         throw new Error('startRef prepare completed without structured resolved provenance');
@@ -591,6 +623,9 @@ export async function executePrepareStep(
         : {}),
       cliCommand,
       ...(selectedPrepareProfile ? { profile: selectedPrepareProfile } : {}),
+      // Lockfiles prepare rewrote for a drifted PR branch: the worker must commit them.
+      ...(lockfilesRewritten?.length ? { lockfilesRewritten } : {}),
+      ...(keptBranches?.length ? { keptBranches } : {}),
       ...(preparedRun?.startRef ? { startRef: preparedRun.startRef } : {}),
       ...(lastOutput ? { lastOutput } : {}),
     },
@@ -607,7 +642,7 @@ export interface DispatchStepContext {
 }
 
 /** Warm delivery consumes its reservation on success. A fresh launch needs its own claim first. */
-async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean> {
+export async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean> {
   const generation = run.engineState?.generation ?? 0;
   return withRunTransition(run.id, async () => {
     const current = getRun(run.id);
@@ -623,6 +658,34 @@ async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean>
         slotClaimBlockedByRelease(slot),
       );
     const row = await readSlotRow(slotId);
+    // The parent's cleanup held the slot for this run: the fresh launch claims it from here.
+    if (parentHoldForWarmChild(row, current)) {
+      const heldFields: Record<string, unknown> = {
+        lifecycle: 'busy',
+        phase: 'dispatching',
+        current_run_id: run.id,
+        handoff_run_id: null,
+        ...PARENT_HOLD_CLAIM_FIELDS,
+      };
+      const held = await claimSlotStatusIf(
+        slotId,
+        (slot) => {
+          const latest = getRun(run.id);
+          if (
+            !latest ||
+            latest.slotId !== slotId ||
+            runSupersededSince(latest, generation) ||
+            !parentHoldForWarmChild(slot, latest)
+          )
+            return false;
+          if (slot.idle_devserver_epoch === slot.slot_epoch && Array.isArray(slot.idle_devservers))
+            heldFields.idle_devserver_epoch = nextSlotEpoch(slot);
+          return true;
+        },
+        heldFields,
+      );
+      return held.claimed;
+    }
     if (row && blockedSlot(row)) return false;
     // A replay or a completed release may already have left the slot owned by
     // this run or free. The normal fresh launch path handles either state.

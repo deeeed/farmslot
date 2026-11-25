@@ -27,6 +27,7 @@ copilot/notified-decisions.json
 /.pr-monitors.json
 /.pr-monitors.json.*.tmp
 /.pr-rules.json
+/.pr-rules.archive.jsonl
 /.pr-rules.json.*.tmp
 /.dispatch-queue.json.provenance-v1
 .farm-cache/

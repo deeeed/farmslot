@@ -1,0 +1,1 @@
+- Test-only: the slot prepare tests run without global or system git config, so a machine whose global config signs commits no longer fails them.

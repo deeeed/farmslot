@@ -23,6 +23,10 @@ export type SlotPrepareResult = {
   stackBase?: StartRefResolution;
   /** Selected prepare profile + any precondition fallbacks taken (ADR-037). */
   profile?: { selected: string; requested?: string; fallbacks: PrepareProfileFallback[] };
+  /** Lockfiles the deps phase rewrote for a drifted PR branch; the worker must commit them. */
+  lockfilesRewritten?: string[];
+  /** Branches prepare created to keep unpushed commits of a branch it deleted or reset. */
+  keptBranches?: string[];
 };
 export interface SlotPrepareInternalOptions {
   /** The keep-warm re-prepare a release runs while it still holds the releasing fence. */
@@ -44,13 +48,20 @@ export interface SlotPrepareInternalOptions {
   stackBase?: { requestedRef: string };
   /** Called as soon as the stack base resolves, before any later prepare phase can fail. */
   onStackBaseResolved?: (resolution: StartRefResolution) => Promise<void>;
+  /** Called as soon as prepare keeps a branch's unpushed commits, before any later phase can fail. */
+  onBranchKept?: (branch: string) => void;
 }
 
 export interface PrepareCommandError extends Error {
   failedCommand?: string;
   failedLogPath?: string;
   failedPhase?: string;
+  /** A failure the run can act on: the install refused a lockfile that does not match package.json. */
+  failureKind?: 'lockfile-drift';
+  /** Slot-host paths: the slot's runtime logs. */
   relatedLogs?: string[];
+  /** The slot is local, so its related logs are files the gateway can read. */
+  relatedLogsOnGateway?: boolean;
   /** Set when the harness readiness record could not be persisted after a failed preflight; the preflight error stays primary. */
   readinessError?: unknown;
 }

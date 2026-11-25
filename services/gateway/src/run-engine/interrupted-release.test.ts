@@ -431,3 +431,62 @@ test('a fence still carrying an unconfirmed cleanup stop keeps its truthful hold
   assert.equal(row?.phase, 'releasing', 'the backstop writes its truthful hold later');
   assert.deepEqual(retried, []);
 });
+
+/** One pass over a census hold left by `leaver`, with `active` as the active runs on that slot. */
+async function reconcileCensusHold(active: ReturnType<typeof makeRun>) {
+  const leaver = makeRun({ id: 'leaver-run', status: 'done', slotId: 'census-slot' });
+  await writeFile(
+    state.statusFile,
+    JSON.stringify({
+      slots: [
+        {
+          slot: 'census-slot',
+          lifecycle: 'held',
+          phase: 'occupied',
+          slot_epoch: 3,
+          current_run_id: null,
+          cleanup_run_id: leaver.id,
+          held_reason: 'Process 4242 still uses the slot repository; slot teardown was skipped',
+        },
+      ],
+    }),
+  );
+  const retried: string[] = [];
+  await reconcileOrphanedSlots({
+    listRuns: () => ({ runs: [active] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: 'census-slot', lifecycle: 'held', phase: 'occupied', slotEpoch: 3 }],
+    }),
+    isTerminalTeardownInFlight: () => false,
+    readSlotField: state.readSlotField,
+    getRun: (id) => (id === active.id ? active : undefined),
+    updateRun: () => {},
+    resetSlot: state.resetSlot,
+    resetSlotIf: state.resetSlotIf,
+    updateSlotStatusIf: state.updateSlotStatusIf,
+    broadcast: () => {},
+    retryOccupiedRunSlot: async (slotId) => {
+      retried.push(slotId);
+      return false;
+    },
+    resumeInterruptedRecovery: () => {
+      throw new Error('A census hold has no workspace recovery journal');
+    },
+  });
+  return retried;
+}
+
+test('a pin waiting for its slot does not stop the pass from retrying the previous cleanup', async () => {
+  const pin = makeRun({
+    id: 'pinned-run',
+    status: 'slot-finding',
+    slotId: 'census-slot',
+    steps: [{ name: 'find-slot', status: 'running' }],
+  });
+  assert.deepEqual(await reconcileCensusHold(pin), ['census-slot']);
+});
+
+test('a run already working on the slot still keeps the pass away from its hold', async () => {
+  const working = makeRun({ id: 'working-run', status: 'monitoring', slotId: 'census-slot' });
+  assert.deepEqual(await reconcileCensusHold(working), []);
+});

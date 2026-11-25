@@ -82,6 +82,7 @@ import {
   runCompletionPipeline,
 } from '../run-completion/orchestrator.js';
 import { captureRunOutput, failRunOutputCapture } from '../run-completion/output.js';
+import { measureCompleteStep, timeCompletePhase } from '../run-completion/phase-timing.js';
 import { withPublicationPackageStorageWait } from '../run-completion/publication-package-wait.js';
 import {
   computeReadyGateReviewSubjectHash,
@@ -1775,7 +1776,18 @@ async function releaseNoChangeCompletion(
   };
 }
 
+/** COMPLETE, with where its time went recorded on its outputs (`timing`). */
 export async function executeCompleteStep(
+  runId: string,
+  context: PostDispatchStepContext,
+): Promise<StepIO> {
+  const { value, timing } = await measureCompleteStep(() =>
+    executeCompleteStepUnmeasured(runId, context),
+  );
+  return value.outputs ? { ...value, outputs: { ...value.outputs, timing } } : value;
+}
+
+async function executeCompleteStepUnmeasured(
   runId: string,
   context: PostDispatchStepContext,
 ): Promise<StepIO> {
@@ -1897,7 +1909,9 @@ export async function executeCompleteStep(
   // Artifact-only workers deliberately leave a local diff. Snapshot it before
   // the completion pipeline retains the artifact manifest, without committing it.
   const artifactOnlyDiff = artifactOnly
-    ? await getDiffStat(current, { fresh: true, required: true })
+    ? await timeCompletePhase('diffStat', () =>
+        getDiffStat(current, { fresh: true, required: true }),
+      )
     : undefined;
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
@@ -1905,7 +1919,8 @@ export async function executeCompleteStep(
     noCodeDisposition,
     artifactOnly,
   };
-  if (current.flowType !== 'review-pr') await captureReviewInputArtifactsForRun(current);
+  if (current.flowType !== 'review-pr')
+    await timeCompletePhase('reviewInputs', () => captureReviewInputArtifactsForRun(current));
 
   const hasCIWatch = shouldSkipRetrospectiveAtComplete(current);
   const skipRetrospective = hasCIWatch;
@@ -1919,11 +1934,15 @@ export async function executeCompleteStep(
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   if (shouldPrepareLocalFirstPackage(current)) {
     updateRunStep(runId, S.COMPLETE, { detail: 'Preparing local PR package...' });
-    const diffStat = await getDiffStat(current, { fresh: true });
-    const prepared = await prepareCompletionPackage(runId, {
-      diffStat,
-      requireArtifactMirror: true,
-    });
+    const diffStat = await timeCompletePhase('diffStat', () =>
+      getDiffStat(current, { fresh: true }),
+    );
+    const prepared = await timeCompletePhase('package', () =>
+      prepareCompletionPackage(runId, {
+        diffStat,
+        requireArtifactMirror: true,
+      }),
+    );
     await holdSlotForPublicationGate(current.slotId, broadcastFn);
     const cliCommand = `farmslot slot check ${current.slotId}`;
     return {
@@ -1951,16 +1970,20 @@ export async function executeCompleteStep(
       },
     };
   }
-  const completion = await runCompletionPipeline(runId, {
-    acceptanceIdentity,
-    skipRetrospective,
-    suppressPrMutation: noCodeDisposition || artifactOnly,
-    requireArtifactMirror: artifactOnly,
-    inheritedAcceptance,
-  });
-  await refreshRunLinks(runId);
+  const completion = await timeCompletePhase('pipeline', () =>
+    runCompletionPipeline(runId, {
+      acceptanceIdentity,
+      skipRetrospective,
+      suppressPrMutation: noCodeDisposition || artifactOnly,
+      requireArtifactMirror: artifactOnly,
+      inheritedAcceptance,
+    }),
+  );
+  await timeCompletePhase('links', () => refreshRunLinks(runId));
   if (completion.prNumber && current.flowType !== 'review-pr') {
-    await captureReviewInputArtifactsForRun(getRun(runId) ?? current);
+    await timeCompletePhase('reviewInputs', () =>
+      captureReviewInputArtifactsForRun(getRun(runId) ?? current),
+    );
   }
 
   const runBeforeDiff = getRun(runId) ?? current;
@@ -1971,7 +1994,9 @@ export async function executeCompleteStep(
   }
 
   // diffStat needs the slot's git tree; runs before slotRelease below.
-  const diffStat = artifactOnlyDiff ?? (await getDiffStat(getRun(runId) ?? current));
+  const diffStat =
+    artifactOnlyDiff ??
+    (await timeCompletePhase('diffStat', () => getDiffStat(getRun(runId) ?? current)));
   const finalizedEvalPackage = await finalizeEvalResultPackageForRun(getRun(runId) ?? current);
   const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
   const outputs = {
@@ -2036,7 +2061,8 @@ export async function executeCompleteStep(
       slotDisposition = 'release-deferred';
     } else {
       const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
-      slotDisposition = (await releaseCompletedRunSlot(current)).released
+      slotDisposition = (await timeCompletePhase('release', () => releaseCompletedRunSlot(current)))
+        .released
         ? 'released'
         : 'kept-shared-slot';
     }

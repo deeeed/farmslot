@@ -7,6 +7,7 @@ import {
   type Principal,
   type ReviewDiffSnapshot,
   type ReviewInterdiffReceipt,
+  type Run,
 } from '@farmslot/protocol';
 
 await import('../runtime/mock-pty.test-support.js');
@@ -48,6 +49,9 @@ let commandFailed = false;
 let nativeSessionHasInput: boolean | undefined;
 let stoppedEmptyReviewer = false;
 let refuseRecovery = false;
+let refuseStop = false;
+let preflightReads: number | undefined;
+let artifactContract = false;
 const resumed: string[] = [];
 let expectedFixCheck: Error | undefined;
 const dispatches: Array<{ contextId: string; retainedFrom?: { contextId: string } }> = [];
@@ -69,7 +73,13 @@ mock.module('../core/exec.js', {
   namedExports: {
     ...exec,
     execOnSlot: async (_vars: unknown, command: string) => ({
-      exitCode: command.startsWith('git merge-base --is-ancestor') ? ancestorExitCode : 0,
+      exitCode: command.startsWith('git merge-base --is-ancestor')
+        ? ancestorExitCode
+        : command.startsWith('git rev-parse HEAD && git status') &&
+            preflightReads !== undefined &&
+            preflightReads-- <= 0
+          ? 1
+          : 0,
       stdout: command.startsWith('git rev-parse HEAD && git status')
         ? `${currentHead}\n${worktreeStatus}`
         : command.startsWith('git merge-base ') && !command.includes('--is-ancestor')
@@ -92,9 +102,11 @@ mock.module('../methods/dispatch/slot-file-write.js', {
 mock.module('../run-engine/run-monitor.js', {
   namedExports: {
     probeWorkerSignalForRun: async (_runId: string, _slotId: string, context: AgentContext) =>
-      commandFailed || (context.status === 'failed' && !resumed.includes(context.id))
-        ? { ok: false, code: 'missing', message: 'review never started' }
-        : { ok: true },
+      artifactContract
+        ? { ok: false, code: 'artifact_contract', message: 'the review result has open subtasks' }
+        : commandFailed || (context.status === 'failed' && !resumed.includes(context.id))
+          ? { ok: false, code: 'missing', message: 'review never started' }
+          : { ok: true },
   },
 });
 mock.module('../run-engine/stack-base.js', { namedExports: { stackPrBase: async () => null } });
@@ -108,6 +120,7 @@ mock.module('../runners/native/review-owner.js', {
 mock.module('../runners/native/worker.js', {
   namedExports: {
     cancelNativeWorkerContext: async (runId: string, context: AgentContext) => {
+      if (refuseStop) throw new Error('the reviewer process did not confirm its stop');
       await upsertAgentContext(runId, 'review', {
         id: context.id,
         nativeSession: { ...context.nativeSession!, closedAt: new Date().toISOString() },
@@ -150,6 +163,7 @@ mock.module('../runners/native/worker.js', {
         await upsertAgentContext(input.runId, 'review', {
           id: input.contextId,
           nativeSession: binding,
+          runnerSessionId: source.runnerSessionId,
         });
         if (resumeFailure === 'superseded') {
           const run = getRun(input.runId)!;
@@ -383,7 +397,8 @@ const { runNativeReviewAgent } = await import('./native-review-agent.js');
 const { executeReview }: typeof import('./orchestrator.js') = await import(
   new URL('./orchestrator.js?refunded-native-review', import.meta.url).href
 );
-const { resetWarmReviewerSessionsForTest } = await import('./session-mode.js');
+const { claimWarmReviewerSession, resetWarmReviewerSessionsForTest } =
+  await import('./session-mode.js');
 const { reviewLaunchStartedAt, reviewRoundAdmissionId, runReviewRoundBudget } =
   await import('./review-round-budget.js');
 
@@ -401,6 +416,9 @@ async function prePublishRun(t: TestContext, ticketOrPr = 'WARM-PREPUBLISH') {
   nativeSessionHasInput = undefined;
   stoppedEmptyReviewer = false;
   refuseRecovery = false;
+  refuseStop = false;
+  preflightReads = undefined;
+  artifactContract = false;
   expectedFixCheck = undefined;
   resumed.length = 0;
   resumeFailure = null;
@@ -494,6 +512,53 @@ for (const status of [' M a.ts\0', 'M  a.ts\0', '?? new.ts\0']) {
     assert.equal(dispatches[1]?.retainedFrom?.contextId, dispatches[0]!.contextId);
   });
 }
+
+test('a comparison replay re-reviews its uncommitted fix at an unchanged head, reading the working tree', async (t) => {
+  const run = await prePublishRun(t);
+  updateRun(run.id, { completionPolicy: 'artifact-only', lane: 'comparison' });
+  await review(run.id);
+  // The comparison task leaves the fix in the working tree; HEAD is the reviewed commit.
+  worktreeStatus = ' M a.ts\0';
+  await reReview(run.id);
+  assert.equal(dispatches.length, 2);
+  assert.equal(dispatches[1]?.retainedFrom?.contextId, dispatches[0]!.contextId);
+  const task = reviewerTask(run.id, dispatches[1]!.contextId);
+  assert.match(task, /## The work is uncommitted/);
+  assert.ok(task.includes(`--stat ${head}`), 'the scope names the working-tree diff against HEAD');
+  // The delta is pinned at the unchanged head, so review.diff is empty: only the scope shows the fix.
+  assert.deepEqual(deltaCaptures, [head]);
+});
+
+test('a comparison replay re-reviewed over a rebase gets the working-tree scope with its interdiff', async (t) => {
+  const run = await prePublishRun(t, published);
+  updateRun(run.id, { completionPolicy: 'artifact-only', lane: 'comparison' });
+  await review(run.id);
+  worktreeStatus = ' M a.ts\0';
+  rebaseQualification = 'reliable';
+  const result = await reReview(run.id);
+  assert.equal(result.mode, 'warm');
+  assert.ok(result.reviewSnapshot?.interdiff);
+  assert.match(reviewerTask(run.id, dispatches.at(-1)!.contextId), /## The work is uncommitted/);
+});
+
+test('a comparison replay whose reviewer cannot resume gets the working-tree scope in the fresh session', async (t) => {
+  const run = await prePublishRun(t, published);
+  updateRun(run.id, { completionPolicy: 'artifact-only', lane: 'comparison' });
+  await review(run.id);
+  worktreeStatus = ' M a.ts\0';
+  resumeFailure = 'handoff';
+  const result = await reReview(run.id);
+  assert.equal(result.mode, 'cold');
+  assert.match(reviewerTask(run.id, dispatches.at(-1)!.contextId), /## The work is uncommitted/);
+});
+
+test('an artifact-only run outside the comparison lane still commits its fix before a re-review', async (t) => {
+  const run = await prePublishRun(t);
+  updateRun(run.id, { completionPolicy: 'artifact-only' });
+  await review(run.id);
+  worktreeStatus = ' M a.ts\0';
+  await assert.rejects(reReview(run.id), /fix not committed/i);
+});
 
 test('generated untracked slot support does not block an evidence re-review', async (t) => {
   const run = await prePublishRun(t);
@@ -850,6 +915,104 @@ test('a reviewer still busy at the deadline falls back to the delta', async (t) 
   const result = await reReview(run.id, { reviewTimeoutMs: 300 });
   assert.equal(result.session?.fallback?.reason, 'session-busy');
   assert.equal(result.mode, 'cold');
+});
+
+// 961d55d3: a warm continuation stopped cleanly; the next round went cold over the whole change.
+test('a warm continuation that failed cleanly is resumed by the next round without a restart', async (t) => {
+  const run = await prePublishRun(t);
+  const first = await review(run.id);
+  commandFailed = true;
+  await assert.rejects(reReview(run.id));
+  const failed = reviewers(run.id).at(-1)!;
+  commandFailed = false;
+  const result = await reReview(run.id);
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+  assert.equal(dispatches.at(-1)?.retainedFrom?.contextId, failed.id);
+});
+
+const ownSlot = (runId: string) =>
+  rewriteStatusFile((current) => ({
+    ...current,
+    slots: [
+      ...(current?.slots ?? []).filter((entry) => entry.slot !== vars.slotId),
+      { slot: vars.slotId, current_run_id: runId },
+    ],
+  }));
+
+/** The lineage's in-memory retained reviewer, or null when none is usable. */
+const retainedReviewer = (run: Run) => {
+  const session = claimWarmReviewerSession({
+    runId: run.id,
+    reviewId: 'lineage-a',
+    familyId: run.familyId,
+    project: run.project,
+    ownerPrincipalId: owner.id,
+    transport: 'native',
+    taskDir: 'tasks/review',
+    artifactScope: null,
+    runner: 'claude',
+    model: 'opus',
+    effort: 'medium',
+  });
+  return session && { runId: session.runId, contextId: session.contextId };
+};
+
+test('a cleanly stopped warm continuation in a later run of the family stays resumable', async (t) => {
+  const earlier = await prePublishRun(t, 'WARM-FAMILY');
+  const later = await prePublishRun(t, 'WARM-FAMILY');
+  updateRun(later.id, { familyId: earlier.familyId });
+  await ownSlot(earlier.id);
+  const first = await review(earlier.id);
+  updateRun(earlier.id, { status: 'done', completedAt: new Date().toISOString() });
+  await ownSlot(later.id);
+  commandFailed = true;
+  await assert.rejects(reReview(later.id));
+  const failed = reviewers(later.id).at(-1)!;
+  assert.deepEqual(retainedReviewer(getRun(later.id)!), { runId: later.id, contextId: failed.id });
+  commandFailed = false;
+  const result = await reReview(later.id);
+  assert.equal(result.mode, 'warm');
+  assert.equal(result.reviewerSessionId, first.reviewerSessionId);
+  assert.deepEqual(dispatches.at(-1)?.retainedFrom, { runId: later.id, contextId: failed.id });
+});
+
+for (const [why, fail] of [
+  [
+    'its stop is unconfirmed',
+    () => {
+      commandFailed = true;
+      refuseStop = true;
+    },
+  ],
+  ['its review result broke the artifact contract', () => (artifactContract = true)],
+] as const)
+  test(`a warm continuation is not kept resumable when ${why}`, async (t) => {
+    const run = await prePublishRun(t);
+    await review(run.id);
+    fail();
+    await assert.rejects(reReview(run.id));
+    assert.equal(retainedReviewer(getRun(run.id)!), null);
+  });
+
+test('a failed cold fallback round is not kept as the lineage reviewer', async (t) => {
+  const run = await prePublishRun(t);
+  await review(run.id);
+  resumeFailure = 'handoff';
+  commandFailed = true;
+  await assert.rejects(reReview(run.id), /review never started|without a valid terminal signal/);
+  assert.equal(retainedReviewer(getRun(run.id)!), null);
+});
+
+test('a retained reviewer that could not resume is not kept for the next round', async (t) => {
+  const run = await prePublishRun(t);
+  await review(run.id);
+  // The handoff is refused; the fallback then stops at its own preflight, before it could
+  // replace the lineage's reviewer.
+  resumeFailure = 'handoff';
+  preflightReads = 1;
+  await assert.rejects(reReview(run.id), /Re-review preflight failed/);
+  assert.equal(retainedReviewer(getRun(run.id)!), null);
 });
 
 // A structured failed command is infrastructure failure, not another code verdict.

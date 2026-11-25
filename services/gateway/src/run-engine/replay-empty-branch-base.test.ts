@@ -8,6 +8,10 @@ import { promisify } from 'node:util';
 
 import type { ExecResult } from '@farmslot/protocol';
 
+import '../core/hermetic-git.test-support.js';
+import '../core/private-pool.test-support.js';
+
+import { poolDirectory } from '../core/config.js';
 import { claimSlotStatusIf } from '../core/state.js';
 
 // 942d189f / 1f5bfba9 shape: a replayed run's local-only work branch had no
@@ -130,10 +134,9 @@ async function staleBaseSlot(t: { after: (fn: () => Promise<void>) => void }) {
   const slotRepo = path.join(fixtureRoot, 'slot');
   const originRepo = path.join(fixtureRoot, 'origin.git');
   const authorRepo = path.join(fixtureRoot, 'author');
-  const repoRoot = path.resolve(new URL('../../../../', import.meta.url).pathname);
   const index = slotCounter++;
   const slotId = `replay-base-${process.pid}-${index}`;
-  const poolPath = path.join(repoRoot, 'pool', `${slotId}.json`);
+  const poolPath = path.join(poolDirectory(), `${slotId}.json`);
   t.after(async () => {
     const session = spawnSync('tmux', ['-S', tmuxSandbox!, 'has-session', '-t', `=${slotId}`]);
     if (session.status === 0)
