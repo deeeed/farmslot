@@ -570,13 +570,14 @@ async function claimAdmittedSlot(
 
   if (!run.engineState?.flags?.skipPrepare) {
     if (!run.engineState?.flags?.freshReuse && !opts?.takeoverLiveOwner && !opts?.reserveOnly) {
+      const before = await readSlotRow(slotId);
       try {
         await reclaimFinishedSlot(slotId, run, emit);
       } catch (error) {
-        // A workspace recovery running there (the released-checkout retry, a refresh) ends by
-        // itself, whatever refusal it caused: select again or wait rather than fail the run.
-        if (workspaceRecoveryInFlight(slotId, await readSlotRow(slotId)))
-          throw slotClaimRefusedError(slotId, 'workspace recovery in progress', true);
+        // Someone else acting on the slot (a recovery, a rival claim) ends by itself, whatever
+        // refusal it caused here: select again or wait rather than fail the run.
+        if (slotChangedUnderAttempt(slotId, runId, before, await readSlotRow(slotId)))
+          throw slotClaimRefusedError(slotId, 'the slot changed during reclaim', true);
         throw error;
       }
     }
@@ -588,14 +589,10 @@ async function claimAdmittedSlot(
   }
 }
 
-/**
- * The claim write itself, with its refusal named and a superseded attempt's
- * claim undone. Exported with its state writers injectable so the cancel
- * window can be driven with the write still pending.
- */
-/** A workspace recovery (an automatic idle return, a refresh) is running on the slot now. A
- * failed one stays held for an operator instead, so this ends by itself. */
-export function workspaceRecoveryInFlight(
+/** A workspace recovery (an automatic idle return, a refresh) is running on the slot now. It
+ * holds the prepare guard and its fenced row only while it runs; a failed one is held for an
+ * operator instead, so this ends by itself. */
+function workspaceRecoveryInFlight(
   slotId: string,
   row: Readonly<Record<string, unknown>> | null | undefined,
 ): boolean {
@@ -608,6 +605,28 @@ export function workspaceRecoveryInFlight(
   );
 }
 
+/** Another actor changed the slot while this run tried it: a recovery is running, a rival run
+ * took it, or its ownership epoch moved (a recovery or claim that already finished). An owner
+ * that held it before the attempt is an ordinary refusal, not a change. */
+function slotChangedUnderAttempt(
+  slotId: string,
+  runId: string,
+  before: Readonly<Record<string, unknown>> | null | undefined,
+  after: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  const ownerChanged = (after?.current_run_id ?? null) !== (before?.current_run_id ?? null);
+  return (
+    workspaceRecoveryInFlight(slotId, after) ||
+    (ownerChanged && !!after && slotClaimBlocker(after, runId, getRun)?.kind === 'live-owner') ||
+    (Number(before?.slot_epoch) || 0) !== (Number(after?.slot_epoch) || 0)
+  );
+}
+
+/**
+ * The claim write itself, with its refusal named and a superseded attempt's
+ * claim undone. Exported with its state writers injectable so the cancel
+ * window can be driven with the write still pending.
+ */
 export async function commitSlotClaim(
   slotId: string,
   runId: string,
@@ -1272,9 +1291,11 @@ function operatorPickedSlot(run: Run): string | undefined {
 
 /**
  * Poll the slot row (no selection work) until the slot can be claimed. A live holder ends by
- * itself, so that wait is unbounded; the slot still busy under the ended run is bounded like an
- * explicit pick's release. A release in progress is left to the explicit pick's own bounded wait,
- * a cancelled holder to selection's reclaim, and any other blocker to selection to report.
+ * itself, so that wait is unbounded; so does a workspace recovery, which holds the slot only
+ * while it runs (a failed one is held for an operator and no longer reads as running). The slot
+ * still busy under the ended run is bounded like an explicit pick's release. A release in
+ * progress is left to the explicit pick's own bounded wait, a cancelled holder to selection's
+ * reclaim, and any other blocker to selection to report.
  */
 async function waitUntilSlotClaimable(slotId: string, runId: string, generation: number) {
   let teardownSince: number | undefined;
@@ -2183,6 +2204,7 @@ async function findSlotAttempt(
         throw runChangedError(runId, candidate.slot);
       // Safe reuse may release or reset the candidate: ask about its app first.
       await confirmAppBinding(run, candidate.slot, createEngineDecision);
+      const before = await readSlotRow(candidate.slot);
       const recover = async () =>
         (await import('../run-lifecycle/safe-idle-slot.js')).reuseSafeIdleSlot(
           candidate.slot,
@@ -2199,9 +2221,9 @@ async function findSlotAttempt(
         reusableSlotId = candidate.slot;
         break;
       }
-      // A recovery that started on it after the guard filter ends by itself: select again.
-      if (workspaceRecoveryInFlight(candidate.slot, await readSlotRow(candidate.slot)))
-        throw slotClaimRefusedError(candidate.slot, 'workspace recovery in progress', true);
+      // A recovery or claim that took it after the guard filter ends by itself: select again.
+      if (slotChangedUnderAttempt(candidate.slot, runId, before, await readSlotRow(candidate.slot)))
+        throw slotClaimRefusedError(candidate.slot, 'the slot changed during safe reuse', true);
       if (outcome.kind === 'local-work') localWorkSlots.add(candidate.slot);
       reuseReasons[candidate.slot] = outcome.reason;
       inputs.reclaimFailures = { ...reuseReasons };

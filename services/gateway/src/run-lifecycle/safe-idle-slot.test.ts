@@ -41,6 +41,8 @@ mock.module('../fleet/state.js', {
   namedExports: { ...fleet, loadFleetStatus: async () => ({ slots: [slot] }) },
 });
 let inspectGate: Promise<void> | undefined;
+/** Thrown by the next inspection only. */
+let inspectFailure: Error | undefined;
 const inspectOptions: unknown[] = [];
 mock.module('../methods/slot/workspace.js', {
   namedExports: {
@@ -48,6 +50,9 @@ mock.module('../methods/slot/workspace.js', {
     inspectSlotWorkspace: async (_slotId: string, options?: unknown) => {
       inspectOptions.push(options);
       await inspectGate;
+      const failure = inspectFailure;
+      inspectFailure = undefined;
+      if (failure) throw failure;
       return workspace;
     },
   },
@@ -331,6 +336,38 @@ test('the automatic retry returns only the exact released head, clean', async ()
   assert.deepEqual(parkRunIds, ['validation']);
   assert.deepEqual(parkHeads, ['a'.repeat(40)]);
   assert.deepEqual(exactFlags, [true], 'recovery re-checks the same identity after inspecting');
+});
+
+test('a node disconnect at the first inspection refuses before any mark; the return succeeds once it is back', async () => {
+  const { NodeExecUnconfirmedError } = await import('../fleet/node-rpc.js');
+  const run: Run = {
+    ...validationRun(),
+    releasedCheckout: {
+      slotId: 'proof',
+      branch: 'TAT-4146-feat-farm-validation',
+      headSha: 'a'.repeat(40),
+      at: '2026-11-01T10:00:00.000Z',
+    },
+  };
+  runs = [run];
+  workspace.branch = run.branch!;
+  workspace.publication = 'unpushed';
+  slotRow = { slot_epoch: 7, current_run_id: null, cleanup_run_id: null, handoff_run_id: null };
+  // mini-mmt-3 after 75fa351c: the node's socket closed while the fetch ran.
+  inspectFailure = new NodeExecUnconfirmedError('mini', 'gw-1-1', 'disconnected');
+  const refused = await returnReleasedCheckoutToIdle(run, () => {}, { exactHead: true });
+  assert.equal(refused?.kind, 'unavailable');
+  assert.match(
+    refused?.kind === 'unavailable' ? refused.reason : '',
+    /unconfirmed closeout \(disconnected\)/,
+  );
+  assert.deepEqual(recovered, [], 'nothing marked, parked or reset while the node was away');
+  // The node is back: the same strict return settles the slot, parking the run's head.
+  assert.deepEqual(await returnReleasedCheckoutToIdle(run, () => {}, { exactHead: true }), {
+    kind: 'ready',
+  });
+  assert.deepEqual(parkRunIds, ['validation']);
+  assert.deepEqual(parkHeads, ['a'.repeat(40)]);
 });
 
 test('unknown remote publication preserves local work before reset', async () => {

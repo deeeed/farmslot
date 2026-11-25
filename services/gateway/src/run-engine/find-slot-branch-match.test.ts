@@ -797,6 +797,41 @@ test('a recovery running on the pinned slot is waited out, whatever refusal it c
   assert.ok(loadWaits.includes(5_000), 'the pin waited for the recovery to end');
 });
 
+test('a fenced recovery row on the pinned slot is waited out, without the guard', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const slotId = slots[0]!.slot;
+  run.slotId = slotId;
+  finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot is returning to idle`;
+  finishedRefusalOnce = true;
+  // A recovery in another gateway process: only its fenced row shows.
+  onFinishedRefusal = () =>
+    liveRows.set(slotId, {
+      workspace_recovery: { id: 'recovery-1' },
+      lifecycle: 'busy',
+      phase: 'releasing',
+      current_run_id: null,
+    });
+  afterLoadWait = () => {
+    liveRows.delete(slotId);
+  };
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(finishedReclaims, [slotId, slotId]);
+  assert.deepEqual(claims, [slotId]);
+});
+
+test('a rival that moved the slot during reclaim sends the pin back, not to failure', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const slotId = slots[0]!.slot;
+  run.slotId = slotId;
+  finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot ownership changed; inspect again`;
+  finishedRefusalOnce = true;
+  onFinishedRefusal = () => liveRows.set(slotId, { slot_epoch: 9 });
+  afterLoadWait = () => {};
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(finishedReclaims, [slotId, slotId]);
+  assert.deepEqual(claims, [slotId]);
+});
+
 test('the same refusal with no recovery running still fails the run', async () => {
   reset('fix-bug', 'TAT-4137');
   run.slotId = slots[0]!.slot;

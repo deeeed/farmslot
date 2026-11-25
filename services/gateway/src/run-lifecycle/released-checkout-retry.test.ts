@@ -93,7 +93,7 @@ let row: Record<string, unknown> | null;
 let bundle: { confirmed: true; taskDir: string } | { confirmed: false; reason: string };
 let busy: boolean;
 let absent: string | null;
-let connects: number;
+let session: string;
 let outcomes: Array<SafeIdleSlotResult | null>;
 const returned: string[] = [];
 const logs: string[] = [];
@@ -103,7 +103,7 @@ let runScans = 0;
 const deps: ReleasedCheckoutRetryDeps = {
   now: () => clock,
   fleetSlots: async () => fleet,
-  defaultBranch: async () => 'main',
+  idleBranches: async () => ({ defaultBranch: 'main', tracking: 'main' }),
   readSlotRow: async () => row,
   allRuns: async () => {
     runScans++;
@@ -117,7 +117,7 @@ const deps: ReleasedCheckoutRetryDeps = {
   },
   slotBusy: () => busy,
   absentNode: async () => absent,
-  nodeConnects: () => connects,
+  nodeSession: async () => session,
   returnToIdle: async (run) => {
     returned.push(run.id);
     return outcomes.shift() ?? { kind: 'ready' };
@@ -135,7 +135,7 @@ beforeEach(() => {
   bundle = { confirmed: true, taskDir: '/bundle/task' };
   busy = false;
   absent = null;
-  connects = 0;
+  session = 'node@2026-11-25T08:00:00.000Z';
   outcomes = [];
   returned.length = 0;
   logs.length = 0;
@@ -177,11 +177,35 @@ test('a refused release return is retried on the second stable pass', async () =
   assert.match(logs.join('\n'), /returned run artifact's released checkout to idle/);
 });
 
-test('a slot idle on its default branch costs no run scan', async () => {
-  fleet = [slot({ branch: 'main' })];
-  await twoPasses();
+test('a slot idle on its default or tracking branch costs no run scan', async () => {
+  fleet = [
+    slot({ branch: 'main' }),
+    slot({ slot: 'node-ff-1', branch: 'ff/track-1', linkedWorktree: true }),
+  ];
+  await withDep(
+    'idleBranches',
+    async (candidate) => ({
+      defaultBranch: 'main',
+      tracking: candidate.linkedWorktree ? 'ff/track-1' : 'main',
+    }),
+    twoPasses,
+  );
   assert.equal(runScans, 0);
   assert.deepEqual(returned, []);
+});
+
+test('an unreadable project stops only its own slot', async () => {
+  fleet = [slot({ slot: 'broken', project: 'broken' }), slot()];
+  await withDep(
+    'idleBranches',
+    async (candidate) => {
+      if (candidate.project === 'broken') throw new Error('project.json is invalid');
+      return { defaultBranch: 'main', tracking: 'main' };
+    },
+    twoPasses,
+  );
+  assert.deepEqual(returned, ['artifact-run']);
+  assert.match(logs.join('\n'), /broken: .*project\.json is invalid/);
 });
 
 test('an absent pass or a node reconnect between passes starts the streak over', async () => {
@@ -191,11 +215,26 @@ test('an absent pass or a node reconnect between passes starts the streak over',
   absent = null;
   await pass();
   assert.deepEqual(returned, [], 'the absent pass reset the streak');
-  connects++;
+  session = 'node@2026-11-25T10:30:00.000Z';
   await pass();
-  assert.deepEqual(returned, [], 'a reconnect between passes reset it too');
+  assert.deepEqual(returned, [], "the node's reconnect between passes reset it too");
   await pass();
   assert.deepEqual(returned, ['artifact-run']);
+});
+
+test('a slot whose release met a node disconnect is settled once the node stays back', async () => {
+  // Release's idle return was refused at its first inspection (the node's socket closed), so the
+  // slot is ready, unowned and on the run branch. The node flaps, then reconnects for good.
+  absent = 'mini';
+  await twoPasses();
+  assert.deepEqual(returned, [], 'nothing while the node is away');
+  absent = null;
+  session = 'mini@2026-11-25T05:02:00.000Z';
+  await pass();
+  assert.deepEqual(returned, [], 'one pass on the new connection is not enough');
+  await pass();
+  assert.deepEqual(returned, ['artifact-run']);
+  assert.match(logs.join('\n'), /returned run artifact's released checkout to idle/);
 });
 
 test('a busy or absent pass keeps the back-off', async () => {

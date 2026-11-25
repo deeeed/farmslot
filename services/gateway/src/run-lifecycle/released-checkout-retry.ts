@@ -1,6 +1,7 @@
 import {
   DEFAULT_BRANCH,
   isCompletionPrerequisiteFailure,
+  isSlotIdleBranch,
   isTerminalRunStatus,
   type Run,
   type SlotStatus,
@@ -32,7 +33,9 @@ import { parksBranchCommits } from './validation-run-commits.js';
 export interface ReleasedCheckoutRetryDeps {
   now: () => number;
   fleetSlots: () => Promise<SlotStatus[]>;
-  defaultBranch: (project: string) => Promise<string>;
+  /** The branches the slot idles on: its project's default branch and, for a linked worktree,
+   * its tracking branch. */
+  idleBranches: (slot: SlotStatus) => Promise<{ defaultBranch: string; tracking: string }>;
   readSlotRow: (slotId: string) => Promise<Readonly<Record<string, unknown>> | null>;
   /** Live and archived runs, read once per pass. */
   allRuns: () => Promise<Run[]>;
@@ -44,8 +47,9 @@ export interface ReleasedCheckoutRetryDeps {
   slotBusy: (slotId: string) => boolean;
   /** The slot's execution node when it is remote and not connected. */
   absentNode: (slotId: string) => Promise<string | null>;
-  /** Grows on every node connection, so a drop and reconnect between passes is seen. */
-  nodeConnects: () => number;
+  /** The slot's node connection (its machine and connect time; one value for a local slot), so a
+   * drop and reconnect between passes is seen. */
+  nodeSession: (slotId: string) => Promise<string>;
   /** The fenced return; it also clears the run's "Checkout retained" note when it succeeds. */
   returnToIdle: (run: Run) => Promise<SafeIdleSlotResult | null>;
   log: (message: string) => void;
@@ -58,6 +62,8 @@ export const RELEASED_CHECKOUT_STABLE_PASSES = 2;
 
 interface SlotRetryState {
   streak: number;
+  /** The node connection the streak was counted on. */
+  session?: string;
   nextAttemptAt: number;
   backoffMs: number;
   lastReason?: string;
@@ -65,13 +71,11 @@ interface SlotRetryState {
 
 const states = new Map<string, SlotRetryState>();
 let passInFlight = false;
-let lastConnects: number | undefined;
 
 /** For tests: forget per-slot retry state. */
 export function resetReleasedCheckoutRetryState(): void {
   states.clear();
   passInFlight = false;
-  lastConnects = undefined;
 }
 
 function unownedReady(slot: SlotStatus): boolean {
@@ -166,20 +170,21 @@ export async function retryReleasedCheckoutIdleReturns(
   passInFlight = true;
   try {
     const now = deps.now();
-    // Any node connection since the last pass breaks every streak: presence must be continuous.
-    const connects = deps.nodeConnects();
-    if (lastConnects !== undefined && connects !== lastConnects)
-      for (const state of states.values()) state.streak = 0;
-    lastConnects = connects;
-    const branches = new Map<string, string>();
     const candidates: SlotStatus[] = [];
     for (const slot of (await deps.fleetSlots()).filter(unownedReady)) {
-      if (!branches.has(slot.project))
-        branches.set(slot.project, await deps.defaultBranch(slot.project));
-      if (slot.branch !== branches.get(slot.project)) candidates.push(slot);
+      try {
+        const { defaultBranch, tracking } = await deps.idleBranches(slot);
+        if (!isSlotIdleBranch(slot.branch, tracking, defaultBranch, !!slot.linkedWorktree))
+          candidates.push(slot);
+      } catch (error) {
+        // An unreadable project config is this slot's problem, not the pass's.
+        noteOnce(deps, slot.slot, stateFor(slot.slot), errorText(error));
+      }
     }
     const candidateIds = new Set(candidates.map((slot) => slot.slot));
-    for (const slotId of [...states.keys()]) if (!candidateIds.has(slotId)) states.delete(slotId);
+    for (const [slotId, state] of [...states])
+      if (!candidateIds.has(slotId) && state.nextAttemptAt === 0 && !state.lastReason)
+        states.delete(slotId);
     if (candidates.length === 0) return;
     // One run scan per pass, indexed by slot.
     const bySlot = new Map<string, Run[]>();
@@ -191,8 +196,7 @@ export async function retryReleasedCheckoutIdleReturns(
       try {
         await retrySlot(deps, slot, bySlot.get(slot.slot) ?? [], now);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        noteOnce(deps, slot.slot, stateFor(slot.slot), reason);
+        noteOnce(deps, slot.slot, stateFor(slot.slot), errorText(error));
       }
     }
   } finally {
@@ -217,33 +221,41 @@ async function retrySlot(
     state.streak = 0;
     return;
   }
+  // The node must stay connected across passes: a reconnect in between starts over too.
+  const session = await deps.nodeSession(slot.slot);
+  if (state.session !== session) state.streak = 0;
+  state.session = session;
   state.streak += 1;
   if (state.streak < RELEASED_CHECKOUT_STABLE_PASSES || now < state.nextAttemptAt) return;
   // Throttle before any bundle or network work; a throw from here on is this attempt's refusal.
   backOff(state, now);
-  let reason: string;
+  let refusal: string | null;
   try {
-    reason = await attempt(deps, slot, owner, runs);
+    refusal = await attempt(deps, slot, owner, runs);
   } catch (error) {
-    reason = error instanceof Error ? error.message : String(error);
+    refusal = errorText(error);
   }
-  if (reason === '') {
+  if (refusal === null) {
     states.delete(slot.slot);
     deps.log(
       `[slot.release] ${slot.slot}: returned run ${owner.id.slice(0, 8)}'s released checkout to idle`,
     );
     return;
   }
-  noteOnce(deps, slot.slot, state, reason);
+  noteOnce(deps, slot.slot, state, refusal);
 }
 
-/** The attempt itself: '' when the slot is back at idle, otherwise why not. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The attempt itself: null when the slot is back at idle, otherwise why not. */
 async function attempt(
   deps: ReleasedCheckoutRetryDeps,
   slot: SlotStatus,
   owner: Run,
   passRuns: readonly Run[],
-): Promise<string> {
+): Promise<string | null> {
   const bundle = await deps.bundleCheck(owner);
   if (!bundle.confirmed)
     return `run ${owner.id.slice(0, 8)}'s bundle is not confirmed (${bundle.reason})`;
@@ -272,12 +284,9 @@ async function attempt(
     return 'the run no longer qualifies';
   if (deps.slotBusy(slot.slot)) return 'a teardown or prepare started on the slot';
   const result = await deps.returnToIdle(fresh);
-  if (result?.kind === 'ready') return '';
+  if (result?.kind === 'ready') return null;
   return result?.reason ?? 'the run no longer qualifies';
 }
-
-let nodeConnectCount = 0;
-let countingNodeConnects = false;
 
 /** Production wiring: the same fenced idle return release uses, strict about the recorded head. */
 export async function defaultReleasedCheckoutRetryDeps(
@@ -292,6 +301,7 @@ export async function defaultReleasedCheckoutRetryDeps(
     teardown,
     prepareGuards,
     machines,
+    tracking,
     safeIdle,
   ] = await Promise.all([
     import('../fleet/state.js'),
@@ -302,20 +312,27 @@ export async function defaultReleasedCheckoutRetryDeps(
     import('../run-engine/terminal-teardown-registry.js'),
     import('../core/native-worker-exclusion.js'),
     import('../fleet/machine-registry.js'),
+    import('../methods/slot/slot-tracking.js'),
     import('./safe-idle-slot.js'),
   ]);
-  if (!countingNodeConnects) {
-    countingNodeConnects = true;
-    machines.onNodeConnected(() => {
-      nodeConnectCount += 1;
-    });
-  }
   return {
     now: () => Date.now(),
     fleetSlots: async () => (await loadFleetStatus()).slots,
-    defaultBranch: async (project) => {
-      const vars = await config.loadProjectVars(project);
-      return config.getProjectField(vars.projectJson, 'default_branch') || DEFAULT_BRANCH;
+    idleBranches: async (slot) => {
+      const project = await config.loadProjectVars(slot.project);
+      const defaultBranch =
+        config.getProjectField(project.projectJson, 'default_branch') || DEFAULT_BRANCH;
+      if (!slot.linkedWorktree) return { defaultBranch, tracking: defaultBranch };
+      const vars = await config.loadSlotVars(slot.slot);
+      return {
+        defaultBranch,
+        tracking: tracking.resolveSlotTrackingBranchFromProject(
+          project.projectJson,
+          vars,
+          project,
+          true,
+        ),
+      };
     },
     readSlotRow: (slotId) => core.readSlotRow(slotId),
     allRuns: () => store.getAllRunsWithArchived(),
@@ -325,7 +342,10 @@ export async function defaultReleasedCheckoutRetryDeps(
     slotBusy: (slotId) =>
       teardown.isTerminalTeardownInFlight(slotId) || prepareGuards.activePrepareSlots.has(slotId),
     absentNode,
-    nodeConnects: () => nodeConnectCount,
+    nodeSession: async (slotId) => {
+      const { machine } = await config.loadSlotVars(slotId);
+      return `${machine}@${machines.getNode(machine)?.connectedAt ?? 'local'}`;
+    },
     returnToIdle: async (run) => {
       const { broadcastEvent } = await import('../server.js');
       return safeIdle.returnReleasedCheckoutToIdle(run, broadcastEvent, { exactHead: true });
