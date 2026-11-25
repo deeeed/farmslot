@@ -1,0 +1,1 @@
+- Native execution node declarations can carry `supportsHostRefresh`.

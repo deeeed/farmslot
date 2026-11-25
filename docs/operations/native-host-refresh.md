@@ -12,6 +12,10 @@ A native host is the detached supervisor and host process that runs native runne
 ## Automatic refresh
 
 - **Node start.** A node refreshes its host before it registers, if every runner has stopped.
+- **A launch, resume or transfer on a node host on another runtime.** The gateway sends the launch with its release list: the node owner's sessions bound there in runs that no longer keep them, by the same rules as below. The node refreshes its host before the launch when every live session is idle and released:
+  - It stops idle runners only on a host with the idle-runner fence, and at most 6 of them, so the launch finishes within its timeout. An older host waits until every runner has stopped.
+  - A session the list doesn't name keeps the host: another owner's, a Command Center chat or standalone session, one started after the list, and an active run's own worker or static review workspace. The error names each with its reason.
+  - Only nodes that declare `supportsHostRefresh` get the list. An older node refreshes only at its own start.
 - **Gateway start, and any launch on a host on another runtime.** The gateway refreshes its local host when every live session is idle:
   - Idle runners are stopped, and their journals and saved runner identities are kept. At startup the gateway then starts the current host.
   - The next host marks those sessions for resume. Warm reviewers, review fixes and messages to a worker then resume them on their own. A Command Center chat shows its resume action. The Co-Pilot starts again from Command Center.
@@ -22,7 +26,7 @@ A native host is the detached supervisor and host process that runs native runne
 
 After a checkout update, a gateway that hasn't restarted yet runs older code than its checkout (it reads its own build when it starts). It refuses to refresh then, because a host started from the checkout would be skewed against it too, and the error says to restart the gateway.
 
-A host with a busy session keeps running. New launches fail, and the error lists the busy sessions. Once they finish, the next launch, or the next gateway start, refreshes the host. A node refreshes its host only when the node starts, and only once every runner has stopped.
+A host with a busy session keeps running. New launches fail, and the error lists the busy sessions. Once they finish, the next launch, or the next gateway start, refreshes the host. That holds for node hosts too: nothing refreshes one between launches, so a node host stays on the old runtime until its next launch or node start. A live dev worker of an active run keeps a node host for as long as it runs.
 
 ## Manual refresh
 

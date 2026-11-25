@@ -5,7 +5,7 @@ import type { AgentContext, Run } from '@farmslot/protocol';
 
 import { makeRun } from '../../run-engine/test-fixtures.js';
 
-import { sessionsNeedingAPerson } from './host-refresh.js';
+import { nodeReleasedSessions, sessionsNeedingAPerson } from './host-refresh.js';
 
 const context = (
   role: AgentContext['role'],
@@ -96,4 +96,31 @@ test('finished runs, other nodes and sessions not live on the host keep nothing'
   const gone = run({ status: 'blocked' }, { agentContexts: [context('dev', 'stopped')] });
 
   assert.equal(needingAPerson([done, remote, gone], ['old-worker', 'remote-worker']).size, 0);
+});
+
+test('a node launch may stop its owner’s bound sessions there that no active run keeps', () => {
+  const active = run(
+    { id: '2137ec52-6d2f-4cad-80f9-a60766346929', status: 'blocked' },
+    {
+      agentContexts: [
+        context('dev', 'worker', 'macpro'),
+        context('review', 'reviewer', 'macpro'),
+        context('review', 'local-reviewer'),
+      ],
+    },
+  );
+  const done = run({ status: 'done' }, { agentContexts: [context('dev', 'old-worker', 'macpro')] });
+  const otherOwner = context('review', 'foreign', 'macpro');
+  otherOwner.nativeSession!.ownerPrincipalId = 'someone-else';
+  const foreign = run({ status: 'blocked' }, { agentContexts: [otherOwner] });
+
+  assert.deepEqual(
+    nodeReleasedSessions([active, done, foreign], 'macpro', 'farm-automation'),
+    ['reviewer', 'old-worker'],
+  );
+  // A session an active run keeps is kept even when a finished run also bound it.
+  const reused = run({ status: 'done' }, { agentContexts: [context('review', 'worker', 'macpro')] });
+  assert.deepEqual(nodeReleasedSessions([reused, active], 'macpro', 'farm-automation'), [
+    'reviewer',
+  ]);
 });

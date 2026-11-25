@@ -27,6 +27,7 @@ const ROLES_RESUMED_BY_A_PERSON: ReadonlySet<AgentRole> = new Set([
 export function sessionsNeedingAPerson(
   runs: readonly Run[],
   sessions: readonly Pick<NativeSessionInfo, 'id'>[],
+  executionNodeId = 'local',
 ): Map<string, string> {
   const live = new Set(sessions.map((session) => session.id));
   const kept = new Map<string, string>();
@@ -35,7 +36,7 @@ export function sessionsNeedingAPerson(
     for (const context of run.agentContexts ?? []) {
       const binding = context.nativeSession;
       if (!binding || !live.has(binding.sessionId)) continue;
-      if ((binding.executionNodeId ?? 'local') !== 'local') continue;
+      if ((binding.executionNodeId ?? 'local') !== executionNodeId) continue;
       if (run.reviewWorkspaceTarget)
         kept.set(binding.sessionId, `static review workspace of run ${run.id.slice(0, 8)}`);
       else if (ROLES_RESUMED_BY_A_PERSON.has(context.role))
@@ -43,6 +44,31 @@ export function sessionsNeedingAPerson(
     }
   }
   return kept;
+}
+
+/**
+ * The owner's sessions bound on an execution node that a launch there may stop to refresh its
+ * host: every bound session the keep rule above doesn't keep. The node keeps every session not
+ * listed, so unbound sessions (Command Center chat, standalone) and new ones keep its host.
+ */
+export function nodeReleasedSessions(
+  runs: readonly Run[],
+  executionNodeId: string,
+  owner: string,
+): string[] {
+  const bound = new Set<string>();
+  for (const run of runs)
+    for (const context of run.agentContexts ?? []) {
+      const binding = context.nativeSession;
+      if (binding?.executionNodeId === executionNodeId && binding.ownerPrincipalId === owner)
+        bound.add(binding.sessionId);
+    }
+  const kept = sessionsNeedingAPerson(
+    runs,
+    [...bound].map((id) => ({ id })),
+    executionNodeId,
+  );
+  return [...bound].filter((id) => !kept.has(id));
 }
 
 /** The gateway's policy: the sessions its active runs still need a person to resume. */

@@ -6,7 +6,11 @@ import test from 'node:test';
 
 import { RUNTIME_VERSION } from '../version.js';
 
-import { NativeSessionClient } from './client.js';
+import {
+  NativeSessionClient,
+  releasedSessionsPolicy,
+  withNativeHostRefreshPolicy,
+} from './client.js';
 import { setup, stopNativeStack, until } from './durability.test-support.js';
 import { type HostIdentity, requestHost } from './ipc.js';
 import { readJson } from './storage.js';
@@ -454,6 +458,154 @@ test('a service on older code than its checkout leaves the host alone and says t
     });
     assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
     assert.notEqual((await client.inspect('owner', session.id)).processStopped, true);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+/** An execution node's client: no policy of its own, fenced idle stops only. */
+const nodeClient = (fixture: ReturnType<typeof setup>, maxRunners = 6) =>
+  new NativeSessionClient(fixture.root, 'local', undefined, { maxRunners });
+
+/** A launch on a node, carrying the gateway's release list. */
+const launchReleasing = (
+  client: NativeSessionClient,
+  fixture: ReturnType<typeof setup>,
+  released: string[],
+) =>
+  withNativeHostRefreshPolicy(releasedSessionsPolicy('owner', new Set(released)), () =>
+    client.create('owner', { runner: 'codex', cwd: fixture.cwd }),
+  );
+
+test('a node launch refreshes an older-runtime host whose idle sessions the gateway released', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = nodeClient(fixture);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const before = skew(fixture);
+
+    const launched = await launchReleasing(client, fixture, [session.id]);
+
+    const after = readJson<HostIdentity>(join(fixture.root, 'host.json'));
+    assert.notEqual(after.pid, before.pid);
+    assert.equal(after.runtimeVersion, RUNTIME_VERSION);
+    assert.equal((await client.inspect('owner', session.id)).state, 'failed');
+    await client.close('owner', launched.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a node launch refused for a busy session refreshes at the next launch once it is idle', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = nodeClient(fixture);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await until(async () => (await client.inspect('owner', session.id)).state === 'running');
+    const before = skew(fixture);
+
+    await assert.rejects(launchReleasing(client, fixture, [session.id]), {
+      code: 'NATIVE_HOST_VERSION_SKEW',
+      message: new RegExp(`refreshed at a later launch.*Busy: ${session.id} \\(running\\)`),
+    });
+    assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+
+    // Within the busy memo's 5 s: a launch's own list gets a fresh census.
+    const launched = await launchReleasing(client, fixture, [session.id]);
+    assert.notEqual(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    await client.close('owner', launched.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a node launch keeps sessions the gateway did not release and other owners’ sessions', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = nodeClient(fixture);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const other = await client.create('other', { runner: 'codex', cwd: fixture.cwd });
+    await client.send('other', other.id, 'other-turn', 'first');
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('other', other.id)).state === 'idle');
+    const before = skew(fixture);
+
+    await assert.rejects(launchReleasing(client, fixture, [other.id]), {
+      message: new RegExp(
+        `Busy: (?=.*${session.id} \\(not released by the gateway\\))(?=.*${other.id} \\(another owner\\))`,
+      ),
+    });
+    assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    await client.close('owner', session.id);
+    await client.close('other', other.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a node never stops an older host without the idle-runner fence', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = nodeClient(fixture);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const before = olderHost(fixture);
+
+    await assert.rejects(launchReleasing(client, fixture, [session.id]), {
+      message: /Busy: the host predates the idle-runner fence/,
+    });
+    assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    assert.equal((await client.inspect('owner', session.id)).state, 'idle');
+    await client.close('owner', session.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a node launch stops no more idle runners than its limit', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = nodeClient(fixture, 0);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    const before = skew(fixture);
+
+    await assert.rejects(launchReleasing(client, fixture, [session.id]), {
+      message: /Busy: 1 idle runners, more than the 0 a launch may stop/,
+    });
+    assert.equal(readJson<HostIdentity>(join(fixture.root, 'host.json')).pid, before.pid);
+    await client.close('owner', session.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a launch to an older-runtime host that also lacks a capability is refused as skew', async () => {
+  const fixture = setup({ manualTurns: true });
+  const client = new NativeSessionClient(fixture.root);
+  try {
+    const { session } = await skewedHost(fixture, client);
+    const hostFile = join(fixture.root, 'host.json');
+    const older: Record<string, unknown> = { ...readJson<HostIdentity>(hostFile) };
+    older.runtimeVersion = '0.0.0';
+    delete older.conversationStreaming;
+    writeFileSync(hostFile, JSON.stringify(older));
+
+    await assert.rejects(client.create('owner', { runner: 'codex', cwd: fixture.cwd }), {
+      code: 'NATIVE_HOST_VERSION_SKEW',
+      message: /conversation streaming before launching new work\./,
+    });
+    await fixture.completeTurn();
+    await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
+    await client.close('owner', session.id);
   } finally {
     await stopNativeStack(fixture);
   }

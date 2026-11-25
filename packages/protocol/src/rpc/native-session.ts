@@ -129,6 +129,8 @@ export interface NativeExecutionNodeDeclaration {
   supportsWorkerStopAttestation?: boolean;
   supportsStructuredResults?: boolean;
   supportsProfiles?: boolean;
+  /** A launch carrying the gateway's release list may refresh a host on another runtime. */
+  supportsHostRefresh?: boolean;
 }
 export interface NativeSessionListResult {
   sessions: NativeSessionInfo[];

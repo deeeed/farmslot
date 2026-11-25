@@ -1,0 +1,1 @@
+- Launches to nodes that declare `supportsHostRefresh` carry the sessions the node may stop to refresh a host on another runtime, by the same keep rules as the gateway host, with a launch timeout sized for that stop.

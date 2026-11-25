@@ -293,3 +293,39 @@ test('older node decoders cannot silently drop an explicit approval mode before 
     unregisterByWs(ws);
   }
 });
+
+test('a launch to a node that refreshes its host carries the gateway’s release list', async () => {
+  const machine = 'native-host-refresh-node';
+  const owner = 'native-owner';
+  const frames: Array<{ method: string; hostRelease?: unknown }> = [];
+  const session = { id: 'session', ownerPrincipalId: owner, executionNodeId: machine };
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      const frame = JSON.parse(raw);
+      frames.push({ method: frame.params.method, hostRelease: frame.params.hostRelease });
+      handleNodeResponse(frame.id, true, session, undefined, undefined, ws);
+    },
+  } as WebSocket;
+  registerNode(
+    machine,
+    1,
+    ws,
+    undefined,
+    undefined,
+    { ownerPrincipalId: owner },
+    { principalId: 'node-test', valid: () => true },
+  );
+  const params = { executionNodeId: machine, runner: 'codex', cwd: '/tmp' };
+  try {
+    await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, params);
+    getNode(machine)!.nativeSessions!.supportsHostRefresh = true;
+    await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, params);
+    assert.deepEqual(frames, [
+      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
+      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: [] },
+    ]);
+  } finally {
+    unregisterByWs(ws);
+  }
+});

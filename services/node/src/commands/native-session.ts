@@ -2,6 +2,11 @@ import path from 'node:path';
 
 import { NATIVE_WORKER_METHODS, NativeSessionClient } from '@farmslot/agent-runtime/native';
 import {
+  releasedSessionsPolicy,
+  withNativeHostRefreshPolicy,
+} from '@farmslot/agent-runtime/native/client';
+import { NATIVE_NODE_REFRESH_MAX_RUNNERS } from '@farmslot/agent-runtime/native/host-runtime';
+import {
   NativeHostObservation,
   type NativeSourceReceipt,
 } from '@farmslot/agent-runtime/native/observation';
@@ -41,12 +46,16 @@ export class NativeNodeSessions {
         supportsWorkerStopAttestation: true,
         supportsStructuredResults: true,
         supportsProfiles: true,
+        supportsHostRefresh: true,
         ...{ supportsObservations: true },
       };
     }
+    // Only fenced idle stops, few enough to finish within the gateway's launch timeout.
     this.client = new NativeSessionClient(
       path.join(root, 'nodes', encodeURIComponent(machine)),
       machine,
+      undefined,
+      { maxRunners: NATIVE_NODE_REFRESH_MAX_RUNNERS },
     );
   }
 
@@ -193,19 +202,30 @@ export class NativeNodeSessions {
       });
     if (typeof value.method !== 'string')
       throw Object.assign(new Error('Native method is required'), { code: 'INVALID_PARAMS' });
-    if (NATIVE_WORKER_METHODS.includes(value.method))
-      return routeNativeWorkerSession(
-        this.client,
-        this.declaration.ownerPrincipalId,
-        value.method,
-        value.params,
-      );
-    return routeNativeSession(
-      this.client,
-      this.declaration.ownerPrincipalId,
-      value.method,
-      value.params,
-      parseNativeSessionRequester(value.requester),
+    const owner = this.declaration.ownerPrincipalId;
+    const method = value.method;
+    const route = () =>
+      NATIVE_WORKER_METHODS.includes(method)
+        ? routeNativeWorkerSession(this.client, owner, method, value.params)
+        : routeNativeSession(
+            this.client,
+            owner,
+            method,
+            value.params,
+            parseNativeSessionRequester(value.requester),
+          );
+    if (value.hostRelease === undefined) return route();
+    if (
+      !Array.isArray(value.hostRelease) ||
+      !value.hostRelease.every((id) => typeof id === 'string')
+    )
+      throw Object.assign(new Error('hostRelease must be a list of session IDs'), {
+        code: 'INVALID_PARAMS',
+      });
+    // A launch to a host on another runtime refreshes it, stopping only released idle sessions.
+    return withNativeHostRefreshPolicy(
+      releasedSessionsPolicy(owner, new Set(value.hostRelease)),
+      route,
     );
   }
 }
