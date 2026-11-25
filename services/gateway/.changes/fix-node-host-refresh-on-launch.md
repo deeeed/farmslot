@@ -1,1 +1,1 @@
-- Launches to nodes that declare `supportsHostRefresh` carry the sessions the node may stop to refresh a host on another runtime, by the same keep rules as the gateway host, with a launch timeout sized for that stop.
+- When a node that declares `supportsHostRefresh` refuses a launch as skewed, the gateway sends it once more with the sessions the node may stop to refresh that host, by the same keep rules as the gateway host. Launches and messages to such nodes get a timeout sized for that refresh.

@@ -12,7 +12,12 @@ import {
   NATIVE_WORKER_STATE,
   NATIVE_WORKER_TRANSFER,
 } from '@farmslot/agent-runtime/native';
+import {
+  NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
+} from '@farmslot/agent-runtime/native/worker-launch';
 import { NATIVE_NODE_ADMISSION_TIMEOUT_MS } from '@farmslot/agent-runtime/native/host-runtime';
+import { NATIVE_HOST_VERSION_SKEW } from '@farmslot/agent-runtime/native/host-unavailable';
 import {
   NATIVE_PROFILE_METHODS,
   validateNativeProfileParams,
@@ -65,6 +70,26 @@ const NODE_ADMISSION_METHODS: readonly string[] = [
   NATIVE_WORKER_RESUME,
   NATIVE_WORKER_TRANSFER,
 ];
+
+/** Requests a node holds while its host refreshes, on top of the launches. */
+const NODE_WORK_METHODS: readonly string[] = [
+  ...NODE_ADMISSION_METHODS,
+  Methods.NATIVE_SESSION_SEND,
+  Methods.NATIVE_SESSION_SET_APPROVAL_MODE,
+  NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
+];
+
+/**
+ * How long the gateway waits for a node's answer. On a node that refreshes its host, a launch
+ * or message may wait for that refresh first: up to 6 idle runners stopped, then a host start.
+ */
+export function nativeNodeSessionTimeout(method: string, refreshesHost: boolean): number {
+  if (method === NATIVE_WORKER_COMPACT) return 185_000;
+  return refreshesHost && NODE_WORK_METHODS.includes(method)
+    ? NATIVE_NODE_ADMISSION_TIMEOUT_MS
+    : 60_000;
+}
 
 type AuthorizedNativeNode = ConnectedNode & {
   nativeSessions: NonNullable<ConnectedNode['nativeSessions']>;
@@ -307,11 +332,7 @@ export async function routeNativeExecution(
       ...(hostRelease ? { hostRelease } : {}),
     };
     return sendNodeRequest(node, 'native.session', envelope, {
-      timeout: hostRelease
-        ? NATIVE_NODE_ADMISSION_TIMEOUT_MS
-        : method === NATIVE_WORKER_COMPACT
-          ? 185_000
-          : 60_000,
+      timeout: nativeNodeSessionTimeout(method, node.nativeSessions.supportsHostRefresh === true),
       requireSameConnection: true,
     });
   };
@@ -325,12 +346,14 @@ export async function routeNativeExecution(
       if (
         !(error instanceof Error) ||
         !('code' in error) ||
-        error.code !== 'NATIVE_HOST_VERSION_SKEW' ||
+        error.code !== NATIVE_HOST_VERSION_SKEW ||
         !node.nativeSessions.supportsHostRefresh ||
         !NODE_ADMISSION_METHODS.includes(method)
       )
         throw error;
       const { getAllRuns } = await loadRunStore();
+      // A run cancelled or paused while the first send waited is not launched for.
+      assertNodeReconnectCurrent();
       assertNativeConnection(owner, executionNodeId, node);
       // Read with no await before the send, so the node gets the current run census.
       result = await send(nodeLaunchRelease(getAllRuns(), executionNodeId, owner, method, params));

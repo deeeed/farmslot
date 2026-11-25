@@ -562,10 +562,10 @@ export class NativeSessionClient {
       return this.dispatch<T>(request, await this.host(), []);
     let host: HostIdentity | undefined;
     const requestPolicy = requestRefreshPolicies.getStore();
-    if (
-      (requestPolicy ?? this.refreshPolicy) &&
-      NATIVE_ADMISSION_METHODS.includes(request.method)
-    ) {
+    const policy = requestPolicy ?? this.refreshPolicy;
+    // A node checks every launch first: one without a list is refused without counting itself,
+    // so it never holds the refresh of a launch that carries one.
+    if ((policy || this.idleStopLimits) && NATIVE_ADMISSION_METHODS.includes(request.method)) {
       // A launch checks the host before it counts itself: it never goes to an old host, so
       // it must not hold that host's refresh, nor another launch's. A refresh's outcome
       // belongs to the caller that asked for it, so its error is not this launch's; the
@@ -574,6 +574,7 @@ export class NativeSessionClient {
       while (this.refreshing) await this.refreshing.catch(() => undefined);
       host = await this.host();
       if (!nativeHostRunsCurrentRuntime(host)) {
+        if (!policy) return this.dispatch<T>(request, host, []);
         // A launch's own list predates the refresh it waited for: refuse it rather than use it.
         if (requestPolicy && waited) return this.dispatch<T>(request, host, [STALE_RELEASE_LIST]);
         const refresh = await this.refreshStaleHost(requestPolicy);

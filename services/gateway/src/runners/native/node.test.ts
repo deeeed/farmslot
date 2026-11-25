@@ -3,7 +3,12 @@ import test from 'node:test';
 
 import { WebSocket } from 'ws';
 
-import { NATIVE_WORKER_CANCEL } from '@farmslot/agent-runtime/native';
+import {
+  NATIVE_WORKER_CANCEL,
+  NATIVE_WORKER_COMPACT,
+  NATIVE_WORKER_TRANSFER,
+} from '@farmslot/agent-runtime/native';
+import { NATIVE_NODE_ADMISSION_TIMEOUT_MS } from '@farmslot/agent-runtime/native/host-runtime';
 import { Methods } from '@farmslot/protocol';
 
 import {
@@ -12,9 +17,10 @@ import {
   registerNode,
   unregisterByWs,
 } from '../../fleet/machine-registry.js';
-import { handleNodeResponse } from '../../fleet/node-rpc.js';
+import { handleNodeResponse, withNodeReconnectWait } from '../../fleet/node-rpc.js';
+import { createRun, deleteRun, updateRun } from '../../runs/store.js';
 
-import { routeNativeExecution } from './node.js';
+import { nativeNodeSessionTimeout, routeNativeExecution } from './node.js';
 
 test('native requests recheck issued authority after a reply and refuse revoked dispatch', async () => {
   const machine = 'native-authority-test';
@@ -294,19 +300,19 @@ test('older node decoders cannot silently drop an explicit approval mode before 
   }
 });
 
-test('a launch a node refuses as skewed is sent once more with the gateway’s release list', async () => {
-  const machine = 'native-host-refresh-node';
-  const owner = 'native-owner';
+/** A node that declares host refresh and refuses the next `refuse` requests as skewed. */
+function skewRefusingNode(machine: string, owner: string, supportsHostRefresh: boolean) {
   const frames: Array<{ method: string; hostRelease?: unknown }> = [];
-  let refuse = 0;
+  const state = { refuse: 0, onSend: () => {} };
   const session = { id: 'session', ownerPrincipalId: owner, executionNodeId: machine };
   const ws = {
     readyState: WebSocket.OPEN,
     send(raw: string) {
       const frame = JSON.parse(raw);
       frames.push({ method: frame.params.method, hostRelease: frame.params.hostRelease });
-      if (refuse > 0) {
-        refuse -= 1;
+      state.onSend();
+      if (state.refuse > 0) {
+        state.refuse -= 1;
         handleNodeResponse(
           frame.id,
           false,
@@ -324,29 +330,76 @@ test('a launch a node refuses as skewed is sent once more with the gateway’s r
     ws,
     undefined,
     undefined,
-    { ownerPrincipalId: owner, supportsEnsure: true },
+    { ownerPrincipalId: owner, supportsEnsure: true, supportsWorkers: true, supportsHostRefresh },
     { principalId: 'node-test', valid: () => true },
   );
+  return { frames, state, ws };
+}
+
+const skewed = { code: 'NATIVE_HOST_VERSION_SKEW' };
+
+test('a launch a node refuses as skewed is sent once more with the gateway’s release list', async () => {
+  const machine = 'native-host-refresh-node';
+  const owner = 'native-owner';
+  const { frames, state, ws } = skewRefusingNode(machine, owner, false);
+  const run = createRun({ flowType: 'dev', project: 'host-refresh', ticketOrPr: 'HOST-REFRESH-1' });
+  updateRun(run.id, {
+    status: 'done',
+    agentContexts: [
+      {
+        id: 'review-context',
+        role: 'review',
+        label: 'review',
+        status: 'idle',
+        slotId: 'slot',
+        runId: run.id,
+        nativeSession: {
+          sessionId: 'finished-reviewer',
+          executionNodeId: machine,
+          ownerPrincipalId: owner,
+          leaseId: 'lease',
+          commandId: 'command',
+        },
+      },
+    ],
+  });
   const create = { executionNodeId: machine, runner: 'codex', cwd: '/tmp' };
-  const skewed = { code: 'NATIVE_HOST_VERSION_SKEW' };
   try {
     // A current host: one send, no list.
     await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create);
     // An older node gets no list, so its refusal stands.
-    refuse = 1;
-    await assert.rejects(
-      routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create),
-      skewed,
-    );
+    state.refuse = 1;
+    await assert.rejects(routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create), skewed);
     getNode(machine)!.nativeSessions!.supportsHostRefresh = true;
     // A node that reads one gets it on the second send; a refusal then stands.
-    refuse = 1;
+    state.refuse = 1;
     await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create);
-    refuse = 2;
+    state.refuse = 2;
     await assert.rejects(
       routeNativeExecution(owner, Methods.NATIVE_SESSION_ENSURE, {
         ...create,
+        sessionId: 'finished-reviewer',
+      }),
+      skewed,
+    );
+    state.refuse = 2;
+    await assert.rejects(
+      routeNativeExecution(owner, NATIVE_WORKER_TRANSFER, {
+        executionNodeId: machine,
+        sessionId: 'finished-reviewer',
+        leaseId: 'lease',
+        generation: 'generation',
+      }),
+      skewed,
+    );
+    // A message is not a launch: its refusal is not sent again.
+    state.refuse = 1;
+    await assert.rejects(
+      routeNativeExecution(owner, Methods.NATIVE_SESSION_SEND, {
+        executionNodeId: machine,
         sessionId: 'session',
+        commandId: 'command',
+        text: 'hello',
       }),
       skewed,
     );
@@ -354,11 +407,51 @@ test('a launch a node refuses as skewed is sent once more with the gateway’s r
       { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
       { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
       { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
-      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: [] },
+      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: ['finished-reviewer'] },
       { method: Methods.NATIVE_SESSION_ENSURE, hostRelease: undefined },
       { method: Methods.NATIVE_SESSION_ENSURE, hostRelease: [] },
+      { method: NATIVE_WORKER_TRANSFER, hostRelease: undefined },
+      { method: NATIVE_WORKER_TRANSFER, hostRelease: ['finished-reviewer'] },
+      { method: Methods.NATIVE_SESSION_SEND, hostRelease: undefined },
     ]);
   } finally {
     unregisterByWs(ws);
+    await deleteRun(run.id);
   }
+});
+
+test('a launch whose run stopped while the first send waited is not sent again', async () => {
+  const machine = 'native-host-refresh-cancel';
+  const owner = 'native-owner';
+  const { frames, state, ws } = skewRefusingNode(machine, owner, true);
+  let cancelled = false;
+  state.refuse = 1;
+  state.onSend = () => (cancelled = true);
+  try {
+    await assert.rejects(
+      withNodeReconnectWait(
+        () =>
+          routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, {
+            executionNodeId: machine,
+            runner: 'codex',
+            cwd: '/tmp',
+          }),
+        () => {
+          if (cancelled) throw new Error('run was cancelled');
+        },
+      ),
+      /run was cancelled/,
+    );
+    assert.equal(frames.length, 1);
+  } finally {
+    unregisterByWs(ws);
+  }
+});
+
+test('launches and messages to a node that refreshes its host wait long enough for the refresh', () => {
+  for (const method of [Methods.NATIVE_SESSION_CREATE, NATIVE_WORKER_TRANSFER, Methods.NATIVE_SESSION_SEND])
+    assert.equal(nativeNodeSessionTimeout(method, true), NATIVE_NODE_ADMISSION_TIMEOUT_MS);
+  assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_CREATE, false), 60_000);
+  assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_READ, true), 60_000);
+  assert.equal(nativeNodeSessionTimeout(NATIVE_WORKER_COMPACT, true), 185_000);
 });
