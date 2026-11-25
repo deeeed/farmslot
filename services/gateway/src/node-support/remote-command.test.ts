@@ -22,6 +22,11 @@ import {
   resolveRemoteFarmCommand,
   settleNodeSupportDeliveries,
 } from './remote-command.js';
+import {
+  notifyNodeSupportSelectionEnded,
+  notifyNodeSupportSelectionStarted,
+  onNodeSupportSelection,
+} from './selection-events.js';
 import { fakeSupportHomeResult } from './support-test-fixtures.js';
 
 // A real tracked project, so the bundle paths come from a real config.
@@ -293,8 +298,9 @@ test('a slot without project config keeps the node copy', async () => {
 async function withTempFarm(t: test.TestContext): Promise<{
   name: string;
   editScript: (body: string) => void;
+  editConfig: (edit: (config: Record<string, unknown>) => Record<string, unknown>) => void;
 }> {
-  const { mkdirSync, rmSync, writeFileSync } = await import('node:fs');
+  const { mkdirSync, readFileSync, rmSync, writeFileSync } = await import('node:fs');
   const path = await import('node:path');
   const { farmslotRoot } = await import('../core/index.js');
   const name = `remote-command-test-${process.pid}-${Date.now()}-farm`;
@@ -313,7 +319,13 @@ async function withTempFarm(t: test.TestContext): Promise<{
   );
   const script = path.join(dir, 'scripts', 'h.sh');
   writeFileSync(script, 'echo v1\n');
-  return { name, editScript: (body) => writeFileSync(script, body) };
+  const config = path.join(dir, 'project.json');
+  return {
+    name,
+    editScript: (body) => writeFileSync(script, body),
+    editConfig: (edit) =>
+      writeFileSync(config, JSON.stringify(edit(JSON.parse(readFileSync(config, 'utf8'))))),
+  };
 }
 
 /** A node whose bundle uploads wait until released; `uploads` lists one entry per delivery. */
@@ -455,18 +467,39 @@ function countedIo(io: NodeSupportIo): { io: NodeSupportIo; calls: () => number 
   };
 }
 
+/**
+ * A clock frozen well past the fixture's writes, so the bundle's inputs read as settled and a held
+ * bundle is checked against its inputs only when a test moves the clock.
+ */
+function settledClock(t: test.TestContext): { advance: (ms: number) => void } {
+  let now = Date.now() + 5_000;
+  t.mock.method(Date, 'now', () => now);
+  return { advance: (ms) => (now += ms) };
+}
+
+/** A command whose budget runs out while its bundle is still uploading. */
+async function pendingCommand(
+  vars: SlotVars,
+  cmd: string,
+  io: NodeSupportIo,
+  options: { selectSlot?: boolean } = {},
+): Promise<void> {
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io, budgetMs: 50, ...options }),
+    NodeSupportPendingError,
+  );
+}
+
 test('a delivery that finishes after every budget ran out serves the next command from the cache', async (t) => {
   resetRemoteFarmCommandCache();
+  settledClock(t);
   const farm = await withTempFarm(t);
   const node = gatedNode();
   const counted = countedIo(node.io);
   const vars = farmVars(farm.name, 'mini-x-1');
   const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
 
-  await assert.rejects(
-    resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50 }),
-    NodeSupportPendingError,
-  );
+  await pendingCommand(vars, cmd, counted.io);
   node.release();
   // Nobody waits for it now; it finishes on its own.
   await settleNodeSupportDeliveries();
@@ -477,32 +510,105 @@ test('a delivery that finishes after every budget ran out serves the next comman
   assert.equal(node.uploads.length, 1);
 });
 
-test('a delivery overtaken by a config change while nobody waited caches nothing', async (t) => {
+test('a background-finished read-only delivery serves read-only commands, not selecting ones', async (t) => {
   resetRemoteFarmCommandCache();
+  settledClock(t);
   const farm = await withTempFarm(t);
   const node = gatedNode();
   const counted = countedIo(node.io);
   const vars = farmVars(farm.name, 'mini-x-1');
   const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
 
-  await assert.rejects(
-    resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50 }),
-    NodeSupportPendingError,
-  );
-  let now = Date.now();
-  t.mock.method(Date, 'now', () => now);
+  await pendingCommand(vars, cmd, counted.io, { selectSlot: false });
+  node.release();
+  await settleNodeSupportDeliveries();
+  let before = counted.calls();
+  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io, selectSlot: false });
+  assert.equal(counted.calls(), before, 'the read-only entry answered the read-only command');
+  before = counted.calls();
+  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
+  assert.ok(counted.calls() > before, 'a selecting command still selects on the node');
+});
+
+test('a delivery overtaken by a script change while nobody waited caches nothing', async (t) => {
+  resetRemoteFarmCommandCache();
+  const clock = settledClock(t);
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const counted = countedIo(node.io);
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  await pendingCommand(vars, cmd, counted.io);
   farm.editScript('echo v2\n');
-  now += 2_100;
+  clock.advance(2_100);
   node.release();
   await settleNodeSupportDeliveries();
 
   // Back to the delivered content: its bundle is checked on the node again, not served from a
   // cache entry recorded while the config said otherwise.
   farm.editScript('echo v1\n');
-  now += 2_100;
+  clock.advance(2_100);
   const before = counted.calls();
   await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
   assert.ok(counted.calls() > before, 'the overtaken delivery left no cache entry');
+});
+
+test('a delivery overtaken by a support-path change while nobody waited caches nothing', async (t) => {
+  resetRemoteFarmCommandCache();
+  settledClock(t);
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const counted = countedIo(node.io);
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  const extra = `projects/${farm.name}/project.json`;
+
+  await pendingCommand(vars, cmd, counted.io);
+  // The project now ships its config too: a different set of support paths.
+  farm.editConfig((config) => ({ ...config, node_support: { paths: [extra] } }));
+  node.release();
+  await settleNodeSupportDeliveries();
+
+  farm.editConfig(({ node_support: _dropped, ...config }) => config);
+  const before = counted.calls();
+  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
+  assert.ok(counted.calls() > before, 'the overtaken delivery left no cache entry');
+});
+
+test('a background-finished delivery is not cached after a newer selection for its slot', async (t) => {
+  resetRemoteFarmCommandCache();
+  settledClock(t);
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const counted = countedIo(node.io);
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  // Right after the delivery's own selection ends, another selection moves the slot elsewhere,
+  // as a second gateway command would; the config never changes.
+  let ownDir: string | null = null;
+  let armed = true;
+  t.after(() => (armed = false));
+  onNodeSupportSelection({
+    started: () => undefined,
+    ended(slotId, supportDir) {
+      if (!armed || slotId !== vars.slotId || ownDir !== null || supportDir === null) return;
+      ownDir = supportDir;
+      notifyNodeSupportSelectionStarted(slotId);
+      notifyNodeSupportSelectionEnded(slotId, '/elsewhere/support/other');
+    },
+  });
+
+  await pendingCommand(vars, cmd, counted.io);
+  node.release();
+  await settleNodeSupportDeliveries();
+  assert.ok(ownDir, 'the delivery selected its bundle');
+  // The slot is back on the delivered bundle, so only a recorded entry could answer from cache.
+  notifyNodeSupportSelectionStarted(vars.slotId);
+  notifyNodeSupportSelectionEnded(vars.slotId, ownDir);
+  const before = counted.calls();
+  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
+  assert.ok(counted.calls() > before, 'the delivery recorded nothing after the slot moved');
 });
 
 test('a probe waits for the support bundle only where execOnSlot would deliver one', () => {
@@ -519,57 +625,6 @@ test('a probe waits for the support bundle only where execOnSlot would deliver o
   // A plain local shell runs the checkout's own scripts and never waits for a bundle.
   assert.equal(commandWaitsForNodeSupport(local, workspaceHook), false);
   assert.equal(commandWaitsForNodeSupport(local, repoProbe), false);
-});
-
-test('a background-finished delivery is not cached after a newer selection for its slot', async (t) => {
-  resetRemoteFarmCommandCache();
-  const farm = await withTempFarm(t);
-  const node = gatedNode();
-  const counted = countedIo(node.io);
-  const vars = farmVars(farm.name, 'mini-x-1');
-  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
-
-  await assert.rejects(
-    resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50 }),
-    NodeSupportPendingError,
-  );
-  let now = Date.now();
-  t.mock.method(Date, 'now', () => now);
-  // Bundle 2 is selected while bundle 1's delivery is still uploading.
-  farm.editScript('echo v2\n');
-  now += 2_100;
-  const second = resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
-  node.release();
-  await second;
-  await settleNodeSupportDeliveries();
-
-  farm.editScript('echo v1\n');
-  now += 2_100;
-  const before = counted.calls();
-  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
-  assert.ok(counted.calls() > before, 'bundle 1 is checked on the node again');
-});
-
-test('a background-finished read-only delivery serves read-only commands, not selecting ones', async (t) => {
-  resetRemoteFarmCommandCache();
-  const farm = await withTempFarm(t);
-  const node = gatedNode();
-  const counted = countedIo(node.io);
-  const vars = farmVars(farm.name, 'mini-x-1');
-  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
-
-  await assert.rejects(
-    resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50, selectSlot: false }),
-    NodeSupportPendingError,
-  );
-  node.release();
-  await settleNodeSupportDeliveries();
-  let before = counted.calls();
-  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io, selectSlot: false });
-  assert.equal(counted.calls(), before, 'the read-only entry answered the read-only command');
-  before = counted.calls();
-  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
-  assert.ok(counted.calls() > before, 'a selecting command still selects on the node');
 });
 
 test('a delivery that fails after its budget ran out is reported to the next command', async (t) => {

@@ -227,9 +227,10 @@ export function hasRemoteFarmRef(
 }
 
 /**
- * Whether `execOnSlot` delivers the slot's support bundle before running `command`, the same test
- * it applies: a remote or node-link slot, no locked project sources, and a farm reference on a path
- * boundary. A command that passes may answer "pending" with no output while a delivery runs.
+ * Whether `execOnSlot` delivers the slot's support bundle before running `command`. It mirrors the
+ * routing in `execOnSlot` and `resolveRemoteFarmCommand` (keep them in step): a remote or node-link
+ * slot, no locked project sources, and a farm reference on a path boundary. A command that passes
+ * may answer "pending" with no output while a delivery runs.
  */
 export function commandWaitsForNodeSupport(
   vars: Pick<SlotVars, 'host' | 'machine' | 'machineEnv'>,
@@ -470,9 +471,11 @@ function ensureOnce(
   delivery.promise.catch(() => undefined);
   // Recorded after the delivery resolves, never inside it: its waiters and the machine's other
   // slots get the result without waiting for the record's config check.
-  const record = delivery.promise
-    .then((state) => rememberFinishedDelivery(vars, local, slotKey, selectSlot, state))
-    .catch(() => undefined);
+  const record = delivery.promise.then(
+    (state) => rememberFinishedDelivery(vars, local, slotKey, selectSlot, state),
+    // A failed delivery records nothing; its waiters, or the next command, report the failure.
+    () => undefined,
+  );
   pendingRecords.add(record);
   void record.finally(() => pendingRecords.delete(record));
   pendingEnsures.set(slotKey, delivery);
