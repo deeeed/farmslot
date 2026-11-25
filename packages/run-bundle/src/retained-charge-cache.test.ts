@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import type { ArtifactRef, Run } from '@farmslot/protocol';
 
+import { decisionHistoryFile } from './decision-history.js';
 import {
   collectRunBundleGarbage,
   DEFAULT_RUN_BUNDLE_RETENTION,
@@ -160,5 +161,24 @@ test('a capture at the archive threshold runs housekeeping first, and one below 
   await f.capture(ids[1], { policy });
   assert.equal(f.housekeepingCalls(), 1);
   await f.capture(ids[2], { policy: { ...policy, maxStoreBytes: stored * 4 } });
+  assert.equal(f.housekeepingCalls(), 1);
+});
+
+test("the capture gate counts the run's decision history, which admission charges", async (t) => {
+  const f = await fixture(t);
+  await f.capture(ids[0]);
+  const stored = (await runBundleAdmissionUsage(f.store, f.root)).store;
+  // Room for the capture's files but not for a 2 MB journal, and well below the 85% threshold.
+  const policy = {
+    ...DEFAULT_RUN_BUNDLE_RETENTION,
+    metadataReserveBytes: 1024,
+    maxStoreBytes: stored * 2 + 1_000_000,
+  };
+  await writeFile(
+    decisionHistoryFile(path.join(f.store.runsDir, `${ids[1]}.json`)),
+    'z'.repeat(2_000_000),
+  );
+  // This run records no decision count, so its capture freezes no history prefix and fits.
+  await f.capture(ids[1], { policy });
   assert.equal(f.housekeepingCalls(), 1);
 });

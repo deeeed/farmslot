@@ -1248,11 +1248,31 @@ async function walkStableStoreCharge(
   return { bytes, retentionCharges, bundleNames };
 }
 
+async function listBundleNames(store: RunBundleStore): Promise<string[]> {
+  try {
+    return await readdir(path.join(store.root, 'sha256'));
+  } catch (error) {
+    if (!hasCode(error, 'ENOENT')) throw error;
+    return [];
+  }
+}
+
+const sameBundleNames = (expected: Set<string>, listed: string[]) =>
+  listed.length === expected.size && listed.every((name) => expected.has(name));
+
 async function stableStoreCharge(store: RunBundleStore): Promise<StableStoreCharge> {
   const key = stableChargeKey(store);
   const before = await storeStamps(store);
   const cached = stableStoreCharges.get(key);
-  if (cached && cached.stamps.every((stamp, i) => stamp === before[i])) return cached;
+  // Bundles leave sha256/ outside the store lock (the retention pass's archive finish). A
+  // removal in the same timestamp tick as a write this process adjusted for leaves the stamp
+  // equal, so the names are checked too: one directory listing, not a walk.
+  if (
+    cached &&
+    cached.stamps.every((stamp, i) => stamp === before[i]) &&
+    sameBundleNames(cached.bundleNames, await listBundleNames(store))
+  )
+    return cached;
   stableStoreCharges.delete(key);
   const walkStartNs = BigInt(Date.now()) * 1_000_000n;
   const walked = await walkStableStoreCharge(store);
@@ -1295,8 +1315,7 @@ async function adjustStableStoreCharge(
     // stamp, so a later removal moves the stamp again and the next read walks.
     if (!addedBundle) return void stableStoreCharges.delete(key);
     bundleNames = new Set(cached.bundleNames).add(addedBundle);
-    const listed = await readdir(path.join(store.root, 'sha256'));
-    if (listed.length !== bundleNames.size || listed.some((name) => !bundleNames.has(name)))
+    if (!sameBundleNames(bundleNames, await listBundleNames(store)))
       return void stableStoreCharges.delete(key);
   }
   stableStoreCharges.set(key, {
@@ -2752,12 +2771,24 @@ export async function materializeRunBundle(
     // The archiver's own pressure test (archiveRunBundleMediaLocked), with this capture's
     // declared bytes and its manifest reserve as the required room. Read outside the lock: a
     // stale charge only decides whether to tidy first, and admission checks again under it.
-    // The run record and its manifest are charged too; the metadata reserve covers the decision
-    // history prefix, which is read only under the capture lock. An artifact without a declared
-    // size cannot be bounded, so it always tidies first.
+    // The run record, its decision history and the manifest are charged too. The history is
+    // the whole journal, an upper bound of the prefix the capture freezes under its lock. An
+    // artifact without a declared size cannot be bounded, so it always tidies first.
+    const historyBytes = async () => {
+      for (const directory of [store.runsDir, path.join(store.runsDir, 'archive')]) {
+        try {
+          return (await stat(decisionHistoryFile(path.join(directory, `${run.id}.json`)))).size;
+        } catch (error) {
+          if (!hasCode(error, 'ENOENT')) throw error;
+        }
+      }
+      return 0;
+    };
     const declared =
       request.artifacts.reduce((total, artifact) => total + (artifact.sizeBytes ?? 0), 0) +
-      Buffer.byteLength(JSON.stringify(request.run)) +
+      // As the bundle stores them: the run record pretty-printed and its decision history.
+      Buffer.byteLength(JSON.stringify(request.run, null, 2)) +
+      (await historyBytes()) +
       Buffer.byteLength(JSON.stringify(request.artifacts)) +
       request.artifacts.length * 300 +
       4096 +
