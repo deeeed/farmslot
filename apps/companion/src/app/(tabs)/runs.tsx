@@ -6,9 +6,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useShallow } from 'zustand/react/shallow';
 
 import {
+  evalRunBadge,
   extractRunArtifactManifest,
   groupRunsByFamily,
+  isEvalRun,
   normalizeRunTags,
+  productFamiliesFirst,
   runDisplayStatus,
   type RunFamilyGroup,
   runListEvidenceSummary,
@@ -141,6 +144,7 @@ const RunCard = React.memo(function RunCard({
     [gatewayUrl, run],
   );
   const tags = useMemo(() => normalizeRunTags(run.tags), [run.tags]);
+  const evalBadge = evalRunBadge(run);
   const primaryVisualPair = visualPairSummary.pairs[0] ?? null;
   const isSingletonFamily = familyRunCount === 1;
   const runPositionLabel =
@@ -173,7 +177,11 @@ const RunCard = React.memo(function RunCard({
         testID={`companion-run-${run.id}`}
         accessibilityRole="button"
         accessibilityLabel={`Open run ${run.id}`}
-        style={[styles.runCard, isFamilyRoot && styles.rootRunCard]}
+        style={[
+          styles.runCard,
+          isFamilyRoot && styles.rootRunCard,
+          isEvalRun(run) && styles.evalRunCard,
+        ]}
         onPress={() =>
           router.push({
             pathname: runWorkspacePathnameForStatus(run.status),
@@ -203,6 +211,15 @@ const RunCard = React.memo(function RunCard({
                 {FLOW_LABELS[run.flowType] ?? run.flowType}
               </Text>
             </View>
+            {evalBadge ? (
+              <View
+                testID={`companion-run-eval-${run.id}`}
+                accessibilityLabel={evalBadge.title}
+                style={styles.evalBadge}
+              >
+                <Text style={[styles.badgeText, styles.evalBadgeText]}>{evalBadge.label}</Text>
+              </View>
+            ) : null}
             {run.metrics?.runner ? (
               <View
                 style={[
@@ -759,13 +776,20 @@ function RunsScreen() {
       }),
     [filters, runFilters, runs, showAllRuns, slotMachines],
   );
+  // Shortcuts follow the list: product families first, and no eval families under Hide evals.
   const recentFamilyShortcuts = useMemo(
-    () => selectRecentRunFamilyGroups(filteredRuns, 3),
-    [filteredRuns],
+    () =>
+      selectRecentRunFamilyGroups(
+        runFilters.lane === 'product'
+          ? selectRunList(filteredRuns, { scope: 'all', lane: 'product' })
+          : filteredRuns,
+        3,
+      ),
+    [filteredRuns, runFilters.lane],
   );
 
   const runRows = useMemo<RunsListRow[]>(() => {
-    const groups = groupRunsByFamily(visibleRuns);
+    const groups = productFamiliesFirst(groupRunsByFamily(visibleRuns));
     const hierarchicalGroups = groups.filter((group) => group.runs.length > 1);
     const familyIndexById = new Map(
       hierarchicalGroups.map((group, index) => [group.familyId, index]),
@@ -805,6 +829,7 @@ function RunsScreen() {
           {activeRuns.length} active package{activeRuns.length === 1 ? '' : 's'} ·{' '}
           {filteredRuns.length} total
           {hasFilters ? ' · filtered' : ''}
+          {runFilterCount > 0 ? ` · ${visibleRuns.length} shown` : ''}
         </Text>
       </View>
       <View style={styles.scopeActions}>
@@ -1219,6 +1244,19 @@ const styles = StyleSheet.create({
   rootRunCard: {
     borderColor: colors.accent + '55',
   },
+  // Eval runs stay in the list but read as evals at a glance, as in Command Center.
+  evalRunCard: {
+    borderLeftColor: colors.accent,
+    borderLeftWidth: 3,
+  },
+  evalBadge: {
+    borderColor: colors.accent,
+    borderRadius: 4,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  evalBadgeText: { color: colors.accent },
   runComparePreview: {
     backgroundColor: colors.bgInput,
     borderColor: colors.accent + '24',

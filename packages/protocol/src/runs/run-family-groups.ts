@@ -1,6 +1,7 @@
 import { isActiveListRun } from '../contracts/runs.js';
 import { compareText } from '../text-order.js';
 
+import { productFamiliesFirst } from './eval-runs.js';
 import { buildFamilySummary } from './family-readiness.js';
 import type { RunListRow } from './list-row.js';
 
@@ -94,10 +95,11 @@ export function groupRunsByFamily(runs: readonly RunListRow[]): RunFamilyGroup[]
     .sort((left, right) => compareText(right.latestCreatedAt, left.latestCreatedAt));
 }
 
+/** The latest families for shortcuts, product families before eval-only ones (as run lists order them). */
 export function selectRecentRunFamilyGroups(
   runs: readonly RunListRow[],
   limit: number,
 ): RunFamilyGroup[] {
   if (limit <= 0) return [];
-  return groupRunsByFamily(runs).slice(0, limit);
+  return productFamiliesFirst(groupRunsByFamily(runs)).slice(0, limit);
 }
