@@ -341,9 +341,13 @@ export function createPrPlan({
         15,
       ),
     );
-  if (touches(['services/node/', 'scripts/deploy-node', '.github/']))
+  if (touches(['services/node/', 'scripts/deploy-node', 'scripts/lib/launchd-reload', '.github/']))
     tasks.push(
-      command('node-deploy-tests', ['node', '--test', 'scripts/deploy-node.test.mjs'], 20),
+      command(
+        'node-deploy-tests',
+        ['node', '--test', 'scripts/deploy-node.test.mjs', 'scripts/lib/launchd-reload.test.mjs'],
+        20,
+      ),
     );
   if (touches(['scripts/install-runner-observability', '.github/']))
     tasks.push(

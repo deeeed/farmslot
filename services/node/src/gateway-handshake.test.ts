@@ -287,3 +287,12 @@ test('missing issued pilot identity requires operator action, not rapid retry', 
       true,
     );
 });
+
+test('a refusal because another process holds the machine retries at the ceiling', () => {
+  const refused = new GatewayRequestError(
+    'NODE_ALREADY_CONNECTED',
+    'Node m is already connected (pid 1); refused pid 2',
+    'Stop the duplicate node process for m',
+  );
+  assert.equal(isDeterministicHandshakeRejection(refused), true);
+});

@@ -509,6 +509,7 @@ systemd_node_arguments() {
 # (macwork, Nov 22 -> Nov 24). Checked in the node's own order: a .env in or above
 # the install dir first, then the existing service definition. Never printed.
 source "$SCRIPT_DIR/lib/node-token.sh"
+source "$SCRIPT_DIR/lib/launchd-reload.sh"
 NODE_ENV_TOKEN_FILE=""
 if [[ "$DRY_RUN" != true && "$NO_NODE_TOKEN" == true ]]; then
   if ! NODE_ENV_TOKEN_FILE=$(node_env_token_file); then
@@ -801,22 +802,8 @@ PLIST
   run "chmod 600 ~/$PLIST_REL"
 
   echo "[deploy] reloading launchd service..."
-  # `launchctl load` silently fails for a previously disabled job and does not
-  # reliably refresh changed environment variables. Re-bootstrap the service
-  # definition, waiting briefly for bootout to leave the launchd domain.
-  run "set -e; uid=\$(id -u); domain=gui/\$uid; label=$PLIST_NAME; plist=\$HOME/$PLIST_REL; \
-launchctl bootout \"\$domain/\$label\" 2>/dev/null || true; \
-wait_count=0; while launchctl print \"\$domain/\$label\" >/dev/null 2>&1; do \
-  wait_count=\$((wait_count + 1)); \
-  if [[ \$wait_count -ge 20 ]]; then echo '[deploy] ERROR: launchd service did not stop' >&2; exit 1; fi; \
-  sleep 0.25; \
-done; \
-launchctl enable \"\$domain/\$label\"; \
-attempt=1; until launchctl bootstrap \"\$domain\" \"\$plist\"; do \
-  if [[ \$attempt -ge 5 ]]; then echo '[deploy] ERROR: launchd bootstrap failed after 5 attempts' >&2; exit 1; fi; \
-  attempt=\$((attempt + 1)); sleep 1; \
-done; \
-launchctl kickstart -k \"\$domain/\$label\""
+  # Re-bootstrap the job, and stop a previous node that outlives bootout (lib/launchd-reload.sh).
+  run "$(launchd_reload_script "$PLIST_NAME" "$PLIST_REL" "$REMOTE_DIR/node.log")"
   sleep 2
   echo "[deploy] verifying..."
   run "launchctl print gui/\$(id -u)/$PLIST_NAME | grep -E 'state = running|pid ='"
@@ -861,7 +848,7 @@ UNIT
   run "chmod 600 ~/$UNIT_DIR/${UNIT_NAME}.service"
 
   echo "[deploy] reloading systemd service..."
-  run "systemctl --user daemon-reload && systemctl --user enable $UNIT_NAME && systemctl --user restart $UNIT_NAME"
+  run "$(systemd_restart_script "$UNIT_NAME" "$REMOTE_DIR/node.log")"
   sleep 2
   echo "[deploy] verifying..."
   run "systemctl --user is-active --quiet $UNIT_NAME && systemctl --user show $UNIT_NAME --property=ActiveState --property=SubState --property=MainPID"

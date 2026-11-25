@@ -1,0 +1,1 @@
+- A node refused as a duplicate of the machine's connected node retries at the slow backoff. A launchd redeploy no longer runs `kickstart -k`. It stops a previous node that outlives bootout, matched by pid and start time, and fails when the gateway refuses the new node as a duplicate.

@@ -247,7 +247,21 @@ import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
 import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js';
 // Method handlers
 import { GatewayInternalError, GatewayMethodError } from '../core/method-error.js';
-import { getAllNodes, getNode, registerNode } from '../fleet/machine-registry.js';
+import {
+  admitNodeConnection,
+  type ConnectedNode,
+  getAllNodes,
+  getNode,
+  NODE_ADMISSION_PROBE_MS,
+  type NodeProbeVerdict,
+  registerNode,
+} from '../fleet/machine-registry.js';
+import {
+  isNodeRequestNotAcceptedError,
+  isNodeSocketStopping,
+  isNodeTransportUnavailableError,
+  sendNodeRequest,
+} from '../fleet/node-rpc.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
 import { pairingCandidates, pairingCreate } from '../fleet/pairing.js';
 import { gatewayPeerVersions } from '../fleet/peer-versions.js';
@@ -644,6 +658,24 @@ async function refreshConnectedNodeBranches(
     seq: nextEventSeq(),
   });
   if (refreshError) throw refreshError;
+}
+
+
+/** How the connected node answers a health check on its own socket (see NodeProbeVerdict). */
+async function probeConnectedNode(node: ConnectedNode): Promise<NodeProbeVerdict> {
+  try {
+    await sendNodeRequest(
+      node,
+      'health.check',
+      {},
+      { timeout: NODE_ADMISSION_PROBE_MS, requireSameConnection: true },
+    );
+    return 'answered';
+  } catch (error) {
+    if (isNodeRequestNotAcceptedError(error)) return 'stopping';
+    // A timeout or a closed socket; any other refusal is still a reply from a live node.
+    return isNodeTransportUnavailableError(error) ? 'silent' : 'answered';
+  }
 }
 
 export interface RouteMethodContext {
@@ -1536,6 +1568,30 @@ async function routeAuthorizedMethod(
         resolved.ok ? resolved.principal : undefined,
         state.authentication?.kind === 'credential',
       );
+      // One live node per machine: decided after this connection's own checks, before any of its
+      // side effects. Nothing after the admission awaits until registerNode, so no other
+      // admission for this machine interleaves.
+      const admission = await admitNodeConnection(machine, pid, state.ws, {
+        probe: probeConnectedNode,
+        isStopping: isNodeSocketStopping,
+      });
+      if (admission.kind === 'refused')
+        throw new GatewayMethodError(admission.code, admission.message, {
+          userAction:
+            admission.code === 'NODE_ALREADY_CONNECTED'
+              ? `Stop the duplicate node process for ${machine} (this one, or pid ${admission.incumbentPid}): only one node per machine may connect.`
+              : 'Reconnect shortly.',
+        });
+      admission.release();
+      if (state.ws.readyState !== WebSocket.OPEN)
+        throw new GatewayMethodError('INVALID_PARAMS', `Node ${machine} closed while it was admitted`);
+      requireNodeSession(authRuntime, state);
+      const admitted = authRuntime.resolver.resolveSessionPrincipal(state);
+      assertNativeMachineAssignment(
+        machine,
+        admitted.ok ? admitted.principal : undefined,
+        authRuntime.store.snapshot().principals,
+      );
       if (nativeSessions) rememberNativeExecutionNode(machine, nativeSessions);
       const authentication = state.authentication ? { ...state.authentication } : undefined;
       const registeredClientKind = state.clientKind;
@@ -1629,6 +1685,8 @@ async function routeAuthorizedMethod(
           ...(taskRuntime === 1 ? { taskRuntime: 1 as const } : {}),
         },
       );
+      // A silent incumbent's socket is replaced now; closing it lets its own close handler run.
+      admission.terminateAfterRegister?.terminate();
       nativeConversations.reconcile();
       nativeObservations.registrationChanged(
         machine,
