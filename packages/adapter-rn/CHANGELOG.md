@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-rn` (published as `@farmslot/expo-reci
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.31.36 - 2026-11-25
+
+- Depends on recipe-runner 0.52.3: the CDP HUD renders from an isolated world, so `app.hud` works on LavaMoat-scuttled MetaMask Extension pages.
+
 ## 0.31.35 - 2026-11-23
 
 - Pin the Recipe Runner 0.52.2 cohort.

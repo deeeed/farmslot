@@ -5,7 +5,11 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.35.33 - 2026-11-25
+
 - `status --watch` and the task view list only the worker checklist's child units. A reviewer's unit on `REVIEW.<context>.md` step N no longer shows as child work under the worker's step N.
+- Depends on recipe-runner 0.52.3: the CDP HUD renders from an isolated world, so `app.hud` works on LavaMoat-scuttled MetaMask Extension pages.
 
 ## 0.35.32 - 2026-11-23
 
