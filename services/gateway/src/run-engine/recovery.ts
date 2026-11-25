@@ -1484,7 +1484,25 @@ export function startOrphanReconciler(deps: RunRecoveryCollaborators): () => voi
     });
   };
   const unsubscribe = onNodeConnected(reconcile);
-  const timer = setInterval(reconcile, RECONCILE_INTERVAL_MS);
+  // Not on node connect: a flapping node must stay present for whole intervals first.
+  const { absentExecutionNode } = deps;
+  const retryReleasedCheckouts = () => {
+    // Without a node presence check the retry cannot tell a flapping node from a present one.
+    if (!absentExecutionNode) return;
+    import('../run-lifecycle/released-checkout-retry.js')
+      .then(async (retry) =>
+        retry.retryReleasedCheckoutIdleReturns(
+          await retry.defaultReleasedCheckoutRetryDeps(absentExecutionNode),
+        ),
+      )
+      .catch((err) => {
+        console.error(`[run-engine] released checkout retry error: ${(err as Error).message}`);
+      });
+  };
+  const timer = setInterval(() => {
+    reconcile();
+    retryReleasedCheckouts();
+  }, RECONCILE_INTERVAL_MS);
   timer.unref();
   return () => {
     clearInterval(timer);

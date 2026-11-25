@@ -101,7 +101,15 @@ export async function taskBundleCheck(run: Run): Promise<BundleCheck> {
     entry && typeof entry === 'object' && 'taskRelativePath' in entry
       ? entry.taskRelativePath
       : undefined;
-  if (typeof taskPath !== 'string' || (taskPath !== folder && !taskPath.endsWith(`/${folder}`)))
+  // The bundle writer records the task file's path (`.../<folder>/TASK.md`); compare its folder.
+  const recordedFolder =
+    typeof taskPath === 'string' && path.posix.basename(taskPath) === 'TASK.md'
+      ? path.posix.dirname(taskPath)
+      : taskPath;
+  if (
+    typeof recordedFolder !== 'string' ||
+    (recordedFolder !== folder && !recordedFolder.endsWith(`/${folder}`))
+  )
     return { confirmed: false, reason: 'bundle record names another task' };
   if (!existsSync(path.join(taskDir, 'TASK.md')))
     return { confirmed: false, reason: 'bundle lacks TASK.md' };
