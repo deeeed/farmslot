@@ -1059,6 +1059,8 @@ export async function runHealthCheck(
     signal?: AbortSignal;
     projectJson?: RawProjectJson;
     projectVars?: ProjectVars;
+    /** The run's effective domain for the project's domain command env; default the slot's. */
+    domain?: string;
   } = {},
 ): Promise<string> {
   const started = Date.now();
@@ -1070,6 +1072,7 @@ export async function runHealthCheck(
         vars,
         options.projectJson ?? {},
         options.projectVars,
+        options.domain,
       ),
       { timeout: options.timeoutMs, signal: options.signal },
     );

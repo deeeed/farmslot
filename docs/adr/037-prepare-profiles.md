@@ -70,7 +70,9 @@ be valid.
    Unoverridden hooks resolve from the top-level `hooks` block as today. In
    addition, every hook invocation exports `FARMSLOT_PREPARE_PROFILE=<name>` so
    a project can keep one preflight script and branch internally — both styles
-   supported, project's choice.
+   supported, project's choice. (Amended: the same hooks also get
+   `FARMSLOT_FLOW_TYPE=<flow>` when the prepare belongs to a flow; a flowless
+   prepare unsets it.)
 3. **Preconditions with declared fallback.** `requires` names framework checks
    that must pass before the profile runs; any failure falls back to the
    profile named in `fallback` (transitively, ending at a profile with no
