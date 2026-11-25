@@ -775,14 +775,17 @@ transcript exists.
 **Privacy and redaction.** Traces contain private code, testnet account data and
 anything sent through the LiteLLM gateway, which is employer-owned. They are private
 and local. Export redacts every file it writes, transcripts and labels alike, never
-an archive in place. The publication scan only detects and cannot replace, so export
-gets its own replacing scrubber, applied line by line to file contents and file
-names: the exact values of the farm's configured secrets, the publication rules, hex
-keys labelled as keys (bare digests are kept), e-mail addresses and DSNs, secret
-variable names matched case-sensitively (so code identifiers survive), usernames,
-home paths and machine names. Redaction is a best-effort backstop, not a guarantee:
-an export is for the local machine only, and sharing it, even internally, needs a
-human review. Farmslot has no upload path.
+an archive in place. Export gets a basic replacing scrubber of its own, applied
+line by line to file contents and file names in time linear in the input: the
+exact values of the farm's configured secrets, obvious token shapes, PEM private
+keys and hex keys labelled as keys (bare digests are kept), e-mail addresses and
+DSNs, secret variable names matched case-sensitively (so code identifiers survive),
+usernames, home paths and machine names. It reads text only; image payloads are
+kept. Farmslot does not own a full secret scan: an operator who wants one sets a
+scan hook, a command run on the written export that can redact or refuse it.
+Redaction is a best-effort backstop, not a guarantee: an export is for the local
+machine only, and sharing it, even internally, needs a human review. Farmslot has
+no upload path.
 
 **Cost.** Today's dev gateway holds a median of 7.7 MB of transcripts per run (p90
 42 MB, max 154 MB). Earlier capture adds the missing reviewer and earlier-round

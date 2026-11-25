@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 
-import { exportRunTraces, type TraceExportStores } from './export.js';
+import { exportRunTraces, gatewayTraceStores, type TraceExportStores } from './export.js';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const put = async (file: string, text: string) => {
@@ -375,3 +375,67 @@ test(
     }
   },
 );
+
+test('the scan hook is off by default; when set it runs on the written export', async (t) => {
+  const { root, s } = await stores(t);
+  const plain = await exportRunTraces({ out: path.join(root, 'plain'), scanHook: '' }, s);
+  assert.equal(plain.scanHook, 'none');
+  assert.match(await readFile(path.join(root, 'plain/README.md'), 'utf8'), /Scan hook: none/);
+  // The hook gets the directory, sees every file written, and may redact in place.
+  const hook = path.join(root, 'hook.sh');
+  await put(
+    hook,
+    'test -f "$1/index.jsonl" || exit 9\nprintf scanned > "$1/SCANNED"\n[ "$FARMSLOT_TRACE_EXPORT_DIR" = "$1" ]\n',
+  );
+  const out = path.join(root, 'scanned');
+  const result = await exportRunTraces({ out, scanHook: `sh ${hook}` }, s);
+  assert.equal(result.scanHook, 'passed');
+  assert.equal(await readFile(path.join(out, 'SCANNED'), 'utf8'), 'scanned');
+  assert.match(await readFile(path.join(out, 'README.md'), 'utf8'), /Scan hook: sh /);
+});
+
+test('a failing scan hook refuses the export until a later run passes', async (t) => {
+  const { root, s } = await stores(t);
+  const out = path.join(root, 'out');
+  // The hook runs with the uncleared marker already in place, and may print what it found.
+  const refuse = path.join(root, 'refuse.sh');
+  await put(
+    refuse,
+    'test -f "$1/REFUSED.md" || exit 9\necho "found AKIAIOSFODNN7EXAMPLE" >&2\nexit 3\n',
+  );
+  await assert.rejects(
+    exportRunTraces({ out, scanHook: `sh ${refuse}` }, s),
+    /scan hook refused the export \(exit 3\)/,
+  );
+  const refused = await readFile(path.join(out, 'REFUSED.md'), 'utf8');
+  assert.match(refused, /refused it \(exit 3\)/);
+  // What the hook printed reaches the operator's stderr, never the export.
+  assert.doesNotMatch(refused, /AKIA/);
+  const pass = path.join(root, 'pass.sh');
+  await put(pass, 'grep -q AKIA "$1/REFUSED.md" && exit 8\nexit 0\n');
+  await exportRunTraces({ out, update: true, scanHook: `sh ${pass}` }, s);
+  assert.equal(existsSync(path.join(out, 'REFUSED.md')), false);
+});
+
+test('the installed CLI refuses to guess the gateway checkout in the legacy layout', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'trace-stores-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const snapshot = path.join(root, 'farmslot-cli/sha');
+  const runs = path.join(root, 'gateway/.runs');
+  await mkdir(path.join(runs, 'episodes'), { recursive: true });
+  await mkdir(snapshot, { recursive: true });
+  const env = { FARMSLOT_HOME: path.join(root, 'home'), FARMSLOT_RUNS_DIR: runs };
+  // The episodes are found, but projects and pool would come from the snapshot.
+  assert.throws(() => gatewayTraceStores(env, snapshot), /gateway checkout is unknown/);
+  const dirs = {
+    FARMSLOT_PROJECTS_DIR: path.join(root, 'gateway/projects'),
+    FARMSLOT_POOL_DIR: path.join(root, 'gateway/pool'),
+  };
+  assert.equal(
+    gatewayTraceStores({ ...env, ...dirs }, snapshot).episodes,
+    path.join(runs, 'episodes'),
+  );
+  // A git checkout is the gateway's own (the CLI running from source there).
+  await mkdir(path.join(snapshot, '.git'));
+  assert.equal(gatewayTraceStores(env, snapshot).projects, path.join(snapshot, 'projects'));
+});
