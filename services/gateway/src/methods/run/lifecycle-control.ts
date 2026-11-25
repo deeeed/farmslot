@@ -532,8 +532,11 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
           retainedCandidate,
         }),
       );
-      if (result.kind !== 'ready')
-        await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
+      // The first attempt's note is stale once the checkout is back at idle.
+      await recordSlotTeardownSkipped(
+        run,
+        result.kind === 'ready' ? null : `Checkout retained: ${result.reason}`,
+      );
     }
     const { loadFleetStatus } = await import('../../fleet/state.js');
     broadcastEvent(Events.FLEET_UPDATED, {

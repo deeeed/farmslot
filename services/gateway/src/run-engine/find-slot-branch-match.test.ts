@@ -143,6 +143,8 @@ let candidateSourcePlans: (() => RunSlotSourcePlans) | undefined;
 const sourceAdmissions: string[] = [];
 const finishedReclaims: string[] = [];
 let finishedRefusal: string | undefined;
+/** The refusal clears after it is thrown once. */
+let finishedRefusalOnce = false;
 let slotSelection: ProjectSlotSelectionConfig | undefined;
 let affinitySlot: SlotStatus | undefined;
 const archivedRuns = new Map<string, Run>();
@@ -418,7 +420,11 @@ mock.module('../run-lifecycle/finished-slot-reclaim.js', {
     reclaimFinishedSlot: async (slotId: string) => {
       assert.deepEqual(claims, [], 'cleanup must finish before the incoming claim');
       finishedReclaims.push(slotId);
-      if (finishedRefusal) throw new Error(finishedRefusal);
+      if (finishedRefusal) {
+        const message = finishedRefusal;
+        if (finishedRefusalOnce) finishedRefusal = undefined;
+        throw new Error(message);
+      }
     },
   },
 });
@@ -512,6 +518,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   repoProbeError = undefined;
   finishedReclaims.length = 0;
   finishedRefusal = undefined;
+  finishedRefusalOnce = false;
   slotSelection = undefined;
   affinitySlot = undefined;
   run = makeRun({
@@ -766,6 +773,17 @@ test('a refused finished checkout cleanup never claims the incoming run', async 
   await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /UNMERGED_WORK/);
   assert.deepEqual(claims, []);
   assert.equal(run.taskFile, null);
+});
+
+test('a workspace recovery running on the selected slot is a claim conflict, not a failure', async () => {
+  reset('fix-bug', 'TAT-4137');
+  run.slotId = slots[0]!.slot;
+  finishedRefusal = `Finished slot ${run.slotId} cleanup refused: Slot is preparing or refreshing`;
+  finishedRefusalOnce = true;
+  afterLoadWait = () => {};
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(finishedReclaims, [run.slotId, run.slotId]);
+  assert.deepEqual(claims, [run.slotId]);
 });
 
 test('skip-prepare retains its selected checkout without finished-run release', async () => {

@@ -569,8 +569,18 @@ async function claimAdmittedSlot(
   }
 
   if (!run.engineState?.flags?.skipPrepare) {
-    if (!run.engineState?.flags?.freshReuse && !opts?.takeoverLiveOwner && !opts?.reserveOnly)
-      await reclaimFinishedSlot(slotId, run, emit);
+    if (!run.engineState?.flags?.freshReuse && !opts?.takeoverLiveOwner && !opts?.reserveOnly) {
+      try {
+        await reclaimFinishedSlot(slotId, run, emit);
+      } catch (error) {
+        // A workspace recovery already running there (the released-checkout retry, a refresh)
+        // ends by itself: select again rather than fail the run.
+        const message = error instanceof Error ? error.message : String(error);
+        if (/preparing or refreshing|ownership changed before idle return/i.test(message))
+          throw slotClaimRefusedError(slotId, 'workspace recovery in progress', true);
+        throw error;
+      }
+    }
     await releaseBranchHolderForSelection(slotId, run.branch);
   }
   await commitSlotClaim(slotId, runId, generation, phase, agent, opts);

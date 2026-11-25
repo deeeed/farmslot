@@ -292,6 +292,43 @@ test('a checkout COMPLETE already released returns to idle when its run closes',
   assert.deepEqual(parkRunIds, ['validation', undefined]);
 });
 
+test('the automatic retry returns only the exact released head, clean', async () => {
+  const run: Run = {
+    ...validationRun(),
+    releasedCheckout: {
+      slotId: 'proof',
+      branch: 'TAT-4146-feat-farm-validation',
+      headSha: 'a'.repeat(40),
+      at: '2026-11-01T10:00:00.000Z',
+    },
+  };
+  runs = [run];
+  workspace.branch = run.branch!;
+  workspace.publication = 'unpushed';
+  slotRow = { slot_epoch: 7, current_run_id: null, cleanup_run_id: null, handoff_run_id: null };
+  for (const changed of [
+    { headSha: 'e'.repeat(40) },
+    { dirtyCount: 1 },
+    { branch: 'someone-else' },
+  ]) {
+    const before = { ...workspace };
+    Object.assign(workspace, changed);
+    const result = await returnReleasedCheckoutToIdle(run, () => {}, { exactHead: true });
+    assert.equal(result?.kind, 'unavailable', JSON.stringify(changed));
+    assert.match(
+      result?.kind === 'unavailable' ? result.reason : '',
+      /Checkout changed since the run released it/,
+    );
+    Object.assign(workspace, before);
+  }
+  assert.deepEqual(recovered, [], 'a changed checkout is never reset automatically');
+  assert.deepEqual(await returnReleasedCheckoutToIdle(run, () => {}, { exactHead: true }), {
+    kind: 'ready',
+  });
+  assert.deepEqual(parkRunIds, ['validation']);
+  assert.deepEqual(parkHeads, ['a'.repeat(40)]);
+});
+
 test('unknown remote publication preserves local work before reset', async () => {
   workspace.publication = 'unknown';
   workspace.error = 'Publication ref is absent';
