@@ -1,0 +1,1 @@
+- `Run.slotRelease` gains optional `phasesMs` and `bundleLock`: where a finished-run release spent its time.

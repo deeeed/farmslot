@@ -48,3 +48,23 @@ test('a failed release keeps its error and records nothing', async (t) => {
   );
   assert.equal(getRun(run.id)?.slotRelease, undefined);
 });
+
+test('a release that measured itself records its phases with the duration', async (t) => {
+  const run = createRun({ flowType: 'fix-bug', project: 'demo', ticketOrPr: randomUUID() });
+  t.after(async () => {
+    if (!getRun(run.id)) return;
+    await persistRunNow(run);
+    await discardUndurableRun(run.id);
+  });
+  const bundleLock = { acquisitions: 2, waitMs: 3, heldMs: 40 };
+  await timeRunSlotRelease(
+    run.id,
+    'slot-a',
+    async () => ({ released: true }),
+    () => ({ phasesMs: { queue: 5, resources: 120 }, bundleLock }),
+  );
+  const record = getRun(run.id)?.slotRelease;
+  assert.deepEqual(record?.phasesMs, { queue: 5, resources: 120 });
+  assert.deepEqual(record?.bundleLock, bundleLock);
+  assert.equal(record?.slotId, 'slot-a');
+});
