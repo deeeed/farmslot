@@ -113,6 +113,10 @@ const prepare: typeof slotPrepare = async (_params, _emit, _signal, options) => 
 };
 const slots = await import('../methods/slot/index.js');
 mock.module('../methods/slot.js', { namedExports: { ...slots, slotPrepare: prepare } });
+let foreignTaskDir: string | null = null;
+mock.module('./foreign-task-dir.js', {
+  namedExports: { foreignTaskDirRefusal: async () => foreignTaskDir },
+});
 const owner: string = './dispatch-lifecycle-steps.js?pinned-prepare-step-test';
 const { executePrepareStep }: typeof import('./dispatch-lifecycle-steps.js') = await import(owner);
 
@@ -129,6 +133,7 @@ const stale: RunPrepareArtifact = {
 
 beforeEach(() => {
   slotDisabled = false;
+  foreignTaskDir = null;
   scrubReceipt = undefined;
   failAfterScrub = false;
   persisted.length = 0;
@@ -266,4 +271,18 @@ test('a failed observed read never fails the prepare and leaves no stale record'
   };
   assert.equal((await prepareRun()).outputs?.success, true);
   assert.equal(run.prepareArtifact, null, 'the earlier record was cleared and nothing replaced it');
+});
+
+test('a task dir another run initialized is refused before slot prepare runs', async () => {
+  run = { ...run, project: 'extension' };
+  foreignTaskDir = 'Task dir /tasks/dev/rerun was initialized by run archived-run; author a fresh task dir (copy TASK.md to a new folder) or re-dispatch with --ticket.';
+  await assert.rejects(prepareRun(), /was initialized by run archived-run; author a fresh task dir/);
+  assert.equal(prepareOptions, undefined, 'slot prepare never ran');
+});
+
+test('a skipped prepare (warm handoff, operator skip) is not refused for its task dir', async () => {
+  run = { ...run, project: 'extension' };
+  foreignTaskDir = 'Task dir /tasks/dev/rerun was initialized by run archived-run; author a fresh task dir (copy TASK.md to a new folder) or re-dispatch with --ticket.';
+  assert.equal((await prepareRun({ skipPrepare: true })).outputs?.skipped, true);
+  assert.equal(prepareOptions, undefined);
 });

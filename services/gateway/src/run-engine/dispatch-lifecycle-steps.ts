@@ -54,6 +54,7 @@ import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.j
 import { taskExecutionAtDispatch } from '../runs/task-execution.js';
 
 import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
+import { foreignTaskDirRefusal } from './foreign-task-dir.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import {
@@ -437,6 +438,10 @@ export async function executePrepareStep(
     await completeRunTaskInitialization(runId);
     return { inputs, outputs: { skipped: true, reason: skipReason } };
   }
+
+  // Before any slot work: a task dir another run initialized, whose slot copy is gone.
+  const foreignTaskDir = await foreignTaskDirRefusal(current);
+  if (foreignTaskDir) throw new Error(foreignTaskDir);
 
   // A record from an earlier prepare must not outlive this one: a prepare that
   // fails, or runs on another slot, would otherwise leave the old build standing.
