@@ -3,12 +3,7 @@ import path from 'node:path';
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 
 import { resolveProjectRuntimeDirName, resolveProjectTaskDirName } from '../core/config.js';
-import {
-  execOnSlot,
-  getProjectField,
-  type RawProjectJson,
-  type SlotVars,
-} from '../core/index.js';
+import { execOnSlot, getProjectField, type RawProjectJson, type SlotVars } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 import { flowDir } from '../intelligence/engine.js';
 
@@ -310,7 +305,10 @@ const FLOW_TYPES = ['fix-bug', 'review-pr', 'qa', 'dev', 'pr-complete', 'update-
  * `scratch-…`) and is never touched; a TASK.md that cannot be checked counts as present.
  * Scratch holding a Git checkout is refused and left for the next prepare, which parks it.
  */
-export function buildTaskScratchDeleteCommand(input: { repo: string; taskDirName: string }): string {
+export function buildTaskScratchDeleteCommand(input: {
+  repo: string;
+  taskDirName: string;
+}): string {
   const taskRoot = safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR).replace(/\/+$/, '');
   const config = {
     repo: input.repo.replace(/\/+$/, ''),

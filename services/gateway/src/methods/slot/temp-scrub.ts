@@ -1,7 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { DEFAULT_BRANCH, isSlotFreedByPark, isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import {
+  DEFAULT_BRANCH,
+  isSlotFreedByPark,
+  isTerminalRunStatus,
+  type Run,
+} from '@farmslot/protocol';
 
 import { resolveProjectRuntimeDirName, resolveProjectTaskDirName } from '../../core/config.js';
 import {
@@ -232,7 +237,9 @@ export async function scrubTempForRun(
   const bound = slotRuns.filter(
     (other) => !chainIds.has(other.id) && !isTerminalRunStatus(other.status),
   );
-  const live = bound.find((other) => !slotPinIsRequestOnly(other, row) && !isSlotFreedByPark(other));
+  const live = bound.find(
+    (other) => !slotPinIsRequestOnly(other, row) && !isSlotFreedByPark(other),
+  );
   if (live)
     throw new Error(
       `Slot ${vars.slotId} still has live run ${live.id.slice(0, 8)}; temp/ cannot be cleared for a new run. Finish, park or release that run, then prepare again.`,
@@ -279,7 +286,10 @@ export async function scrubTempForRun(
     };
     for (const checkout of survey.checkouts) {
       try {
-        parked.push({ path: checkout.path, refs: await parkAndRemoveCheckout(vars, checkout, park) });
+        parked.push({
+          path: checkout.path,
+          refs: await parkAndRemoveCheckout(vars, checkout, park),
+        });
       } catch (error) {
         throw new Error(
           `Could not park nested checkout ${checkout.path} before clearing temp/: ${(error as Error).message}`,

@@ -88,19 +88,22 @@ test('every checkout is found before anything is entered, and the scrub never de
   ]);
   t.after(() => rm(parent, { recursive: true, force: true }));
   // A checkout directly under the task root: its src/ must not be cleared before it is seen.
-  await execFileAsync('git', ['init', '-q', '-b', 'main', path.join(repo, 'temp/tasks/goal3-clone')]);
+  await execFileAsync('git', [
+    'init',
+    '-q',
+    '-b',
+    'main',
+    path.join(repo, 'temp/tasks/goal3-clone'),
+  ]);
   await execFileAsync('git', ['init', '-q', '--bare', path.join(repo, 'temp/scratch-x/bare.git')]);
 
   const found = await survey(repo, []);
 
   assert.deepEqual(found.refused, []);
-  assert.deepEqual(
-    found.checkouts.map(({ path: p, bare, linked }) => [p, bare, linked]).sort(),
-    [
-      ['temp/scratch-x/bare.git', true, false],
-      ['temp/tasks/goal3-clone', false, false],
-    ],
-  );
+  assert.deepEqual(found.checkouts.map(({ path: p, bare, linked }) => [p, bare, linked]).sort(), [
+    ['temp/scratch-x/bare.git', true, false],
+    ['temp/tasks/goal3-clone', false, false],
+  ]);
   assert.deepEqual(found.taskDirs, ['temp/tasks/feat/tat-4800']);
 
   const result = await scrub(repo, []);

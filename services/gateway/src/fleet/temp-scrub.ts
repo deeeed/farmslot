@@ -70,7 +70,11 @@ export function buildTempSurveyCommand(input: {
   keep: string[];
   taskRoot: string;
 }): string {
-  const config = { repo: input.repo.replace(/\/+$/, ''), keep: input.keep, taskRoot: input.taskRoot };
+  const config = {
+    repo: input.repo.replace(/\/+$/, ''),
+    keep: input.keep,
+    taskRoot: input.taskRoot,
+  };
   return [
     `__fs_config=${shellQuote(JSON.stringify(config))}`,
     'python3 - "$__fs_config" <<\'PY\'',
@@ -140,7 +144,11 @@ export function buildTempScrubCommand(input: {
   keep: string[];
   taskRoot: string;
 }): string {
-  const config = { repo: input.repo.replace(/\/+$/, ''), keep: input.keep, taskRoot: input.taskRoot };
+  const config = {
+    repo: input.repo.replace(/\/+$/, ''),
+    keep: input.keep,
+    taskRoot: input.taskRoot,
+  };
   return [
     `__fs_config=${shellQuote(JSON.stringify(config))}`,
     'python3 - "$__fs_config" <<\'PY\'',
@@ -276,6 +284,10 @@ export async function scrubSlotTemp(
   taskRoot: string,
 ): Promise<TempScrubResult> {
   return parseTempScrubOutput(
-    await runOnSlot(vars, buildTempScrubCommand({ repo: vars.remoteRepo, keep, taskRoot }), 'scrub'),
+    await runOnSlot(
+      vars,
+      buildTempScrubCommand({ repo: vars.remoteRepo, keep, taskRoot }),
+      'scrub',
+    ),
   );
 }

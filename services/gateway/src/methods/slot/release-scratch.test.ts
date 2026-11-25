@@ -205,7 +205,7 @@ beforeEach(() => {
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 9 };
 });
 
-test('a full release deletes scratch rather than parking it; other runs\' dirs are left', async () => {
+test("a full release deletes scratch rather than parking it; other runs' dirs are left", async () => {
   slotWithLeftovers('scratch');
   releasingRun();
 

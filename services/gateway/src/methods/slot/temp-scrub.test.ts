@@ -44,7 +44,11 @@ const realExec = await import('../../core/exec.js');
 mock.module('../../core/exec.js', { namedExports: { ...realExec, execOnSlot: onSlot } });
 const realState = await import('../../core/state.js');
 mock.module('../../core/state.js', {
-  namedExports: { ...realState, readSlotRow: async () => slotRow, updateSlotStatusIf: async () => true },
+  namedExports: {
+    ...realState,
+    readSlotRow: async () => slotRow,
+    updateSlotStatusIf: async () => true,
+  },
 });
 const realRetained = await import('../../run-completion/retained-artifacts.js');
 mock.module('../../run-completion/retained-artifacts.js', {
@@ -149,7 +153,11 @@ function freedPark(runId: string): Run['park'] {
     slotFreedAt: '2026-11-25T07:30:10.000Z',
     prePauseStatus: 'human-gating',
     prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
-    resourceManifest: { capturedAt: '2026-11-25T07:30:00.000Z', resources: [], capabilityLeases: [] },
+    resourceManifest: {
+      capturedAt: '2026-11-25T07:30:00.000Z',
+      resources: [],
+      capabilityLeases: [],
+    },
     recoveryHandle: null,
     errors: [],
     residuals: { runner: 'stopped', resources: [] },
@@ -158,7 +166,9 @@ function freedPark(runId: string): Run['park'] {
   };
 }
 const parkedRefs = () =>
-  git(repo, 'for-each-ref', '--format=%(refname)', 'refs/farmslot/parked/').split('\n').filter(Boolean);
+  git(repo, 'for-each-ref', '--format=%(refname)', 'refs/farmslot/parked/')
+    .split('\n')
+    .filter(Boolean);
 
 test('farm state: temp/farmslot always, the runtime dir and watched resource dirs', () => {
   assert.deepEqual(tempStatePaths(terminalProject), [
@@ -232,7 +242,13 @@ test('another live run on the slot stops the clear-out; a queued pin or a parked
   write('temp/tasks/feat/live-1125-080000/TASK.md');
   write('temp/tasks/feat/parked-1125-070000/TASK.md');
   write('temp/scratch-live/notes.md');
-  const live = slotRun('TAT-4900', 'feat', 'live-1125-080000', { status: 'monitoring' });
+  const dispatched = slotRun('TAT-4900', 'feat', 'live-1125-080000', { status: 'monitoring' });
+  // Past slot finding: the slot is the run's, not a request.
+  const live = runs.updateRun(dispatched.id, {
+    steps: dispatched.steps.map((entry) =>
+      entry.name === 'find-slot' ? { ...entry, status: 'done' } : entry,
+    ),
+  })!;
   const fresh = slotRun('TAT-4901', 'feat', 'fresh-1125-090000');
   await assert.rejects(
     scrubTempForRun(vars, terminalProject, fresh),

@@ -212,9 +212,8 @@ test('slot storage cleanup keeps every task inside the retention window', async 
 // preflight refused the slot. Release deletes scratch* there: it is regenerable.
 const deleteScratch = async (repo: string, taskDirName = 'temp/tasks') =>
   parseTaskScratchDeleteOutput(
-    (
-      await execFileAsync('/bin/sh', ['-c', buildTaskScratchDeleteCommand({ repo, taskDirName })])
-    ).stdout,
+    (await execFileAsync('/bin/sh', ['-c', buildTaskScratchDeleteCommand({ repo, taskDirName })]))
+      .stdout,
   );
 
 test('release deletes scratch directories and leaves task dirs, even scratch-named ones', async () => {
