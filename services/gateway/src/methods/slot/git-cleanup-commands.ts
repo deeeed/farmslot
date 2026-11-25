@@ -44,6 +44,23 @@ export const FETCH_MAINTENANCE_COMMAND = `${DISABLE_AUTO_MAINTENANCE_COMMAND}; $
 /** Before a fetch: stale remote ref locks, git's own auto-maintenance off, stale temporary packs. */
 export const PRE_FETCH_CLEANUP_COMMAND = `${REFRESH_REMOTE_REF_LOCKS_COMMAND}; ${FETCH_MAINTENANCE_COMMAND}`;
 
+/** Hours between two remote prunes of one slot repo. */
+export const REMOTE_PRUNE_INTERVAL_HOURS = 24;
+
+/**
+ * Drops remote-tracking refs whose branch is gone from origin (`git remote prune origin`: one ref
+ * listing, no objects fetched), at most once per `hours` per repo, timed by a stamp file in the git
+ * dir. Run it on an idle slot only, after its reset: a ref a running run needs must not go.
+ * - A git dir other worktrees share is left alone and the note says why.
+ * - On a case-insensitive volume (APFS), deleting `origin/feat/ABC` also deletes a loose
+ *   `origin/feat/abc` file and reverts that ref to its packed value. So when two remote refs differ
+ *   only in case, nothing is pruned and the note names one.
+ * It never fails the command it precedes.
+ */
+export function remotePruneCommand(hours: number): string {
+  return `git_dir=$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P) && common_dir=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) && worktrees=$(git worktree list --porcelain 2>/dev/null | grep -c '^worktree ') && if [ "$git_dir" != "$common_dir" ] || [ "$worktrees" -gt 1 ]; then echo "${GIT_MAINTENANCE_NOTE} remote prune skipped: the git dir $common_dir is shared by $worktrees worktrees"; else prune_stamp="$git_dir/farmslot-remote-prune.stamp"; if [ -z "$(find "$prune_stamp" -mmin -${hours * 60} 2>/dev/null)" ]; then case_twin=$(git for-each-ref --format='%(refname)' refs/remotes/origin | awk '{ k = tolower($0); if (k in seen) { print $0; exit } seen[k] = 1 }'); if [ -n "$case_twin" ]; then echo "${GIT_MAINTENANCE_NOTE} remote prune skipped: refs differ only in case ($case_twin)"; elif pruned=$(git remote prune origin 2>/dev/null); then touch "$prune_stamp"; count=$(printf '%s\n' "$pruned" | grep -cF '[pruned]'); [ "$count" -eq 0 ] || echo "${GIT_MAINTENANCE_NOTE} pruned $count remote refs whose branch is gone"; else echo "${GIT_MAINTENANCE_NOTE} remote prune failed"; fi; fi; fi; true`;
+}
+
 /** The notes a fetch maintenance command printed: kept or removed packs, a failed config write. */
 export function gitMaintenanceNotes(output: string): string[] {
   return output

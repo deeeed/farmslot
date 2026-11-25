@@ -1,0 +1,1 @@
+- The idle refresh drops remote-tracking refs whose branch origin deleted (`git remote prune origin`, no objects fetched), at most once a day per slot repo. A shared git dir, or remote refs that differ only in case, are left alone with a note.

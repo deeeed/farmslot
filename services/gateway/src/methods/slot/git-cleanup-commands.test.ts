@@ -16,6 +16,7 @@ import {
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
   REMOVE_STALE_TMP_PACKS_COMMAND,
+  remotePruneCommand,
 } from './git-cleanup-commands.js';
 
 function runBash(command: string, cwd?: string) {
@@ -440,4 +441,94 @@ test('gitMaintenanceNotes keeps only the maintenance notes', () => {
     ),
     ['removed 2 stale tmp packs'],
   );
+});
+
+/** An origin with main and two branches, and a slot clone of it that has fetched them all. */
+const PRUNE_FIXTURE = `ROOT=$(mktemp -d)
+  trap 'command rm -rf "$ROOT"' EXIT
+  g() { git -c user.name=T -c user.email=t@localhost -c commit.gpgsign=false "$@"; }
+  git init -q --bare -b main "$ROOT/origin.git"
+  g clone -q "$ROOT/origin.git" "$ROOT/seed" 2>/dev/null
+  (cd "$ROOT/seed" && g commit -q --allow-empty -m base && g push -q origin main main:refs/heads/feat/gone main:refs/heads/feat/later)
+  g clone -q "$ROOT/origin.git" "$ROOT/slot"
+  cd "$ROOT/slot"
+  remote_refs() { git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin | tr '\\n' ' '; }`;
+
+test('remotePruneCommand drops refs whose branch origin deleted, at most once per window', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `${PRUNE_FIXTURE}
+      git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
+      eval "$CMD"
+      echo "first=$(remote_refs)"
+      # Within the window a second refresh does not prune again.
+      git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/later
+      eval "$CMD"
+      echo "second=$(remote_refs)"
+      # Once the stamp is older than the window, it prunes.
+      touch -t 202601010000 "$(git rev-parse --absolute-git-dir)/farmslot-remote-prune.stamp"
+      eval "$CMD"
+      echo "third=$(remote_refs)"`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: remotePruneCommand(24) } },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const lines = result.stdout.trim().split('\n');
+  assert.deepEqual(gitMaintenanceNotes(result.stdout), [
+    'pruned 1 remote refs whose branch is gone',
+    'pruned 1 remote refs whose branch is gone',
+  ]);
+  assert.deepEqual(
+    lines.filter((line) => !line.startsWith('farmslot-git-maintenance:')),
+    ['first=HEAD feat/later main ', 'second=HEAD feat/later main ', 'third=HEAD main '],
+  );
+});
+
+test('remotePruneCommand leaves a git dir other worktrees share alone', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `${PRUNE_FIXTURE}
+      git worktree add -q "$ROOT/linked" -b linked-work origin/main
+      git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
+      (cd "$ROOT/linked" && eval "$CMD")
+      eval "$CMD"
+      echo "refs=$(remote_refs)"`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: remotePruneCommand(24) } },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const notes = gitMaintenanceNotes(result.stdout);
+  assert.equal(notes.length, 2);
+  for (const note of notes) assert.match(note, /remote prune skipped: the git dir .* is shared by 2 worktrees/);
+  assert.match(result.stdout, /refs=HEAD feat\/gone feat\/later main/);
+});
+
+test('remotePruneCommand prunes nothing while two remote refs differ only in case', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `${PRUNE_FIXTURE}
+      # GitHub allows both names; on APFS deleting one loose ref also deletes the other.
+      git update-ref refs/remotes/origin/feat/CASE origin/main
+      git pack-refs --all
+      git update-ref refs/remotes/origin/feat/case origin/main
+      git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
+      eval "$CMD"
+      echo "refs=$(remote_refs)"`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: remotePruneCommand(24) } },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(gitMaintenanceNotes(result.stdout), [
+    'remote prune skipped: refs differ only in case (refs/remotes/origin/feat/case)',
+  ]);
+  assert.match(result.stdout, /feat\/gone/);
 });
