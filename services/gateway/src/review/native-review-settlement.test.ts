@@ -60,7 +60,7 @@ type Ending =
   | 'completion-interrupted'
   | 'completion-invalid-idle'
   | 'completion-unfinished-pass'
-  | 'completion-missing'
+  | 'completion-late-signal'
   | 'completion-invalid-schema'
   | 'completion-infra'
   | 'reattach-config-changed'
@@ -69,6 +69,7 @@ let ending: Ending = 'verdict';
 let completionReadWake: ((runId: string, contextId: string) => void) | undefined;
 let dispatchCalls = 0;
 let signalReadErrorProbes = 0;
+let lateSignalProbes = 0;
 let markerPresent = true;
 let provenancePresent = true;
 let restoreTaskFails = false;
@@ -153,8 +154,11 @@ mock.module('../run-engine/run-monitor.js', {
             code: 'terminal_contract_infrastructure',
             message: 'slot contract check unavailable',
           };
-        if (!continued && ending === 'completion-missing')
-          return { ok: false, code: 'missing', message: 'review signal missing' };
+        // The reviewer writes its terminal mark after its turn has ended.
+        if (ending === 'completion-late-signal')
+          return ++lateSignalProbes <= 2
+            ? { ok: false, code: 'missing', message: 'review signal missing' }
+            : { ok: true };
         if (!continued && ending === 'completion-invalid-schema')
           return { ok: false, code: 'invalid_schema', message: 'review signal has no status' };
         if (
@@ -840,19 +844,25 @@ test('a PASS result without its terminal mark is not accepted and settles no-ver
   assert.deepEqual([budget.used, budget.noVerdict], [0, 1]);
 });
 
-for (const [code, instruction] of [
-  ['missing', /If you never ran .* start, run it once now/],
-  ['invalid-schema', /Do not run start/],
-] as const)
-  test(`valid findings whose signal reads ${code} get the one completion re-ask`, async (t) => {
-    ending = `completion-${code}`;
-    completionCommands.length = 0;
-    const run = await nativeRun(t);
-    assert.equal((await review(run.id)).verdict, 'issues');
-    assert.equal(completionCommands.length, 1);
-    const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
-    assert.match(context.nativeCommandText ?? '', instruction);
-  });
+test('valid findings whose signal reads invalid-schema get the one completion re-ask', async (t) => {
+  ending = 'completion-invalid-schema';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 1);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.match(context.nativeCommandText ?? '', /Do not run start/);
+});
+
+test('a terminal mark written after the turn ended is accepted without a completion re-ask', async (t) => {
+  ending = 'completion-late-signal';
+  lateSignalProbes = 0;
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 0, 'a missing signal waits instead of re-asking');
+  assert.ok(lateSignalProbes > 2);
+});
 
 test('an ended completion whose signal cannot be checked is re-read, then fails closed', async (t) => {
   ending = 'completion-infra';
