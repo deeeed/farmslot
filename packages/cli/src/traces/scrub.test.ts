@@ -344,7 +344,7 @@ test('scrubbing time grows with the input, not its square', () => {
     'eyJaaaaaaaaaa-'.repeat(70_000),
     'sk-'.repeat(330_000),
     '-----BEGIN PRIVATE KEY----- '.repeat(35_000),
-    `-----BEGIN PRIVATE KEY-----${'\n1\t'.repeat(1)}${'A'.repeat(15)}-`.repeat(25_000),
+    `-----BEGIN PRIVATE KEY-----\n1\t${'A'.repeat(15)}-`.repeat(25_000),
   ];
   const started = performance.now();
   for (const input of inputs)
