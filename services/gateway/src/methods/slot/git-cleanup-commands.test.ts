@@ -483,7 +483,7 @@ test('remotePruneCommand drops refs whose branch origin deleted, at most once pe
   ]);
   assert.deepEqual(
     lines.filter((line) => !line.startsWith('farmslot-git-maintenance:')),
-    ['first=HEAD feat/later main ', 'second=HEAD feat/later main ', 'third=HEAD main '],
+    ['first=HEAD feat/later main ', 'second=HEAD feat/later main ', 'third=HEAD main'],
   );
 });
 
