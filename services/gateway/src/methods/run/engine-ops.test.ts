@@ -28,7 +28,20 @@ writeFileSync(path.join(root, 'scripts/dev.sh'), '');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
 writeFileSync(
   path.join(root, 'projects/demo/project.json'),
-  JSON.stringify({ name: 'demo', task_dir: 'work-items', hooks: {} }),
+  // demo pins prepare for comparison runs with a start ref; the other runs here are
+  // production runs, which pinning leaves alone.
+  JSON.stringify({
+    name: 'demo',
+    task_dir: 'work-items',
+    hooks: {},
+    prepare: {
+      profiles: {
+        attach: { phases: ['health'] },
+        full: { phases: ['git', 'deps', 'preflight'], pinned_kind: 'source' },
+      },
+      pinned_profiles: { cli: ['full'] },
+    },
+  }),
 );
 writeFileSync(
   path.join(root, 'pool/local.json'),
@@ -145,6 +158,33 @@ for (const fails of [false, true]) {
     assert.deepEqual(rollbacks, fails ? [{ current_run_id: null }] : []);
   });
 }
+
+test('activating a pinned run prepares with the pinned default for the target slot, not a stored profile', async (t) => {
+  const previousPressure = process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+  process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'off';
+  t.after(() => {
+    if (previousPressure === undefined) delete process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+    else process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = previousPressure;
+  });
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'PROJ-384-pinned' });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'failed',
+    lane: 'comparison',
+    startRef: { requestedRef: '260bd3a5' },
+    slotId: 'move-a',
+    requestedSlotId: 'move-a',
+    // Stored before the move (or before this build): it installs nothing.
+    prepareProfile: 'attach',
+  });
+  let requested: string | undefined;
+  replay = async (params) => {
+    requested = params.prepareProfile;
+    return { run: getRun(run.id)! };
+  };
+  await runActivateOnSlot({ runId: run.id, slotId: 'move-b' }, () => {});
+  assert.equal(requested, 'full');
+});
 
 async function retainedTask(t: TestContext, slotId = 'move-b', originSlot = 'move-b') {
   const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'RESTORE-1' });

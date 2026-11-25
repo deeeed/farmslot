@@ -1,22 +1,28 @@
 import {
   isEvalRun,
+  isRecord,
   nativeWorkerBindingIsHeld,
   type Run,
   type RunPrepareArtifact,
   workerRoleForFlow,
 } from '@farmslot/protocol';
 
-import { loadProjectVars, type RawProjectJson } from '../core/index.js';
+import { selectAgentContext } from '../agents/contexts.js';
+import type { RawProjectJson } from '../core/index.js';
+import { FULL_COMMIT } from '../evals/blind-inputs.js';
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
-import { projectPinsPrepare } from '../methods/slot/pinned-prepare.js';
+import { projectPinsPrepare, resolvePinnedProfile } from '../methods/slot/pinned-prepare.js';
+
+import { loadProjectVarsOrNull } from './project-vars.js';
 
 type PinnedRunFields = Pick<Run, 'lane' | 'startRef' | 'flowType' | 'engineState'>;
 
 /**
  * A run whose prepare must install a build of its start commit: a comparison-lane
  * dev or fix-bug run with a start ref (start-ref-policy.ts limits a user start ref
- * to these flows). Blind capsule trials keep their own isolated base, and QA proof
- * trials run no app build, so neither is pinned.
+ * to these flows). Blind capsule trials keep their own isolated base, so they are
+ * excluded; QA proof trials, comparison-lane QA runs, are excluded by flow. Both
+ * record the build they ran on instead (`prepareObservesBuild`).
  */
 export function isPinnedPrepareRun(run: PinnedRunFields): boolean {
   return (
@@ -29,8 +35,8 @@ export function isPinnedPrepareRun(run: PinnedRunFields): boolean {
 
 /**
  * Whether this run's prepare is pinned: the run qualifies and its project takes
- * part. An unreadable project config counts as taking part, so the prepare refuses
- * instead of running on whatever build the slot has.
+ * part. An unreadable project config (`undefined`) counts as taking part, so the
+ * prepare refuses instead of running on whatever build the slot has.
  */
 export function prepareIsPinned(
   run: PinnedRunFields,
@@ -40,16 +46,28 @@ export function prepareIsPinned(
 }
 
 export async function runPrepareIsPinned(
-  run: PinnedRunFields & Pick<Run, 'project'>,
+  run: PinnedRunFields & Pick<Run, 'project' | 'id'>,
 ): Promise<boolean> {
   if (!isPinnedPrepareRun(run)) return false;
-  let projectJson: RawProjectJson | undefined;
-  try {
-    projectJson = (await loadProjectVars(run.project)).projectJson;
-  } catch {
-    projectJson = undefined;
-  }
-  return prepareIsPinned(run, projectJson);
+  const projectVars = await loadProjectVarsOrNull(run.project, 'pinned prepare', run.id);
+  return prepareIsPinned(run, projectVars?.projectJson);
+}
+
+/**
+ * The profile a pinned run activated on a slot prepares with: the pinned default
+ * for that slot's platform, whatever the run stored. Refuses when the project
+ * config is unreadable or names no profile for the platform.
+ */
+export async function pinnedActivationProfile(
+  run: Pick<Run, 'project' | 'id'>,
+  platform: string,
+): Promise<string> {
+  const projectVars = await loadProjectVarsOrNull(run.project, 'pinned activation', run.id);
+  if (!projectVars)
+    throw new Error(
+      `A pinned comparison run cannot be activated: the config of project ${run.project} failed to load`,
+    );
+  return resolvePinnedProfile(projectVars.projectJson, platform).name;
 }
 
 /**
@@ -72,6 +90,19 @@ export function pinnedDispatchRefusal(
   if (artifact.baseSha !== base)
     return `The installed build is for ${artifact.baseSha}, not the run's start ${base}; prepare again`;
   return undefined;
+}
+
+/**
+ * Refuse to dispatch a pinned run without its build. `projectJson` is undefined
+ * when the config could not be read, which counts as pinned.
+ */
+export function assertPinnedRunDispatchable(
+  run: Run,
+  projectJson: RawProjectJson | undefined,
+): void {
+  if (!prepareIsPinned(run, projectJson)) return;
+  const refusal = pinnedDispatchRefusal(run);
+  if (refusal) throw new Error(refusal);
 }
 
 /**
@@ -100,15 +131,16 @@ export function shouldReroutePinnedReplayToPrepare(input: {
 /**
  * A native worker this replay would resume rather than replace: the primary role's
  * binding is held and its launch was requested, and the replay asks for neither a
- * fresh dispatch nor another runner.
+ * fresh dispatch nor another worker runner.
  */
 export function replayResumesNativeWorker(
-  run: Pick<Run, 'transport' | 'flowType' | 'agentContexts'>,
-  replay: { freshDispatch?: boolean; runnerOverride: boolean },
+  run: Run,
+  replay: { freshDispatch?: boolean; workerRunnerOverride: boolean },
 ): boolean {
-  if (run.transport !== 'native' || replay.freshDispatch || replay.runnerOverride) return false;
-  const role = workerRoleForFlow(run.flowType);
-  const primary = role ? run.agentContexts?.find((context) => context.role === role) : undefined;
+  if (run.transport !== 'native' || replay.freshDispatch || replay.workerRunnerOverride)
+    return false;
+  if (!workerRoleForFlow(run.flowType)) return false;
+  const primary = selectAgentContext(run);
   return Boolean(
     primary?.nativeSession &&
     nativeWorkerBindingIsHeld(primary.nativeSession) &&
@@ -137,21 +169,21 @@ export function observedBuildFiles(
   ];
 }
 
+/** An eval run with a start ref that pinning excludes: capsule and proof trials. */
+export function isObservedBuildRun(run: PinnedRunFields): boolean {
+  return isEvalRun(run) && Boolean(run.startRef) && !isPinnedPrepareRun(run);
+}
+
 /**
  * Whether prepare records the build it found for this run without enforcing it: an
- * eval run with a start ref that pinning excludes (capsule and proof trials), on a
- * project that takes part. Analysis filters those cells by this record.
+ * excluded eval run on a project that takes part. Analysis filters those cells by
+ * this record.
  */
 export function prepareObservesBuild(
   run: PinnedRunFields,
   projectJson: RawProjectJson | undefined,
 ): boolean {
-  return (
-    isEvalRun(run) &&
-    Boolean(run.startRef) &&
-    !isPinnedPrepareRun(run) &&
-    Boolean(projectJson && projectPinsPrepare(projectJson))
-  );
+  return isObservedBuildRun(run) && Boolean(projectJson && projectPinsPrepare(projectJson));
 }
 
 /**
@@ -160,31 +192,17 @@ export function prepareObservesBuild(
  * `appInstalled: false`), another simulator, or no Runway run id.
  */
 export function observedRunwayArtifact(
-  raw: string,
+  record: Record<string, unknown>,
   slot: { slotId: string; baseSha: string; platform: string; simulator?: string },
 ): RunPrepareArtifact | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-  const record = parsed as Record<string, unknown>;
   if (record.appInstalled !== true || typeof record.recordedAt !== 'string') return undefined;
-  const simulator =
-    record.simulator && typeof record.simulator === 'object' && !Array.isArray(record.simulator)
-      ? (record.simulator as Record<string, unknown>)
-      : undefined;
+  const simulator = isRecord(record.simulator) ? record.simulator : undefined;
   if (!slot.simulator || (simulator?.name !== slot.simulator && simulator?.udid !== slot.simulator))
     return undefined;
-  const artifact =
-    record.artifact && typeof record.artifact === 'object' && !Array.isArray(record.artifact)
-      ? (record.artifact as Record<string, unknown>)
-      : undefined;
+  const artifact = isRecord(record.artifact) ? record.artifact : undefined;
   if (typeof artifact?.runId !== 'string' || !artifact.runId) return undefined;
   const revision =
-    typeof artifact.revision === 'string' && /^[0-9a-f]{40}$/.test(artifact.revision)
+    typeof artifact.revision === 'string' && FULL_COMMIT.test(artifact.revision)
       ? artifact.revision
       : undefined;
   return {

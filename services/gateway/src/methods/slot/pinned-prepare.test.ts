@@ -109,8 +109,8 @@ test('a missing or malformed receipt fails prepare', () => {
     () => checkPrepareArtifactReceipt(null, expected),
     /wrote no prepare-artifact\.json/,
   );
-  assert.throws(() => checkPrepareArtifactReceipt('{', expected), /is not valid JSON/);
-  assert.throws(() => checkPrepareArtifactReceipt('[]', expected), /is not a receipt object/);
+  assert.throws(() => checkPrepareArtifactReceipt('{', expected), /is not a JSON receipt object/);
+  assert.throws(() => checkPrepareArtifactReceipt('[]', expected), /is not a JSON receipt object/);
   assert.throws(
     () => checkPrepareArtifactReceipt(receipt({ status: 'maybe' }), expected),
     /status must be ok or failed/,
@@ -124,7 +124,7 @@ test('a receipt must echo the run base and name a full revision', () => {
   );
   assert.throws(
     () => checkPrepareArtifactReceipt(receipt({ revision: '41900351233' }), expected),
-    /revision must be a 40-hex commit/,
+    /revision must be a full commit id/,
     'runRevision can fall back to the run id; that is not a revision',
   );
   assert.throws(
@@ -160,5 +160,25 @@ test('a refusal carries the harness reason on one line', () => {
   assert.throws(
     () => checkPrepareArtifactReceipt(receipt({ status: 'failed' }), expected),
     /Pinned build refused: the preflight gave no reason/,
+  );
+});
+
+test('compatibility names the compatibility profile before the list is checked', () => {
+  const aliased = {
+    ...mobile,
+    prepare: { ...mobile.prepare, compatibility_profile: 'full' },
+  };
+  assert.deepEqual(resolvePinnedProfile(aliased, 'ios', 'compatibility'), {
+    name: 'full',
+    kind: 'source',
+  });
+  assert.throws(
+    () =>
+      resolvePinnedProfile(
+        { ...mobile, prepare: { ...mobile.prepare, compatibility_profile: 'runtime' } },
+        'ios',
+        'compatibility',
+      ),
+    /profile 'runtime': it is not in prepare\.pinned_profiles/,
   );
 });

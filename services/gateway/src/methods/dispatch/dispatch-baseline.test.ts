@@ -33,6 +33,7 @@ const captured: string[] = [];
 let prepares = 0;
 let runtimeBoots = 0;
 let projectJson: RawProjectJson = {};
+let projectConfigBroken = false;
 const stop = new Error('Fixture stops before worker task copy or launch');
 
 mock.module('../../core/config.js', {
@@ -58,7 +59,10 @@ mock.module('../../core/index.js', {
   namedExports: {
     ...core,
     loadSlotVars: async () => vars,
-    loadProjectVars: async () => ({ projectJson, projectConfig: 'project.json' }),
+    loadProjectVars: async () => {
+      if (projectConfigBroken) throw new Error('project.json is unreadable');
+      return { projectJson, projectConfig: 'project.json' };
+    },
   },
 });
 mock.module('../../run-engine/declared-capabilities.js', {
@@ -433,5 +437,85 @@ for (const scenario of [
       (error: unknown) => error === stop,
     );
     assert.equal(runtimeBoots, scenario.boots);
+  });
+}
+
+const PINNED_BASE = '260bd3a5b20c3f9126510b7b71d0e5527f395b5d';
+for (const scenario of [
+  { name: 'no record', record: false, broken: false, refusal: /no record of the build/ },
+  { name: 'a matching record', record: true, broken: false, refusal: null },
+  {
+    name: 'an unreadable project config',
+    record: false,
+    broken: true,
+    refusal: /no record of the build/,
+  },
+]) {
+  test(`dispatch of a pinned run with ${scenario.name} ${scenario.refusal ? 'is refused' : 'proceeds'}`, async (t) => {
+    const task = path.join(root, 'PINNED-TASK.md');
+    await writeFile(task, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');
+    const run = createRun({
+      flowType: 'dev',
+      project: vars.projectName,
+      ticketOrPr: 'TAT-4616',
+      slotId: vars.slotId,
+      transport: 'tmux',
+      mode: 'autonomous',
+    });
+    updateRun(run.id, {
+      lane: 'comparison',
+      startRef: { requestedRef: '260bd3a5', resolvedSha: PINNED_BASE },
+      ...(scenario.record
+        ? {
+            prepareArtifact: {
+              kind: 'runway' as const,
+              slotId: vars.slotId,
+              baseSha: PINNED_BASE,
+              runId: '41900351233',
+              revision: PINNED_BASE,
+              platform: 'ios',
+              installedAt: '2026-11-25T10:00:00.000Z',
+              enforced: true,
+            },
+          }
+        : {}),
+    });
+    const previous = projectJson;
+    projectJson = { hooks: { artifact_check: 'probe' } };
+    projectConfigBroken = scenario.broken;
+    t.after(async () => {
+      projectJson = previous;
+      projectConfigBroken = false;
+      await persistRunNow(updateRun(run.id, { status: 'done' }));
+      await deleteRun(run.id);
+    });
+    await core.rewriteStatusFile(() => ({
+      slots: [
+        {
+          slot: vars.slotId,
+          current_run_id: run.id,
+          slot_epoch: 1,
+          lifecycle: 'ready',
+          phase: null,
+          agent: 'idle',
+        },
+      ],
+    }));
+    prepares = 0;
+    const dispatching = dispatchExecute(
+      {
+        slotId: vars.slotId,
+        runId: run.id,
+        taskFile: task,
+        runner: 'claude',
+        model: 'opus',
+        mode: 'autonomous',
+        skipPrepare: true,
+      },
+      () => {},
+    );
+    if (scenario.refusal) await assert.rejects(dispatching, scenario.refusal);
+    else await assert.rejects(dispatching, (error: unknown) => error === stop);
+    assert.equal(prepares, 0);
   });
 }

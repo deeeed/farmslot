@@ -319,3 +319,32 @@ test(
     assert.equal(baseFrom(preflightCommands[0] ?? ''), undefined);
   },
 );
+
+test(
+  'a replay that recreates a missing branch resolves its start once',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, baseSha } = await pinnedFixture(t, 'resolve-once', 48844);
+    preflight = writesReceipt({});
+    const events: Array<{ event: string; payload: unknown }> = [];
+    const result = await slotPrepare(
+      { slotId, branch: 'pinned-work', flowType: 'dev' },
+      (event, payload) => events.push({ event, payload }),
+      undefined,
+      {
+        startRef: { requestedRef: 'pinned-base' },
+        pinned: true,
+        preserveBranch: true,
+        allowMissingReplayBranch: true,
+      },
+    );
+    assert.equal(result.prepareArtifact?.baseSha, baseSha);
+    // Each step also echoes as script output; count the step events.
+    const resolutions = events.filter(
+      ({ event, payload }) =>
+        event === 'slot.prepare.step' &&
+        JSON.stringify(payload).includes('Base ref pinned-base resolved to'),
+    );
+    assert.equal(resolutions.length, 1, 'one resolution feeds both the branch and the preflight');
+  },
+);

@@ -3298,7 +3298,11 @@ export interface Run {
   pressureAdmissionRef?: import('./pressure-admission.js').PressureAdmissionReference;
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
-  /** The build prepare installed for `startRef` (pinned runs), cleared when a prepare starts. */
+  /**
+   * The build on the slot for `startRef`: installed and verified by a pinned prepare
+   * (`enforced: true`), or observed on an excluded eval trial (`enforced: false`).
+   * Cleared when a prepare starts.
+   */
   prepareArtifact?: RunPrepareArtifact | null;
   /** Stack position when this run builds on another run's published PR. */
   stack?: RunStack;

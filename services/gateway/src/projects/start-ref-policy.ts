@@ -8,9 +8,11 @@ import type {
 
 import { execOnSlot } from '../core/exec.js';
 import { withFarmGitConfig } from '../core/farm-git.js';
-import { loadProjectVars, loadSlotVars, type RawProjectJson } from '../core/index.js';
+import { loadSlotVars } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
-import { projectPinsPrepare } from '../methods/slot/pinned-prepare.js';
+import { PINNED_SKIP_PREPARE_REFUSAL } from '../methods/slot/pinned-prepare.js';
+import { prepareIsPinned } from '../run-engine/pinned-prepare.js';
+import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 
 import { resolveStartRefInRepo, sanitizeStartRef } from './start-ref-resolution.js';
 
@@ -111,22 +113,24 @@ export function normalizeStartRefRequest(
 }
 
 export async function assertStartRefSkipPrepareEligible(
-  params: Pick<RunCreateParams, 'startRef' | 'skipPrepare' | 'slotId' | 'project'>,
+  params: Pick<RunCreateParams, 'startRef' | 'skipPrepare' | 'slotId' | 'project' | 'flowType'>,
 ): Promise<void> {
   if (!params.startRef?.trim() || !params.skipPrepare) return;
   // A matching HEAD says nothing about the installed app: a project that pins
   // prepare installs the start commit's build there, so it cannot be skipped.
-  let projectJson: RawProjectJson | undefined;
-  try {
-    projectJson = params.project ? (await loadProjectVars(params.project)).projectJson : undefined;
-  } catch {
-    projectJson = undefined;
-  }
-  if (!projectJson || projectPinsPrepare(projectJson)) {
-    throw new StartRefPolicyError(
-      'A pinned comparison run cannot skip prepare; prepare installs the build of its start commit.',
-    );
-  }
+  // normalizeStartRefRequest already limits a start ref to comparison dev/fix-bug runs.
+  const projectVars = await loadProjectVarsOrNull(params.project, 'start ref policy');
+  if (
+    prepareIsPinned(
+      {
+        lane: 'comparison',
+        flowType: params.flowType,
+        startRef: { requestedRef: params.startRef },
+      },
+      projectVars?.projectJson,
+    )
+  )
+    throw new StartRefPolicyError(PINNED_SKIP_PREPARE_REFUSAL);
   if (!params.slotId?.trim()) {
     throw new StartRefPolicyError(
       'startRef with skipPrepare requires slotId so slot HEAD can be verified against the requested startRef',

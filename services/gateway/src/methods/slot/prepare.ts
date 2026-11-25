@@ -31,7 +31,6 @@ import {
   readSlotField,
   readSlotRow,
   SLOT_PHASE_RELEASING,
-  slotDeletePath,
   slotFileExists,
   slotReadFile,
   type SlotVars,
@@ -39,6 +38,7 @@ import {
   withProjectMachineEnv,
 } from '../../core/index.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
+import { slotReadFileIfExists } from '../../core/slot-io.js';
 import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { farmCommandRootsForSlot } from '../../fleet/farm-paths.js';
@@ -90,10 +90,13 @@ import {
 } from './git-identity.js';
 import {
   checkPrepareArtifactReceipt,
+  deleteStaleReceipt,
+  parseJsonObject,
   PREPARE_ARTIFACT_RECEIPT,
   projectPinsPrepare,
   receiptRefusal,
   resolvePinnedProfile,
+  sourceBuildRefusal,
 } from './pinned-prepare.js';
 import { bindRunToSlot } from './prepare-bind.js';
 import {
@@ -877,8 +880,10 @@ async function slotPrepareInner(
   // A requested start ref must resolve to structured provenance on every branch
   // path: a slot already on the work branch, a preserved replay branch, or a
   // fresh branch. The dispatch refuses a run without it.
+  // Resolved once: a branch name that moves between two calls would otherwise leave
+  // the work branch on one commit and preflight's base on another.
   const resolveRequestedStartRef = async () => {
-    if (!opts?.startRef) return;
+    if (!opts?.startRef || resolvedStartRef) return;
     step('start-ref', `Resolving base ref ${opts.startRef.requestedRef}...`);
     if (opts.blindBaseSha) {
       if (!opts.preserveBranch || opts.startRef.requestedRef !== opts.blindBaseSha)
@@ -1975,9 +1980,9 @@ async function slotPrepareInner(
       throw new Error('A pinned prepare reached preflight with no resolved start');
     return resolvedStartRef.resolvedSha;
   };
-  const readReceipt = async (): Promise<string | null> =>
-    (await slotFileExists(vars, receiptPath)) ? slotReadFile(vars, receiptPath) : null;
-  if (pinned) await slotDeletePath(vars, receiptPath);
+  const readReceipt = (): Promise<string | null> => slotReadFileIfExists(vars, receiptPath);
+  // A remote slot's fs.delete refuses a missing file, so delete only what is there.
+  if (pinned) await deleteStaleReceipt(vars, receiptPath);
   if (preflightHook) {
     const preflightPidPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.pid');
     const preflightIdentityPath = prepareIdentityPath(vars.remoteRepo, runtimeDir);
@@ -2122,7 +2127,10 @@ async function slotPrepareInner(
       err.relatedLogsOnGateway = slotIsLocal;
       // A pinned preflight that refused the build says why in its receipt; that
       // reason, not the bare exit code, is what the operator needs.
-      const refusal = pinned ? receiptRefusal(await readReceipt()) : undefined;
+      // Best effort: the preflight error stays primary if the receipt cannot be read.
+      const refusal = pinned
+        ? receiptRefusal(parseJsonObject(await readReceipt().catch(() => null)))
+        : undefined;
       if (refusal) err.message = `Pinned build refused: ${refusal} — log: ${preflightLogPath}`;
       throw err;
     }
@@ -2146,24 +2154,26 @@ async function slotPrepareInner(
   let prepareArtifact: SlotPrepareResult['prepareArtifact'];
   if (pinned) {
     const baseSha = pinnedBaseSha();
-    const artifact = checkPrepareArtifactReceipt(await readReceipt(), {
-      kind: pinned.kind,
-      baseSha,
-      platform: vars.platform,
-    });
+    const receiptLog = preflightHook ? ` — log: ${phaseLog('preflight')}` : '';
+    let artifact: ReturnType<typeof checkPrepareArtifactReceipt>;
+    try {
+      artifact = checkPrepareArtifactReceipt(await readReceipt(), {
+        kind: pinned.kind,
+        baseSha,
+        platform: vars.platform,
+      });
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${receiptLog}`);
+    }
     // A prepare replay keeps the worker's commits, so a source build may sit on a
     // descendant of the start; anything else is a build of some other commit.
-    if (artifact.kind === 'source' && artifact.revision !== baseSha) {
-      const ancestry = await execOnSlot(
-        vars,
-        `git -C ${shellQuote(vars.remoteRepo)} merge-base --is-ancestor ${shellQuote(baseSha)} ${shellQuote(artifact.revision)}`,
-      );
-      if (ancestry.exitCode !== 0) {
-        throw new Error(
-          `${PREPARE_ARTIFACT_RECEIPT} reports a source build of ${artifact.revision}, which does not descend from the run's start ${baseSha}`,
-        );
-      }
-    }
+    const sourceRefusal =
+      artifact.kind === 'source'
+        ? await sourceBuildRefusal(vars.remoteRepo, baseSha, artifact.revision, (command) =>
+            execGit('merge-base --is-ancestor', vars, withFarmGitConfig(command)),
+          )
+        : undefined;
+    if (sourceRefusal) throw new Error(`${sourceRefusal}${receiptLog}`);
     prepareArtifact = { ...artifact, installedAt: new Date().toISOString() };
     step(
       'preflight',

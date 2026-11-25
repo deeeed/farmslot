@@ -1,6 +1,9 @@
-import { PREPARE_PINNED_KINDS, type PreparePinnedKind } from '@farmslot/protocol';
+import { isRecord, PREPARE_PINNED_KINDS, type PreparePinnedKind } from '@farmslot/protocol';
 
 import type { RawProjectJson } from '../../core/index.js';
+import { slotDeletePath, slotFileExists, type SlotLocality } from '../../core/slot-io.js';
+import { shellQuote } from '../../core/tmux.js';
+import { FULL_COMMIT } from '../../evals/blind-inputs.js';
 
 /**
  * Pinned prepare: a comparison run with a start commit must run on a build of that
@@ -8,6 +11,10 @@ import type { RawProjectJson } from '../../core/index.js';
  * build and reports what it installed in this receipt, in the slot runtime dir.
  */
 export const PREPARE_ARTIFACT_RECEIPT = 'prepare-artifact.json';
+
+/** Every refusal of `skipPrepare` for a pinned run says this. */
+export const PINNED_SKIP_PREPARE_REFUSAL =
+  'A pinned comparison run cannot skip prepare; prepare installs the build of its start commit.';
 
 /** The build a pinned prepare installed, as its receipt reported it. */
 export interface PinnedPrepareArtifact {
@@ -32,8 +39,9 @@ export function projectPinsPrepare(projectJson: RawProjectJson): boolean {
 
 /**
  * The profile a pinned run prepares with: the requested one if the platform's list
- * has it, otherwise the list's first entry. Validation guarantees each listed
- * profile declares a pinned_kind.
+ * has it, otherwise the list's first entry. `compatibility` names the project's
+ * compatibility profile, as it does for any prepare. Validation guarantees each
+ * listed profile declares a pinned_kind.
  */
 export function resolvePinnedProfile(
   projectJson: RawProjectJson,
@@ -50,7 +58,9 @@ export function resolvePinnedProfile(
   if (!list?.length) {
     throw new Error(`prepare.pinned_profiles has no entry for platform '${platform}'`);
   }
-  const name = requested ?? list[0];
+  const alias =
+    requested === 'compatibility' ? projectJson.prepare?.compatibility_profile : undefined;
+  const name = alias ?? requested ?? list[0];
   if (!list.includes(name)) {
     throw new Error(
       `A pinned comparison run cannot prepare with profile '${name}': it is not in prepare.pinned_profiles for ${platform} (allowed: ${list.join(', ')})`,
@@ -63,24 +73,24 @@ export function resolvePinnedProfile(
   return { name, kind };
 }
 
-const FULL_SHA = /^[0-9a-f]{40}$/;
-
-/**
- * The reason a receipt gives for refusing the build, flattened to one line, or
- * undefined when the receipt is not a refusal. The harness message ends in a
- * "Next:" hint that alone would hide the cause.
- */
-export function receiptRefusal(raw: string | null): string | undefined {
+/** A JSON object from raw text, or undefined for anything else. */
+export function parseJsonObject(raw: string | null): Record<string, unknown> | undefined {
   if (raw === null) return undefined;
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-  const receipt = parsed as Record<string, unknown>;
-  if (receipt.status !== 'failed') return undefined;
+}
+
+/**
+ * The reason a receipt gives for refusing the build, flattened to one line, or
+ * undefined when it is not a refusal. The harness message ends in a "Next:" hint
+ * that alone would hide the cause.
+ */
+export function receiptRefusal(receipt: Record<string, unknown> | undefined): string | undefined {
+  if (receipt?.status !== 'failed') return undefined;
   const reason =
     typeof receipt.reason === 'string'
       ? receipt.reason
@@ -95,8 +105,7 @@ export function receiptRefusal(raw: string | null): string | undefined {
 /**
  * Check the receipt a pinned preflight wrote against the run. Every mismatch fails
  * the prepare: a build that cannot be shown to match the run's start commit must
- * not reach a worker. A refusal carries the harness reason flattened to one line,
- * since it ends in a "Next:" hint that alone would hide the cause.
+ * not reach a worker.
  */
 export function checkPrepareArtifactReceipt(
   raw: string | null,
@@ -107,17 +116,9 @@ export function checkPrepareArtifactReceipt(
       `The pinned preflight wrote no ${PREPARE_ARTIFACT_RECEIPT}: it must report the build it installed`,
     );
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`${PREPARE_ARTIFACT_RECEIPT} is not valid JSON`);
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${PREPARE_ARTIFACT_RECEIPT} is not a receipt object`);
-  }
-  const receipt = parsed as Record<string, unknown>;
-  const refusal = receiptRefusal(raw);
+  const receipt = parseJsonObject(raw);
+  if (!receipt) throw new Error(`${PREPARE_ARTIFACT_RECEIPT} is not a JSON receipt object`);
+  const refusal = receiptRefusal(receipt);
   if (refusal) throw new Error(`Pinned build refused: ${refusal}`);
   if (receipt.status !== 'ok') {
     throw new Error(`${PREPARE_ARTIFACT_RECEIPT} status must be ok or failed`);
@@ -137,8 +138,8 @@ export function checkPrepareArtifactReceipt(
       `${PREPARE_ARTIFACT_RECEIPT} reports a build installed for base ${String(receipt.baseSha)}, not the run's start ${expected.baseSha}`,
     );
   }
-  if (typeof receipt.revision !== 'string' || !FULL_SHA.test(receipt.revision)) {
-    throw new Error(`${PREPARE_ARTIFACT_RECEIPT} revision must be a 40-hex commit`);
+  if (typeof receipt.revision !== 'string' || !FULL_COMMIT.test(receipt.revision)) {
+    throw new Error(`${PREPARE_ARTIFACT_RECEIPT} revision must be a full commit id`);
   }
   const runId = typeof receipt.runId === 'string' && receipt.runId ? receipt.runId : undefined;
   if (expected.kind === 'runway' && !runId) {
@@ -151,4 +152,33 @@ export function checkPrepareArtifactReceipt(
     revision: receipt.revision,
     platform: expected.platform,
   };
+}
+
+/**
+ * Remove a receipt an earlier prepare left, so it cannot stand in for one this
+ * preflight did not write. A remote slot's fs.delete refuses a missing path, so only
+ * an existing file is deleted.
+ */
+export async function deleteStaleReceipt(ctx: SlotLocality, receiptPath: string): Promise<void> {
+  if (await slotFileExists(ctx, receiptPath)) await slotDeletePath(ctx, receiptPath);
+}
+
+/**
+ * Why a source receipt's build cannot stand for the run's start, or undefined. A
+ * prepare replay keeps the worker's commits, so the built commit may descend from
+ * the start; any other commit is a build of something else.
+ */
+export async function sourceBuildRefusal(
+  repo: string,
+  baseSha: string,
+  revision: string,
+  runGit: (command: string) => Promise<{ exitCode: number }>,
+): Promise<string | undefined> {
+  if (revision === baseSha) return undefined;
+  const ancestry = await runGit(
+    `git -C ${shellQuote(repo)} merge-base --is-ancestor ${shellQuote(baseSha)} ${shellQuote(revision)}`,
+  );
+  return ancestry.exitCode === 0
+    ? undefined
+    : `${PREPARE_ARTIFACT_RECEIPT} reports a source build of ${revision}, which does not descend from the run's start ${baseSha}`;
 }

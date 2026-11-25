@@ -21,6 +21,7 @@ import {
   replayResumesNativeWorker,
   shouldReroutePinnedReplayToPrepare,
 } from './pinned-prepare.js';
+import { makeRun } from './test-fixtures.js';
 
 const BASE = '260bd3a5b20c3f9126510b7b71d0e5527f395b5d';
 const comparison: Pick<Run, 'lane' | 'startRef' | 'flowType' | 'engineState'> = {
@@ -160,7 +161,7 @@ test('a pinned replay that would re-dispatch restarts from prepare', () => {
 function native(
   binding: Partial<NativeWorkerSessionBinding> | null,
   role: AgentContext['role'] = 'dev',
-): Pick<Run, 'transport' | 'flowType' | 'agentContexts'> {
+): Run {
   const context: AgentContext = {
     id: 'ctx',
     role,
@@ -181,11 +182,12 @@ function native(
         }
       : {}),
   };
-  return { transport: 'native', flowType: 'dev', agentContexts: [context] };
+  // makeRun keeps neither transport nor contexts.
+  return { ...makeRun({ flowType: 'dev' }), transport: 'native', agentContexts: [context] };
 }
 
 test('only a held, launched primary native worker counts as live', () => {
-  const plain = { freshDispatch: false, runnerOverride: false };
+  const plain = { freshDispatch: false, workerRunnerOverride: false };
   const launched = { launchRequestedAt: '2026-11-25T10:00:00.000Z' };
   assert.equal(replayResumesNativeWorker(native(launched), plain), true);
   assert.equal(
@@ -208,7 +210,7 @@ test('only a held, launched primary native worker counts as live', () => {
     false,
   );
   assert.equal(
-    replayResumesNativeWorker(native(launched), { ...plain, runnerOverride: true }),
+    replayResumesNativeWorker(native(launched), { ...plain, workerRunnerOverride: true }),
     false,
   );
   assert.equal(replayResumesNativeWorker({ ...native(launched), transport: 'tmux' }, plain), false);
@@ -219,16 +221,15 @@ test('only a held, launched primary native worker counts as live', () => {
   );
 });
 
-const provision = (fields: Record<string, unknown> = {}) =>
-  JSON.stringify({
-    schemaVersion: 1,
-    appInstalled: true,
-    platform: 'ios',
-    simulator: { name: 'mm-2', udid: 'UDID-2', created: false },
-    artifact: { runId: '41900351233', revision: 'c'.repeat(40), branch: 'main' },
-    recordedAt: '2026-11-25T09:00:00.000Z',
-    ...fields,
-  });
+const provision = (fields: Record<string, unknown> = {}): Record<string, unknown> => ({
+  schemaVersion: 1,
+  appInstalled: true,
+  platform: 'ios',
+  simulator: { name: 'mm-2', udid: 'UDID-2', created: false },
+  artifact: { runId: '41900351233', revision: 'c'.repeat(40), branch: 'main' },
+  recordedAt: '2026-11-25T09:00:00.000Z',
+  ...fields,
+});
 const slot = { slotId: 'macwork-mm-2', baseSha: BASE, platform: 'ios', simulator: 'mm-2' };
 
 test('an excluded trial records the Runway build its slot reports, unenforced', () => {
@@ -258,7 +259,6 @@ test('an excluded trial records the Runway build its slot reports, unenforced', 
 });
 
 test('an observed record is written only when the file vouches for this slot', () => {
-  assert.equal(observedRunwayArtifact('{', slot), undefined, 'malformed');
   assert.equal(
     observedRunwayArtifact(provision({ appInstalled: false }), slot),
     undefined,

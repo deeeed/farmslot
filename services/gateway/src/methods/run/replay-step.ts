@@ -126,6 +126,7 @@ import { writeTextFileOnSlot } from '../dispatch/slot-file-write.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 import { rebindRunSlot } from '../fleet.js';
 import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
+import { PINNED_SKIP_PREPARE_REFUSAL } from '../slot/pinned-prepare.js';
 import { assertReleaseRunGuards, slotReleasePreflight } from '../slot/release.js';
 
 import {
@@ -1630,10 +1631,12 @@ async function replayRunStep(
     shouldReroutePinnedReplayToPrepare({
       pinned: pinnedRun,
       adoptedLiveWorker: Boolean(adoptedTaskSignal || blockedAttempt),
-      liveNativeWorker: replayResumesNativeWorker(existing, {
-        freshDispatch: params.freshDispatch,
-        runnerOverride: params.runner !== undefined || params.model !== undefined,
-      }),
+      liveNativeWorker:
+        pinnedRun &&
+        replayResumesNativeWorker(existing, {
+          freshDispatch: params.freshDispatch,
+          workerRunnerOverride: hasWorkerRunnerOverride,
+        }),
       targetIdx,
       prepareIdx,
       dispatchIdx,
@@ -1645,11 +1648,8 @@ async function replayRunStep(
       `[run] replay from ${params.stepName} — starting at prepare so the pinned build is installed again`,
     );
   }
-  if (params.skipPrepare && pinnedRun && targetIdx >= 0 && targetIdx <= dispatchIdx) {
-    throw new Error(
-      'A pinned comparison run cannot skip prepare; prepare installs the build of its start commit.',
-    );
-  }
+  if (params.skipPrepare && pinnedRun && targetIdx >= 0 && targetIdx <= dispatchIdx)
+    throw new Error(PINNED_SKIP_PREPARE_REFUSAL);
   if (replayStepName === PS.MONITOR && probeBlockedMonitor && !blockedAttempt) {
     if (
       probe?.signal?.attemptId &&
