@@ -31,6 +31,8 @@ export interface PRRawSnapshot {
   prStateStdout: string;
   /** Why the PR state read returned nothing (gh's message); absent when it succeeded. */
   prStateError?: string;
+  /** The PR's head commit (`headRefOid`); absent from snapshots retained before it was read. */
+  headSha?: string;
   commentsStdout: string;
   reviewCommentsStdout: string;
   latestCommitStdout: string;
@@ -127,6 +129,7 @@ export function restoreRetainedPRRawObservations(value: unknown): void {
       !raw ||
       typeof raw !== 'object' ||
       !Number.isFinite(raw.fetchedAt) ||
+      (raw.headSha !== undefined && typeof raw.headSha !== 'string') ||
       (raw.errors !== undefined &&
         (!Array.isArray(raw.errors) ||
           !raw.errors.every((error: unknown) => typeof error === 'string'))) ||
@@ -159,6 +162,12 @@ export function isUsablePRRawSnapshot(
   if (cached.partial && !opts.allowPartial) return false;
   return true;
 }
+
+/**
+ * Error-label prefixes of the two reads that carry a PR's comments. A reader that
+ * needs the comments treats a failed one as "comments unknown".
+ */
+export const PR_COMMENT_READ_LABELS = ['issues.comments#', 'pulls.reviewThreads#'] as const;
 
 function swallowGh(label: string) {
   return (err: unknown): CommandOutput & { observationError: string } => {
@@ -210,6 +219,7 @@ const PR_VIEW_FIELDS = [
   'title',
   'reviewDecision',
   'headRefName',
+  'headRefOid',
   'createdAt',
   'updatedAt',
   'closedAt',
@@ -229,10 +239,10 @@ const PR_STATE_COLUMNS = [
   'title',
 ];
 
-/** `gh pr view --json … --jq '([...] | @tsv), (.author.login // "")'`. */
+/** `gh pr view --json … --jq '([...] | @tsv), (.author.login // ""), .headRefOid'`. */
 function formatPRState(pr: Record<string, unknown>): string {
   const login = jqField(pr.author, 'login');
-  return `${PR_STATE_COLUMNS.map((column) => tsvCell(pr[column])).join('\t')}\n${typeof login === 'string' ? login : ''}\n`;
+  return `${PR_STATE_COLUMNS.map((column) => tsvCell(pr[column])).join('\t')}\n${typeof login === 'string' ? login : ''}\n${tsvCell(pr.headRefOid)}\n`;
 }
 
 /** `gh api --paginate repos/R/issues/N/comments --jq '.[] | {id, author, user_type, body, created_at, html_url}'`. */
@@ -335,7 +345,7 @@ export async function getPRRawData(
             force,
           })
           .then((rows) => ({ stdout: formatIssueComments(rows), stderr: '' }))
-          .catch(swallowGh(`issues.comments#${prNum}`)),
+          .catch(swallowGh(`${PR_COMMENT_READ_LABELS[0]}${prNum}`)),
         // Inline review comments via GraphQL — filters out resolved + outdated threads
         // so ci-watch / pr-complete don't waste cycles re-triaging the same findings the
         // worker already addressed. REST `/pulls/N/comments` would return every comment
@@ -356,7 +366,7 @@ export async function getPRRawData(
             return page;
           });
           return { stdout: formatReviewThreadComments(threads), stderr: '' };
-        })().catch(swallowGh(`pulls.reviewThreads#${prNum}`)),
+        })().catch(swallowGh(`${PR_COMMENT_READ_LABELS[1]}${prNum}`)),
         github
           .rest<unknown>('GET', `repos/${ghRepo}/pulls/${prNum}/commits`, { force })
           .then((rows) => ({ stdout: formatLatestCommit(rows), stderr: '' }))
@@ -381,9 +391,10 @@ export async function getPRRawData(
         ).catch(swallowGh(`pr.reviews#${prNum}`)),
       ],
     );
-    const [stateLine, author] = prState.stdout.trimEnd().split('\n');
+    const [stateLine, author, headSha] = prState.stdout.trimEnd().split('\n');
     const snap: PRRawSnapshot = {
       author: author || undefined,
+      ...(headSha ? { headSha } : {}),
       checksStdout: checks.stdout,
       checksAvailable: !checks.stderr,
       prStateStdout: stateLine ?? '',
@@ -524,6 +535,7 @@ interface GqlPullRequestNode {
   mergeStateStatus?: string;
   reviewDecision?: string;
   headRefName?: string;
+  headRefOid?: string;
   createdAt?: string;
   updatedAt?: string;
   closedAt?: string | null;
@@ -588,7 +600,7 @@ export function buildBatchQuery(prCount: number): string {
   for (let i = 0; i < prCount; i++) {
     aliases.push(
       `    pr_${i}: pullRequest(number: $pr_${i}) {\n` +
-        `      state mergeable mergeStateStatus reviewDecision headRefName createdAt updatedAt closedAt mergedAt title author { login }\n` +
+        `      state mergeable mergeStateStatus reviewDecision headRefName headRefOid createdAt updatedAt closedAt mergedAt title author { login }\n` +
         `      statusCheckRollup { contexts(first: 100) {\n` +
         `        pageInfo { hasNextPage }\n` +
         `        nodes {\n` +
@@ -806,6 +818,7 @@ export function synthesizeRawSnapshotFromGraphQL(
 
   return {
     author: node.author?.login || undefined,
+    ...(node.headRefOid ? { headSha: node.headRefOid } : {}),
     checksStdout,
     checksAvailable:
       (node.statusCheckRollup === null || Boolean(node.statusCheckRollup?.contexts?.nodes)) &&
