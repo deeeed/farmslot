@@ -771,6 +771,55 @@ test("housekeeping selects an active run's superseded captures for archival but 
   assert.equal(await bundle.readText('artifacts/report.html'), '<h1>Retained report</h1>');
 });
 
+test('an archived bundle takes its usage and availability records, and records a gone bundle left move in bounded passes', async (t) => {
+  const f = await fixture(t);
+  f.run.status = 'human-gating';
+  const commit: MaterializeRunBundleRequest['commit'] = async (ref) => {
+    f.run.artifactBundle = ref;
+    await writeFile(path.join(f.store.runsDir, `${f.run.id}.json`), JSON.stringify(f.run));
+  };
+  const capture = (key: string) =>
+    materializeRunBundle({ ...f.request, captureKey: key, manifestDigest: key, commit });
+  const superseded = await capture('legacy:package');
+  f.run.engineState = { generation: 1 };
+  const live = await capture('generation-1:package');
+  const records = (digest: string) =>
+    ['usage', 'availability'].map((dir) => path.join(f.store.root, dir, `${digest}.json`));
+  for (const digest of [superseded.ref.bundleDigest, live.ref.bundleDigest])
+    await writeFile(records(digest)[1], JSON.stringify({ revision: 1, prunedPaths: [] }));
+  // Before: archival moved only sha256/<digest>, so these stayed behind with no bundle.
+  const gone = Array.from({ length: 201 }, (_, index) =>
+    createHash('sha256').update(`gone-${index}`).digest('hex'),
+  );
+  for (const digest of gone) await writeFile(records(digest)[1], '{"revision":1,"prunedPaths":[]}');
+  await writeFile(records(gone[0])[0], '{"bytes":1}');
+  const now = Date.now();
+  const selected = await runBundleHousekeepingPaths(f.store, now);
+
+  const own = selected.filter((entry) => entry.runId === f.run.id);
+  assert.deepEqual(
+    own.filter((entry) => entry.store !== 'bundle-intents').map((entry) => entry.path),
+    [
+      ...records(superseded.ref.bundleDigest),
+      path.join(f.store.root, 'sha256', superseded.ref.bundleDigest),
+    ],
+    'records first, so an interrupted pass leaves the bundle to select again',
+  );
+  assert.equal(
+    selected.some((entry) => records(live.ref.bundleDigest).includes(entry.path)),
+    false,
+    "a live bundle's records stay",
+  );
+  const orphans = selected.filter((entry) => entry.runId !== f.run.id);
+  assert.equal(orphans.length, 200, 'one pass moves a bounded share of the backlog');
+  const key = `bundle-records-${new Date(now).toISOString().slice(0, 13).replace(/\D/gu, '')}`;
+  for (const entry of orphans) {
+    assert.equal(entry.store, 'bundle-records');
+    assert.equal(entry.runId, key);
+    assert.ok(gone.includes(path.basename(entry.path, '.json')));
+  }
+});
+
 test('a cached manifest cannot hide loss of the retained bundle directory', async (t) => {
   const f = await fixture(t);
   const result = await materializeRunBundle(f.request);

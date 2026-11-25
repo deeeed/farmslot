@@ -2,7 +2,11 @@ import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
-import { resolveRetainedRunBundleRef, runBundleRefs } from '@farmslot/run-bundle';
+import {
+  resolveRetainedRunBundleRef,
+  runBundleRecordPaths,
+  runBundleRefs,
+} from '@farmslot/run-bundle';
 
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 
@@ -181,7 +185,11 @@ function ownedPaths(
     'review-workspaces': owned('review-workspaces'),
     'native-sessions': owned('native-sessions'),
     'run-bundles': bundles
-      ? owned('run-bundles').map((digest) => path.join(bundles.root, 'sha256', digest))
+      ? // Records first: a pass interrupted before the bundle selects it again.
+        owned('run-bundles').flatMap((digest) => [
+          ...runBundleRecordPaths(bundles.root, digest),
+          path.join(bundles.root, 'sha256', digest),
+        ])
       : [],
   };
 }
