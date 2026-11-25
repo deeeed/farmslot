@@ -9,11 +9,6 @@ import { closeStepWait, Events, isSlotFreedByPark, type Run } from '@farmslot/pr
 
 import { runReachedDispatch } from '../agents/contexts.js';
 import { markBacklogRunObserved } from '../backlog/store.js';
-import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
-import { invalidateWarmReviewerSessions } from '../review/session-mode.js';
-import { cancelRunEngine } from '../run-engine/orchestrator.js';
-import { scheduledGraphOf } from '../run-engine/stack-base.js';
-import { cancelNativeRunWorkers } from '../runners/native/worker.js';
 import {
   ownsRunSlotCleanup,
   readSlotRow,
@@ -22,10 +17,15 @@ import {
   SLOT_PHASE_RELEASING,
 } from '../core/index.js';
 import { currentReleaseGatewayInstance, SLOT_RELEASE_GATEWAY_INSTANCE } from '../core/state.js';
+import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
+import { invalidateWarmReviewerSessions } from '../review/session-mode.js';
+import { cancelRunEngine } from '../run-engine/orchestrator.js';
+import { scheduledGraphOf } from '../run-engine/stack-base.js';
 import {
   isTerminalTeardownInFlight,
   withTerminalTeardown,
 } from '../run-engine/terminal-teardown-registry.js';
+import { cancelNativeRunWorkers } from '../runners/native/worker.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { schedulerTick } from '../work-graph/store.js';
 
@@ -41,6 +41,7 @@ import {
   slotOwnershipBlocker,
   stopRunOwnedTmuxAndWatches,
 } from './slot-teardown.js';
+import { tryWithRunTransition } from './transition-coordinator.js';
 import {
   effectFailed,
   type RunTransitionActor,
@@ -50,7 +51,6 @@ import {
   type RunTransitionRequest,
   type RunTransitionSyncEffect,
 } from './transition-router.js';
-import { tryWithRunTransition } from './transition-coordinator.js';
 import { parksBranchCommits } from './validation-run-commits.js';
 
 interface SkippedSlotRelease {
@@ -355,11 +355,11 @@ export function defaultCancelCollaborators({
         : await slotOwnershipBlocker(run);
       if (!state) await recordSlotTeardownSkipped(run, blocker);
       const fence =
-        state?.fence ?? (await fenceRunSlotCleanup(run, blocker, keeps(run) ? 'replay' : 'release'));
+        state?.fence ??
+        (await fenceRunSlotCleanup(run, blocker, keeps(run) ? 'replay' : 'release'));
       cleanup.delete(run.id);
       try {
         const { readSlotField, updateSlotStatusIf } = await import('../core/index.js');
-        const { loadFleetStatus } = await import('../fleet/state.js');
         await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
         if (run.transport === 'native') {
           // A completed handoff can leave the prior run cancellable while its successor
@@ -406,44 +406,43 @@ export async function finishCancelledSlot(
   broadcastTransitionEvent: (event: string, payload: unknown) => unknown,
 ): Promise<{ skipped: string } | undefined> {
   const { loadFleetStatus } = await import('../fleet/state.js');
-    // Keep replay by default; on-demand selection releases the confirmed owned cleanup.
-    // A reclaimed blind trial gets its original Git back while it still owns the slot.
-    let releaseBlocker = blocker;
-    if (
-      !releaseBlocker &&
-      !keepSlot &&
-      usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
-    ) {
-      const { restoreFinishedBlindTrialGit } = await import('../evals/blind-trial.js');
-      releaseBlocker = await restoreFinishedBlindTrialGit(run);
-      if (releaseBlocker) await recordSlotTeardownSkipped(run, releaseBlocker);
-    }
-    const kept = await releaseRunSlotOwnership(run, fence, releaseBlocker, {
-      keepForReplay: keepSlot,
-      collectRecipes: !keepSlot,
+  // Keep replay by default; on-demand selection releases the confirmed owned cleanup.
+  // A reclaimed blind trial gets its original Git back while it still owns the slot.
+  let releaseBlocker = blocker;
+  if (
+    !releaseBlocker &&
+    !keepSlot &&
+    usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)
+  ) {
+    const { restoreFinishedBlindTrialGit } = await import('../evals/blind-trial.js');
+    releaseBlocker = await restoreFinishedBlindTrialGit(run);
+    if (releaseBlocker) await recordSlotTeardownSkipped(run, releaseBlocker);
+  }
+  const kept = await releaseRunSlotOwnership(run, fence, releaseBlocker, {
+    keepForReplay: keepSlot,
+    collectRecipes: !keepSlot,
+  });
+  if (releaseBlocker) return { skipped: releaseBlocker };
+  if (!kept) return { skipped: 'Slot ownership changed during cancellation' };
+  const blindCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
+  // A reclaimed artifact-only run cannot replay any more: its own commits are parked.
+  if (!keepSlot && (blindCandidate || parksBranchCommits(run))) {
+    const { reuseSafeIdleSlot } = await import('./safe-idle-slot.js');
+    const result = await reuseSafeIdleSlot(run.slotId!, broadcastTransitionEvent, {
+      epoch: Number(fence.before?.slot_epoch) || 0,
+      runId: null,
+      recordRunId: run.id,
+      retainedCandidate: blindCandidate,
     });
-    if (releaseBlocker) return { skipped: releaseBlocker };
-    if (!kept) return { skipped: 'Slot ownership changed during cancellation' };
-    const blindCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
-    // A reclaimed artifact-only run cannot replay any more: its own commits are parked.
-    if (!keepSlot && (blindCandidate || parksBranchCommits(run))) {
-      const { reuseSafeIdleSlot } = await import('./safe-idle-slot.js');
-      const result = await reuseSafeIdleSlot(run.slotId!, broadcastTransitionEvent, {
-        epoch: Number(fence.before?.slot_epoch) || 0,
-        runId: null,
-        recordRunId: run.id,
-        retainedCandidate: blindCandidate,
-      });
-      if (result.kind !== 'ready')
-        await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
-    }
-    await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
-    console.log(
-      `[run-lifecycle] ${keepSlot ? 'kept' : 'released'} slot ${run.slotId} for cancelled run ${run.id}`,
-    );
+    if (result.kind !== 'ready')
+      await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
+  }
+  await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+  console.log(
+    `[run-lifecycle] ${keepSlot ? 'kept' : 'released'} slot ${run.slotId} for cancelled run ${run.id}`,
+  );
   return undefined;
 }
-
 
 /**
  * Finish a cancel's slot cleanup that a gateway restart interrupted, from the intent its fence

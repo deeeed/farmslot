@@ -1903,7 +1903,8 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
       return fencedSlotOwnershipBlocker(run);
     },
     resumeInterruptedCancel: async (run, slotId, intent) => {
-      const { resumeInterruptedCancelCleanup } = await import('../run-lifecycle/cancel-transition.js');
+      const { resumeInterruptedCancelCleanup } =
+        await import('../run-lifecycle/cancel-transition.js');
       return resumeInterruptedCancelCleanup(run, slotId, intent);
     },
     quarantineLeakedRun,

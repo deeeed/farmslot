@@ -1717,7 +1717,9 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
           continue;
         }
         if (stalledFor < STALE_RELEASE_RECLAIM_MS) {
-          console.log(`[run-engine] reconcile: ${slot.slot} interrupted cancel stays fenced: ${blocker}`);
+          console.log(
+            `[run-engine] reconcile: ${slot.slot} interrupted cancel stays fenced: ${blocker}`,
+          );
           continue;
         }
         // Still blocked past the bound: the backstop below holds it for an operator, as before.
