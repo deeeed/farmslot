@@ -156,9 +156,16 @@ try {
       180_000,
     );
     const finishLine = `${slot} finished the cancel a gateway restart interrupted (${intent})`;
-    const finishedByReconcile = readdirSync(evidence)
-      .filter((name) => /^gateway-\d+\.log$/.test(name))
-      .some((name) => readFileSync(path.join(evidence, name), 'utf8').includes(finishLine));
+    // The row settles before reconcile logs it, so give the line a moment to land.
+    const finishedByReconcile = await poll(
+      `reconcile logs the ${intent} finish`,
+      async () =>
+        readdirSync(evidence)
+          .filter((name) => /^gateway-\d+\.log$/.test(name))
+          .some((name) => readFileSync(path.join(evidence, name), 'utf8').includes(finishLine)) ||
+        undefined,
+      30_000,
+    ).catch(() => false);
     const ok =
       finishedByReconcile &&
       (intent === 'replay'
