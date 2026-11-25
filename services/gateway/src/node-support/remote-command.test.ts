@@ -19,6 +19,7 @@ import {
   remapRemoteFarmRefs,
   resetRemoteFarmCommandCache,
   resolveRemoteFarmCommand,
+  settleNodeSupportDeliveries,
 } from './remote-command.js';
 import { fakeSupportHomeResult } from './support-test-fixtures.js';
 
@@ -467,7 +468,7 @@ test('a delivery that finishes after every budget ran out serves the next comman
   );
   node.release();
   // Nobody waits for it now; it finishes on its own.
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await settleNodeSupportDeliveries();
   const before = counted.calls();
   const mapped = await resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50 });
   assert.match(mapped, /support\/[0-9a-f]{64}\//);
@@ -492,7 +493,7 @@ test('a delivery overtaken by a config change while nobody waited caches nothing
   farm.editScript('echo v2\n');
   now += 2_100;
   node.release();
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await settleNodeSupportDeliveries();
 
   // Back to the delivered content: its bundle is checked on the node again, not served from a
   // cache entry recorded while the config said otherwise.

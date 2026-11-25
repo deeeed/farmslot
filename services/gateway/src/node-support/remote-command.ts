@@ -680,6 +680,13 @@ export async function resolveSlotFarmCommand(
   return resolveRemoteFarmCommand(await loadSlotVars(slotId), command, { budgetMs });
 }
 
+/** Test seam: wait for every delivery still running, including the ones nobody waits for. */
+export async function settleNodeSupportDeliveries(): Promise<void> {
+  await Promise.all(
+    [...pendingEnsures.values()].map((delivery) => delivery.promise.catch(() => null)),
+  );
+}
+
 /** Test seam: forget what this process verified. */
 export function resetRemoteFarmCommandCache(): void {
   verifiedBundles.clear();
