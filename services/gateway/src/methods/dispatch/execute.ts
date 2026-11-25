@@ -1612,6 +1612,7 @@ export async function dispatchExecute(
           mergeMain,
           flowType: flowType || undefined,
           app: selectedApp || undefined,
+          domain: currentRun?.domain,
           runId: params.runId,
         },
         emit,

@@ -4,6 +4,7 @@ import test from 'node:test';
 import { PREPARE_PHASES, type PrepareRequirement } from '@farmslot/protocol';
 
 import type { RawProjectJson } from '../../core/index.js';
+import { makeVars } from '../../runners/test-fixtures.js';
 
 import {
   buildDepsFingerprintCommand,
@@ -438,6 +439,43 @@ test('checkPrepareRequirement required_skills_present asks only for the matching
     /mms-mobile-testing/,
     'a rule this run does not match is not asked for',
   );
+});
+
+// The probes run under the prepare's effective domain, not the slot's default one.
+test('checkPrepareRequirement dev_server_up and artifact_available use the run domain env', async () => {
+  const probed: string[] = [];
+  const exec: NonNullable<Parameters<typeof checkPrepareRequirement>[2]> = async (
+    _vars,
+    command,
+  ) => {
+    probed.push(command);
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+  const projectJson = {
+    hooks: { dev_server_check: 'check-dev-server', artifact_check: 'check-artifact' },
+    command_env: {
+      domains: {
+        perps: { set: { PROBE_DOMAIN: 'perps' } },
+        'money-movement': { set: { PROBE_DOMAIN: 'money-movement' } },
+      },
+    },
+  };
+  for (const requirement of ['dev_server_up', 'artifact_available'] as const) {
+    probed.length = 0;
+    const result = await checkPrepareRequirement(
+      requirement,
+      {
+        vars: makeVars({ remoteRepo: '/repo', domain: 'perps' }),
+        projectJson,
+        runtimeDir: '.agent',
+        domain: 'money-movement',
+      },
+      exec,
+    );
+    assert.equal(result.ok, true, `${requirement}: ${result.detail}`);
+    assert.match(probed[0] ?? '', /PROBE_DOMAIN=.?money-movement/, requirement);
+    assert.doesNotMatch(probed[0] ?? '', /PROBE_DOMAIN=.?perps/, requirement);
+  }
 });
 
 test('checkPrepareRequirement artifact_available fails when no artifact_check hook is declared', async () => {

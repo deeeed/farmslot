@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 
+import type { SlotPrepareParams } from '@farmslot/protocol';
+
 import type { RawProjectJson } from '../../core/config.js';
 import type { SlotPrepareResult } from '../slot/shared.js';
 
@@ -31,6 +33,9 @@ const baseline = 'a058550f8d0ad59470460ca37afb252d17380b48';
 const fixedHead = 'f3f36fc1' + '1'.repeat(32);
 const captured: string[] = [];
 let prepares = 0;
+let prepareParams: SlotPrepareParams | undefined;
+// The mock assigns it; a getter keeps the read from narrowing to the reset value.
+const lastPrepareParams = (): SlotPrepareParams | undefined => prepareParams;
 let runtimeBoots = 0;
 let projectJson: RawProjectJson = {};
 let projectConfigBroken = false;
@@ -95,8 +100,9 @@ mock.module('../../backlog/pr-admission.js', {
 mock.module('../slot.js', {
   namedExports: {
     ...slots,
-    slotPrepare: async () => {
+    slotPrepare: async (params: SlotPrepareParams) => {
       prepares++;
+      prepareParams = params;
       return { prepared: true, requestId: 'fixture-prepare' } satisfies SlotPrepareResult;
     },
   },
@@ -444,6 +450,58 @@ for (const scenario of [
     assert.equal(runtimeBoots, scenario.boots);
   });
 }
+
+// Parity with the engine's PREPARE step: a dispatch that prepares passes the run's domain.
+test('a preparing dispatch passes the run domain to prepare', async (t) => {
+  const task = path.join(root, 'DOMAIN-TASK.md');
+  await writeFile(task, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');
+  const run = createRun({
+    flowType: 'dev',
+    project: vars.projectName,
+    ticketOrPr: 'TAT-4153',
+    slotId: vars.slotId,
+    transport: 'tmux',
+    mode: 'autonomous',
+    domain: 'money-movement',
+  });
+  await core.rewriteStatusFile(() => ({
+    slots: [
+      {
+        slot: vars.slotId,
+        current_run_id: run.id,
+        slot_epoch: 1,
+        lifecycle: 'ready',
+        phase: null,
+        agent: 'idle',
+      },
+    ],
+  }));
+  t.after(async () => {
+    await persistRunNow(updateRun(run.id, { status: 'done' }));
+    await deleteRun(run.id);
+  });
+  prepares = 0;
+  prepareParams = undefined;
+  captured.length = 0;
+  await assert.rejects(
+    dispatchExecute(
+      {
+        slotId: vars.slotId,
+        runId: run.id,
+        taskFile: task,
+        runner: 'claude',
+        model: 'opus',
+        mode: 'autonomous',
+        skipPrepare: false,
+      },
+      () => {},
+    ),
+    (error: unknown) => error === stop,
+  );
+  assert.equal(prepares, 1);
+  assert.equal(lastPrepareParams()?.flowType, 'dev');
+  assert.equal(lastPrepareParams()?.domain, 'money-movement');
+});
 
 const PINNED_BASE = '260bd3a5b20c3f9126510b7b71d0e5527f395b5d';
 for (const scenario of [

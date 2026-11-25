@@ -311,6 +311,7 @@ export async function checkPrepareRequirement(
           vars,
           projectJson,
           projectVars,
+          domain,
         ),
       );
       return r.exitCode === 0
@@ -346,6 +347,7 @@ export async function checkPrepareRequirement(
           vars,
           projectJson,
           projectVars,
+          domain,
         ),
       );
       if (r.exitCode === 0) {
@@ -432,6 +434,7 @@ export async function checkPrepareRequirement(
         logPrefix: 'prepare-profile',
         projectJson,
         projectVars,
+        domain,
       });
       if (value && (!readyIndicator || value === readyIndicator)) {
         return { requirement, ok: true, detail: `health ${value}` };
