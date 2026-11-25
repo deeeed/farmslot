@@ -189,6 +189,11 @@ export interface RunRecoveryCollaborators {
   resetSlot: (slotId: string) => Promise<void>;
   retryOccupiedRunSlot: (slotId: string) => Promise<boolean>;
   /**
+   * Drop remote refs whose branch origin deleted on one released idle slot (throttled per slot).
+   * Settles in the background under the slot's prepare guard: the pass does not wait for it.
+   */
+  pruneIdleRemoteRefs?: (slots: readonly FleetSlotSnapshot[], activeSlotIds: ReadonlySet<string>) => void;
+  /**
    * Run a workspace recovery that a restart interrupted once more, from fresh workspace evidence.
    * Settles in the background: startup does not wait for the slot's git work.
    */
@@ -1510,6 +1515,7 @@ type OrphanRecoveryCollaborators = Pick<
   | 'updateSlotStatusIf'
   | 'broadcast'
   | 'retryOccupiedRunSlot'
+  | 'pruneIdleRemoteRefs'
   | 'resumeInterruptedRecovery'
   | 'absentExecutionNode'
   | 'releaseFenceBlocker'
@@ -1545,6 +1551,7 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
     );
   };
   const freshFleet = await deps.loadFleetStatus(true);
+  deps.pruneIdleRemoteRefs?.(freshFleet.slots, activeSlotIds);
   for (const slot of freshFleet.slots) {
     if (!['busy', 'held'].includes(slot.lifecycle)) continue;
     const blockedOwner =

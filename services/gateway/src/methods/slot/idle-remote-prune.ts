@@ -1,58 +1,80 @@
 // methods/slot/idle-remote-prune.ts — drops remote-tracking refs whose branch origin deleted, on
-// idle slots only. Release, prepare, find-slot and recovery never prune: release's
-// unpushed-commit check (`--not --remotes`) still needs a merged PR's deleted branch ref.
+// released idle slots only. Release, prepare, find-slot and recovery never prune: release's
+// unpushed-commit check (`--not --remotes`) still needs a merged PR's deleted branch ref. The
+// orphan reconciler's periodic pass starts it; the slot's prepare guard keeps a prepare out.
 
-import { SLOT_LIFECYCLE, type SlotStatus } from '@farmslot/protocol';
+import { SLOT_DESTRUCTIVE_OPS, SLOT_LIFECYCLE } from '@farmslot/protocol';
 
 import { withFarmGitConfig } from '../../core/farm-git.js';
-import { execOnSlot, loadSlotVars, readSlotRow } from '../../core/index.js';
+import {
+  execOnSlot,
+  type ExecResult,
+  loadSlotVars,
+  readSlotRow,
+} from '../../core/index.js';
+import {
+  activePrepareSlots,
+  assertNoNativeWorkerRecovery,
+} from '../../core/native-worker-exclusion.js';
 import { shellQuote } from '../../core/tmux.js';
-import { loadFleetStatus } from '../../fleet/state.js';
 
 import {
   gitMaintenanceNotes,
+  REMOTE_PRUNE_FAILED_EXIT,
   REMOTE_PRUNE_INTERVAL_HOURS,
   REMOTE_PRUNE_RETRY_HOURS,
   remotePruneCommand,
 } from './git-cleanup-commands.js';
+import { assertSlotNotOperatorRoot } from './slot-tracking.js';
 
-/** How often the job looks for an idle slot to prune. */
-export const IDLE_REMOTE_PRUNE_TICK_MS = 10 * 60_000;
 const COMMAND_TIMEOUT_MS = 60_000;
 
-/** When each slot may be tried again; slot-side stamps still decide after a gateway restart. */
+/** When each slot may be tried again; the slot-side stamp still decides after a gateway restart. */
 const nextAttempt = new Map<string, number>();
+let inFlight = false;
+
+/** The reconciler's view of a slot. */
+export interface IdlePruneCandidate {
+  slot: string;
+  lifecycle: string;
+  phase?: string | null;
+  currentRunId?: string | null;
+}
 
 export interface IdleRemotePruneDeps {
-  listSlots: () => Promise<readonly SlotStatus[]>;
   readRow: typeof readSlotRow;
-  run: (slotId: string, command: string) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+  /** Throws when the slot's checkout is the gateway's operator root. */
+  assertPrunable: (slotId: string) => Promise<void>;
+  run: (slotId: string, command: string) => Promise<ExecResult>;
+  guards: Set<string>;
   now: () => number;
   log: (line: string) => void;
 }
 
 const defaultDeps: IdleRemotePruneDeps = {
-  listSlots: async () => (await loadFleetStatus()).slots,
   readRow: readSlotRow,
+  assertPrunable: async (slotId) => {
+    assertNoNativeWorkerRecovery(slotId);
+    const vars = await loadSlotVars(slotId);
+    if (!vars.slotEnabled) throw new Error('slot is disabled');
+    await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.refresh);
+  },
   run: async (slotId, command) => {
     const vars = await loadSlotVars(slotId);
-    return execOnSlot(vars, withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && { ${command}; }`), {
-      timeout: COMMAND_TIMEOUT_MS,
-      noRetry: true,
-    });
+    return execOnSlot(
+      vars,
+      withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && ${command}`),
+      { timeout: COMMAND_TIMEOUT_MS, noRetry: true },
+    );
   },
+  guards: activePrepareSlots,
   now: Date.now,
   log: (line) => console.log(line),
 };
 
-/**
- * A slot back at idle: lifecycle `ready` with no phase (busy and held slots carry one) and no run,
- * handoff, cleanup or recovery holding it. Manual and disabled slots are never touched.
- */
-async function releasedIdle(slot: SlotStatus, deps: IdleRemotePruneDeps): Promise<boolean> {
-  if (slot.lifecycle !== SLOT_LIFECYCLE.ready || slot.phase != null || slot.currentRunId)
-    return false;
-  const row = await deps.readRow(slot.slot);
+/** Lifecycle `ready` with no phase, and no run, handoff, cleanup or recovery on the status row. */
+async function releasedIdle(slotId: string, deps: IdleRemotePruneDeps): Promise<boolean> {
+  const row = await deps.readRow(slotId);
   return Boolean(
     row &&
       row.lifecycle === SLOT_LIFECYCLE.ready &&
@@ -65,47 +87,61 @@ async function releasedIdle(slot: SlotStatus, deps: IdleRemotePruneDeps): Promis
 }
 
 /**
- * One pass: at most one idle slot per machine, each prune bounded and never thrown. A failed or
- * timed-out attempt (exit 124, a dropped node) waits `REMOTE_PRUNE_RETRY_HOURS` before the next.
+ * Prunes one due idle slot, holding its prepare guard so a prepare, refresh or recovery waits.
+ * A pass already running makes this a no-op. Never throws: a failure is logged and retried after
+ * `REMOTE_PRUNE_RETRY_HOURS`.
  */
-export async function pruneIdleSlotRemoteRefs(deps: IdleRemotePruneDeps = defaultDeps): Promise<void> {
-  const machines = new Set<string>();
-  for (const slot of await deps.listSlots()) {
-    if (machines.has(slot.machine) || (nextAttempt.get(slot.slot) ?? 0) > deps.now()) continue;
-    if (!(await releasedIdle(slot, deps))) continue;
-    machines.add(slot.machine);
-    let retryHours = REMOTE_PRUNE_INTERVAL_HOURS;
+export async function pruneIdleSlotRemoteRefs(
+  slots: readonly IdlePruneCandidate[],
+  activeSlotIds: ReadonlySet<string>,
+  deps: IdleRemotePruneDeps = defaultDeps,
+): Promise<void> {
+  if (inFlight) return;
+  inFlight = true;
+  try {
+    const due = slots.find(
+      (slot) =>
+        slot.lifecycle === SLOT_LIFECYCLE.ready &&
+        slot.phase == null &&
+        !slot.currentRunId &&
+        !activeSlotIds.has(slot.slot) &&
+        !deps.guards.has(slot.slot) &&
+        (nextAttempt.get(slot.slot) ?? 0) <= deps.now(),
+    );
+    if (!due) return;
+    const slotId = due.slot;
+    nextAttempt.set(slotId, deps.now() + REMOTE_PRUNE_RETRY_HOURS * 3_600_000);
+    let guarded = false;
     try {
-      const result = await deps.run(slot.slot, remotePruneCommand());
+      await deps.assertPrunable(slotId);
+      // The checks awaited: a prepare may have taken the guard meanwhile.
+      if (deps.guards.has(slotId)) return;
+      deps.guards.add(slotId);
+      guarded = true;
+      if (!(await releasedIdle(slotId, deps))) return;
+      const result = await deps.run(slotId, remotePruneCommand());
       for (const note of gitMaintenanceNotes(result.stdout))
-        deps.log(`[slot] ${slot.slot}: git maintenance: ${note}`);
-      if (result.exitCode !== 0) {
-        retryHours = REMOTE_PRUNE_RETRY_HOURS;
+        deps.log(`[slot] ${slotId}: git maintenance: ${note}`);
+      if (result.exitCode === 0) {
+        nextAttempt.set(slotId, deps.now() + REMOTE_PRUNE_INTERVAL_HOURS * 3_600_000);
+      } else if (result.exitCode !== REMOTE_PRUNE_FAILED_EXIT) {
+        // The failed-prune exit already noted git's error; anything else (124 included) did not.
         deps.log(
-          `[slot] ${slot.slot}: remote prune exited ${result.exitCode}: ${result.stderr.trim().split('\n').at(-1) ?? ''}`,
+          `[slot] ${slotId}: remote prune exited ${result.exitCode}: ${result.stderr.trim().split('\n').at(-1) ?? ''}`,
         );
       }
     } catch (error) {
-      // A disconnected node or transport failure is reported and retried later, never thrown.
-      retryHours = REMOTE_PRUNE_RETRY_HOURS;
-      deps.log(`[slot] ${slot.slot}: remote prune unavailable: ${(error as Error).message}`);
+      // A disconnected node, a transport failure or a refused slot is reported and retried later.
+      deps.log(`[slot] ${slotId}: remote prune unavailable: ${(error as Error).message}`);
+    } finally {
+      if (guarded) deps.guards.delete(slotId);
     }
-    nextAttempt.set(slot.slot, deps.now() + retryHours * 3_600_000);
+  } finally {
+    inFlight = false;
   }
 }
 
 export function resetIdleRemotePruneForTest(): void {
   nextAttempt.clear();
-}
-
-let timer: ReturnType<typeof setInterval> | undefined;
-
-export function startIdleRemotePrune(): void {
-  if (timer) return;
-  timer = setInterval(() => {
-    pruneIdleSlotRemoteRefs().catch((error: unknown) => {
-      console.error(`[slot] idle remote prune pass failed: ${(error as Error).message}`);
-    });
-  }, IDLE_REMOTE_PRUNE_TICK_MS);
-  timer.unref();
+  inFlight = false;
 }
