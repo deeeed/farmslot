@@ -10,10 +10,13 @@ import {
 import type { SlotStatus } from '../contracts/slots.js';
 import { compareText } from '../text-order.js';
 
+import { isEvalRun } from './eval-runs.js';
 import { runLinkedTicketRefs } from './linked-tickets.js';
 import type { RunListRow } from './list-row.js';
 import type { RunListProjection } from './run-list-filter.js';
 import { resolveRunSlotId } from './slot-resolution.js';
+
+export type RunListLaneFilter = RunLane | 'product';
 
 /** `active` follows `isActiveListRun`, `history` keeps terminal runs, `all` keeps every run. */
 export type RunListScope = 'active' | 'history' | 'all';
@@ -26,7 +29,8 @@ export interface RunListQuery {
   slotMachines?: ReadonlyMap<string, string>;
   status?: RunStatus;
   flow?: FlowType;
-  lane?: RunLane;
+  /** A lane, or `product`: every lane except the eval/comparison lane ("Hide evals"). */
+  lane?: RunListLaneFilter;
   tag?: string;
   search?: string;
 }
@@ -48,7 +52,7 @@ export function selectRunList<R extends Run | RunListRow | RunListProjection>(
       (!query.machines?.length || onMachines(run, query.machines, query.slotMachines)) &&
       (!query.status || run.status === query.status) &&
       (!query.flow || run.flowType === query.flow) &&
-      (!query.lane || run.lane === query.lane) &&
+      (!query.lane || (query.lane === 'product' ? !isEvalRun(run) : run.lane === query.lane)) &&
       (!tag || normalizeRunTags(run.tags).includes(tag)) &&
       (!search || matchesSearch(run, search)),
   );
