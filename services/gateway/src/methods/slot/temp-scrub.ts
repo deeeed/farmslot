@@ -1,37 +1,23 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import {
-  DEFAULT_BRANCH,
-  isSlotFreedByPark,
-  isTerminalRunStatus,
-  type Run,
-} from '@farmslot/protocol';
+import { isSlotFreedByPark, isTerminalRunStatus, type Run } from '@farmslot/protocol';
 
 import { resolveProjectRuntimeDirName, resolveProjectTaskDirName } from '../../core/config.js';
+import { type RawProjectJson, readSlotRow, type SlotVars } from '../../core/index.js';
 import {
-  execOnSlot,
-  getProjectField,
-  type RawProjectJson,
-  readSlotRow,
-  type SlotVars,
-} from '../../core/index.js';
-import { shellQuote } from '../../core/tmux.js';
-import {
+  CHECKOUT_KINDS,
+  listTempTaskDirs,
   scrubSlotTemp,
-  surveySlotTemp,
-  type TempCheckout,
+  TEMP_TASK_ROOT,
   type TempScrubResult,
 } from '../../fleet/temp-scrub.js';
-import { parkGitWork, readParkedGitWork } from '../../host-services/parked-work.js';
 import { retainedRunTaskDirectory } from '../../run-completion/retained-artifacts.js';
 import { workerTaskDirectory } from '../../run-engine/worker-task-dir.js';
-import { persistSlotParkedInventory } from '../../run-lifecycle/validation-run-commits.js';
 import { getRunWithArchived, listRunsForSlotHistory } from '../../runs/store.js';
 import { slotPinIsRequestOnly } from '../dispatch/slot-scoring.js';
 
-/** The layout this scrub owns: only there is everything in temp/ a run's or the farm's. */
-export const TEMP_TASK_ROOT = 'temp/tasks';
+export { TEMP_TASK_ROOT };
 
 /**
  * What a slot keeps in temp/ between runs: `temp/farmslot` (deps stamps and locks, CI parity),
@@ -145,83 +131,19 @@ async function parentChain(run: Run): Promise<Run[]> {
   return chain;
 }
 
-/**
- * Save a nested checkout's unpushed commits, local branches and dirty work as parked refs in
- * the slot repo (the farm's one parking store, keyed to the slot repo), confirm the slot lists
- * them, then delete the checkout and prune its worktree admin data. Throws, deleting nothing,
- * when any step fails.
- */
-async function parkAndRemoveCheckout(
-  vars: SlotVars,
-  checkout: TempCheckout,
-  park: { repoKey: string; operationKey: string; defaultBranch: string },
-): Promise<string[]> {
-  const where = path.posix.join(vars.remoteRepo.replace(/\/+$/, ''), checkout.path);
-  const heads = checkout.branches.map((branch) => ({ branch, headSha: `refs/heads/${branch}` }));
-  let refs: string[] = [];
-  if (!checkout.bare && !checkout.hasHead) throw new Error('it has no commit to park its work on');
-  if (!checkout.bare || heads.length) {
-    const capture = await parkGitWork(
-      { ...vars, remoteRepo: where },
-      {
-        slotId: vars.slotId,
-        operationKey: park.operationKey,
-        defaultBranch: park.defaultBranch,
-        purpose: 'prior-work',
-        at: new Date().toISOString(),
-        repoKey: park.repoKey,
-        ...(checkout.bare
-          ? { includeWorktree: false, sourceHeads: heads }
-          : {
-              extraRefs: heads
-                .filter((head) => head.branch !== checkout.branch)
-                .map((head) => head.headSha),
-            }),
-      },
-    );
-    refs = capture.receipts.map((receipt) => receipt.ref);
-    const specs = refs.flatMap((ref) => {
-      const meta = ref.replace('refs/farmslot/parked/', 'refs/farmslot/parked-meta/');
-      return [`${ref}:${ref}`, `${meta}:${meta}`];
-    });
-    if (specs.length) {
-      const fetched = await execOnSlot(
-        vars,
-        `git -C ${shellQuote(vars.remoteRepo)} fetch --quiet --no-tags --no-write-fetch-head ${shellQuote(where)} ${specs.map(shellQuote).join(' ')}`,
-        { timeout: 120_000, noRetry: true },
-      );
-      if (fetched.exitCode !== 0)
-        throw new Error(`its parked refs did not reach the slot repo: ${fetched.stderr.trim()}`);
-    }
-    const listed = await readParkedGitWork(vars, vars.slotId);
-    const missing = refs.find((ref) => !listed.receipts.some((receipt) => receipt.ref === ref));
-    if (missing) throw new Error(`the slot repo does not list ${missing}`);
-  }
-  const prune = checkout.linked
-    ? ` && git --git-dir=${shellQuote(checkout.commonDir)} worktree prune`
-    : '';
-  const removed = await execOnSlot(
-    vars,
-    `rm -rf -- ${shellQuote(where)} && [ ! -e ${shellQuote(where)} ]${prune}`,
-    { timeout: 120_000, noRetry: true },
-  );
-  if (removed.exitCode !== 0)
-    throw new Error(`it was parked but not removed: ${removed.stderr.trim() || 'still present'}`);
-  return refs;
-}
-
 export interface TempScrubOutcome extends TempScrubResult {
   /** Removed task dirs with their run and whether its bundle had them. */
   taskDirs: Array<{ path: string; runId: string | null; bundle: string }>;
-  /** Nested checkouts saved as parked refs, then deleted. */
-  parked: Array<{ path: string; refs: string[] }>;
+  /** Nested Git checkouts deleted, with their kind (clone, linked worktree, bare). */
+  checkouts: Array<{ path: string; kind: string }>;
 }
 
 /**
  * Prepare's clear-out for a new run: everything in temp/ goes except farm state, the task dirs
  * of this run, its parent chain and runs still bound to the slot. Another live run on the slot
  * stops it, since its scratch cannot be told apart; a queued pin or a run parked off the slot
- * does not. Nested checkouts are parked as refs, then deleted; a failed park stops prepare.
+ * does not. Nested Git checkouts are deleted outright: a run's real work is on its branch and
+ * in its bundle.
  */
 export async function scrubTempForRun(
   vars: SlotVars,
@@ -248,11 +170,8 @@ export async function scrubTempForRun(
     ...tempStatePaths(projectJson),
     ...[run, ...chain, ...bound].flatMap((owner) => slotTaskRelDir(owner, taskDirName) ?? []),
   ];
-  const survey = await surveySlotTemp(vars, keep, taskDirName);
-  if (survey.refused.length)
-    throw new Error(
-      `temp/ cannot be cleared: ${survey.refused.map((entry) => `${entry.path} (${entry.reason})`).join('; ')}`,
-    );
+  const keptDir = (dir: string) => keep.some((kept) => dir === kept || dir.startsWith(`${kept}/`));
+  const present = (await listTempTaskDirs(vars, taskDirName)).filter((dir) => !keptDir(dir));
 
   // Named before anything goes, so an unreadable bundle is reported with the dir still there.
   const byDir = new Map(
@@ -262,7 +181,7 @@ export async function scrubTempForRun(
     }),
   );
   const named: TempScrubOutcome['taskDirs'] = [];
-  for (const dir of survey.taskDirs) {
+  for (const dir of present) {
     const owner = byDir.get(dir);
     let bundle = 'no run record';
     if (owner) {
@@ -277,29 +196,6 @@ export async function scrubTempForRun(
     named.push({ path: dir, runId: owner?.id ?? null, bundle });
   }
 
-  const parked: TempScrubOutcome['parked'] = [];
-  if (survey.checkouts.length) {
-    const park = {
-      repoKey: (await readParkedGitWork(vars, vars.slotId)).repoKey,
-      operationKey: `temp-scrub-${run.id}`,
-      defaultBranch: getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH,
-    };
-    for (const checkout of survey.checkouts) {
-      try {
-        parked.push({
-          path: checkout.path,
-          refs: await parkAndRemoveCheckout(vars, checkout, park),
-        });
-      } catch (error) {
-        throw new Error(
-          `Could not park nested checkout ${checkout.path} before clearing temp/: ${(error as Error).message}`,
-          { cause: error },
-        );
-      }
-    }
-    await persistSlotParkedInventory(vars, execOnSlot);
-  }
-
   const result = await scrubSlotTemp(vars, keep, taskDirName);
   const taskDirs = named.filter(
     (dir) =>
@@ -307,5 +203,7 @@ export async function scrubTempForRun(
         (entry) => entry.path === dir.path || entry.path.startsWith(`${dir.path}/`),
       ),
   );
-  return { ...result, taskDirs, parked };
+  const kinds: readonly string[] = CHECKOUT_KINDS;
+  const checkouts = result.removed.filter((entry) => kinds.includes(entry.kind));
+  return { ...result, taskDirs, checkouts };
 }

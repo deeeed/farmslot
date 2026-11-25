@@ -23,6 +23,8 @@ const SLOT_ID = 'macpro-mme-1';
 const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 let repo = '';
 let slotRow: Record<string, unknown>;
+// va-mmcx-terminal-farm's task root; another layout's task root keeps release's parking.
+let layout = { artifact_dir: 'temp/tasks' };
 
 const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
 const applies = (
@@ -92,10 +94,7 @@ mock.module('../../core/index.js', {
     }),
     loadProjectVars: async () => ({
       runtimeDir: '.agent',
-      projectJson: {
-        default_branch: 'main',
-        paths: { runtime_dir: 'temp/farmslot', artifact_dir: 'temp/tasks' },
-      },
+      projectJson: { default_branch: 'main', paths: { runtime_dir: 'temp/farmslot', ...layout } },
     }),
     readSlotField: async (_slotId: string, field: string) => slotRow[field] ?? null,
     readSlotRow: async () => slotRow,
@@ -218,4 +217,22 @@ test("a full release deletes scratch rather than parking it; other runs' dirs ar
     'temp/tat4505-trace.json',
   ]);
   assert.throws(() => lstatSync(path.join(parkHome, 'parked-scratch')), 'nothing is parked');
+});
+
+test('another layout keeps parking its scratch at release', async () => {
+  slotWithLeftovers('other-layout');
+  layout = { artifact_dir: '.task' };
+  try {
+    mkdirSync(path.join(repo, '.task/scratch-probe'), { recursive: true });
+    writeFileSync(path.join(repo, '.task/scratch-probe/run.json'), 'x');
+
+    const result = await slotRelease({ slotId: SLOT_ID, forceReset: true }, () => {});
+
+    assert.deepEqual(result, { released: true });
+    assert.throws(() => lstatSync(path.join(repo, '.task/scratch-probe')), 'moved off the slot');
+    assert.equal(readdirSync(path.join(parkHome, 'parked-scratch', SLOT_ID)).length, 1);
+    assert.ok(tempEntries().includes('temp/scratch-tat4752/fix-notes.md'), 'temp/ is not scanned');
+  } finally {
+    layout = { artifact_dir: 'temp/tasks' };
+  }
 });

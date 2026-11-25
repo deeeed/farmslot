@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { existsSync, lstatSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
 import {
+  buildTempScratchDeleteCommand,
   buildTempScrubCommand,
-  buildTempSurveyCommand,
+  parseTempScratchDeleteOutput,
   parseTempScrubOutput,
-  parseTempSurveyOutput,
 } from './temp-scrub.js';
 
 const execFileAsync = promisify(execFile);
@@ -27,11 +27,21 @@ async function slotWith(files: string[]) {
   return { parent, repo };
 }
 
-const run = async (command: string) => (await execFileAsync('/bin/sh', ['-c', command])).stdout;
+const gitEnv = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_AUTHOR_NAME: 'Fixture',
+  GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+  GIT_COMMITTER_NAME: 'Fixture',
+  GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+};
+const run = async (command: string) =>
+  (await execFileAsync('bash', ['-c', command], { env: gitEnv })).stdout;
+const git = async (cwd: string, ...args: string[]) =>
+  (await execFileAsync('git', ['-C', cwd, ...args], { env: gitEnv })).stdout.trim();
 const scrub = async (repo: string, keep: string[]) =>
   parseTempScrubOutput(await run(buildTempScrubCommand({ repo, keep, taskRoot: 'temp/tasks' })));
-const survey = async (repo: string, keep: string[]) =>
-  parseTempSurveyOutput(await run(buildTempSurveyCommand({ repo, keep, taskRoot: 'temp/tasks' })));
 
 test('temp/ is cleared of every run leftover except farm state and the kept task dirs', async (t) => {
   const { parent, repo } = await slotWith([
@@ -80,40 +90,116 @@ test('temp/ is cleared of every run leftover except farm state and the kept task
   assert.equal(result.removed.find(({ path: p }) => p === 'temp/linked-outside')?.kind, 'link');
 });
 
-test('every checkout is found before anything is entered, and the scrub never deletes one', async (t) => {
+test('nested clones and bare repos are deleted outright and named with their kind', async (t) => {
   const { parent, repo } = await slotWith([
     'temp/tasks/feat/tat-4800/TASK.md',
     'temp/tasks/goal3-clone/src/answer.ts',
     'temp/scratch-x/notes.md',
   ]);
   t.after(() => rm(parent, { recursive: true, force: true }));
-  // A checkout directly under the task root: its src/ must not be cleared before it is seen.
-  await execFileAsync('git', [
-    'init',
-    '-q',
-    '-b',
-    'main',
-    path.join(repo, 'temp/tasks/goal3-clone'),
-  ]);
-  await execFileAsync('git', ['init', '-q', '--bare', path.join(repo, 'temp/scratch-x/bare.git')]);
-
-  const found = await survey(repo, []);
-
-  assert.deepEqual(found.refused, []);
-  assert.deepEqual(found.checkouts.map(({ path: p, bare, linked }) => [p, bare, linked]).sort(), [
-    ['temp/scratch-x/bare.git', true, false],
-    ['temp/tasks/goal3-clone', false, false],
-  ]);
-  assert.deepEqual(found.taskDirs, ['temp/tasks/feat/tat-4800']);
+  // A clone directly under the task root and one in a task dir, plus a bare repo in scratch.
+  await git(repo, 'init', '-q', path.join(repo, 'temp/tasks/goal3-clone'));
+  await git(repo, 'init', '-q', path.join(repo, 'temp/tasks/feat/tat-4800/clone'));
+  await git(repo, 'init', '-q', '--bare', path.join(repo, 'temp/scratch-x/bare.git'));
 
   const result = await scrub(repo, []);
-  assert.deepEqual(result.refused.map(({ path: p }) => p).sort(), [
-    'temp/scratch-x/bare.git',
-    'temp/tasks/goal3-clone',
+
+  assert.deepEqual(result.refused, []);
+  assert.deepEqual(
+    result.removed.filter(({ kind }) => !['file', 'dir', 'link'].includes(kind)).sort((a, b) =>
+      a.path.localeCompare(b.path),
+    ),
+    [
+      { path: 'temp/scratch-x/bare.git', kind: 'bare' },
+      { path: 'temp/tasks/feat/tat-4800/clone', kind: 'clone' },
+      { path: 'temp/tasks/goal3-clone', kind: 'clone' },
+    ],
+  );
+  for (const gone of ['temp/tasks/goal3-clone', 'temp/tasks/feat', 'temp/scratch-x'])
+    assert.equal(existsSync(path.join(repo, gone)), false, gone);
+});
+
+test('a linked worktree goes through worktree remove; its sibling outside temp/ keeps its admin', async (t) => {
+  const { parent, repo } = await slotWith(['temp/tasks/feat/wt-task/TASK.md']);
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const origin = path.join(parent, 'origin-clone');
+  await git(parent, 'init', '-q', '-b', 'main', origin);
+  await git(origin, 'commit', '-q', '--allow-empty', '-m', 'base');
+  const inside = path.join(repo, 'temp/tasks/feat/wt-task/wt');
+  const outside = path.join(parent, 'outside-wt');
+  await git(origin, 'worktree', 'add', '-q', '-b', 'inside', inside);
+  await git(origin, 'worktree', 'add', '-q', '-b', 'outside', outside);
+  await writeFile(path.join(outside, 'draft.md'), 'kept\n');
+  // An unmounted volume looks like a missing worktree to prune; remove must not touch it.
+  const missing = path.join(parent, 'unmounted-wt');
+  await git(origin, 'worktree', 'add', '-q', '-b', 'unmounted', missing);
+  await rm(missing, { recursive: true });
+
+  const result = await scrub(repo, []);
+
+  assert.deepEqual(result.refused, []);
+  assert.deepEqual(
+    result.removed.find(({ path: p }) => p === 'temp/tasks/feat/wt-task/wt'),
+    { path: 'temp/tasks/feat/wt-task/wt', kind: 'linked worktree' },
+  );
+  const listed = await git(origin, 'worktree', 'list', '--porcelain');
+  assert.doesNotMatch(listed, /wt-task/, "the removed worktree's admin data is gone");
+  assert.match(listed, /outside-wt/, 'the sibling stays registered');
+  assert.match(listed, /unmounted-wt/, 'a missing sibling is not pruned');
+  assert.equal(await git(outside, 'status', '--porcelain'), '?? draft.md');
+});
+
+test('a checkout holding a kept path is refused, not deleted whole', async (t) => {
+  const { parent, repo } = await slotWith(['temp/recipe/harness/state.json']);
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  await git(repo, 'init', '-q', path.join(repo, 'temp/recipe'));
+
+  const result = await scrub(repo, ['temp/recipe/harness']);
+
+  assert.deepEqual(result.refused, [
+    { path: 'temp/recipe', reason: 'a Git checkout holding a kept path' },
   ]);
-  assert.equal(existsSync(path.join(repo, 'temp/tasks/goal3-clone/src/answer.ts')), true);
-  assert.equal(existsSync(path.join(repo, 'temp/scratch-x/bare.git/HEAD')), true);
-  assert.equal(existsSync(path.join(repo, 'temp/tasks/feat/tat-4800')), false);
+  assert.equal(existsSync(path.join(repo, 'temp/recipe/harness/state.json')), true);
+});
+
+test('release deletes temp/tasks-layout scratch, leaves task dirs and refuses checkouts', async (t) => {
+  const { parent, repo } = await slotWith([
+    'temp/scratch-tat4752/fix-notes.md',
+    'temp/tasks/scratch-probe/baseline-run.json',
+    'temp/tasks/feat/scratch-tat-4753/probe.mts',
+    // A SCRATCH-12 Jira key names a real task dir scratch-12-<date>; TASK.md keeps it in place.
+    'temp/tasks/fix/scratch-12-1123-101010/TASK.md',
+    'temp/tasks/manual-notes/scratch-export/notes.md',
+    'temp/tasks/scratch-locked/x.json',
+  ]);
+  await git(repo, 'init', '-q', path.join(repo, 'temp/tasks/scratch-clone/repo'));
+  const locked = path.join(repo, 'temp/tasks/scratch-locked/inner');
+  await mkdir(locked);
+  await chmod(locked, 0o000);
+  t.after(async () => {
+    await chmod(locked, 0o755);
+    await rm(parent, { recursive: true, force: true });
+  });
+
+  const result = parseTempScratchDeleteOutput(await run(buildTempScratchDeleteCommand({ repo })));
+
+  const rel = (p: string) => path.relative(repo, p);
+  assert.deepEqual(result.deleted.map(rel).sort(), [
+    'temp/scratch-tat4752',
+    'temp/tasks/feat/scratch-tat-4753',
+    'temp/tasks/scratch-probe',
+  ]);
+  assert.deepEqual(result.refused.map((entry) => rel(entry.path)).sort(), [
+    'temp/tasks/scratch-clone',
+    'temp/tasks/scratch-locked',
+  ]);
+  for (const kept of [
+    'temp/tasks/fix/scratch-12-1123-101010/TASK.md',
+    'temp/tasks/manual-notes/scratch-export/notes.md',
+    'temp/tasks/scratch-clone/repo/.git',
+    'temp/tasks/scratch-locked/x.json',
+  ])
+    assert.equal(existsSync(path.join(repo, kept)), true, kept);
 });
 
 test('a symlinked ancestor of a kept path is left, and a symlinked temp/ is refused', async (t) => {

@@ -7,8 +7,8 @@ import { after, mock, test } from 'node:test';
 
 import type { Run, RunOutput } from '@farmslot/protocol';
 
-// The scrub and the parking run for real against a temp slot repo; only the transport, the
-// slot row and the bundle store are faked: `<bundles>/<runId>/manifest.json` and
+// The scrub runs for real against a temp slot repo; only the transport, the slot row and the
+// bundle store are faked: `<bundles>/<runId>/manifest.json` and
 // `<bundles>/<runId>/tasks/t/`.
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'temp-scrub-run-')));
 for (const dir of ['runs', 'home', 'pool', 'bundles']) mkdirSync(path.join(root, dir));
@@ -30,26 +30,13 @@ const onSlot = async (_vars: unknown, cmd: string) => {
   const result = spawnSync('bash', ['-c', cmd], { encoding: 'utf8', env: gitEnv, timeout: 60_000 });
   return { stdout: result.stdout, stderr: result.stderr, exitCode: result.status ?? 1 };
 };
-let slotRow: Record<string, unknown> = { lifecycle: 'ready' };
+const slotRow: Record<string, unknown> = { lifecycle: 'ready' };
 const realCore = await import('../../core/index.js');
 mock.module('../../core/index.js', {
-  namedExports: {
-    ...realCore,
-    execOnSlot: onSlot,
-    readSlotRow: async () => slotRow,
-    updateSlotStatusIf: async () => true,
-  },
+  namedExports: { ...realCore, execOnSlot: onSlot, readSlotRow: async () => slotRow },
 });
 const realExec = await import('../../core/exec.js');
 mock.module('../../core/exec.js', { namedExports: { ...realExec, execOnSlot: onSlot } });
-const realState = await import('../../core/state.js');
-mock.module('../../core/state.js', {
-  namedExports: {
-    ...realState,
-    readSlotRow: async () => slotRow,
-    updateSlotStatusIf: async () => true,
-  },
-});
 const realRetained = await import('../../run-completion/retained-artifacts.js');
 mock.module('../../run-completion/retained-artifacts.js', {
   namedExports: {
@@ -165,11 +152,6 @@ function freedPark(runId: string): Run['park'] {
     updatedAt: '2026-11-25T07:30:10.000Z',
   };
 }
-const parkedRefs = () =>
-  git(repo, 'for-each-ref', '--format=%(refname)', 'refs/farmslot/parked/')
-    .split('\n')
-    .filter(Boolean);
-
 test('farm state: temp/farmslot always, the runtime dir and watched resource dirs', () => {
   assert.deepEqual(tempStatePaths(terminalProject), [
     'temp/farmslot',
@@ -269,54 +251,34 @@ test('another live run on the slot stops the clear-out; a queued pin or a parked
   finish(fresh, queued, parked);
 });
 
-test("a checkout directly under temp/tasks has its dirty work parked as a ref, then it's gone", async () => {
+test('nested checkouts are deleted outright and named with their kind', async () => {
   const clone = path.join(repo, 'temp/tasks/goal3-clone');
   mkdirSync(clone, { recursive: true });
   git(clone, 'init', '-q', '-b', 'main');
-  writeFileSync(path.join(clone, 'fix.ts'), 'committed fix\n');
-  git(clone, 'add', '.');
-  git(clone, 'commit', '-qm', 'unpushed fix');
-  git(clone, 'branch', 'side');
-  mkdirSync(path.join(clone, 'src'));
-  writeFileSync(path.join(clone, 'src/answer.ts'), 'the held-out answer\n');
+  writeFileSync(path.join(clone, 'answer.ts'), 'the held-out answer\n');
+  // A shallow or unborn repo needs no special handling: it is only deleted.
   const linked = path.join(repo, 'temp/tasks/feat/wt-1125-070000/wt');
   git(repo, 'worktree', 'add', '-q', '-b', 'wt-branch', linked);
-  writeFileSync(path.join(linked, 'draft.md'), 'linked worktree draft\n');
   const run = slotRun('TAT-5200', 'feat', 'new-1125-110000');
-  const before = new Set(parkedRefs());
 
   const outcome = await scrubTempForRun(vars, terminalProject, run);
 
   assert.deepEqual(outcome?.refused, []);
-  assert.deepEqual(outcome?.parked.map((entry) => entry.path).sort(), [
-    'temp/tasks/feat/wt-1125-070000/wt',
-    'temp/tasks/goal3-clone',
-  ]);
-  assert.equal(present('temp/tasks/goal3-clone'), false, 'the checkout is deleted');
-  assert.equal(present('temp/tasks/feat/wt-1125-070000'), false);
-  assert.doesNotMatch(git(repo, 'worktree', 'list'), /wt-1125-070000/, 'no stale worktree admin');
-  const added = parkedRefs().filter((ref) => !before.has(ref));
-  const trees = added.map((ref) => git(repo, 'ls-tree', '-r', '--name-only', ref)).join('\n');
-  assert.match(trees, /^src\/answer\.ts$/m, 'the dirty file is in a parked ref');
-  assert.match(trees, /^draft\.md$/m, "the linked worktree's draft too");
-  assert.ok(added.length >= 3, 'HEAD with its dirty work, the side branch and the worktree');
-  finish(run);
-});
-
-test('a checkout that cannot be parked fails the clear-out by name and stays', async () => {
-  const unborn = path.join(repo, 'temp/scratch-x/new');
-  mkdirSync(unborn, { recursive: true });
-  git(unborn, 'init', '-q');
-  writeFileSync(path.join(unborn, 'work.md'), 'uncommitted\n');
-  write('temp/other-leftover.json');
-  const run = slotRun('TAT-5300', 'feat', 'new-1125-120000');
-  await assert.rejects(
-    scrubTempForRun(vars, terminalProject, run),
-    /Could not park nested checkout temp\/scratch-x\/new before clearing temp\/: it has no commit/,
+  assert.deepEqual(
+    outcome?.checkouts.map(({ path: p, kind }) => [p, kind]).sort(),
+    [
+      ['temp/tasks/feat/wt-1125-070000/wt', 'linked worktree'],
+      ['temp/tasks/goal3-clone', 'clone'],
+    ],
   );
-  assert.equal(present('temp/scratch-x/new/work.md'), true);
-  assert.equal(present('temp/other-leftover.json'), true, 'nothing is deleted before parking');
-  rmSync(path.join(repo, 'temp/scratch-x'), { recursive: true });
+  assert.equal(present('temp/tasks/goal3-clone'), false);
+  assert.equal(present('temp/tasks/feat/wt-1125-070000'), false);
+  assert.doesNotMatch(git(repo, 'worktree', 'list'), /wt-1125-070000/);
+  assert.equal(
+    git(repo, 'for-each-ref', 'refs/farmslot/'),
+    '',
+    'nothing is parked in the slot repo',
+  );
   finish(run);
 });
 

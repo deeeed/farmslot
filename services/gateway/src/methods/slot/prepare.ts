@@ -753,19 +753,16 @@ async function slotPrepareInner(
 
   // 1d. A new run starts on a temp/ holding nothing of another run's: a held-out trial must not
   // read an earlier task, its scratch or its traces. Farm state and the task dirs of this run,
-  // its parent chain and runs still bound to the slot stay. A nested checkout is parked as refs,
-  // then deleted. A warm handoff, a replay or a resumed task keeps its files. Anything that
-  // cannot be parked or deleted fails prepare, by name.
+  // its parent chain and runs still bound to the slot stay. A nested Git checkout is deleted
+  // and named. A warm handoff, a replay or a resumed task keeps its files. Anything that cannot
+  // be deleted fails prepare, by name.
   const scrubbingRun = params.runId ? getRun(params.runId) : undefined;
   if (shouldScrubTempForRun(scrubbingRun)) {
     checkAborted();
     const scrub = await scrubTempForRun(vars, projectJson, scrubbingRun);
     if (scrub) {
-      for (const entry of scrub.parked)
-        step(
-          'clean',
-          `Parked nested checkout ${entry.path} at ${entry.refs.join(', ') || 'no refs (nothing to keep)'}; removed it`,
-        );
+      for (const entry of scrub.checkouts)
+        step('clean', `Deleted nested ${entry.kind} ${entry.path}`);
       for (const dir of scrub.taskDirs)
         step(
           'clean',
@@ -773,7 +770,9 @@ async function slotPrepareInner(
         );
       for (const entry of scrub.kept) step('clean', `Left ${entry.path}: ${entry.reason}`);
       const other = scrub.removed.filter(
-        (entry) => !scrub.taskDirs.some((dir) => dir.path === entry.path),
+        (entry) =>
+          !scrub.taskDirs.some((dir) => dir.path === entry.path) &&
+          !scrub.checkouts.includes(entry),
       ).length;
       if (other > 0)
         step('clean', `Removed ${other} other entr${other === 1 ? 'y' : 'ies'} from temp/`);
