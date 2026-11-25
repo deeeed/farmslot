@@ -74,7 +74,7 @@ test('temp/ is cleared of every run leftover except farm state and the kept task
   );
 });
 
-test('a dir holding a nested Git checkout is refused, not deleted, and named', async (t) => {
+test('a nested Git checkout is refused, not deleted, and named; what is around it goes', async (t) => {
   const repo = await slotWith([
     'temp/tasks/feat/tat-4800/TASK.md',
     'temp/tasks/feat/tat-4800/clone/.git/HEAD',
@@ -85,9 +85,10 @@ test('a dir holding a nested Git checkout is refused, not deleted, and named', a
   const result = await scrub(repo, ['temp/farmslot']);
 
   assert.deepEqual(result.refused, [
-    { path: path.join(repo, 'temp/tasks/feat/tat-4800'), reason: 'holds a nested Git checkout' },
+    { path: path.join(repo, 'temp/tasks/feat/tat-4800/clone'), reason: 'is a nested Git checkout' },
   ]);
   assert.equal(existsSync(path.join(repo, 'temp/tasks/feat/tat-4800/clone/fix.ts')), true);
+  assert.equal(existsSync(path.join(repo, 'temp/tasks/feat/tat-4800/TASK.md')), false);
 });
 
 test('a temp/ that is a symlink is refused whole', async (t) => {

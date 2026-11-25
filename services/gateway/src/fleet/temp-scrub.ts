@@ -10,11 +10,20 @@ export interface TempScrubResult {
 
 /**
  * Delete everything under the slot's `temp/` except the repo-relative `keep` paths and their
- * ancestors. Symlinks are unlinked, never followed; a directory holding a nested Git checkout
- * is refused, never deleted. `temp/` itself must be a plain directory inside the checkout.
+ * ancestors. Task dirs under `taskRoot` are removed one by one, so each is reported. Symlinks
+ * are unlinked, never followed; a nested Git checkout is refused, never deleted, and what is
+ * around it still goes. `temp/` itself must be a plain directory inside the checkout.
  */
-export function buildTempScrubCommand(input: { repo: string; keep: string[] }): string {
-  const config = { repo: input.repo.replace(/\/+$/, ''), keep: input.keep };
+export function buildTempScrubCommand(input: {
+  repo: string;
+  keep: string[];
+  taskRoot?: string;
+}): string {
+  const config = {
+    repo: input.repo.replace(/\/+$/, ''),
+    keep: input.keep,
+    taskRoot: input.taskRoot ?? 'temp/tasks',
+  };
   return [
     `__fs_config=${shellQuote(JSON.stringify(config))}`,
     'python3 - "$__fs_config" <<\'PY\'',
@@ -23,6 +32,10 @@ export function buildTempScrubCommand(input: { repo: string; keep: string[] }): 
     'repo = os.path.realpath(cfg["repo"])',
     'temp = os.path.join(repo, "temp")',
     'keep = {os.path.normpath(os.path.join(repo, rel)) for rel in cfg["keep"]}',
+    'task_root = os.path.normpath(os.path.join(repo, cfg["taskRoot"]))',
+    'def descend(path):',
+    '    # The task root and its flow folders: their task dirs are removed and reported singly.',
+    '    return path == task_root or os.path.dirname(path) == task_root or any(k.startswith(path + os.sep) for k in keep)',
     'def emit(kind, path, detail):',
     '    print(json.dumps({"kind": kind, "path": path, "detail": detail}))',
     'def holds_checkout(path):',
@@ -40,10 +53,10 @@ export function buildTempScrubCommand(input: { repo: string; keep: string[] }): 
     '                os.unlink(path)',
     '                emit("removed", path, "link")',
     '            elif os.path.isdir(path):',
-    '                if any(k.startswith(path + os.sep) for k in keep):',
+    '                if os.path.lexists(os.path.join(path, ".git")):',
+    '                    emit("refused", path, "is a nested Git checkout")',
+    '                elif descend(path) or holds_checkout(path):',
     '                    scrub(path)',
-    '                elif holds_checkout(path):',
-    '                    emit("refused", path, "holds a nested Git checkout")',
     '                else:',
     '                    shutil.rmtree(path)',
     '                    emit("removed", path, "dir")',
@@ -74,8 +87,13 @@ export function parseTempScrubOutput(stdout: string): TempScrubResult {
   return result;
 }
 
-export async function scrubSlotTemp(vars: SlotVars, keep: string[]): Promise<TempScrubResult> {
-  const result = await execOnSlot(vars, buildTempScrubCommand({ repo: vars.remoteRepo, keep }), {
+export async function scrubSlotTemp(
+  vars: SlotVars,
+  keep: string[],
+  taskRoot: string,
+): Promise<TempScrubResult> {
+  const command = buildTempScrubCommand({ repo: vars.remoteRepo, keep, taskRoot });
+  const result = await execOnSlot(vars, command, {
     cwd: vars.remoteRepo,
     timeout: SCRUB_TIMEOUT_MS,
   });

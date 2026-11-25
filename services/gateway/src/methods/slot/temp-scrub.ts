@@ -109,15 +109,20 @@ export async function scrubTempForRun(
     ...tempStatePaths(projectJson),
     ...keepRuns.flatMap((owner) => slotTaskRelDir(owner, taskDirName) ?? []),
   ];
-  let result = await scrubSlotTemp(vars, keep);
+  let result = await scrubSlotTemp(vars, keep, taskDirName);
   const taskRoot = `${vars.remoteRepo.replace(/\/+$/, '')}/${taskDirName}/`;
-  const checkoutDirs = result.refused
-    .filter(({ path: p, reason }) => reason.includes('nested Git checkout') && p.startsWith(taskRoot))
-    .map(({ path: p }) => p.slice(taskRoot.length))
-    .filter((rel) => rel.split('/').length === 2);
+  // A checkout inside a task dir goes through the usual retention (F310), then the dir goes.
+  const checkoutDirs = [
+    ...new Set(
+      result.refused
+        .filter(({ path: p, reason }) => reason.includes('Git checkout') && p.startsWith(taskRoot))
+        .map(({ path: p }) => p.slice(taskRoot.length).split('/').slice(0, 2).join('/'))
+        .filter((rel) => rel.split('/').length === 2),
+    ),
+  ];
   if (checkoutDirs.length) {
     for (const rel of checkoutDirs) await retainTaskCheckouts(vars, projectJson, rel);
-    const again = await scrubSlotTemp(vars, keep);
+    const again = await scrubSlotTemp(vars, keep, taskDirName);
     result = { removed: [...result.removed, ...again.removed], refused: again.refused };
   }
   const byDir = new Map(
