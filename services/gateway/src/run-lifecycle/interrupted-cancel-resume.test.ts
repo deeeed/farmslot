@@ -164,10 +164,10 @@ test('a teardown already on the slot, such as an owner-bound release, wins', asy
   const before = await read();
   registry.beginTerminalTeardown(SLOT);
   try {
-    assert.deepEqual(
-      await resumeInterruptedCancelCleanup(run, SLOT, observed),
-      { kind: 'busy', reason: 'another teardown owns this slot' },
-    );
+    assert.deepEqual(await resumeInterruptedCancelCleanup(run, SLOT, observed), {
+      kind: 'busy',
+      reason: 'another teardown owns this slot',
+    });
   } finally {
     registry.endTerminalTeardown(SLOT);
   }
@@ -191,10 +191,10 @@ test('a transition holding the run, such as a replay, wins', async () => {
   // The replay must hold the run key before the resume asks for it.
   await holding;
   try {
-    assert.deepEqual(
-      await resumeInterruptedCancelCleanup(run, SLOT, observed),
-      { kind: 'busy', reason: 'a transition holds the run' },
-    );
+    assert.deepEqual(await resumeInterruptedCancelCleanup(run, SLOT, observed), {
+      kind: 'busy',
+      reason: 'a transition holds the run',
+    });
   } finally {
     release();
     await held;
@@ -251,10 +251,10 @@ test('this gateway’s own fence is never resumed, even when it is what was obse
     release_gateway_instance: instance,
   }));
   const before = await read();
-  assert.deepEqual(
-    await resumeInterruptedCancelCleanup(run, SLOT, { ...observed, instance }),
-    { kind: 'refused', reason: 'the release fence changed' },
-  );
+  assert.deepEqual(await resumeInterruptedCancelCleanup(run, SLOT, { ...observed, instance }), {
+    kind: 'refused',
+    reason: 'the release fence changed',
+  });
   assert.deepEqual(await read(), before);
 });
 
@@ -278,10 +278,10 @@ test('a finish that fails settles the cleanup hold the live cancel would, named 
   duringFinish = async () => {
     throw new Error('node command hung');
   };
-  assert.deepEqual(
-    await resumeInterruptedCancelCleanup(run, SLOT, observed),
-    { kind: 'not-finished', reason: 'node command hung' },
-  );
+  assert.deepEqual(await resumeInterruptedCancelCleanup(run, SLOT, observed), {
+    kind: 'not-finished',
+    reason: 'node command hung',
+  });
   const row = await read();
   assert.equal(row?.lifecycle, 'held');
   assert.equal(row?.phase, 'occupied');
@@ -319,10 +319,10 @@ test('a blind trial whose Git restore fails is held, and the fleet hears it', as
       },
     },
   });
-  assert.deepEqual(
-    await resumeInterruptedCancelCleanup(run, SLOT, observed),
-    { kind: 'not-finished', reason: 'Blind trial Git restore failed' },
-  );
+  assert.deepEqual(await resumeInterruptedCancelCleanup(run, SLOT, observed), {
+    kind: 'not-finished',
+    reason: 'Blind trial Git restore failed',
+  });
   const row = await read();
   assert.equal(row?.lifecycle, 'held');
   assert.equal(row?.held_reason, 'Blind trial Git restore failed');
