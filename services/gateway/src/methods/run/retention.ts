@@ -33,9 +33,9 @@ import {
   type OrphanScaffoldingResult,
 } from '../../runs/orphan-scaffolding.js';
 import {
+  countsAsRetentionEntry,
   DAY_MS,
   diskBytes,
-  countsAsRetentionEntry,
   exists,
   planRunRetention,
   readTaskPins,

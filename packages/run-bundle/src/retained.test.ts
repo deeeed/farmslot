@@ -37,6 +37,7 @@ import {
   reserveRunBundleMetadata,
   resolveRunBundleEntry,
   runBundleAdmissionUsage,
+  RunBundleCapacityError,
   runBundleHousekeepingPaths,
   withRunBundleLockWaitBudget,
   withRunBundleStoreLock,
@@ -623,8 +624,11 @@ test('a bundle retention has moved aside is charged its record, or measured if i
   await reserveRunBundleMetadata(f.store, 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee', policy);
   await rm(path.join(f.store.root, 'reservations', 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee.json'));
   await writeFile(path.join(aside, 'unrecorded.bin'), Buffer.alloc(60_000));
+  // Staged bundles are not written to; this test grows one, so the cached charge is dropped.
+  forgetRunBundleStoreChargeCache();
   await assert.rejects(
     reserveRunBundleMetadata(f.store, 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee', policy),
+    RunBundleCapacityError,
   );
 });
 
@@ -837,10 +841,14 @@ test('a charge read while a bundle and its usage record are staged for archive w
     path.join(f.store.root, 'sha256', captured.ref.bundleDigest),
     path.join(f.store.root, 'sha256', '.retention-staged'),
   );
+  forgetRunBundleStoreChargeCache();
+  const before = (await runBundleAdmissionUsage(f.store, f.root)).store;
   await rename(usage, path.join(f.store.root, 'usage', '.retention-staged'));
   forgetRunBundleStoreChargeCache();
-  await runBundleAdmissionUsage(f.store, f.root);
+  const staged = (await runBundleAdmissionUsage(f.store, f.root)).store;
   await assert.rejects(stat(usage), { code: 'ENOENT' }, 'no orphan usage record');
+  assert.ok(staged > 0, 'the staged bundle is still charged until it leaves');
+  assert.ok(staged <= before, `${staged} > ${before}`);
 });
 
 test('a cached manifest cannot hide loss of the retained bundle directory', async (t) => {
