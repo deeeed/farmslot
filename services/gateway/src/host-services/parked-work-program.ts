@@ -13,9 +13,21 @@ for (const key of ['GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_OBJECT_DIRECT
 env.GIT_OPTIONAL_LOCKS = '0';
 const config = ['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','commit.gpgSign=false','-c','gc.auto=0','-c','maintenance.auto=false','-c','submodule.recurse=false','-C',repo];
 function fail(code, message) { const error = new Error(message); error.code = code; throw error; }
+// The caller kills the whole command at timeoutMs. Stopping 10 s earlier names the Git step it
+// stopped at. Reads after a finished mutation get the full timeout, so the mutation's result
+// is not reported as a timeout.
+const startedAt = Date.now();
+const timeoutMs = Number.isFinite(input.timeoutMs) ? input.timeoutMs : 120000;
+let deadline = startedAt + (Number.isFinite(input.budgetMs) ? input.budgetMs : timeoutMs - 10000);
+function finishing() { deadline = Math.max(deadline, startedAt + timeoutMs - 1000); }
 function git(args, options = {}) {
   const gitEnv = options.localOnly ? { ...env, GIT_NO_LAZY_FETCH: '1' } : env;
-  const result = cp.spawnSync('git', config.concat(args), { timeout: options.timeout, env: options.index ? { ...gitEnv, GIT_INDEX_FILE: options.index } : gitEnv, input: options.input, encoding: null, maxBuffer: 64 * 1024 * 1024 });
+  const remaining = deadline - Date.now();
+  const step = [args.find((arg, i) => !arg.startsWith('-') && args[i-1] !== '-C' && args[i-1] !== '-c')].concat(args.filter(arg => arg.startsWith('--') && !arg.includes('=')).slice(0,2)).join(' ');
+  if (remaining <= 0) fail('GIT_TIMEOUT', 'Parked-work ran out of its time budget before Git ' + step);
+  const limit = Math.min(options.timeout || Infinity, remaining);
+  const result = cp.spawnSync('git', config.concat(args), { timeout: limit, env: options.index ? { ...gitEnv, GIT_INDEX_FILE: options.index } : gitEnv, input: options.input, encoding: null, maxBuffer: 64 * 1024 * 1024 });
+  if (result.error && result.error.code === 'ETIMEDOUT' && limit === remaining) fail('GIT_TIMEOUT', 'Git ' + step + ' did not finish within the ' + (remaining / 1000).toFixed(1) + 's left of the parked-work budget');
   if (result.status !== 0 && !(options.allow || []).includes(result.status)) fail('GIT_FAILED', 'Git ' + args[0] + ' failed with exit ' + result.status + ': ' + (result.stderr || '').toString().slice(-500));
   return { status: result.status, stdout: result.stdout || Buffer.alloc(0) };
 }
@@ -265,6 +277,7 @@ function quickState() {
 function runCommand() {
   const commandEnv={...env,GIT_CONFIG_PARAMETERS:(env.GIT_CONFIG_PARAMETERS?env.GIT_CONFIG_PARAMETERS+' ':'')+"'core.hooksPath=/dev/null' 'submodule.recurse=false'"};
   const r=cp.spawnSync('bash',['-c',input.command],{cwd:repo,env:commandEnv,encoding:'utf8',maxBuffer:64*1024*1024});
+  finishing();
   return {stdout:r.stdout||'',stderr:r.stderr||'',exitCode:r.status === null?1:r.status,state:quickState()};
 }
 function mutate() {
@@ -305,6 +318,7 @@ function restore() {
     try { fs.writeFileSync(fd,git(['show',saved.indexArchiveSha+':index']).stdout); fs.closeSync(fd); fs.renameSync(lock,target); }
     catch(error) { try{fs.closeSync(fd);}catch(e){if(e.code!=='EBADF')throw e;} if(exists(lock))fs.unlinkSync(lock); throw error; }
   }
+  finishing();
   return {branch:name,headSha:text(['rev-parse','HEAD']),fingerprint:snapshot(false).fingerprint};
 }
 function prune() {

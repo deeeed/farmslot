@@ -3,6 +3,7 @@ import { RECOVERY_CASES, runRecoveryMatrix } from './recovery.mjs';
 import { runPerformanceCanary } from './performance.mjs';
 import { FULLFLOW_CASES, runFullflow } from './fullflow.mjs';
 import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
+import { dismissReaper, runProofs } from './proofs.mjs';
 // Farmslot canary profiles.
 //
 //   canary   after every dev gateway update; zero inference, a few minutes. Against the deployed
@@ -18,7 +19,9 @@ import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
 //            round, HUMAN_GATE prep and FINALIZE, which must leave it alive (no model call: the test
 //            answers the reviewer), and a Pi-runner worker in MONITOR whose model stream drops as
 //            the gateway restarts. --with-review adds one reviewed run whose reviewer turns the test answers
-//            (no model call): REVIEW and its fix round.
+//            (no model call): REVIEW and its fix round. `proofs` runs the opt-in proofs nothing else
+//            runs (proofs.mts): two e2e gateway proofs and the warm-review proof, whose codex reviewer
+//            uses config.json proofs.reviewModel (the only nightly model calls).
 //
 //   recovery  seven concurrent recovery cases on disposable slots, zero inference.
 //             Hard ceiling 120 s including cleanup; cases over 5 s print step attribution.
@@ -106,6 +109,8 @@ const config = JSON.parse(readFileSync(new URL('./config.json', import.meta.url)
   modelAllowlist: string[];
   budgetsS: Record<string, number>;
   knownFailures: KnownFailure[];
+  /** The warm-review proof's codex reviewer model (never luna). */
+  proofs: { reviewModel: string };
   live: {
     profileHome: string;
     profile: string;
@@ -134,6 +139,7 @@ const CASES = [
   'review',
   'review-past-wait',
   'worker-survives',
+  'proofs',
 ] as const;
 const only = arg('only')?.split(',') ?? (fastScripted ? ['lifecycle'] : undefined);
 if (fastScripted && only!.some((name) => name !== 'lifecycle'))
@@ -152,6 +158,7 @@ const available: readonly string[] =
             ...RESTART_STEPS,
             'review-past-wait',
             'worker-survives',
+            'proofs',
             ...(withReview ? ['review'] : []),
           ];
 for (const name of only ?? [])
@@ -189,8 +196,9 @@ const plan =
         survive: wants('worker-survives') ? surviveSteps : [],
       };
 
-// The models those cases would use, checked before anything is dispatched. Every reviewer turn is
-// answered by the test or the proxy, so only fullflow's worker calls a model.
+// The models those cases would use, checked before anything is dispatched. Every canary reviewer
+// turn is answered by the test or the proxy; only fullflow's worker and the warm-review proof's
+// codex reviewer call a model.
 const fullflowWorker =
   arg('model') === 'haiku' ? { runner: 'claude', model: 'haiku' } : FULLFLOW_MODEL;
 if (
@@ -200,8 +208,13 @@ if (
 )
   throw new Error('--model for fullflow must be haiku or litellm/deepseek-v4p1-flash');
 const fullflowModels = profile === 'fullflow' && FULLFLOW_CASES.some(wants);
+const proofs = profile === 'nightly' && wants('proofs');
 const models =
-  profile === 'fullflow' ? (fullflowModels ? [fullflowWorker.model] : []) : ['scripted'];
+  profile === 'fullflow'
+    ? fullflowModels
+      ? [fullflowWorker.model]
+      : []
+    : ['scripted', ...(proofs ? [config.proofs.reviewModel] : [])];
 const refused = models.filter((model) => !config.modelAllowlist.includes(model));
 
 await mkdir(evidence, { recursive: true });
@@ -223,6 +236,7 @@ const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: '
 const reaper = startReaper();
 let stopStack: (() => Promise<string[]>) | undefined;
 let stopLive: (() => Promise<string[]>) | undefined;
+let stopProofs: (() => Promise<string[]>) | undefined;
 let markerContract: Promise<void> | undefined;
 const checks: CheckResult[] = [];
 const cleanupErrors: string[] = [];
@@ -276,10 +290,12 @@ const cleanup = cleanupOnExit(async () => {
     cleanupErrors.push(`marker-contract: ${String(error)}`);
   }
   cleanupErrors.push(...((await stopLive?.()) ?? []));
+  const proofErrors = (await stopProofs?.()) ?? [];
+  cleanupErrors.push(...proofErrors);
   const stackErrors = (await stopStack?.()) ?? [];
   cleanupErrors.push(...stackErrors);
   // What could not be stopped stays with the reaper, which tries again when this process exits.
-  if (!stackErrors.length) reaper.done();
+  dismissReaper(reaper, stackErrors, proofErrors);
   // A signal exits right after this, so the report is written here on both paths.
   await finish();
 });
@@ -387,6 +403,20 @@ try {
       onCleanup: (stop) => {
         stopStack = stop;
       },
+    });
+  // Last: each proof boots its own isolated gateway or fixture farm.
+  if (proofs)
+    await runProofs({
+      root,
+      evidence,
+      reviewModel: config.proofs.reviewModel,
+      reaper,
+      cleaning: () => cleaning,
+      onCleanup: (stop) => {
+        stopProofs = stop;
+      },
+      log,
+      onCheck,
     });
   completed = !cleaning;
 } catch (error) {

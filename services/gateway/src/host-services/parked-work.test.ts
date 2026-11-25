@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { execFile, execFileSync, spawn } from 'node:child_process';
+import {
+  execFile,
+  execFileSync,
+  spawn,
+  spawnSync,
+  type SpawnSyncOptions,
+} from 'node:child_process';
 import { existsSync, watch } from 'node:fs';
 import {
   chmod,
@@ -540,6 +546,107 @@ test('an ignored file that reset would expose to clean is retained in the origin
   await restoreParkedGitWork(vars, { slotId: 'proof' }, clean, capture.receipts[0], localExec);
   assert.equal(await readFile(path.join(repo, 'private-note'), 'utf8'), 'local note');
   assert.equal(await readFile(path.join(repo, '.gitignore'), 'utf8'), 'private-note\n');
+});
+
+/** Run the parked-work program directly and return its result envelope. */
+async function runProgram(input: Record<string, unknown>, env?: NodeJS.ProcessEnv) {
+  const stdout = await execute('node', ['-e', PARKED_WORK_PROGRAM, JSON.stringify(input)], {
+    env,
+  }).then(
+    (result) => result.stdout,
+    // A refused operation exits non-zero; its envelope is still on stdout.
+    (error: unknown) => {
+      if (!(error instanceof Error) || !('stdout' in error)) throw error;
+      return String(error.stdout);
+    },
+  );
+  const envelope: unknown = JSON.parse(stdout.trim().split('\n').at(-1) ?? '{}');
+  assert.ok(isRecord(envelope), 'the program answers with a JSON envelope');
+  return envelope;
+}
+
+test('parking that runs out of its time budget names the Git command it stopped at', async () => {
+  const envelope = await runProgram({
+    op: 'list',
+    repo: os.tmpdir(),
+    slotId: 'proof',
+    budgetMs: 0,
+  });
+  assert.equal(envelope.code, 'GIT_TIMEOUT');
+  assert.match(String(envelope.message), /time budget before Git for-each-ref/);
+});
+
+test('a Git call that outlives the parking budget is stopped and named', async (t) => {
+  const bin = await mkdtemp(path.join(os.tmpdir(), 'park-slow-git-'));
+  t.after(() => rm(bin, { force: true, recursive: true }));
+  // A Git that never answers: the budget, not the caller's 120 s kill, ends the park.
+  await writeFile(path.join(bin, 'git'), '#!/bin/sh\nexec sleep 30\n');
+  await chmod(path.join(bin, 'git'), 0o755);
+  const envelope = await runProgram(
+    { op: 'list', repo: os.tmpdir(), slotId: 'proof', budgetMs: 500 },
+    { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` },
+  );
+  assert.equal(envelope.code, 'GIT_TIMEOUT');
+  assert.match(
+    String(envelope.message),
+    /^Git for-each-ref did not finish within the \d+\.\ds left of the parked-work budget/,
+  );
+});
+
+test('a mutation that ends after the step budget still reports its own result', async (t) => {
+  const { vars, repo, options } = await fixture(t);
+  const capture = await parkGitWork(vars, options, localExec);
+  // A virtual clock: the mutation's command takes a minute, past the 30 s step budget but
+  // inside the caller's 120 s timeout. Git steps take no virtual time.
+  let clock = 0;
+  class ClockDate extends Date {
+    static now() {
+      return clock;
+    }
+  }
+  const realRequire = createRequire(import.meta.url);
+  const requireInProgram = (name: string): unknown =>
+    name === 'node:child_process'
+      ? {
+          spawnSync: (command: string, args: readonly string[], spawnOptions: SpawnSyncOptions) => {
+            if (command === 'bash') clock += 60_000;
+            return spawnSync(command, args, spawnOptions);
+          },
+        }
+      : realRequire(name);
+  let output = '';
+  vm.runInNewContext(PARKED_WORK_PROGRAM, {
+    require: requireInProgram,
+    Buffer,
+    Date: ClockDate,
+    process: {
+      argv: [
+        'node',
+        JSON.stringify({
+          op: 'mutate',
+          repo,
+          slotId: 'proof',
+          expectedFingerprint: capture.fingerprint,
+          saved: capture.receipts,
+          command: 'true',
+          budgetMs: 30_000,
+        }),
+      ],
+      env: process.env,
+      stdout: {
+        write: (text: string) => {
+          output += text;
+        },
+      },
+      stderr: { write: () => {} },
+    },
+  });
+  const envelope: unknown = JSON.parse(output);
+  assert.ok(isRecord(envelope));
+  assert.equal(envelope.ok, true, String(envelope.message));
+  assert.ok(isRecord(envelope.value));
+  assert.equal(envelope.value.exitCode, 0);
+  assert.equal(clock, 60_000);
 });
 
 test('restore evaluates ignored paths before and after checkout without sharing temporary rule state', async (t) => {

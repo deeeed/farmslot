@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,9 +8,14 @@ import test from 'node:test';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
+  DISABLE_AUTO_MAINTENANCE_COMMAND,
+  FETCH_MAINTENANCE_COMMAND,
+  gitMaintenanceNotes,
+  PRE_FETCH_CLEANUP_COMMAND,
   recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
+  REMOVE_STALE_TMP_PACKS_COMMAND,
 } from './git-cleanup-commands.js';
 
 function runBash(command: string, cwd?: string) {
@@ -266,4 +271,173 @@ test('recreateBranchCommand is refused, config kept, when another worktree holds
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+/**
+ * Runs `script` in bash inside a fresh repo at $ROOT/repo with $PACK set to its pack directory.
+ * `fakeLsof`, when set, is the body of an `lsof` placed first on PATH.
+ */
+function inRepo(
+  script: string,
+  options: { command?: string; fakeLsof?: string; shell?: string } = {},
+) {
+  const root = mkdtempSync(path.join(tmpdir(), 'git-cleanup-'));
+  try {
+    const bin = path.join(root, 'bin');
+    mkdirSync(bin);
+    if (options.fakeLsof !== undefined) {
+      writeFileSync(path.join(bin, 'lsof'), `#!/bin/sh\n${options.fakeLsof}\n`, { mode: 0o755 });
+    }
+    return spawnSync(
+      options.shell ?? 'bash',
+      [
+        '-c',
+        `export ROOT="$1"; git init -q "$ROOT/repo" && cd "$ROOT/repo" || exit 1
+        PACK=$(cd .git/objects/pack && pwd -P)
+        old() { touch -t 202601010000 "$@"; }
+        ${script}`,
+        '_',
+        root,
+      ],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          CMD: options.command ?? REMOVE_STALE_TMP_PACKS_COMMAND,
+          PATH: `${bin}:${process.env.PATH}`,
+          GIT_CONFIG_GLOBAL: path.join(root, 'global'),
+        },
+      },
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('REMOVE_STALE_TMP_PACKS_COMMAND removes temporary packs a killed fetch left, and keeps live ones', () => {
+  const result =
+    inRepo(`old "$PACK/tmp_pack_stale" "$PACK/tmp_idx_stale" "$PACK/tmp_rev_stale" "$PACK/tmp_pack_held" "$PACK/pack-kept.pack"
+    touch "$PACK/tmp_pack_fresh"
+    # A process still writing an old-looking temporary pack keeps it. exec: no forked child to leak.
+    bash -c 'exec 3<"$1"; exec sleep 30' _ "$PACK/tmp_pack_held" </dev/null >/dev/null 2>&1 &
+    holder=$!
+    trap 'kill "$holder" 2>/dev/null' EXIT
+    for _ in $(seq 100); do lsof -p "$holder" 2>/dev/null | grep -q tmp_pack_held && break; sleep 0.05; done
+    eval "$CMD"
+    echo "left: $(ls "$PACK" | sort | tr '\\n' ' ')"`);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /left: pack-kept\.pack tmp_pack_fresh tmp_pack_held $/m);
+  assert.deepEqual(gitMaintenanceNotes(result.stdout), ['removed 3 stale tmp packs']);
+});
+
+test('REMOVE_STALE_TMP_PACKS_COMMAND deletes nothing when lsof fails or is killed', () => {
+  // Silent failures, and one that lists the pack directory and then dies mid-listing.
+  for (const fakeLsof of ['exit 1', 'kill -9 $$', 'printf "n%s\\n" "$3"; kill -9 $$']) {
+    const result = inRepo(
+      `old "$PACK/tmp_pack_stale"
+      eval "$CMD"
+      echo "left: $(ls "$PACK")"`,
+      { fakeLsof },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /left: tmp_pack_stale/, `lsof: ${fakeLsof}`);
+    assert.deepEqual(gitMaintenanceNotes(result.stdout), [
+      'kept stale tmp packs: the open-file check did not complete',
+    ]);
+  }
+});
+
+test('REMOVE_STALE_TMP_PACKS_COMMAND deletes nothing without lsof', () => {
+  // Every tool the command runs stays on PATH; only lsof is missing.
+  const result = inRepo(`old "$PACK/tmp_pack_stale"
+    tools="$ROOT/tools"; mkdir "$tools"
+    for name in git find sed grep awk rm wc tr; do ln -s "$(command -v "$name")" "$tools/$name"; done
+    PATH="$tools" eval "$CMD"
+    echo "left: $(ls "$PACK")"`);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /left: tmp_pack_stale/);
+  assert.deepEqual(gitMaintenanceNotes(result.stdout), [
+    'kept stale tmp packs: lsof is not available',
+  ]);
+});
+
+test('REMOVE_STALE_TMP_PACKS_COMMAND runs no lsof when there is nothing stale', () => {
+  const result = inRepo(
+    `touch "$PACK/tmp_pack_fresh"; old "$PACK/pack-kept.pack"
+    eval "$CMD"
+    [ -e "$ROOT/lsof-ran" ] && echo "lsof ran" || echo "lsof skipped"`,
+    {
+      fakeLsof: 'touch "$ROOT/lsof-ran"; exit 1',
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /lsof skipped/);
+});
+
+test('DISABLE_AUTO_MAINTENANCE_COMMAND turns off auto-maintenance once and unregisters only this repo', () => {
+  const result = inRepo(
+    `git config --global --add maintenance.repo "$(git rev-parse --show-toplevel)"
+    git config --global --add maintenance.repo /some/other/repo
+    eval "$CMD"
+    echo "auto=$(git config --local --get maintenance.auto) gc=$(git config --local --get gc.auto) repos=$(git config --global --get-all maintenance.repo | tr '\\n' ' ')"
+    # Already set: a second run only reads. With .git unwritable, any write would fail and print a note.
+    chmod a-w .git
+    second=$(eval "$CMD" 2>&1)
+    chmod u+w .git
+    echo "second=[$second]"`,
+    { command: DISABLE_AUTO_MAINTENANCE_COMMAND },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^auto=false gc=0 repos=\/some\/other\/repo $/m);
+  assert.match(result.stdout, /^second=\[\]$/m);
+});
+
+test('DISABLE_AUTO_MAINTENANCE_COMMAND leaves the config of a linked worktree, which shares it, alone', () => {
+  const result = inRepo(
+    `git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m base
+    git worktree add -q "$ROOT/linked" -b linked
+    cd "$ROOT/linked" && eval "$CMD"
+    cd "$ROOT/repo" && echo "auto=[$(git config --local --get maintenance.auto)] gc=[$(git config --local --get gc.auto)]"`,
+    { command: DISABLE_AUTO_MAINTENANCE_COMMAND },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^auto=\[\] gc=\[\]$/m);
+  // An expected state, so no note a caller would surface: only a debug line.
+  assert.deepEqual(gitMaintenanceNotes(result.stdout), []);
+  assert.match(
+    result.stdout,
+    /^farmslot-git-maintenance-debug: config left unchanged: this linked worktree shares it with \/.+\/repo\/\.git$/m,
+  );
+});
+
+test(
+  'PRE_FETCH_CLEANUP_COMMAND works under the node-link shell (zsh -f)',
+  { skip: !existsSync('/bin/zsh') },
+  () => {
+    const result = inRepo(
+      `old "$PACK/tmp_pack_stale"
+    /bin/zsh -f -c 'eval "$CMD"'
+    echo "left=[$(ls "$PACK")] auto=$(git config --local --get maintenance.auto) gc=$(git config --local --get gc.auto)"`,
+      { command: PRE_FETCH_CLEANUP_COMMAND },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /left=\[\] auto=false gc=0/);
+  },
+);
+
+test('the pre-fetch cleanups clear ref locks, auto-maintenance and stale temporary packs', () => {
+  assert.ok(FETCH_MAINTENANCE_COMMAND.includes(DISABLE_AUTO_MAINTENANCE_COMMAND));
+  assert.ok(FETCH_MAINTENANCE_COMMAND.includes(REMOVE_STALE_TMP_PACKS_COMMAND));
+  assert.ok(PRE_FETCH_CLEANUP_COMMAND.includes(FETCH_MAINTENANCE_COMMAND));
+  assert.ok(PRE_FETCH_CLEANUP_COMMAND.includes(REFRESH_REMOTE_REF_LOCKS_COMMAND));
+});
+
+test('gitMaintenanceNotes keeps only the maintenance notes', () => {
+  assert.deepEqual(
+    gitMaintenanceNotes(
+      'From origin\nfarmslot-git-maintenance: removed 2 stale tmp packs\n * branch main\n',
+    ),
+    ['removed 2 stale tmp packs'],
+  );
 });
