@@ -130,6 +130,9 @@ test('Settings tier models route through the real codex LB', { timeout: 300_000 
             return false;
           } catch (error) {
             if (hasCode(error, 'ESRCH')) return true;
+            // macOS can answer EPERM while the group's last members are exiting or unreaped.
+            // These are the proof's own children, so keep waiting; the ceiling still bounds it.
+            if (hasCode(error, 'EPERM')) return false;
             throw error;
           }
         },
