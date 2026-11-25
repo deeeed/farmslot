@@ -570,7 +570,10 @@ test('a Git call that outlives the parking budget is stopped and named', async (
   ).catch((error: { stdout: string }) => error);
   const envelope = JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}');
   assert.equal(envelope.code, 'GIT_TIMEOUT');
-  assert.match(envelope.message, /^Git for-each-ref did not finish within the 0\.[23]s left of the parked-work budget/);
+  assert.match(
+    envelope.message,
+    /^Git for-each-ref did not finish within the 0\.[23]s left of the parked-work budget/,
+  );
 });
 
 test('restore evaluates ignored paths before and after checkout without sharing temporary rule state', async (t) => {
