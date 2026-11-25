@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { mock, test } from 'node:test';
+import { after, mock, test } from 'node:test';
 
 import '../core/hermetic-git.test-support.js';
 import '../core/private-pool.test-support.js';
@@ -12,17 +12,19 @@ import type { ProjectVars } from '../core/config.js';
 
 // A real prepare for a new run, on the fixture project shaped like Mobile, Extension and Core:
 // task root temp/tasks, runtime dir temp/recipe/runtime, deps stamps in temp/farmslot.
-process.env.FARMSLOT_RUNS_DIR = await mkdtemp(path.join(os.tmpdir(), 'prepare-temp-scrub-runs-'));
+const runsDir = await mkdtemp(path.join(os.tmpdir(), 'prepare-temp-scrub-runs-'));
+process.env.FARMSLOT_RUNS_DIR = runsDir;
+after(() => rm(runsDir, { recursive: true, force: true }));
 const realConfig = await import('../core/config.js');
-const mobileShaped = (vars: ProjectVars): ProjectVars => ({
-  ...vars,
-  runtimeDir: 'temp/recipe/runtime',
-  // metamask-mobile-farm's own paths: the task root comes from artifact_dir.
-  projectJson: {
+const mobileShaped = (vars: ProjectVars): ProjectVars => {
+  // metamask-mobile-farm's own paths: no task_dir, so the task root comes from artifact_dir.
+  const projectJson = {
     ...vars.projectJson,
     paths: { runtime_dir: 'temp/recipe/runtime', artifact_dir: 'temp/tasks' },
-  },
-});
+  };
+  Reflect.deleteProperty(projectJson, 'task_dir');
+  return { ...vars, runtimeDir: 'temp/recipe/runtime', projectJson };
+};
 mock.module('../core/config.js', {
   namedExports: {
     ...realConfig,
