@@ -72,6 +72,7 @@ import {
   reviewExecutionLocations,
 } from './review-execution-location.js';
 import type { RunLifecycleAction } from './run-detail-actions.js';
+import { renderRunSlotPreparePopover } from './run-slot-prepare-popover.js';
 import { renderCancelledRunSlotChoices } from './run-detail-cancelled-slot-renderers.js';
 import { renderRunCost } from './run-detail-cost.js';
 import {
@@ -1411,30 +1412,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
  * element exists in only one state and nothing in it moves when the detail lands. Every
  * action is disabled until the detail is ready and acts on the detail.
  */
-/** Run detail's "Load <slot> with this run" popover; it passes the run's flow type and domain. */
-export function renderRunSlotPreparePopover(
-  r: Pick<RunListRow, 'id' | 'project' | 'branch' | 'flowType' | 'domain'>,
-  slot: { id: string; branch: string; health: import('@farmslot/protocol').SlotHealth | null },
-  actionsBlocked: boolean,
-) {
-  const boundSlotId = slot.id;
-  return html`
-    <slot-prepare-popover
-      slot-id=${boundSlotId}
-      slot-branch=${slot.branch}
-      project=${r.project}
-      run-id=${r.id}
-      run-branch=${r.branch}
-      run-flow-type=${r.flowType}
-      run-domain=${r.domain ?? ''}
-      button-label="Load ${boundSlotId} with this run →"
-      button-style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
-      .slotHealth=${slot.health}
-      ?disabled=${actionsBlocked}
-    ></slot-prepare-popover>
-  `;
-}
-
 function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail: Run | null) {
   const sc = runStatusColor(r.status);
   const activityLabel = runDetailHeaderModel(r).activityLabel;

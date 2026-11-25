@@ -205,7 +205,12 @@ export async function slotPrepare(
   const run = [params.runId, params.bindRunId]
     .map((id) => (id ? getRun(id) : undefined))
     .find((found) => found !== undefined);
-  if (run) assertRunMatchesSlotProject(run, params.slotId, (await loadSlotVars(params.slotId)).projectName);
+  if (run)
+    assertRunMatchesSlotProject(
+      run,
+      params.slotId,
+      (await loadSlotVars(params.slotId)).projectName,
+    );
   const forRun = withRunPrepareContext(params, run);
   return withSlotSources(params.slotId, () => slotPrepareWithSources(forRun, emit, signal, opts));
 }

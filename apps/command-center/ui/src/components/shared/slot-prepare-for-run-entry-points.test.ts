@@ -10,7 +10,11 @@ import { litBinding } from '../../testing/lit-text.js';
 
 mock.module('../../gateway-client.js', {
   namedExports: {
-    gateway: { resourceConnectionId: 'connection-1', connectionState: 'connected', request: async () => ({}) },
+    gateway: {
+      resourceConnectionId: 'connection-1',
+      connectionState: 'connected',
+      request: async () => ({}),
+    },
   },
 });
 const prepares: Array<Record<string, unknown>> = [];
@@ -25,21 +29,11 @@ mock.module('./slot-prepare-client.js', {
     navigateToPreparedSlot: () => {},
   },
 });
-mock.module('../shared/slot-prepare-client.js', {
-  namedExports: {
-    ...realClient,
-    runSlotPrepareForRun: async (input: Record<string, unknown>) => {
-      prepares.push(input);
-      return { prepared: true, requestId: 'r' };
-    },
-    navigateToPreparedSlot: () => {},
-  },
-});
 
 const { SlotPreparePopover } = await import('./slot-prepare-popover.js');
 const { SlotLoadRunModal } = await import('../slot-view/slot-load-run-modal.js');
 const { SlotHistoryModal } = await import('../slot-view/slot-history-modal.js');
-const { renderRunSlotPreparePopover } = await import('../runs/run-detail-renderers.js');
+const { renderRunSlotPreparePopover } = await import('../runs/run-slot-prepare-popover.js');
 
 test('the prepare popover sends its run flow type and domain', async () => {
   prepares.length = 0;
@@ -111,6 +105,8 @@ test('slot history binds the run flow type on its prepare popover', () => {
     runRecordPath: '/runs/run-4.json',
     currentForSlot: false,
   };
+  // The popover sits in the row's expanded actions.
+  Reflect.set(modal, '_expanded', new Set([entry.runId]));
   const rendered = Reflect.get(modal, '_renderRow').call(modal, entry);
   assert.equal(litBinding(rendered, 'run-flow-type='), 'dev');
 });

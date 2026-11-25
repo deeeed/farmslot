@@ -8,6 +8,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+// The shared fixture calls mock.module(...) and needs the module-mock test lane.
 import '../core/hermetic-git.test-support.js';
 import '../core/private-pool.test-support.js';
 
@@ -43,31 +44,42 @@ async function prepareFor(
     await deleteRun(created.id);
   });
   const prepare = () =>
-    slotPrepare({ slotId, branch: 'main', prepareProfile: 'typecheck', ...ids(created.id) }, () => {});
+    slotPrepare(
+      { slotId, branch: 'main', prepareProfile: 'typecheck', ...ids(created.id) },
+      () => {},
+    );
   return { prepare, synced };
 }
 
-test('a prepare naming only the runId uses the run flow type and domain', needsTmuxSandbox, async (t) => {
-  const { prepare, synced } = await prepareFor(
-    t,
-    'run-id',
-    { project: 'farmslot-farm', flowType: 'dev', domain: 'perps' },
-    (runId) => ({ runId }),
-  );
-  assert.equal((await prepare()).prepared, true);
-  assert.deepEqual(synced, [{ flowType: 'dev', domain: 'perps' }]);
-});
+test(
+  'a prepare naming only the runId uses the run flow type and domain',
+  needsTmuxSandbox,
+  async (t) => {
+    const { prepare, synced } = await prepareFor(
+      t,
+      'run-id',
+      { project: 'farmslot-farm', flowType: 'dev', domain: 'perps' },
+      (runId) => ({ runId }),
+    );
+    assert.equal((await prepare()).prepared, true);
+    assert.deepEqual(synced, [{ flowType: 'dev', domain: 'perps' }]);
+  },
+);
 
-test('a prepare naming only the bindRunId uses the run flow type and domain', needsTmuxSandbox, async (t) => {
-  const { prepare, synced } = await prepareFor(
-    t,
-    'bind-id',
-    { project: 'farmslot-farm', flowType: 'dev', domain: 'perps' },
-    (runId) => ({ bindRunId: runId }),
-  );
-  assert.equal((await prepare()).prepared, true);
-  assert.deepEqual(synced, [{ flowType: 'dev', domain: 'perps' }]);
-});
+test(
+  'a prepare naming only the bindRunId uses the run flow type and domain',
+  needsTmuxSandbox,
+  async (t) => {
+    const { prepare, synced } = await prepareFor(
+      t,
+      'bind-id',
+      { project: 'farmslot-farm', flowType: 'dev', domain: 'perps' },
+      (runId) => ({ bindRunId: runId }),
+    );
+    assert.equal((await prepare()).prepared, true);
+    assert.deepEqual(synced, [{ flowType: 'dev', domain: 'perps' }]);
+  },
+);
 
 test('explicit prepare params win over the named run', needsTmuxSandbox, async (t) => {
   const { prepare, synced } = await prepareFor(
@@ -80,13 +92,17 @@ test('explicit prepare params win over the named run', needsTmuxSandbox, async (
   assert.deepEqual(synced, [{ flowType: 'qa', domain: 'money-movement' }]);
 });
 
-test('a prepare for another project run is refused before any phase', needsTmuxSandbox, async (t) => {
-  const { prepare, synced } = await prepareFor(
-    t,
-    'other-project',
-    { project: 'another-project', flowType: 'dev', domain: 'perps' },
-    (runId) => ({ runId }),
-  );
-  await assert.rejects(prepare(), /belongs to project another-project, not .*farmslot-farm/);
-  assert.deepEqual(synced, []);
-});
+test(
+  'a prepare for another project run is refused before any phase',
+  needsTmuxSandbox,
+  async (t) => {
+    const { prepare, synced } = await prepareFor(
+      t,
+      'other-project',
+      { project: 'another-project', flowType: 'dev', domain: 'perps' },
+      (runId) => ({ runId }),
+    );
+    await assert.rejects(prepare(), /belongs to project another-project, not .*farmslot-farm/);
+    assert.deepEqual(synced, []);
+  },
+);

@@ -35,13 +35,16 @@ test('a prepare for no run, or a run without those fields, is unchanged', () => 
 });
 
 test('blank prepare params count as unset and take the run values', () => {
-  assert.deepEqual(withRunPrepareContext({ slotId: 's', runId: 'r', flowType: '', domain: '', app: '' }, run), {
-    slotId: 's',
-    runId: 'r',
-    flowType: 'dev',
-    domain: 'perps',
-    app: 'extension',
-  });
+  assert.deepEqual(
+    withRunPrepareContext({ slotId: 's', runId: 'r', flowType: '', domain: '', app: '' }, run),
+    {
+      slotId: 's',
+      runId: 'r',
+      flowType: 'dev',
+      domain: 'perps',
+      app: 'extension',
+    },
+  );
 });
 
 test('a run of another project is refused; the same project or an unknown one passes', () => {
@@ -49,6 +52,10 @@ test('a run of another project is refused; the same project or an unknown one pa
     () => assertRunMatchesSlotProject({ id: 'run-12345678', project: 'other' }, 'slot-1', 'mine'),
     /Run run-1234 belongs to project other, not slot-1's project mine/,
   );
-  assert.doesNotThrow(() => assertRunMatchesSlotProject({ id: 'r', project: 'mine' }, 'slot-1', 'mine'));
-  assert.doesNotThrow(() => assertRunMatchesSlotProject({ id: 'r', project: '' }, 'slot-1', 'mine'));
+  assert.doesNotThrow(() =>
+    assertRunMatchesSlotProject({ id: 'r', project: 'mine' }, 'slot-1', 'mine'),
+  );
+  assert.doesNotThrow(() =>
+    assertRunMatchesSlotProject({ id: 'r', project: '' }, 'slot-1', 'mine'),
+  );
 });
