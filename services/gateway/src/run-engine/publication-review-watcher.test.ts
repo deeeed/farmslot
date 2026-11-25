@@ -139,7 +139,13 @@ for (const answered of ['before', 'after'] as const) {
       // Its loop finishes here, before the next test starts.
       await engine;
       suspendPublicationReviewRecoveryForRun(runId);
-      updateRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
+      // A finished loop ends in a completion failure, which deleteRun refuses while the run names a
+      // slot; this fixture slot exists only in the run.
+      updateRun(runId, {
+        status: 'failed',
+        completedAt: new Date().toISOString(),
+        slotId: undefined,
+      });
       await deleteRun(runId);
     });
     const before = replays.length;
@@ -177,7 +183,13 @@ test('a gate replay still runs for a loop parked on its open gate decision', asy
       resolveEngineDecision(decision.id, 'approve');
     await engine;
     suspendPublicationReviewRecoveryForRun(runId);
-    updateRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
+    // A finished loop ends in a completion failure, which deleteRun refuses while the run names a
+    // slot; this fixture slot exists only in the run.
+    updateRun(runId, {
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      slotId: undefined,
+    });
     await deleteRun(runId);
   });
   const before = replays.length;
