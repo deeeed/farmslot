@@ -43,7 +43,7 @@ const { scrubTempForRun, shouldScrubTempForRun, taskBundleConfirmed } = await im
 const SLOT_ID = 'macpro-mme-1';
 const repo = path.join(root, 'slot');
 const vars = makeVars({ slotId: SLOT_ID, remoteRepo: repo });
-const projectJson = { task_dir: 'temp/tasks', runtime_dir: 'temp/farmslot' };
+const projectJson = { task_dir: 'temp/tasks', paths: { runtime_dir: 'temp/farmslot' } };
 const orchestratorTask = (flow: string, name: string) =>
   `/farm/projects/va-mmcx-terminal-farm/tasks/${flow}/${name}/TASK.md`;
 const write = (rel: string) => {
