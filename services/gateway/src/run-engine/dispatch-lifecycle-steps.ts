@@ -624,6 +624,9 @@ export async function executePrepareStep(
           : {}),
       },
     );
+    // Prepare skips a disabled slot: stop here rather than initialize a task on it.
+    if (!prepareResult.prepared)
+      throw new Error(`Slot ${current.slotId} is disabled; prepare did not prepare it`);
     selectedPrepareProfile = prepareResult.profile;
     lockfilesRewritten = prepareResult.lockfilesRewritten;
     keptBranches = prepareResult.keptBranches;

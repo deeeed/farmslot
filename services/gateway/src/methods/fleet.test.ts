@@ -1343,6 +1343,45 @@ test("one slot's broken config doesn't fail its host's SSH check for every slot 
   assert.equal(status.get('dead.invalid'), 'unloadable', 'no slot loads: no SSH verdict at all');
 });
 
+test('a host whose slots are all held is skipped even when they name a mode', async () => {
+  const reached: string[] = [];
+  const status = await checkSSHPerMachine(
+    [
+      {
+        machine: 'held',
+        project: 'audiolab',
+        platform: 'ios',
+        os: 'darwin',
+        host: 'held.invalid',
+        ssh_user: 'operator',
+        slots: [
+          {
+            id: 'held-1',
+            mode: 'dispatch',
+            enabled: false,
+            repo: '/repos/held-1',
+            session: 'held-1',
+          },
+          {
+            id: 'held-2',
+            mode: 'custom',
+            enabled: false,
+            repo: '/repos/held-2',
+            session: 'held-2',
+          },
+        ],
+      },
+    ],
+    async (slotId) => makeVars({ slotId }),
+    async (vars) => {
+      reached.push(vars.slotId);
+      return { exitCode: 0, stdout: 'ok', stderr: '' };
+    },
+  );
+  assert.equal(status.get('held.invalid'), 'skip');
+  assert.deepEqual(reached, [], 'no held slot is probed');
+});
+
 test('a pool read mid-write is read again; one still unreadable is reported with its last good slots (F306)', async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'fleet-pools-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
