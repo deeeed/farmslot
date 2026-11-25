@@ -431,6 +431,78 @@ test('a budget that runs out leaves the delivery running for the next command', 
   assert.equal(node.uploads.length, 1, 'the next command joined the same delivery');
 });
 
+/** A node whose every call is counted, so a cached answer shows as zero calls. */
+function countedIo(io: NodeSupportIo): { io: NodeSupportIo; calls: () => number } {
+  let calls = 0;
+  const count =
+    <A extends unknown[], R>(fn: (...args: A) => R) =>
+    (...args: A): R => {
+      calls++;
+      return fn(...args);
+    };
+  return {
+    io: {
+      ...io,
+      exec: count(io.exec),
+      fileExists: count(io.fileExists),
+      readFile: count(io.readFile),
+      writeFile: count(io.writeFile),
+      writeFiles: count(io.writeFiles),
+    },
+    calls: () => calls,
+  };
+}
+
+test('a delivery that finishes after every budget ran out serves the next command from the cache', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const counted = countedIo(node.io);
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50 }),
+    NodeSupportPendingError,
+  );
+  node.release();
+  // Nobody waits for it now; it finishes on its own.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const before = counted.calls();
+  const mapped = await resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50 });
+  assert.match(mapped, /support\/[0-9a-f]{64}\//);
+  assert.equal(counted.calls(), before, 'the finished delivery answered without asking the node');
+  assert.equal(node.uploads.length, 1);
+});
+
+test('a delivery overtaken by a config change while nobody waited caches nothing', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const counted = countedIo(node.io);
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50 }),
+    NodeSupportPendingError,
+  );
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  farm.editScript('echo v2\n');
+  now += 2_100;
+  node.release();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // Back to the delivered content: its bundle is checked on the node again, not served from a
+  // cache entry recorded while the config said otherwise.
+  farm.editScript('echo v1\n');
+  now += 2_100;
+  const before = counted.calls();
+  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
+  assert.ok(counted.calls() > before, 'the overtaken delivery left no cache entry');
+});
+
 test('a delivery that fails after its budget ran out is reported to the next command', async (t) => {
   resetRemoteFarmCommandCache();
   const farm = await withTempFarm(t);

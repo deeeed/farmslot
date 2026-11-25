@@ -436,13 +436,15 @@ function ensureOnce(
         }
         delivery.progress = progress;
       }
-      return await ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
+      const state = await ensureNodeSupportBundle(vars, projectVars.runtimeDir ?? '.agent', {
         projectVars,
         io,
         collected: local.collected,
         selectSlot,
         progress,
       });
+      await rememberFinishedDelivery(vars, projectVars, local, slotKey, selectSlot, state);
+      return state;
     } finally {
       forgetDelivery(delivery);
     }
@@ -454,6 +456,42 @@ function ensureOnce(
   pendingEnsures.set(slotKey, delivery);
   if (!upload) machinePublishes.set(machineKey, delivery);
   return delivery;
+}
+
+function rememberVerified(
+  cacheKey: string,
+  slotId: string,
+  supportDir: string,
+  selectSlot: boolean,
+): void {
+  if (selectionCurrent(slotId, supportDir, selectSlot))
+    verifiedBundles.set(cacheKey, { at: Date.now(), supportDir });
+}
+
+/**
+ * A delivery records its own result, so a bundle that finished after every waiter's budget ran
+ * out serves the next command from the cache. Without this, a delivery slower than the budget
+ * (a fleet probe waits 10 s) was redone by every later command and never caught up. Only the
+ * bundle the slot's config still builds is recorded: a delivery overtaken by a config change
+ * caches nothing.
+ */
+async function rememberFinishedDelivery(
+  vars: SlotVars,
+  projectVars: ProjectVars,
+  local: LocalBundle,
+  cacheKey: string,
+  selectSlot: boolean,
+  state: NodeSupportBundleState | null,
+): Promise<void> {
+  if (!state?.hash || state.hash !== local.hash) return;
+  try {
+    const latest = await currentLocalBundle(vars.projectName, projectVars.projectJson);
+    if (latest.hash !== local.hash) return;
+  } catch {
+    // An unreadable config is not evidence that this bundle is current.
+    return;
+  }
+  rememberVerified(cacheKey, vars.slotId, state.supportDir, selectSlot);
 }
 
 /**
@@ -624,8 +662,7 @@ export async function resolveRemoteFarmCommand(
     options.signal,
   );
   if (!state?.hash) return command;
-  if (selectionCurrent(vars.slotId, state.supportDir, selectSlot))
-    verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });
+  rememberVerified(cacheKey, vars.slotId, state.supportDir, selectSlot);
   const mapped = remap(state.supportDir, state.paths);
   return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, state.supportDir);
 }

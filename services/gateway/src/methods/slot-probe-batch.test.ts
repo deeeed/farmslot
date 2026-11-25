@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import { parseSlotProbeOutput, slotProbeScript } from './slot-probe-batch.js';
+import { parseSlotProbeOutput, runSlotProbeBatches, slotProbeScript } from './slot-probe-batch.js';
 
 const run = promisify(execFile);
 const alive = (pid: number) => {
@@ -100,4 +100,55 @@ for (const shell of [
 
 test('a probe the batch never reported reads as unavailable', () => {
   assert.deepEqual(parseSlotProbeOutput('', 2), [undefined, undefined]);
+});
+
+// A hook that calls a farm script waits for the node support bundle; a delivery still running at
+// the batch budget answers with no output at all (execOnSlot's pending result).
+const FARM = '/node/farmslot-node/projects/x-farm/setup/health-check.sh';
+const head = "printf 'sha=abc\\nref=main\\n'";
+
+test('a pending support bundle leaves the probes that need none with their results', async () => {
+  const scripts: string[] = [];
+  const results = await runSlotProbeBatches([head, undefined, `bash ${FARM}`, 'echo primary'], {
+    needsBundle: (command) => command.includes(FARM),
+    timeoutSeconds: 2,
+    runBatch: async (script) => {
+      scripts.push(script);
+      if (script.includes(FARM)) return '';
+      return (await run('/bin/sh', ['-c', script])).stdout;
+    },
+  });
+  assert.equal(scripts.length, 2, 'the farm-script probe runs in its own batch');
+  assert.deepEqual(results, [
+    { stdout: 'sha=abc\nref=main\n', stderr: '', exitCode: 0 },
+    undefined,
+    undefined,
+    { stdout: 'primary\n', stderr: '', exitCode: 0 },
+  ]);
+});
+
+test('a slot with no farm-script probe still runs one batch', async () => {
+  const scripts: string[] = [];
+  const results = await runSlotProbeBatches([head, 'echo primary'], {
+    needsBundle: (command) => command.includes(FARM),
+    timeoutSeconds: 2,
+    runBatch: async (script) => {
+      scripts.push(script);
+      return (await run('/bin/sh', ['-c', script])).stdout;
+    },
+  });
+  assert.equal(scripts.length, 1);
+  assert.equal(results[0]?.stdout, 'sha=abc\nref=main\n');
+  assert.equal(results[1]?.stdout, 'primary\n');
+});
+
+test('a batch that could not run leaves only its own probes unavailable', async () => {
+  const results = await runSlotProbeBatches([`bash ${FARM}`, head], {
+    needsBundle: (command) => command.includes(FARM),
+    timeoutSeconds: 2,
+    runBatch: async (script) =>
+      script.includes(FARM) ? undefined : (await run('/bin/sh', ['-c', script])).stdout,
+  });
+  assert.equal(results[0], undefined);
+  assert.equal(results[1]?.stdout, 'sha=abc\nref=main\n');
 });
