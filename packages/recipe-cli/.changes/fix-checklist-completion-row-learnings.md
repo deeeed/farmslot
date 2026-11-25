@@ -1,0 +1,1 @@
+- `checklist mark N` on the completion row (the last row, which says to run `mark complete`) stages the learning package and shows the completion guidance, as `mark complete` does. agent-runtime 0.51.1 completes the run for that row, but the CLI keyed staging on the typed step, so the run completed without a learning package.

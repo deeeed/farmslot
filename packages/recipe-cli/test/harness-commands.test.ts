@@ -248,3 +248,33 @@ test('start does not re-open a completed run through the tool path', async (t) =
   assert.equal(await handleChecklist(['mark', dir, 'start']), 0);
   assert.equal(JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status, 'running');
 });
+
+// `mark N` on the row that says to run `mark complete` completes the run
+// (agent-runtime runs it), so completion staging must follow the signal, not
+// the typed step: before, the run completed with no learning package staged.
+test('marking the completion row stages learnings and shows completion guidance', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'host-completion-row-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
+  mkdirSync(path.join(dir, 'inputs'), { recursive: true });
+  writeFileSync(path.join(dir, 'inputs', 'handoff.json'), '{}');
+  writeFileSync(path.join(dir, 'artifacts', 'learnings.md'), '- None\n');
+  writeFileSync(path.join(dir, 'artifacts', 'report.md'), 'Done.\n');
+  writeFileSync(
+    path.join(dir, 'TASK.md'),
+    '# Task\n\n## Steps\n- [ ] 1. Do it\n- [ ] 2. Finish: run `<task>/mark complete --mark-last`\n',
+  );
+  const calls: string[] = [];
+  const options = {
+    beforeComplete: () => calls.push('beforeComplete'),
+    closeout: () => {
+      calls.push('closeout');
+      return { status: 0 };
+    },
+  };
+  assert.equal(await handleChecklist(['mark', dir, '1'], options), 0);
+  assert.deepEqual(calls, []);
+  assert.equal(await handleChecklist(['mark', dir, '2'], options), 0);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status, 'complete');
+  assert.deepEqual(calls, ['beforeComplete', 'closeout']);
+});

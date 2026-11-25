@@ -308,6 +308,7 @@ export async function handleChecklist(
   }
   if (!stepGatesReady(resolvedTaskDir, step, gates, targetOverrides.checklist)) return EXIT.runtime;
   if (step === 'complete') options.beforeComplete?.(resolvedTaskDir);
+  const completedBefore = terminalSignalStatus(resolvedTaskDir, targetOverrides) === 'complete';
 
   const result = spawnSync(process.execPath, [MARK_SCRIPT, resolvedTaskDir, ...forwarded], {
     stdio: 'inherit',
@@ -318,7 +319,14 @@ export async function handleChecklist(
   }
   const status = result.status ?? EXIT.runtime;
   if (status === EXIT.ok) {
-    stageLearningPackage(resolvedTaskDir, step, forwarded, options);
+    // `mark N` on the completion row runs `mark complete` itself (agent-runtime), so
+    // the step typed here doesn't say whether the run completed; the signal does.
+    const completedByRow =
+      numericMarkStep(step) !== null &&
+      !completedBefore &&
+      terminalSignalStatus(resolvedTaskDir, targetOverrides) === 'complete';
+    if (completedByRow) options.beforeComplete?.(resolvedTaskDir);
+    stageLearningPackage(resolvedTaskDir, completedByRow ? 'complete' : step, forwarded, options);
   }
   return status;
 }
