@@ -5,11 +5,6 @@ import { slotDeletePath, slotFileExists, type SlotLocality } from '../../core/sl
 import { shellQuote } from '../../core/tmux.js';
 import { FULL_COMMIT } from '../../evals/blind-inputs.js';
 
-export {
-  PINNED_SKIP_PREPARE_REFUSAL,
-  projectPinsPrepare,
-} from '../../projects/pinned-prepare-policy.js';
-
 /**
  * Pinned prepare: a comparison run with a start commit must run on a build of that
  * commit, or fail before its worker starts. The project's preflight installs the

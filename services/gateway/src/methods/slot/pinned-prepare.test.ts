@@ -2,12 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { RawProjectJson } from '../../core/index.js';
+import { projectPinsPrepare } from '../../projects/pinned-prepare-policy.js';
 
-import {
-  checkPrepareArtifactReceipt,
-  projectPinsPrepare,
-  resolvePinnedProfile,
-} from './pinned-prepare.js';
+import { checkPrepareArtifactReceipt, resolvePinnedProfile } from './pinned-prepare.js';
 
 const BASE = '260bd3a5b20c3f9126510b7b71d0e5527f395b5d';
 const REVISION = 'a'.repeat(40);

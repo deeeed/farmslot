@@ -20,8 +20,6 @@ import {
 
 import { loadProjectVarsOrNull } from './project-vars.js';
 
-export { isPinnedPrepareRun, prepareIsPinned } from '../projects/pinned-prepare-policy.js';
-
 export async function runPrepareIsPinned(
   run: PinnedRunFields & Pick<Run, 'project' | 'id'>,
 ): Promise<boolean> {

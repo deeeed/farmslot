@@ -55,6 +55,7 @@ import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
+import { PINNED_SKIP_PREPARE_REFUSAL } from '../../projects/pinned-prepare-policy.js';
 import {
   canRecoverReviewFixPass,
   pipelineReviewSelection,
@@ -126,7 +127,6 @@ import { writeTextFileOnSlot } from '../dispatch/slot-file-write.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 import { rebindRunSlot } from '../fleet.js';
 import { runtimeCapabilityStatus } from '../runtime-capabilities.js';
-import { PINNED_SKIP_PREPARE_REFUSAL } from '../slot/pinned-prepare.js';
 import { assertReleaseRunGuards, slotReleasePreflight } from '../slot/release.js';
 
 import {

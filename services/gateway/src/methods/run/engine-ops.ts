@@ -283,8 +283,8 @@ export async function runActivateOnSlot(
       {
         runId: params.runId,
         stepName: PipelineSteps.PREPARE,
-        // A pinned run prepares with the pinned default for the target slot's
-        // platform, never a profile stored for another slot; attach installs nothing.
+        // A pinned run keeps a stored profile listed for the target slot's platform,
+        // otherwise takes that platform's pinned default; attach installs nothing.
         prepareProfile:
           params.prepareProfile ??
           ((await runPrepareIsPinned(run))

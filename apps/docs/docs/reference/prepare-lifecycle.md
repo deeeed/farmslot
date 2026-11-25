@@ -199,8 +199,8 @@ config that fails to load refuses a run that would otherwise be pinned.
   replay that would re-dispatch, and at prepare. A replay whose target lies after
   prepare and at or before dispatch restarts from prepare, unless it resumes a live
   native worker. Restart recovery prepares a pinned run with no matching record again
-  instead of trusting its health check. `activateOnSlot` uses the pinned default
-  instead of `attach`.
+  instead of trusting its health check. `activateOnSlot` keeps a stored profile listed for the slot's platform,
+  otherwise uses the pinned default, never `attach`.
 
 ## Hook overrides
 

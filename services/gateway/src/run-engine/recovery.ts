@@ -39,6 +39,7 @@ import {
   isActiveSlotHolder,
   slotPinIsRequestOnly,
 } from '../methods/dispatch/slot-scoring.js';
+import { prepareIsPinned } from '../projects/pinned-prepare-policy.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import {
@@ -52,7 +53,7 @@ import { withSourcePlanning } from '../sources/runtime.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import { pendingReviewContinuation } from './gate-policy.js';
-import { pinnedDispatchRefusal, prepareIsPinned } from './pinned-prepare.js';
+import { pinnedDispatchRefusal } from './pinned-prepare.js';
 import {
   publicationFinalizationAction,
   shouldResumePublicationGate,

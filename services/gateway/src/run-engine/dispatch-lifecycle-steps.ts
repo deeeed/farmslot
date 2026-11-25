@@ -15,7 +15,8 @@ import {
   slotClaimBlockedByRelease,
 } from '../methods/dispatch/slot-scoring.js';
 import { slotPrepare } from '../methods/slot.js';
-import { parseJsonObject, PINNED_SKIP_PREPARE_REFUSAL } from '../methods/slot/pinned-prepare.js';
+import { parseJsonObject } from '../methods/slot/pinned-prepare.js';
+import { PINNED_SKIP_PREPARE_REFUSAL } from '../projects/pinned-prepare-policy.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
 import {
   BEFORE_WORKER_LAUNCH,

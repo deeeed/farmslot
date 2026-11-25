@@ -10,13 +10,12 @@ import type {
 } from '@farmslot/protocol';
 
 import type { RawProjectJson } from '../core/index.js';
+import { isPinnedPrepareRun, prepareIsPinned } from '../projects/pinned-prepare-policy.js';
 
 import {
-  isPinnedPrepareRun,
   observedBuildFiles,
   observedRunwayArtifact,
   pinnedDispatchRefusal,
-  prepareIsPinned,
   prepareObservesBuild,
   replayResumesNativeWorker,
   shouldReroutePinnedReplayToPrepare,
@@ -215,7 +214,7 @@ test('only a held, launched primary native worker counts as live', () => {
   assert.equal(
     replayResumesNativeWorker({ ...native(launched), flowType: 'pr-complete' }, plain),
     false,
-    'a flow whose primary context is not the dev worker',
+    'pr-complete looks up the primary context, so a dev context does not match',
   );
 });
 

@@ -24,6 +24,8 @@ const snapshots = await import('../../run-engine/diff-artifacts.js');
 const admission = await import('../../backlog/pr-admission.js');
 const slots = await import('../slot.js');
 const { makeVars } = await import('../../runners/test-fixtures.js');
+const { NativeWorkerOperationUncertainError } =
+  await import('../../runners/native/worker-error.js');
 const { createRun, deleteRun, getRun, persistRunNow, updateRun } =
   await import('../../runs/store.js');
 const vars = makeVars({ projectName: 'dispatch-baseline', platform: 'cli' });
@@ -35,6 +37,7 @@ let runtimeBoots = 0;
 let projectJson: RawProjectJson = {};
 let projectConfigBroken = false;
 const stop = new Error('Fixture stops before worker task copy or launch');
+const nativeReconciliation = new Error('Fixture stops at native reconciliation');
 
 mock.module('../../core/config.js', {
   namedExports: {
@@ -70,6 +73,10 @@ mock.module('../../run-engine/declared-capabilities.js', {
     ...capabilities,
     prepareDispatchRunCapabilities: async () => {
       throw stop;
+    },
+    // Only native reconciliation calls this, before any launch.
+    prepareRetainedRunCapabilities: async () => {
+      throw nativeReconciliation;
     },
   },
 });
@@ -596,6 +603,11 @@ test('a pinned native run with a held worker reaches reconciliation, not the mis
     () => undefined,
     (failure: unknown) => failure,
   );
-  assert.ok(error instanceof Error);
-  assert.doesNotMatch(error.message, /no record of the build/, 'the live worker was not refused');
+  // launchNative wraps any reconciliation failure; its cause is the fixture stop.
+  assert.ok(error instanceof NativeWorkerOperationUncertainError || error === nativeReconciliation);
+  assert.equal(
+    error === nativeReconciliation ? error : (error as Error & { cause?: unknown }).cause,
+    nativeReconciliation,
+    'dispatch reached native reconciliation instead of refusing the live worker',
+  );
 });

@@ -53,6 +53,7 @@ import {
   resolveSandboxPorts,
   siblingPortsFromDevServer,
 } from '../../prepare/farmslot-port-provisioning.js';
+import { projectPinsPrepare } from '../../projects/pinned-prepare-policy.js';
 import { farmslotRuntimeLogDir } from '../../projects/repo-root.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
 import {
@@ -93,7 +94,6 @@ import {
   deleteStaleReceipt,
   parseJsonObject,
   PREPARE_ARTIFACT_RECEIPT,
-  projectPinsPrepare,
   receiptRefusal,
   resolvePinnedProfile,
   sourceBuildRefusal,
@@ -2160,7 +2160,6 @@ async function slotPrepareInner(
         cause === undefined ? undefined : { cause },
       );
       if (receiptLogPath) error.failedLogPath = receiptLogPath;
-      error.failedPhase = 'preflight';
       return error;
     };
     let artifact: ReturnType<typeof checkPrepareArtifactReceipt>;
