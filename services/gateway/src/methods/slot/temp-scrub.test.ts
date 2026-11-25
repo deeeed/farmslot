@@ -74,9 +74,9 @@ git(repo, 'add', '.');
 git(repo, 'commit', '-qm', 'base');
 
 const vars = makeVars({ slotId: SLOT_ID, remoteRepo: repo });
+// The packs' own paths: va-mmcx-terminal-farm and metamask-mobile-farm.
 const terminalProject = {
-  task_dir: 'temp/tasks',
-  paths: { runtime_dir: 'temp/farmslot' },
+  paths: { runtime_dir: 'temp/farmslot', artifact_dir: 'temp/tasks' },
   resources: {
     'dev-server': {
       type: 'dev-server',
@@ -91,7 +91,7 @@ const terminalProject = {
   },
 };
 // Mobile, extension and core: the runtime dir is temp/recipe/runtime, deps stamps sit in temp/farmslot.
-const mobileProject = { task_dir: 'temp/tasks', paths: { runtime_dir: 'temp/recipe/runtime' } };
+const mobileProject = { paths: { runtime_dir: 'temp/recipe/runtime', artifact_dir: 'temp/tasks' } };
 const orchestratorTask = (flow: string, name: string) =>
   `/farm/projects/va-mmcx-terminal-farm/tasks/${flow}/${name}/TASK.md`;
 const write = (rel: string, body = 'answer') => {

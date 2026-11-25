@@ -94,8 +94,7 @@ mock.module('../../core/index.js', {
       runtimeDir: '.agent',
       projectJson: {
         default_branch: 'main',
-        task_dir: 'temp/tasks',
-        paths: { runtime_dir: 'temp/farmslot' },
+        paths: { runtime_dir: 'temp/farmslot', artifact_dir: 'temp/tasks' },
       },
     }),
     readSlotField: async (_slotId: string, field: string) => slotRow[field] ?? null,
