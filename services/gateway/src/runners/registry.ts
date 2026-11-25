@@ -3844,8 +3844,8 @@ export async function sendRunnerPostLaunchPrompt(
       isObservabilityReadingAuthoritative(hook) && hook.value !== 'unknown' ? hook.value : null;
     const plainPane = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
     // The live composer decides, on the ANSI pane: it recognises suggestions, placeholders and
-    // multi-row drafts. A bordered grok composer (`│ ❯ … │`) is not recognised, so without an
-    // authoritative reading grok gets the extra window and fails closed.
+    // multi-row drafts. A bordered grok composer (`│ ❯ … │`) is not recognised, so it is never
+    // handed over: grok gets the extra window and fails closed, whatever the reading.
     const composerState = liveComposerState(pane);
     const composerHoldsInstruction = liveComposerHoldsInstruction(pane, message);
     // Delivery submits whatever it reads as a buffered instruction. Hand over only when that is

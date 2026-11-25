@@ -2980,7 +2980,7 @@ for (const [why, pane, reading, runner] of [
   ],
   [
     'a codex draft under the instruction in scrollback while the hook reads idle',
-    `› ${message}\n\n• Sure.\n\n› hold on\n\n  gpt-5.5 · ~/repo\n`,
+    `› ${message}\n\n  Sure.\n\n› hold on\n\n  gpt-5.5 · ~/repo\n`,
     idle,
     'codex',
   ],
