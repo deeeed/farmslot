@@ -18,8 +18,18 @@ test('node native execution rejects other owners and conflicting execution ident
     supportsProfiles: true,
     supportsWorkerStopAttestation: true,
     supportsStructuredResults: true,
+    supportsHostRefresh: true,
     supportsObservations: true,
   });
+  await assert.rejects(
+    service.route({
+      owner: 'owner',
+      method: 'native.session.create',
+      params: {},
+      hostRelease: 'all',
+    }),
+    /hostRelease must be a list of session IDs/,
+  );
   await assert.rejects(
     service.route({ owner: 'another', method: 'native.session.list', params: {} }),
     /not owned/,

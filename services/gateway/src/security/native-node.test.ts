@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Principal } from '@farmslot/protocol';
+import type { NativeExecutionNodeDeclaration, Principal } from '@farmslot/protocol';
 
 import {
   assertNativeMachineAssignment,
@@ -73,5 +73,32 @@ test('native node declarations require an issued credential for that exact machi
     assert.throws(
       () => nativeNodeDeclaration({ ...declaration, supportsEnsure }, 'node-a', principal, true),
       /supportsEnsure must be boolean/,
+    );
+});
+
+test('native node declarations keep every declared boolean capability', () => {
+  const capabilities = {
+    supportsStandaloneDelegation: true,
+    supportsApprovalMode: true,
+    supportsEnsure: true,
+    supportsWorkers: true,
+    supportsWorkerStopAttestation: true,
+    supportsProfiles: true,
+    supportsObservations: true,
+    supportsStructuredResults: true,
+    supportsHostRefresh: true,
+  } satisfies Required<
+    Omit<NativeExecutionNodeDeclaration, 'ownerPrincipalId' | 'conversationStreaming'>
+  >;
+  const declaration = {
+    ownerPrincipalId: 'owner',
+    conversationStreaming: 1,
+    ...capabilities,
+  } as const;
+  assert.deepEqual(nativeNodeDeclaration(declaration, 'node-a', principal, true), declaration);
+  for (const field of Object.keys(capabilities))
+    assert.throws(
+      () => nativeNodeDeclaration({ ...declaration, [field]: 'true' }, 'node-a', principal, true),
+      new RegExp(`${field} must be boolean`),
     );
 });

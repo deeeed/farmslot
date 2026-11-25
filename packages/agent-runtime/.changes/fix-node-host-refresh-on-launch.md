@@ -1,0 +1,1 @@
+- `withNativeHostRefreshPolicy` and `releasedSessionsPolicy` refresh a host under one launch's own policy, from a fresh census. Clients can limit idle stops to fenced hosts and a runner count. A launch to a host on another runtime is refused as skew before capability errors.

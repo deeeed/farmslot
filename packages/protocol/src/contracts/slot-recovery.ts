@@ -109,12 +109,18 @@ export function slotRecoveryEligibility(
   const observed = Date.parse(work.observedAt);
   if (!Number.isFinite(observed) || now - observed > SLOT_WORKSPACE_MAX_AGE_MS)
     return blocked('Workspace inspection expired', 'unknown');
-  if (slot.lifecycle === 'busy' && !work.terminalOwner) return blocked('Slot is working');
   bulkInspectable = slot.lifecycle === 'ready' && !work.currentRunId;
+  // The named reason first: a busy slot's protection otherwise read only as "busy".
   if (work.protectedReason) {
     bulkInspectable = false;
     return blocked(work.protectedReason);
   }
+  if (slot.lifecycle === 'busy' && !work.terminalOwner)
+    return blocked(
+      slot.phase === 'releasing' && !work.currentRunId
+        ? 'Slot is returning to idle'
+        : 'Slot is busy for an unfinished run',
+    );
   if (work.cleanupRunId || work.handoffRunId) {
     bulkInspectable = false;
     return blocked('Slot has a cleanup or handoff owner');

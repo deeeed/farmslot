@@ -1,0 +1,1 @@
+- `confirmStopped` now works for a native worker on an execution node. Before, the gateway answered that the node needed an upgrade, though the node supported stop confirmation.

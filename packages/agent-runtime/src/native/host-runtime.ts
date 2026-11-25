@@ -77,6 +77,12 @@ export function nativeIdleStopCleanupMs(runners: number): number {
   return NATIVE_HOST_CLEANUP_MS + runners * NATIVE_RUNNER_CLEANUP_MS;
 }
 
+/** The most idle runners an execution node stops when a launch refreshes its host. */
+export const NATIVE_NODE_REFRESH_MAX_RUNNERS = 6;
+/** A launch to a node may first stop that many idle runners, then start the new host. */
+export const NATIVE_NODE_ADMISSION_TIMEOUT_MS =
+  60_000 + nativeIdleStopCleanupMs(NATIVE_NODE_REFRESH_MAX_RUNNERS);
+
 /**
  * The supervisor's command line ends with the state directory it was started on, spelled as
  * its client resolved it. Another spelling of the same directory, through a symlink, matches.

@@ -459,6 +459,33 @@ test('a failed fetch reports its exit code and leaves recovery held', async () =
   assert.equal((await core.readSlotRow('example-slot'))?.lifecycle, 'held');
   assert.deepEqual(calls, []);
 });
+test('a strict return refuses a checkout that changed after its inspection, before any mark', async () => {
+  branch = 'example-feature';
+  remote = 'b'.repeat(40);
+  const strict = (expectedWorkspace: SlotRefreshParams['expectedWorkspace']) =>
+    recoverSlotWorkspace(
+      { slotId: 'example-slot', release: true, mode: 'safe', expectedWorkspace },
+      () => {},
+      undefined,
+      { exactWorkspace: true },
+    );
+  const inspected = slotWorkspaceIdentity(
+    await inspectSlotWorkspace('example-slot', { timeoutMs: 120_000 }),
+  );
+  const before = await core.readSlotRow('example-slot');
+  dirty = 1;
+  const refused = await strict(inspected);
+  assert.equal(refused.refreshed, false);
+  assert.equal(refused.reason, 'identity-changed');
+  assert.equal(refused.detail, 'Checkout changed since inspection');
+  assert.deepEqual(calls, [], 'nothing parked, stopped or reset');
+  assert.equal((await core.readSlotRow('example-slot'))?.lifecycle, before?.lifecycle);
+  dirty = 0;
+  const unchanged = await strict(
+    slotWorkspaceIdentity(await inspectSlotWorkspace('example-slot', { timeoutMs: 120_000 })),
+  );
+  assert.equal(unchanged.refreshed, true, unchanged.detail);
+});
 test('inspection without identity requires an existing recovery marker', async () => {
   await seed({ workspace_recovery: null });
   assert.equal((await recover()).detail, 'Slot has no pending workspace recovery');

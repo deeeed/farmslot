@@ -9,6 +9,7 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src && node --test ../../scripts/deploy-node.test.mjs",
+    "test:host-refresh-live": "TSX_TSCONFIG_PATH=tsconfig.json node --import tsx --test src/commands/native-session-refresh.live.ts",
     "quality": "yarn typecheck && yarn test"
   },
   "dependencies": {

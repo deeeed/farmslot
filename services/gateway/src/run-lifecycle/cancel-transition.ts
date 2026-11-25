@@ -35,6 +35,7 @@ import { schedulerTick } from '../work-graph/store.js';
 
 import { episodeCaptureEffect } from './episode-capture-effect.js';
 import {
+  clearCheckoutRetainedNote,
   fenceRunSlotCleanup,
   recordSlotTeardownSkipped,
   releaseRunOwnedCapabilities,
@@ -431,8 +432,8 @@ export async function finishCancelledSlot(
       recordRunId: run.id,
       retainedCandidate: blindCandidate,
     });
-    if (result.kind !== 'ready')
-      await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
+    if (result.kind === 'ready') await clearCheckoutRetainedNote(run);
+    else await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
   }
   await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
   console.log(

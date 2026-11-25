@@ -101,6 +101,7 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
+import { recoveryFromRow } from '../methods/slot/workspace.js';
 import { type GatewayResourceRevisions, resourceRevisions } from '../resources/revisions.js';
 import {
   isCancelledSlotHolder,
@@ -569,14 +570,61 @@ async function claimAdmittedSlot(
   }
 
   if (!run.engineState?.flags?.skipPrepare) {
-    if (!run.engineState?.flags?.freshReuse && !opts?.takeoverLiveOwner && !opts?.reserveOnly)
-      await reclaimFinishedSlot(slotId, run, emit);
+    if (!run.engineState?.flags?.freshReuse && !opts?.takeoverLiveOwner && !opts?.reserveOnly) {
+      const before = await readSlotRow(slotId);
+      try {
+        await reclaimFinishedSlot(slotId, run, emit);
+      } catch (error) {
+        // Someone else acting on the slot (a recovery, a rival claim) ends by itself, whatever
+        // refusal it caused here: select again or wait rather than fail the run.
+        if (slotChangedUnderAttempt(slotId, before, await readSlotRow(slotId)))
+          throw slotClaimRefusedError(slotId, 'the slot changed during reclaim', true);
+        throw error;
+      }
+    }
     await releaseBranchHolderForSelection(slotId, run.branch);
   }
   await commitSlotClaim(slotId, runId, generation, phase, agent, opts);
   if (selectedExecutionTemplate && !run.executionTemplate) {
     updateRun(runId, { executionTemplate: selectedExecutionTemplate });
   }
+}
+
+/** A workspace recovery (an automatic idle return, a refresh) is running on the slot now. It
+ * holds the prepare guard and its fenced row while it runs; a failed one is held for an operator
+ * instead. After a gateway crash the fenced row stays until the reconciler resumes the recovery,
+ * which needs the slot's node back, so a wait on it ends once that node returns. */
+function workspaceRecoveryInFlight(
+  slotId: string,
+  row: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  return (
+    activePrepareSlots.has(slotId) ||
+    (!!row?.workspace_recovery &&
+      row.lifecycle === 'busy' &&
+      row.phase === SLOT_PHASE_RELEASING &&
+      !row.current_run_id)
+  );
+}
+
+/** Another actor changed the slot while this run tried it: a recovery is running, a claim moved
+ * its ownership epoch (every claim does), or another recovery finished meanwhile: the slot is
+ * ready again with a different marker, head or branch (recovery keeps the epoch). This run's own
+ * recovery that failed leaves the slot held instead, which is its real refusal, not a change. */
+function slotChangedUnderAttempt(
+  slotId: string,
+  before: Readonly<Record<string, unknown>> | null | undefined,
+  after: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  const recoveryId = (row: typeof before) => (row ? recoveryFromRow(row)?.id : undefined);
+  return (
+    workspaceRecoveryInFlight(slotId, after) ||
+    (Number(before?.slot_epoch) || 0) !== (Number(after?.slot_epoch) || 0) ||
+    (after?.lifecycle === 'ready' &&
+      (recoveryId(before) !== recoveryId(after) ||
+        (before?.head_sha ?? null) !== (after?.head_sha ?? null) ||
+        (before?.branch ?? null) !== (after?.branch ?? null)))
+  );
 }
 
 /**
@@ -704,6 +752,7 @@ export async function commitSlotClaim(
       // whose preview waits for it on a pinned slot.
       !blocker ||
         blocker.kind === 'live-owner' ||
+        workspaceRecoveryInFlight(slotId, row) ||
         (blocker.kind === 'occupied' && (await cleanupHoldClearsSoon(slotId, row, cleanupHoldRun))),
     );
   }
@@ -1247,15 +1296,22 @@ function operatorPickedSlot(run: Run): string | undefined {
 
 /**
  * Poll the slot row (no selection work) until the slot can be claimed. A live holder ends by
- * itself, so that wait is unbounded; the slot still busy under the ended run is bounded like an
- * explicit pick's release. A release in progress is left to the explicit pick's own bounded wait,
- * a cancelled holder to selection's reclaim, and any other blocker to selection to report.
+ * itself, so that wait is unbounded; so does a workspace recovery, which holds the slot only
+ * while it runs (a failed one is held for an operator and no longer reads as running). The slot
+ * still busy under the ended run is bounded like an explicit pick's release. A release in
+ * progress is left to the explicit pick's own bounded wait, a cancelled holder to selection's
+ * reclaim, and any other blocker to selection to report.
  */
 async function waitUntilSlotClaimable(slotId: string, runId: string, generation: number) {
   let teardownSince: number | undefined;
   for (;;) {
     if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
     const row = await readSlotRow(slotId);
+    // A pin waits out a recovery on its slot rather than meeting its refusal again at once.
+    if (workspaceRecoveryInFlight(slotId, row)) {
+      await delay(SLOT_CLAIM_CONFLICT_POLL_MS);
+      continue;
+    }
     const blocker = row ? slotClaimBlocker(row, runId, getRun) : null;
     const owner =
       row && typeof row.current_run_id === 'string' ? getRun(row.current_run_id) : undefined;
@@ -2153,6 +2209,7 @@ async function findSlotAttempt(
         throw runChangedError(runId, candidate.slot);
       // Safe reuse may release or reset the candidate: ask about its app first.
       await confirmAppBinding(run, candidate.slot, createEngineDecision);
+      const before = await readSlotRow(candidate.slot);
       const recover = async () =>
         (await import('../run-lifecycle/safe-idle-slot.js')).reuseSafeIdleSlot(
           candidate.slot,
@@ -2169,6 +2226,9 @@ async function findSlotAttempt(
         reusableSlotId = candidate.slot;
         break;
       }
+      // A recovery or claim that took it after the guard filter ends by itself: select again.
+      if (slotChangedUnderAttempt(candidate.slot, before, await readSlotRow(candidate.slot)))
+        throw slotClaimRefusedError(candidate.slot, 'the slot changed during safe reuse', true);
       if (outcome.kind === 'local-work') localWorkSlots.add(candidate.slot);
       reuseReasons[candidate.slot] = outcome.reason;
       inputs.reclaimFailures = { ...reuseReasons };
