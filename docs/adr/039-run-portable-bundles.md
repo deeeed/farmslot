@@ -440,8 +440,8 @@ admission continues to refuse insufficient capacity. Inactive reservations and
 abandoned capture scaffolding are archived before admission rather than charged
 forever. Only selection and staging hold admission locks; bulk copying does not.
 Since 2026-11-25 a capture runs that selection only at the archive threshold or
-when its own declared bytes would cross the cap; the hourly pass and admission
-refusals run it otherwise, because it reads every run record and capture intent
+when its own declared bytes would cross the cap; the hourly pass and dispatch
+admission refusals run it otherwise, because it reads every run record and capture intent
 under the store lock.
 Operators restore storage
 using the recorded paths while its run is inactive. Automated restore is outside

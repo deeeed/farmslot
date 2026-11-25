@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type { ArtifactRef, Run } from '@farmslot/protocol';
 
@@ -96,6 +97,8 @@ const ids = [
 test('a capture below the archive threshold runs no housekeeping and walks the stable charge at most once', async (t) => {
   const f = await fixture(t);
   await f.capture(ids[0]);
+  // Captures on a farm are minutes apart; a walk this close to a change is not kept.
+  await delay(30);
   const walks = runBundleStableChargeWalks();
   await f.capture(ids[1]);
   // Before: every capture ran full housekeeping and walked the whole store 2-4 times.
@@ -122,7 +125,20 @@ test('the cached store charge equals a cold walk after captures, an outside writ
   assert.equal(afterOutside, afterCapture + 5000);
   assert.equal(afterOutside, await freshCharge(f.store, f.root));
 
+  // A retention finish outside the lock removes a bundle moved aside as `.retention-*`.
+  const retention = path.join(f.store.root, 'sha256', '.retention-outside');
+  await mkdir(retention, { recursive: true });
+  await writeFile(path.join(retention, 'payload'), 'y'.repeat(3000));
+  assert.equal(
+    (await runBundleAdmissionUsage(f.store, f.root)).store,
+    await freshCharge(f.store, f.root),
+  );
   await f.capture(ids[1]);
+  await rm(retention, { recursive: true });
+  assert.equal(
+    (await runBundleAdmissionUsage(f.store, f.root)).store,
+    await freshCharge(f.store, f.root),
+  );
   await collectRunBundleGarbage(f.store);
   assert.equal(
     (await runBundleAdmissionUsage(f.store, f.root)).store,

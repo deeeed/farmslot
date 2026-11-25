@@ -1097,6 +1097,7 @@ async function publishBundleDirectory(
     'sha256',
     recorded === undefined ? undefined : stamps,
     recorded ?? 0,
+    digest,
   );
 }
 
@@ -1168,7 +1169,24 @@ interface StableStoreCharge {
   stamps: string[];
   bytes: number;
   retentionCharges: [string, number][];
+  /** The `sha256/` names the walk charged, so a publish can prove it is the only change. */
+  bundleNames: Set<string>;
 }
+
+/**
+ * A walk is kept only if no stamped directory changed this close to its start: on a filesystem
+ * with coarse timestamps (ext4 advances them per jiffy, 4-10 ms) a change in the same tick as
+ * the first stat leaves the stamp equal. APFS stamps are nanosecond-grained.
+ */
+const STABLE_CHARGE_QUIET_NS = 10_000_000n;
+
+const stampTimesNs = (stamp: string): bigint[] =>
+  stamp === 'missing'
+    ? []
+    : stamp
+        .split(':')
+        .slice(1)
+        .map((part) => BigInt(part));
 
 const STAMPED_STORE_DIRS = ['', 'sha256', 'usage', 'availability'] as const;
 const stableStoreCharges = new Map<string, StableStoreCharge>();
@@ -1206,10 +1224,12 @@ async function walkStableStoreCharge(
   stableStoreWalks += 1;
   let bytes = 0;
   const retentionCharges: [string, number][] = [];
+  const bundleNames = new Set<string>();
   for (const entry of await readdir(store.root, { withFileTypes: true })) {
     const file = path.join(store.root, entry.name);
     if (entry.name === 'sha256' && entry.isDirectory()) {
       for (const name of await readdir(file)) {
+        bundleNames.add(name);
         const directory = path.join(file, name);
         const charged = BUNDLE_DIGEST.test(name)
           ? await recordedBundleBytes(store, name)
@@ -1225,7 +1245,7 @@ async function walkStableStoreCharge(
       continue;
     bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
   }
-  return { bytes, retentionCharges };
+  return { bytes, retentionCharges, bundleNames };
 }
 
 async function stableStoreCharge(store: RunBundleStore): Promise<StableStoreCharge> {
@@ -1234,11 +1254,16 @@ async function stableStoreCharge(store: RunBundleStore): Promise<StableStoreChar
   const cached = stableStoreCharges.get(key);
   if (cached && cached.stamps.every((stamp, i) => stamp === before[i])) return cached;
   stableStoreCharges.delete(key);
+  const walkStartNs = BigInt(Date.now()) * 1_000_000n;
   const walked = await walkStableStoreCharge(store);
   const after = await storeStamps(store);
   const charge = { ...walked, stamps: after };
-  // Something changed a stamped directory during the walk: use this answer once, keep nothing.
-  if (after.every((stamp, i) => stamp === before[i])) stableStoreCharges.set(key, charge);
+  // Something changed a stamped directory during the walk, or too close to its start to tell:
+  // use this answer once and keep nothing.
+  const quiet = after.every((stamp) =>
+    stampTimesNs(stamp).every((time) => time < walkStartNs - STABLE_CHARGE_QUIET_NS),
+  );
+  if (quiet && after.every((stamp, i) => stamp === before[i])) stableStoreCharges.set(key, charge);
   return charge;
 }
 
@@ -1252,6 +1277,8 @@ async function adjustStableStoreCharge(
   directory: (typeof STAMPED_STORE_DIRS)[number],
   stampsBefore: string[] | undefined,
   delta: number,
+  /** For `sha256/`: the name this write added. */
+  addedBundle?: string,
 ): Promise<void> {
   const key = stableChargeKey(store);
   const cached = stableStoreCharges.get(key);
@@ -1261,7 +1288,23 @@ async function adjustStableStoreCharge(
   const changed = STAMPED_STORE_DIRS.indexOf(directory);
   if (!after.every((stamp, i) => i === changed || stamp === cached.stamps[i]))
     return void stableStoreCharges.delete(key);
-  stableStoreCharges.set(key, { ...cached, bytes: cached.bytes + delta, stamps: after });
+  let bundleNames = cached.bundleNames;
+  if (directory === 'sha256') {
+    // The retention pass finishes archives outside the store lock, removing `.retention-*`
+    // bundles from sha256/; that would move the same stamp in this window. Listed after the
+    // stamp, so a later removal moves the stamp again and the next read walks.
+    if (!addedBundle) return void stableStoreCharges.delete(key);
+    bundleNames = new Set(cached.bundleNames).add(addedBundle);
+    const listed = await readdir(path.join(store.root, 'sha256'));
+    if (listed.length !== bundleNames.size || listed.some((name) => !bundleNames.has(name)))
+      return void stableStoreCharges.delete(key);
+  }
+  stableStoreCharges.set(key, {
+    ...cached,
+    bytes: cached.bytes + delta,
+    stamps: after,
+    bundleNames,
+  });
 }
 
 async function chargedStoreBytesUntimed(
@@ -1370,6 +1413,7 @@ function loadKeptFootprints(store: RunBundleStore) {
 }
 
 const footprintSaves = new Map<string, Promise<void>>();
+const legacyFootprintsRemoved = new Set<string>();
 
 /**
  * One save at a time per store, each writing the map as it is when its turn comes, so an
@@ -1388,6 +1432,11 @@ function saveKeptFootprints(
       );
       await atomicJson(footprintFile(store), { v: 1, dirs });
       for (const [, kept] of saved) delete kept.unsaved;
+      // Saved in the new place: the old file must never be read again.
+      if (!legacyFootprintsRemoved.has(store.root)) {
+        await rm(legacyFootprintFile(store), { force: true });
+        legacyFootprintsRemoved.add(store.root);
+      }
     });
   footprintSaves.set(store.root, save);
   return save;
@@ -1410,6 +1459,7 @@ export async function forgetAcquisitionFootprints(
     if (changed) await saveKeptFootprints(store, footprints);
   } catch {
     await rm(footprintFile(store), { force: true });
+    await rm(legacyFootprintFile(store), { force: true });
   }
 }
 
@@ -2702,15 +2752,27 @@ export async function materializeRunBundle(
     // The archiver's own pressure test (archiveRunBundleMediaLocked), with this capture's
     // declared bytes and its manifest reserve as the required room. Read outside the lock: a
     // stale charge only decides whether to tidy first, and admission checks again under it.
+    // The run record and its manifest are charged too; the metadata reserve covers the decision
+    // history prefix, which is read only under the capture lock. An artifact without a declared
+    // size cannot be bounded, so it always tidies first.
     const declared =
       request.artifacts.reduce((total, artifact) => total + (artifact.sizeBytes ?? 0), 0) +
+      Buffer.byteLength(JSON.stringify(request.run)) +
       Buffer.byteLength(JSON.stringify(request.artifacts)) +
       request.artifacts.length * 300 +
       4096 +
       policy.metadataReserveBytes;
+    // Under the lock: a cold charge walks the store and can record a legacy bundle's bytes.
     const charged =
-      (await chargedStoreBytes(store)) + (await reservedMetadataBytes(store)) + acquisitionSize;
+      acquisitionSize +
+      (await withBundleLock(
+        store,
+        STORE_LOCK,
+        { label: `capacity check of run ${run.id}` },
+        async () => (await chargedStoreBytes(store)) + (await reservedMetadataBytes(store)),
+      ));
     if (
+      request.artifacts.some((artifact) => artifact.sizeBytes === undefined) ||
       charged >= policy.maxStoreBytes * RUN_BUNDLE_ARCHIVE_HIGH_RATIO ||
       charged + declared > policy.maxStoreBytes
     )
