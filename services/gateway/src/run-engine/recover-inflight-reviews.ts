@@ -430,6 +430,8 @@ export function buildRecoveredReview(params: {
   reviewSnapshot?: ReviewDiffSnapshot;
   reviewedPackage: ReadyGatePrPackage | undefined;
   recoveryContinuationPending?: boolean;
+  /** The completion turn ended without its mark and its valid ISSUES result was accepted. */
+  resultWithoutSignal?: boolean;
 }): ReviewStatus | null {
   const { run, ctx, signal, feedback, reviewSnapshot, reviewedPackage } = params;
   // Freshness anchors on the CURRENT attempt's launch time. startedAt is too
@@ -437,15 +439,23 @@ export function buildRecoveredReview(params: {
   // signal looks fresh) and updatedAt is too new after a restart (startup
   // reconciliation rewrites it before this recovery runs, which would reject
   // the genuine pre-restart signal this path exists to ingest).
-  const freshSignal = signal && signalMatchesReviewerAttempt(signal, ctx) ? signal : undefined;
+  const freshSignal =
+    !params.resultWithoutSignal && signal && signalMatchesReviewerAttempt(signal, ctx)
+      ? signal
+      : undefined;
   const completedContextIsFresh = completedReviewerContextIsFresh(ctx, signal);
-  if (!freshSignal && !completedContextIsFresh) return null;
   // Only a cleanly completed reviewer may stamp a verdict. A failed/blocked
   // terminal signal can coexist with parseable feedback (e.g. a PASS draft
   // written before the reviewer died) — stamping it would certify a review
   // that never finished; skipping leaves the gate to request a fresh one.
-  if (freshSignal && freshSignal.status !== 'complete' && freshSignal.status !== 'done')
-    return null;
+  // The one exception is an ended completion turn whose valid ISSUES result was accepted.
+  if (params.resultWithoutSignal) {
+    if (feedback.verdict !== 'issues') return null;
+  } else {
+    if (!freshSignal && !completedContextIsFresh) return null;
+    if (freshSignal && freshSignal.status !== 'complete' && freshSignal.status !== 'done')
+      return null;
+  }
   if (feedback.incomplete) return null;
 
   const priorReviews = run.engineState?.publishGate?.reviews ?? [];
@@ -788,6 +798,8 @@ async function ingestRecoveredReviewer(
   options: PublicationReviewRecoveryOptions,
 ): Promise<RecoveredReviewerAction> {
   let native: NativeSessionReadResult | undefined;
+  // The completion turn ended without its mark but left a valid ISSUES result.
+  let resultWithoutSignal = false;
   if (ctx.nativeSession?.generation && !ctx.nativeSession.closedAt) {
     const assertCurrent = () => {
       if (options.shouldAbort?.()) throw new Error('Recovered reviewer completion was superseded');
@@ -825,7 +837,9 @@ async function ingestRecoveredReviewer(
           enforceProgressTimeout: true,
         }),
       );
-      if (continued) return null;
+      // 'result' is a verdict to ingest, not a turn still running.
+      if (continued === 'result') resultWithoutSignal = true;
+      else if (continued) return null;
     } catch (error) {
       if (error instanceof NativeReviewCompletionError) {
         if (await markRecoveredReviewerContext(runId, ctx, 'failed', { error: error.message })) {
@@ -880,7 +894,7 @@ async function ingestRecoveredReviewer(
   const signal = await readReviewerTerminalSignal(vars, ctx);
   if (options.shouldAbort?.()) return null;
   const freshSignal = signal && signalMatchesReviewerAttempt(signal, ctx) ? signal : undefined;
-  if (freshSignal && !isSuccessfulTerminalReviewSignal(freshSignal)) {
+  if (!resultWithoutSignal && freshSignal && !isSuccessfulTerminalReviewSignal(freshSignal)) {
     const persistedId = await persistRecoveredFailedReviewer(
       runId,
       ctx,
@@ -956,6 +970,7 @@ async function ingestRecoveredReviewer(
     reviewSnapshot,
     reviewedPackage: stampablePackage,
     recoveryContinuationPending,
+    resultWithoutSignal,
   });
   if (!review) return null;
 

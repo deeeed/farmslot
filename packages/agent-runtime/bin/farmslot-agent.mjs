@@ -14,7 +14,7 @@ function usage(exitCode = 0) {
     '',
     'Commands:',
     '  mark <task-md> <signal-json> <args...>',
-    '  mark <task-dir> sub <start <id> --step N --from src | <id> <n> | <id> complete | <id> blocked | <id> status>',
+    '  mark <task-dir> sub <start <id> --step N --from src | <id> <rows> | <id> complete [--rows <rows>] | <id> blocked | <id> status>',
     '  artifact-check <task-dir> [args...]',
     '  ac <list | render> [--task-dir path]',
     '  task init <task-dir> --flow f --platform p --template id --title t [--run-mode m] [options]',

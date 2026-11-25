@@ -76,6 +76,7 @@ import {
   isActiveSlotHolder,
   slotClaimBlockedByRelease,
   slotPinIsRequestOnly,
+  warmChildAwaitsParentRow,
 } from './dispatch/slot-scoring.js';
 import { checkFixtureSteps } from './slot/check.js';
 import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
@@ -490,6 +491,8 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   // Before FIND_SLOT claims it, run.slotId is only a request. A refresh must not
   // manufacture that claim and make the request fail its own busy-slot check.
   if (slotPinIsRequestOnly(activeRun, row)) return row;
+  // Nor may it bind a warm child to its parent's row: the child's claim does that by CAS.
+  if (warmChildAwaitsParentRow(activeRun, row)) return row;
   // A releasing fence belongs to an in-flight teardown: overwriting it with
   // the active run's phase would reopen the slot mid-destruction. Preserve
   // the fence; the teardown's own CAS finalize decides what comes next.
@@ -785,7 +788,8 @@ function missingRunningStepLeases(
     const step = run.steps.find((entry) => entry.status === 'running');
     if (!step || !run.slotId || runReleasedSlot(run)) continue;
     const row = rows.find((entry) => entry.slot === run.slotId);
-    if (slotPinIsRequestOnly(run, row)) continue;
+    // A warm child runs its first steps on its parent's row; its own claim binds the slot.
+    if (slotPinIsRequestOnly(run, row) || warmChildAwaitsParentRow(run, row)) continue;
     if (row?.current_run_id === run.id || row?.handoff_run_id === run.id) continue;
     // Preserve the existing ci-watch release policy: it no longer occupies a ready row.
     if (run.status === 'ci-watching' && row?.lifecycle === 'ready' && !row.current_run_id) continue;

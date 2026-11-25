@@ -107,6 +107,21 @@ test('blocked keeps step ownership, complete settles it', () => {
   assert.equal(subtaskPresentation(unitFixture({ status: 'done' })).settled, true);
 });
 
+test('a unit left open by an ended owner reads as ended, not live, and starts closed', () => {
+  const view = subtaskPresentation(unitFixture({ status: 'running', ownerEnded: true }));
+  assert.equal(view.statusLabel, 'owner ended');
+  assert.match(view.statusTooltip, /left running: the context that owned it has ended/);
+  assert.equal(view.currentStep, null, 'nobody is working its current step');
+  assert.equal(view.settled, false);
+  assert.equal(view.ownerEnded, true);
+  const state = new SubtaskOpenState().scope('run-owner-ended');
+  assert.equal(
+    openBinding(unitFixture({ id: 'orphan', status: 'running', ownerEnded: true }), state),
+    false,
+  );
+  assert.equal(subtaskPresentation(unitFixture({ status: 'running' })).statusLabel, 'running');
+});
+
 test('the block renders the child steps through the host row renderer', () => {
   const rendered = litText(
     renderSubtaskBlock(
