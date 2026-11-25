@@ -4,10 +4,17 @@ import type { RunListRow, SlotHealth } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
+/** The slot run detail offers to load with the run. */
+export interface RunPrepareSlot {
+  id: string;
+  branch: string;
+  health: SlotHealth | null;
+}
+
 /** Run detail's "Load <slot> with this run" popover; it passes the run's flow type and domain. */
 export function renderRunSlotPreparePopover(
   r: Pick<RunListRow, 'id' | 'project' | 'branch' | 'flowType' | 'domain'>,
-  slot: { id: string; branch: string; health: SlotHealth | null },
+  slot: RunPrepareSlot,
   actionsBlocked: boolean,
 ) {
   const boundSlotId = slot.id;

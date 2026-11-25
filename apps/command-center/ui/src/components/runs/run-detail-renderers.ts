@@ -72,7 +72,6 @@ import {
   reviewExecutionLocations,
 } from './review-execution-location.js';
 import type { RunLifecycleAction } from './run-detail-actions.js';
-import { renderRunSlotPreparePopover } from './run-slot-prepare-popover.js';
 import { renderCancelledRunSlotChoices } from './run-detail-cancelled-slot-renderers.js';
 import { renderRunCost } from './run-detail-cost.js';
 import {
@@ -91,6 +90,7 @@ import { runInventoryHashFromDetail } from './run-detail-url-state.js';
 import { runProgressSummary } from './run-list-model.js';
 import { stepInspectorTaskProgress } from './run-pipeline-model.js';
 import { renderReviewProcess, renderRunReviewResult } from './run-review-result-renderer.js';
+import { renderRunSlotPreparePopover } from './run-slot-prepare-popover.js';
 import {
   collectRunEvidenceArtifacts,
   dispositionColor,

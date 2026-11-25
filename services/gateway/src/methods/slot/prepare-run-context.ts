@@ -14,9 +14,9 @@ export function withRunPrepareContext(
   if (!run) return params;
   return {
     ...params,
-    ...(!params.flowType && run.flowType ? { flowType: run.flowType } : {}),
-    ...(!params.domain && run.domain ? { domain: run.domain } : {}),
-    ...(!params.app && run.app ? { app: run.app } : {}),
+    ...(!params.flowType?.trim() && run.flowType ? { flowType: run.flowType } : {}),
+    ...(!params.domain?.trim() && run.domain ? { domain: run.domain } : {}),
+    ...(!params.app?.trim() && run.app ? { app: run.app } : {}),
   };
 }
 

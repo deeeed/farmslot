@@ -21,6 +21,10 @@ cpSync(
   { recursive: true },
 );
 process.env.FARMSLOT_PROJECTS_DIR = projects;
+// A private run store too: a machine shell may export the farm's own FARMSLOT_RUNS_DIR.
+const runsDir = mkdtempSync(path.join(os.tmpdir(), 'prepare-for-run-runs-'));
+after(() => rmSync(runsDir, { recursive: true, force: true }));
+process.env.FARMSLOT_RUNS_DIR = runsDir;
 
 const { mockFixtureSync, mockPrepareCommand, needsTmuxSandbox, slotPrepare, stackFixture } =
   await import('./stack-base-prepare.test-support.js');
@@ -31,6 +35,7 @@ async function prepareFor(
   label: string,
   run: { project: string; flowType: 'dev' | 'qa'; domain?: string },
   ids: (runId: string) => Record<string, string>,
+  other?: { project: string; flowType: 'dev' | 'qa' },
 ) {
   const { slotId } = await stackFixture(t, `for-run-${label}`, 48828);
   const synced: Array<{ flowType?: string; domain?: string }> = [];
@@ -39,16 +44,33 @@ async function prepareFor(
     synced.push({ flowType: opts.flowType, domain: opts.domain });
   });
   const created = createRun({ ...run, ticketOrPr: 'TAT-0000', slotId, mode: 'autonomous' });
+  const second = other && createRun({ ...other, ticketOrPr: 'TAT-0001', mode: 'autonomous' });
   t.after(async () => {
-    await persistRunNow(updateRun(created.id, { status: 'done' }));
-    await deleteRun(created.id);
+    for (const r of second ? [created, second] : [created]) {
+      await persistRunNow(updateRun(r.id, { status: 'done' }));
+      await deleteRun(r.id);
+    }
   });
+  const events: Array<{ event: string; data: unknown }> = [];
   const prepare = () =>
     slotPrepare(
-      { slotId, branch: 'main', prepareProfile: 'typecheck', ...ids(created.id) },
-      () => {},
+      {
+        slotId,
+        branch: 'main',
+        prepareProfile: 'typecheck',
+        requestId: `for-run-${label}`,
+        ...ids(created.id),
+        ...(second ? { bindRunId: second.id } : {}),
+      },
+      (event, data) => events.push({ event, data }),
     );
-  return { prepare, synced };
+  return { prepare, synced, events };
+}
+
+function completed(events: Array<{ event: string; data: unknown }>) {
+  return events
+    .filter(({ event }) => event === 'script.complete')
+    .map(({ data }) => (data as { exitCode?: number }).exitCode);
 }
 
 test(
@@ -96,7 +118,7 @@ test(
   'a prepare for another project run is refused before any phase',
   needsTmuxSandbox,
   async (t) => {
-    const { prepare, synced } = await prepareFor(
+    const { prepare, synced, events } = await prepareFor(
       t,
       'other-project',
       { project: 'another-project', flowType: 'dev', domain: 'perps' },
@@ -104,5 +126,23 @@ test(
     );
     await assert.rejects(prepare(), /belongs to project another-project, not .*farmslot-farm/);
     assert.deepEqual(synced, []);
+    assert.deepEqual(completed(events), [1]);
+  },
+);
+
+test(
+  'a prepare whose bindRunId names another project run is refused too',
+  needsTmuxSandbox,
+  async (t) => {
+    const { prepare, synced, events } = await prepareFor(
+      t,
+      'other-bind',
+      { project: 'farmslot-farm', flowType: 'dev', domain: 'perps' },
+      (runId) => ({ runId }),
+      { project: 'another-project', flowType: 'qa' },
+    );
+    await assert.rejects(prepare(), /belongs to project another-project, not .*farmslot-farm/);
+    assert.deepEqual(synced, []);
+    assert.deepEqual(completed(events), [1]);
   },
 );

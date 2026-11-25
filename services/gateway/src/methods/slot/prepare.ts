@@ -205,12 +205,6 @@ export async function slotPrepare(
   const run = [params.runId, params.bindRunId]
     .map((id) => (id ? getRun(id) : undefined))
     .find((found) => found !== undefined);
-  if (run)
-    assertRunMatchesSlotProject(
-      run,
-      params.slotId,
-      (await loadSlotVars(params.slotId)).projectName,
-    );
   const forRun = withRunPrepareContext(params, run);
   return withSlotSources(params.slotId, () => slotPrepareWithSources(forRun, emit, signal, opts));
 }
@@ -272,6 +266,11 @@ async function slotPrepareWithSources(
     }
     await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
     const vars = await loadSlotVars(params.slotId);
+    // Every live run the prepare names must be of the slot's project, before any phase.
+    for (const id of new Set([params.runId, params.bindRunId])) {
+      const named = id ? getRun(id) : undefined;
+      if (named) assertRunMatchesSlotProject(named, params.slotId, vars.projectName);
+    }
     if (isLocal(vars.host, vars.machine)) assertStorageVolumePresent(vars.remoteRepo);
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.
