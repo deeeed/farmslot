@@ -1,4 +1,5 @@
-// @farmslot:serial. Uses an owned detached host and OS process cleanup.
+// Live suite (yarn test:host-refresh-live, in test:release-live): the refresh test takes over
+// 5 s alone. Uses an owned detached host and OS process cleanup.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
