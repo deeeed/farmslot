@@ -140,7 +140,15 @@ export function runnerPaneWithoutComposer(pane: string): string {
     : pane;
 }
 
-export function runnerPaneHasBufferedInstruction(pane: string, message: string): boolean {
+/** The live composer's state; null when no live composer is recognised, so callers hold. */
+export function liveComposerState(pane: string): 'empty' | 'draft' | null {
+  const composer = liveComposer(pane);
+  if (!composer) return null;
+  return composer.text ? 'draft' : 'empty';
+}
+
+/** The live composer holds exactly `message`; scrollback never counts. */
+export function liveComposerHoldsInstruction(pane: string, message: string): boolean {
   const buffered = runnerPaneBufferedInstruction(pane);
   return Boolean(buffered) && buffered === normalizeInstructionText(message);
 }

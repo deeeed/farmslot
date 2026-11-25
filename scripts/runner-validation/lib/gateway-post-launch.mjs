@@ -19,6 +19,7 @@ export function runGatewayPostLaunchPrompt({
   artifactsDir,
   requirePromptDigest = false,
   taskDir,
+  runnerObservabilityDir,
 }) {
   fs.mkdirSync(artifactsDir, { recursive: true });
   const blockerSnapshotPath = `${artifactsDir}/dispatch-launch.txt`;
@@ -49,6 +50,7 @@ const vars = {
   remoteRepo: ${JSON.stringify(repo)},
   projectName: '',
   resourceVars: {},
+  ${runnerObservabilityDir ? `runnerObservabilityDir: ${JSON.stringify(runnerObservabilityDir)},` : ''}
 };
 
 try {

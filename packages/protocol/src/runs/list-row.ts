@@ -72,11 +72,18 @@ export type RunListEngineState = Omit<RunEngineState, 'publishGate'> & {
 /** An agent context on a list row, without its visual-review blobs, session archive and usage. */
 export type RunListAgentContext = Omit<
   AgentContext,
-  'pipelineVisualReviewInput' | 'pipelineVisualReviewResult' | 'runnerSessionArchive' | 'usage'
+  | 'pipelineVisualReviewInput'
+  | 'pipelineVisualReviewResult'
+  | 'runnerSessionArchive'
+  | 'runnerSessionArchives'
+  | 'usage'
 >;
 
 /** Metrics on a list row, without the checklist timing events. */
-export type RunListMetrics = Omit<RunMetrics, 'subtasks' | 'checklistTiming'>;
+export type RunListMetrics = Omit<
+  RunMetrics,
+  'subtasks' | 'checklistTiming' | 'runnerSessionArchives'
+>;
 
 /** Ticket data on a list row, without the ticket's description. */
 export type RunListTicketData = Omit<RunTicketData, 'description'>;

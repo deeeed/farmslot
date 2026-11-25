@@ -2032,6 +2032,8 @@ export interface RunMetrics {
    * live under `.runs/session-archives/`. Not eval evidence and not a farmrun payload.
    */
   runnerSessionArchive?: RunnerSessionArchiveRef;
+  /** One ref per worker session, in capture order (ADR-039 Amendment 10). */
+  runnerSessionArchives?: RunnerSessionArchiveRef[];
   /**
    * Operator-local provider subscription label that actually funded this run
    * (after any in-place failover). Label only — never an email, token, or home path.
@@ -2454,6 +2456,29 @@ export interface RunRecoveryRuntimeProposal {
   status: RunAutoRecoveryProposalStatus;
   proposalId?: string;
   generation: number;
+}
+
+/** ADR-039 Amendment 10: the output a run was graded on, and its retained diff. */
+export interface RunGradedOutput {
+  /** sha256 of the graded diff against the dispatch head. */
+  diffSha256: string;
+  /** The published commit, or the working tree release graded before it reset the slot. */
+  source: 'committed' | 'working-tree';
+  /** The commit graded; for a working tree, the ref release parked its commits under, if any. */
+  ref: string | null;
+  /** The diff bytes, relative to the episode store; absent when the diff exceeded 32 MiB. */
+  path?: string;
+  sizeBytes: number;
+  recordedAt: string;
+}
+
+/** ADR-039 Amendment 10: an append-only attempt the step history and recovery records miss. */
+export interface RunAttemptLogEntry {
+  kind: 'dispatch' | 'replay' | 'recovery' | 'infra-failure' | 'operator';
+  step?: string;
+  at: string;
+  error?: string;
+  recovery?: string;
 }
 
 export interface RunReplayStep {
@@ -3337,6 +3362,15 @@ export interface Run {
   /** Monotonic per-candidate launch attempt, inherited from the queue item; lets run
    * observations tell a legitimate takeover from a stale echo of a superseded run. */
   launchAttempt?: number;
+  /** ADR-039 Amendment 10 trace fields, written when the run records them. */
+  gradedOutput?: RunGradedOutput;
+  /** Worktree head when the run finished; the PR head when it was published; the merge commit. */
+  finalHead?: string;
+  prHead?: string;
+  mergeSha?: string;
+  /** The acceptance ledger at completion, when no ready gate recorded one. */
+  completionAcceptance?: AcceptanceStatusLedger;
+  attemptLog?: RunAttemptLogEntry[];
   completedAt?: string;
   error?: string;
   /**
@@ -3584,6 +3618,13 @@ export interface RunEngineState {
   };
 }
 
+/** CI-watch gates that can auto-dispatch, and so offer "Keep holding" while a PR is held. */
+export type CIHoldGate =
+  | 'merge_conflict'
+  | 'ci_failed'
+  | 'review_comments'
+  | 'review_comments_early';
+
 /**
  * Per-run CI-watch inline-fix state — persisted on {@link Run} so dedup signatures
  * and attempt counters survive gateway restart (ADR-027).
@@ -3591,6 +3632,21 @@ export interface RunEngineState {
 export interface RunCiWatchState {
   /** Scope refusals stop automatic CI fix retries. */
   fixScopeRefusal?: string;
+  /**
+   * When a replay that re-ran ci-watch handed the PR back to automation. An
+   * operator hold is derived from `Run.decisions` (a `wait` at
+   * `inline_fix_blocked` while that gate offered a dispatch); replay keeps those
+   * resolved decisions, so a hold resolved before this time no longer applies.
+   */
+  holdReleasedAt?: string;
+  /**
+   * Per held gate (`merge_conflict`, `ci_failed`, `review_comments`,
+   * `review_comments_early`), the last time a complete GitHub read showed that
+   * gate's state clear while the PR was held. A "Keep holding" answered at or
+   * before it no longer quiets the gate, so a state that clears and returns asks
+   * again, across a gateway restart too.
+   */
+  holdClearedAt?: Partial<Record<CIHoldGate, string>>;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };

@@ -3,6 +3,7 @@ import * as budgetGuardSmoke from './budget-guard-smoke.mjs';
 import * as busyComposer from './busy-composer.mjs';
 import * as copilotRuntimeSmoke from './copilot-runtime-smoke.mjs';
 import * as dispatchModelFlag from './dispatch-model-flag.mjs';
+import * as dispatchPromptDeadline from './dispatch-prompt-deadline.mjs';
 import * as dispatchPromptDroppedEnter from './dispatch-prompt-dropped-enter.mjs';
 import * as dispatchPromptMcpRace from './dispatch-prompt-mcp-race.mjs';
 import * as dispatchPromptSmoke from './dispatch-prompt-smoke.mjs';
@@ -96,6 +97,7 @@ export const SCENARIOS = {
   'dispatch-prompt-dropped-enter': dispatchPromptDroppedEnter,
   'dispatch-prompt-mcp-race': dispatchPromptMcpRace,
   'dispatch-prompt-trust': dispatchPromptTrust,
+  'dispatch-prompt-deadline': dispatchPromptDeadline,
   'prompt-accepted': promptAccepted,
   'pi-interactive-prompt': piInteractivePrompt,
   'review-recovery-terminal-contract': reviewRecoveryTerminalContract,

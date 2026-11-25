@@ -1,0 +1,1 @@
+- `project.json` accepts `traces: { enabled }` (ADR-039 Amendment 10).

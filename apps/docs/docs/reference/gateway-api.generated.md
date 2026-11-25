@@ -323,13 +323,16 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.create`                            | run              | bounded-write | —                         | —                         | Run Create gateway method.                            |
 | `run.createNative`                      | run              | bounded-write | —                         | —                         | Run CreateNative gateway method.                      |
 | `run.delete`                            | run              | high-impact   | —                         | —                         | Run Delete gateway method.                            |
+| `run.episode.recapture`                 | run              | bounded-write | —                         | —                         | Run Episode Recapture gateway method.                 |
 | `run.extendReviewBudget`                | run              | bounded-write | —                         | —                         | Run ExtendReviewBudget gateway method.                |
 | `run.forSlot`                           | run              | bounded-write | —                         | —                         | Run ForSlot gateway method.                           |
 | `run.forceComplete`                     | run              | bounded-write | —                         | —                         | Run ForceComplete gateway method.                     |
 | `run.get`                               | run              | read-only     | —                         | —                         | Run Get gateway method.                               |
 | `run.getGrade`                          | run              | read-only     | —                         | —                         | Run GetGrade gateway method.                          |
 | `run.grade`                             | run              | bounded-write | —                         | —                         | Run Grade gateway method.                             |
+| `run.grade.external.record`             | run              | bounded-write | —                         | —                         | Run Grade External Record gateway method.             |
 | `run.interactiveDev.resolve`            | run              | high-impact   | —                         | —                         | Run InteractiveDev Resolve gateway method.            |
+| `run.interview.record`                  | run              | bounded-write | —                         | —                         | Run Interview Record gateway method.                  |
 | `run.linkedTickets.set`                 | run              | bounded-write | —                         | —                         | Run LinkedTickets Set gateway method.                 |
 | `run.list`                              | run              | read-only     | —                         | —                         | Run List gateway method.                              |
 | `run.overrideClaim`                     | run              | bounded-write | —                         | —                         | Run OverrideClaim gateway method.                     |

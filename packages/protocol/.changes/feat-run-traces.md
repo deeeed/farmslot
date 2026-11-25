@@ -1,0 +1,1 @@
+- Run traces (ADR-039 Amendment 10): per-session archive refs (`runnerSessionArchives`, `sessionKey`, `answersRound`), the run fields `gradedOutput`, `finalHead`, `prHead`, `mergeSha`, `completionAcceptance` and `attemptLog`, `traces.enabled` in project config, and the `run.grade.external.record`, `run.interview.record` and `run.episode.recapture` method types.

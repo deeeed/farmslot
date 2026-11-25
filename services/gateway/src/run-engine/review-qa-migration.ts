@@ -21,6 +21,7 @@ export function canReconcileReviewQaRun(run: Run): boolean {
     !run.metrics.runnerSessionId &&
     !run.metrics.runnerSessionPath &&
     !run.metrics.runnerSessionArchive &&
+    !run.metrics.runnerSessionArchives?.length &&
     !run.metrics.outcome &&
     !run.metrics.terminalEvidence &&
     !run.metrics.sessionTurns &&
