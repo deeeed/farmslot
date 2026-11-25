@@ -444,7 +444,10 @@ test('checkPrepareRequirement required_skills_present asks only for the matching
 // The probes run under the prepare's effective domain, not the slot's default one.
 test('checkPrepareRequirement dev_server_up and artifact_available use the run domain env', async () => {
   const probed: string[] = [];
-  const exec: NonNullable<Parameters<typeof checkPrepareRequirement>[2]> = async (_vars, command) => {
+  const exec: NonNullable<Parameters<typeof checkPrepareRequirement>[2]> = async (
+    _vars,
+    command,
+  ) => {
     probed.push(command);
     return { exitCode: 0, stdout: '', stderr: '' };
   };

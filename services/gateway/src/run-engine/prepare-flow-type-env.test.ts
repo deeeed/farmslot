@@ -17,12 +17,19 @@ import '../core/private-pool.test-support.js';
 // whatever the caller's environment points at.
 const projects = mkdtempSync(path.join(os.tmpdir(), 'prepare-flow-env-projects-'));
 after(() => rmSync(projects, { recursive: true, force: true }));
-cpSync(fileURLToPath(new URL('../../../../projects/farmslot-farm', import.meta.url)), path.join(projects, 'farmslot-farm'), {
-  recursive: true,
-});
+cpSync(
+  fileURLToPath(new URL('../../../../projects/farmslot-farm', import.meta.url)),
+  path.join(projects, 'farmslot-farm'),
+  {
+    recursive: true,
+  },
+);
 const packJson = path.join(projects, 'farmslot-farm/project.json');
 const pack = JSON.parse(readFileSync(packJson, 'utf8'));
-writeFileSync(packJson, JSON.stringify({ ...pack, hooks: { ...pack.hooks, unlock: 'unlock-slot' } }, null, 2));
+writeFileSync(
+  packJson,
+  JSON.stringify({ ...pack, hooks: { ...pack.hooks, unlock: 'unlock-slot' } }, null, 2),
+);
 process.env.FARMSLOT_PROJECTS_DIR = projects;
 
 // Health and unlock commands reach verifyPrepareHealth, not runPrepareCommand.

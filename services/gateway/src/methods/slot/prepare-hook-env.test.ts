@@ -29,8 +29,14 @@ test('in a shell, the exports replace or drop an inherited FARMSLOT_FLOW_TYPE', 
   const seen = (flowType?: string) =>
     spawnSync(
       'bash',
-      ['-c', `${prepareHookEnvExports('full', flowType).join('; ')}; printf '%s' "\${FARMSLOT_FLOW_TYPE-unset}"`],
-      { encoding: 'utf8', env: { ...process.env, FARMSLOT_FLOW_TYPE: 'inherited-from-the-gateway' } },
+      [
+        '-c',
+        `${prepareHookEnvExports('full', flowType).join('; ')}; printf '%s' "\${FARMSLOT_FLOW_TYPE-unset}"`,
+      ],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, FARMSLOT_FLOW_TYPE: 'inherited-from-the-gateway' },
+      },
     ).stdout;
   assert.equal(seen('dev'), 'dev');
   assert.equal(seen(), 'unset');
