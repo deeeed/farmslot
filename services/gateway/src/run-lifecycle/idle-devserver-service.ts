@@ -528,7 +528,9 @@ async function devServersBlocker(
   );
   // Definite activity first, so an unreported server listed before a running one or a lease
   // does not hide it. A failed probe (`error`) is no more an answer than `unknown`.
-  const active = up.find((resource) => resource.status === 'running' || resource.status === 'stale');
+  const active = up.find(
+    (resource) => resource.status === 'running' || resource.status === 'stale',
+  );
   if (active) return { reason: `dev server ${active.id} ${active.status}`, definite: true };
   if (await capabilityRetains(slotId))
     return { reason: 'retained by a capability lease', definite: true };

@@ -40,7 +40,7 @@ let promptDelivered = false;
 let slotRunsGone = false;
 let identityReads = 0;
 let identityReadFails = false;
-let siblingStatus: 'running' | 'stopped' | undefined;
+let siblingStatus: 'running' | 'stopped' | 'unknown' | undefined;
 let serverStatus: 'unknown' | 'error' | undefined;
 let reapFindsNothing = false;
 let simulatorUp = false;
@@ -672,8 +672,9 @@ test('a running dev server clears the window even when an unreported one is list
   slotRunsGone = true;
   row = ownerless();
   await scopePass();
-  serverStatus = 'unknown';
-  siblingStatus = 'running';
+  // The unreported sibling is listed before the running server.
+  siblingStatus = 'unknown';
+  alive = true;
   await scopePass();
   assert.equal(row.idle_prepare_scope, null);
 });
