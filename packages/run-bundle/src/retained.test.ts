@@ -1509,7 +1509,7 @@ test('a settled task dir is charged its kept footprint and only live task dirs a
   assert.equal(remeasured.settledDirs, 0, 'a new token measures it again');
   assert.equal(remeasured.bytes, first.bytes + 2500);
   const kept = JSON.parse(
-    await readFile(path.join(f.store.root, 'usage', 'acquisition-footprints.json'), 'utf8'),
+    await readFile(path.join(f.store.root, 'usage', 'acquisition', 'footprints.json'), 'utf8'),
   ) as { dirs: Record<string, unknown> };
   assert.deepEqual(kept.dirs, { [settledDir]: { token: 'ended@2', bytes: 5000 } });
 });
@@ -1519,7 +1519,7 @@ test('kept footprints load from the store, and a dir that goes live or is remove
   const settledDir = path.join(f.root, 'projects/demo/tasks/qa/ended');
   await mkdir(settledDir, { recursive: true });
   await writeFile(path.join(settledDir, 'TASK.md'), Buffer.alloc(1000));
-  const file = path.join(f.store.root, 'usage', 'acquisition-footprints.json');
+  const file = path.join(f.store.root, 'usage', 'acquisition', 'footprints.json');
   await mkdir(path.dirname(file), { recursive: true });
   // Kept by an earlier gateway process.
   await writeFile(
@@ -1554,7 +1554,7 @@ test('an unreadable footprint file only costs one walk of each settled dir', asy
   const settledDir = path.join(f.root, 'projects/demo/tasks/qa/ended');
   await mkdir(settledDir, { recursive: true });
   await writeFile(path.join(settledDir, 'TASK.md'), 'task');
-  const file = path.join(f.store.root, 'usage', 'acquisition-footprints.json');
+  const file = path.join(f.store.root, 'usage', 'acquisition', 'footprints.json');
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, '{"v":1,"dirs":');
   const request: MaterializeRunBundleRequest = {
@@ -1571,7 +1571,7 @@ test('a failed footprint read is retried by the next scan, and the kept file is 
   const settledDir = path.join(f.root, 'projects/demo/tasks/qa/ended');
   await mkdir(settledDir, { recursive: true });
   await writeFile(path.join(settledDir, 'TASK.md'), 'task');
-  const file = path.join(f.store.root, 'usage', 'acquisition-footprints.json');
+  const file = path.join(f.store.root, 'usage', 'acquisition', 'footprints.json');
   const request: MaterializeRunBundleRequest = {
     ...f.request,
     acquisitionTaskDirs: async () => (directory) =>
@@ -1603,7 +1603,7 @@ test('settled task dirs under .sandbox are kept, and a forgotten footprint is me
   await writeFile(path.join(settledDir, 'more.bin'), Buffer.alloc(700));
   await forgetAcquisitionFootprints(f.store, [settledDir]);
   const kept = JSON.parse(
-    await readFile(path.join(f.store.root, 'usage', 'acquisition-footprints.json'), 'utf8'),
+    await readFile(path.join(f.store.root, 'usage', 'acquisition', 'footprints.json'), 'utf8'),
   ) as { dirs: object };
   assert.deepEqual(kept.dirs, {}, 'forgetting persists at once');
   const remeasured = (await materializeRunBundle(request)).acquisitionScan;

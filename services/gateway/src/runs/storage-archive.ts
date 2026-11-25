@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { inventory } from '@farmslot/protocol/node/tree-fingerprint';
+import { forgetRunBundleStoreChargeCache } from '@farmslot/run-bundle';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
@@ -249,6 +250,8 @@ async function finishEntry(entry: StorageArchiveEntry, save: () => Promise<void>
       await rm(entry.staged, { recursive: true });
     }
   }
+  // The staged path has left its store (a run-bundle `.retention-*` entry, for one).
+  forgetRunBundleStoreChargeCache();
   if (!existsSync(entry.destination))
     throw new Error(`Archive source and destination missing: ${entry.source}`);
   entry.completedAt = new Date().toISOString();
@@ -329,6 +332,8 @@ export async function stageStoragePaths(
       entry.state = 'staged';
     }
   }
+  // A staged path may be a run-bundle store entry; the store's charge is read again from disk.
+  forgetRunBundleStoreChargeCache();
   // Stay synchronous from the ownership re-check through staging and detaching: no other work may
   // run between beforeStage() and the renames, or a run could regain a path about to be removed.
   // Once renamed, a source is gone from its store; the slow removal of the detached tree is async.

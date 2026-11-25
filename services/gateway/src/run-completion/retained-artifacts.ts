@@ -634,8 +634,6 @@ export async function retainCapturedRunArtifacts(input: {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
   await assertRunBundleWriteRoom(store.root);
-  // The materializer protects this run and its source snapshot while moving referenced media.
-  await tryArchiveRunArtifactHousekeeping(false);
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.
   // The materializer checks containment and hashes each file while copying it.
@@ -723,6 +721,11 @@ export async function retainCapturedRunArtifacts(input: {
   );
   return materializeRunBundle({
     store,
+    // Only near capacity: housekeeping walks every run and intent under the store lock, which
+    // cost captures up to a minute each when it ran on every one. The hourly retention pass
+    // and admission refusals still run it. The materializer protects this run and its source
+    // snapshot while moving referenced media.
+    housekeepBeforeCapture: () => tryArchiveRunArtifactHousekeeping(false),
     farmslotRoot: farmslotRoot(),
     acquisitionTaskDirs: acquisitionTaskDirToken,
     archiveRoot: (await import('../runs/storage-archive.js')).runArchiveRoot(),

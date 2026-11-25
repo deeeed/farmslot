@@ -439,6 +439,10 @@ metadata. Gateway startup/capture no longer invoke destructive bundle GC; budget
 admission continues to refuse insufficient capacity. Inactive reservations and
 abandoned capture scaffolding are archived before admission rather than charged
 forever. Only selection and staging hold admission locks; bulk copying does not.
+Since 2026-11-25 a capture runs that selection only at the archive threshold or
+when its own declared bytes would cross the cap; the hourly pass and dispatch
+admission refusals run it otherwise, because it reads every run record and capture intent
+under the store lock.
 Operators restore storage
 using the recorded paths while its run is inactive. Automated restore is outside
 this change.
@@ -452,7 +456,8 @@ One environment setting, `FARMSLOT_RUN_ARCHIVE_ROOT`. The hourly gateway pass an
 read-only retention-plan script remain the consumers. Run records use the existing
 `links` field for a local manifest reference; no public package or RPC change.
 The private `@farmslot/run-bundle` housekeeping selector is consumed by gateway
-admission, capture and hourly archival. No worker protocol changes.
+admission, by capture under capacity pressure, and by hourly archival. No worker
+protocol changes.
 
 ## Amendment 4: 2026-11-01 run-end episode capture
 
