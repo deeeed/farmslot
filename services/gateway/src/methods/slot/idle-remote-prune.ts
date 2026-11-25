@@ -6,12 +6,7 @@
 import { SLOT_DESTRUCTIVE_OPS, SLOT_LIFECYCLE } from '@farmslot/protocol';
 
 import { withFarmGitConfig } from '../../core/farm-git.js';
-import {
-  execOnSlot,
-  type ExecResult,
-  loadSlotVars,
-  readSlotRow,
-} from '../../core/index.js';
+import { execOnSlot, type ExecResult, loadSlotVars, readSlotRow } from '../../core/index.js';
 import {
   activePrepareSlots,
   assertNoNativeWorkerRecovery,
@@ -61,11 +56,10 @@ const defaultDeps: IdleRemotePruneDeps = {
   },
   run: async (slotId, command) => {
     const vars = await loadSlotVars(slotId);
-    return execOnSlot(
-      vars,
-      withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && ${command}`),
-      { timeout: COMMAND_TIMEOUT_MS, noRetry: true },
-    );
+    return execOnSlot(vars, withFarmGitConfig(`cd ${shellQuote(vars.remoteRepo)} && ${command}`), {
+      timeout: COMMAND_TIMEOUT_MS,
+      noRetry: true,
+    });
   },
   guards: activePrepareSlots,
   now: Date.now,
@@ -77,12 +71,12 @@ async function releasedIdle(slotId: string, deps: IdleRemotePruneDeps): Promise<
   const row = await deps.readRow(slotId);
   return Boolean(
     row &&
-      row.lifecycle === SLOT_LIFECYCLE.ready &&
-      row.phase == null &&
-      !row.current_run_id &&
-      !row.handoff_run_id &&
-      !row.cleanup_run_id &&
-      !row.workspace_recovery,
+    row.lifecycle === SLOT_LIFECYCLE.ready &&
+    row.phase == null &&
+    !row.current_run_id &&
+    !row.handoff_run_id &&
+    !row.cleanup_run_id &&
+    !row.workspace_recovery,
   );
 }
 

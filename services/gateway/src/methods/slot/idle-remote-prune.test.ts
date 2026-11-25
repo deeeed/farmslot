@@ -20,7 +20,10 @@ const pruned: ExecResult = {
   stderr: '',
 };
 
-function harness(rows: Record<string, Row>, run?: (slotId: string) => Promise<ExecResult> | ExecResult) {
+function harness(
+  rows: Record<string, Row>,
+  run?: (slotId: string) => Promise<ExecResult> | ExecResult,
+) {
   let clock = 1_000_000;
   const ran: string[] = [];
   const logs: string[] = [];
@@ -71,7 +74,10 @@ test('one released idle slot per pass; busy, held, active and guarded slots are 
 test("a prune holds the slot's prepare guard, so a prepare cannot overlap it", async (t) => {
   t.after(resetIdleRemotePruneForTest);
   let release = (_value: ExecResult) => {};
-  const h = harness({ 'idle-1': idleRow }, () => new Promise<ExecResult>((resolve) => (release = resolve)));
+  const h = harness(
+    { 'idle-1': idleRow },
+    () => new Promise<ExecResult>((resolve) => (release = resolve)),
+  );
   const pass = pruneIdleSlotRemoteRefs([idle('idle-1')], new Set(), h.deps);
   await new Promise((resolve) => setImmediate(resolve));
   // slotPrepare refuses a slot in this set ('already preparing'); find-slot waits for it.
@@ -105,14 +111,28 @@ test('a failed prune, a timeout or an unreachable node backs off one hour, never
   const slots = ['failed-1', 'timeout-1', 'offline-1', 'operator-1'].map(idle);
   for (let pass = 0; pass < 4; pass++) await pruneIdleSlotRemoteRefs(slots, new Set(), h.deps);
   assert.deepEqual(h.ran, ['failed-1', 'timeout-1', 'offline-1'], 'the operator root never runs');
-  assert.ok(h.logs.includes('[slot] failed-1: git maintenance: remote prune failed: fatal: could not read from remote'));
-  assert.ok(h.logs.includes('[slot] timeout-1: remote prune exited 124: command timed out after 60000ms'));
-  assert.ok(h.logs.includes('[slot] offline-1: remote prune unavailable: node mini is disconnected'));
-  assert.ok(h.logs.includes('[slot] operator-1: remote prune unavailable: slot repo is the operator root'));
+  assert.ok(
+    h.logs.includes(
+      '[slot] failed-1: git maintenance: remote prune failed: fatal: could not read from remote',
+    ),
+  );
+  assert.ok(
+    h.logs.includes('[slot] timeout-1: remote prune exited 124: command timed out after 60000ms'),
+  );
+  assert.ok(
+    h.logs.includes('[slot] offline-1: remote prune unavailable: node mini is disconnected'),
+  );
+  assert.ok(
+    h.logs.includes('[slot] operator-1: remote prune unavailable: slot repo is the operator root'),
+  );
   h.advance(59 * 60_000);
   await pruneIdleSlotRemoteRefs(slots, new Set(), h.deps);
   assert.equal(h.ran.length, 3, 'inside the one-hour backoff nothing is retried');
   h.advance(2 * 60_000);
   await pruneIdleSlotRemoteRefs(slots, new Set(), h.deps);
-  assert.deepEqual(h.ran.slice(3), ['failed-1'], 'after the backoff the failed slot is tried first');
+  assert.deepEqual(
+    h.ran.slice(3),
+    ['failed-1'],
+    'after the backoff the failed slot is tried first',
+  );
 });

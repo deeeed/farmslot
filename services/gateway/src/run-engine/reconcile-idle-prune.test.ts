@@ -1,14 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import '../core/private-pool.test-support.js';
 
-test("the orphan reconciler's pass hands its fleet snapshot and active slots to the idle prune", async () => {
+test("the orphan reconciler's pass hands its fleet snapshot and active slots to the idle prune", async (t) => {
   const { reconcileOrphanedSlots } = await import('./recovery.js');
   const calls: Array<{ slots: string[]; active: string[] }> = [];
-  const active: Pick<Run, 'id' | 'status' | 'slotId'> = { id: 'run-1', status: 'running', slotId: 'busy-1' };
+  const { createRun, deleteRun, updateRun } = await import('../runs/store.js');
+  const created = createRun({ flowType: 'dev', project: 'fixture', ticketOrPr: 'TAT-1' }, { deferBackgroundPersist: true });
+  const active = updateRun(created.id, { status: 'dispatching', slotId: 'busy-1' })!;
+  t.after(async () => {
+    updateRun(active.id, { status: 'done', completedAt: new Date().toISOString() });
+    await deleteRun(active.id);
+  });
   await reconcileOrphanedSlots({
-    listRuns: () => ({ runs: [active as Run] }),
+    listRuns: () => ({ runs: [active] }),
     loadFleetStatus: async () => ({
       slots: [
         { slot: 'idle-1', lifecycle: 'ready', phase: null, currentRunId: null },

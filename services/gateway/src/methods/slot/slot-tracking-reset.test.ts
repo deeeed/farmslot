@@ -273,5 +273,8 @@ test('the idle reset that release, prepare, find-slot and recovery share never p
   // A squash-merged PR: origin deleted the branch; release still needs origin/feat/merged.
   git(origin, 'update-ref', '-d', 'refs/heads/feat/merged');
   await reset(slotVars(repo, 'no-prune'), {}, undefined, 'main');
-  assert.equal(git(repo, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/feat/merged').length, 40);
+  assert.equal(
+    git(repo, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/feat/merged').length,
+    40,
+  );
 });

@@ -192,7 +192,10 @@ export interface RunRecoveryCollaborators {
    * Drop remote refs whose branch origin deleted on one released idle slot (throttled per slot).
    * Settles in the background under the slot's prepare guard: the pass does not wait for it.
    */
-  pruneIdleRemoteRefs?: (slots: readonly FleetSlotSnapshot[], activeSlotIds: ReadonlySet<string>) => void;
+  pruneIdleRemoteRefs?: (
+    slots: readonly FleetSlotSnapshot[],
+    activeSlotIds: ReadonlySet<string>,
+  ) => void;
   /**
    * Run a workspace recovery that a restart interrupted once more, from fresh workspace evidence.
    * Settles in the background: startup does not wait for the slot's git work.

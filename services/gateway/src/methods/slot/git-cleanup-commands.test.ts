@@ -15,8 +15,8 @@ import {
   recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
-  REMOVE_STALE_TMP_PACKS_COMMAND,
   remotePruneCommand,
+  REMOVE_STALE_TMP_PACKS_COMMAND,
 } from './git-cleanup-commands.js';
 
 function runBash(command: string, cwd?: string) {
@@ -460,10 +460,14 @@ const PRUNE_FIXTURE = `ROOT=$(mktemp -d)
 /** The fixture and `script` in `shell`; the command under test is `prune` (min stale days 0). */
 function runPrune(script: string, options: { shell?: string; minStaleDays?: number } = {}) {
   const shell = options.shell ?? 'bash';
-  const result = spawnSync(shell, [...(shell === 'bash' ? [] : ['-f']), '-c', `${PRUNE_FIXTURE}\n${script}`], {
-    encoding: 'utf8',
-    env: { ...process.env, CMD: remotePruneCommand(24, options.minStaleDays ?? 0) },
-  });
+  const result = spawnSync(
+    shell,
+    [...(shell === 'bash' ? [] : ['-f']), '-c', `${PRUNE_FIXTURE}\n${script}`],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, CMD: remotePruneCommand(24, options.minStaleDays ?? 0) },
+    },
+  );
   assert.equal(result.status, 0, result.stderr);
   return {
     notes: gitMaintenanceNotes(result.stdout),
