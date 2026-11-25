@@ -345,7 +345,7 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
   session: CdpCallSession,
   expression: string,
   worldName: string,
-  timeoutMs?: number,
+  options: CdpCallOptions = {},
 ): Promise<T> {
   let contexts = isolatedWorldContexts.get(session);
   if (!contexts) {
@@ -356,13 +356,13 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
   if (!isolatedWorld) {
     const frameTree = await session.call<{
       frameTree?: { frame?: { id?: string } };
-    }>('Page.getFrameTree', {}, { timeoutMs });
+    }>('Page.getFrameTree', {}, options);
     const frameId = frameTree.frameTree?.frame?.id;
     if (!frameId) throw new Error('CDP evaluation could not resolve the page frame.');
     const created = await session.call<{ executionContextId?: number }>(
       'Page.createIsolatedWorld',
       { frameId, worldName },
-      { timeoutMs },
+      options,
     );
     if (created.executionContextId === undefined) {
       throw new Error('CDP evaluation could not create an isolated world.');
@@ -382,7 +382,7 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
         awaitPromise: true,
         returnByValue: true,
       },
-      { timeoutMs },
+      options,
     );
     if (result.exceptionDetails) {
       throw new CdpPageEvaluationError(
@@ -421,13 +421,6 @@ async function retryTransientCdpContext<T>(
   } while (Date.now() < deadline);
   throw lastError;
 }
-
-/**
- * A page-side next-frame function. LavaMoat scuttling makes reading a page global
- * such as requestAnimationFrame throw in the main world, where Runtime.evaluate
- * runs (MetaMask Extension pages); then a 16 ms timer stands in for the frame.
- */
-export const SCUTTLE_SAFE_NEXT_FRAME = `((callback) => { let frame; try { frame = globalThis.requestAnimationFrame; } catch { frame = undefined; } return typeof frame === 'function' ? frame.call(globalThis, callback) : setTimeout(callback, 16); })`;
 
 /**
  * Distinguish a reachable JavaScript context from a renderable, interactive
@@ -516,7 +509,7 @@ export async function probeCdpCompositorInteractivity(
           async (remainingMs): Promise<EvaluationResult> => {
             const value = await evaluateCdpSessionInIsolatedWorld<
               Omit<CdpCompositorProbe, 'status'>
-            >(session, expression, COMPOSITOR_WORLD, remainingMs);
+            >(session, expression, COMPOSITOR_WORLD, { timeoutMs: remainingMs });
             return { result: { value } };
           },
         );
@@ -684,13 +677,13 @@ export class CdpWebPage {
       await retryTransientCdpContext(
         deadline,
         async (attemptTimeoutMs) => {
-          const expression = `new Promise((resolve, reject) => { const key = '__farmslotDomSettlementCancel'; globalThis[key]?.(); const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let observer; let finished = false; const cleanup = () => { observer?.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); if (globalThis[key] === cancel) delete globalThis[key]; }; const cancel = () => { if (finished) return; finished = true; cleanup(); resolve(false); }; globalThis[key] = cancel; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; const finiteAnimations = animations.filter((animation) => animation.effect?.getTiming().iterations !== Infinity); if (finiteAnimations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); const nextFrame = ${SCUTTLE_SAFE_NEXT_FRAME}; nextFrame(() => nextFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for this settlement attempt.')); }, ${attemptTimeoutMs}); })`;
+          const expression = `new Promise((resolve, reject) => { const key = '__farmslotDomSettlementCancel'; globalThis[key]?.(); const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let observer; let finished = false; const cleanup = () => { observer?.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); if (globalThis[key] === cancel) delete globalThis[key]; }; const cancel = () => { if (finished) return; finished = true; cleanup(); resolve(false); }; globalThis[key] = cancel; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; const finiteAnimations = animations.filter((animation) => animation.effect?.getTiming().iterations !== Infinity); if (finiteAnimations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for this settlement attempt.')); }, ${attemptTimeoutMs}); })`;
           const settled = await withTimeout(
             evaluateCdpSessionInIsolatedWorld<boolean>(
               this.session,
               expression,
               DOM_SETTLEMENT_WORLD,
-              attemptTimeoutMs + 25,
+              { timeoutMs: attemptTimeoutMs + 25 },
             ),
             attemptTimeoutMs + 50,
             timeoutReason,
@@ -727,12 +720,21 @@ export class CdpWebPage {
     return result.result?.value as T;
   }
 
-  async evaluateInIsolatedWorld<T = unknown>(expression: string, worldName: string): Promise<T> {
+  async evaluateInIsolatedWorld<T = unknown>(
+    expression: string,
+    worldName: string,
+    options: CdpCallOptions = {},
+  ): Promise<T> {
     try {
-      return await evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName);
+      return await evaluateCdpSessionInIsolatedWorld<T>(
+        this.session,
+        expression,
+        worldName,
+        options,
+      );
     } catch (error) {
       if (!isTransientCdpContextError(error)) throw error;
-      return evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName);
+      return evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName, options);
     }
   }
 
@@ -784,7 +786,7 @@ export class CdpWebPage {
               this.session,
               expression,
               'farmslot-click-readiness',
-              attemptTimeoutMs,
+              { timeoutMs: attemptTimeoutMs },
             ),
           ),
           remainingMs,
@@ -1767,6 +1769,11 @@ interface CdpHudState {
   last?: HudFinishedStep;
 }
 
+// The HUD shares the page's DOM from its own world: page policy (LavaMoat scuttling
+// on MetaMask Extension pages) can make main-world globals such as
+// requestAnimationFrame throw, and the paint wait needs real frames.
+const CDP_HUD_WORLD = 'farmslot-recipe-hud';
+
 async function renderCdpHud(
   page: CdpWebPage,
   node: Record<string, unknown>,
@@ -1775,8 +1782,9 @@ async function renderCdpHud(
 ): Promise<unknown> {
   if (node.clear === true) {
     delete hud.last;
-    return page.evaluate(
+    return page.evaluateInIsolatedWorld(
       "(() => { document.getElementById('farmslot-recipe-hud')?.remove(); document.getElementById('farmslot-recipe-hud-reserved-space')?.remove(); document.documentElement.style.removeProperty('--farmslot-recipe-hud-height'); document.body?.style.removeProperty('padding-bottom'); return { hud: false, cleared: true }; })()",
+      CDP_HUD_WORLD,
     );
   }
   const title = hudSecondaryText(asOptionalString(node.title, 'app.hud.title') ?? 'Recipe run');
@@ -1815,7 +1823,7 @@ async function renderCdpHud(
   // A failing step stays the main line in the fail colour; a completed run shows its outcome.
   const intentColor =
     status === 'fail' ? HUD_COLORS.fail : complete && status === 'pass' ? HUD_COLORS.pass : '#fff';
-  return page.evaluate(
+  return page.evaluateInIsolatedWorld(
     `(() => {
       const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines, intentStyle: intent.webStyle, intentColor, finished, colors: HUD_COLORS, bounds: HUD_PANEL_BOUNDS })};
       const id = 'farmslot-recipe-hud';
@@ -1965,9 +1973,10 @@ async function renderCdpHud(
         document.documentElement.style.removeProperty('--farmslot-recipe-hud-height');
         document.body?.style.removeProperty('padding-bottom');
       }
-      return (${waitForHudPaint.toString()})(${SCUTTLE_SAFE_NEXT_FRAME}).then(() =>
+      return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() =>
         ({ hud: true, status: payload.status, nodeId: payload.nodeId, flow: payload.flow }));
     })()`,
+    CDP_HUD_WORLD,
     // Navigation/hydration may occupy the main thread before the paint wait starts.
     { timeoutMs: 10_000, signal: context.signal },
   );
