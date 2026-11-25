@@ -1,1 +1,2 @@
 - `SlotPrepareParams` documents that `runId` and `bindRunId` supply the run's `flowType`, `domain` and `app` when those are unset, and must name a run of the slot's project.
+- `SlotRunHistoryEntry` gains an optional `domain`: the run's domain.

@@ -1,1 +1,1 @@
-- Preparing a slot for a run from the load-run modal, the prepare popover or run detail sends the run's flow type and domain (the slot history popover sends the flow type), so that prepare follows the run's context.
+- Preparing a slot for a run from the load-run modal, the prepare popover, run detail or slot history sends the run's flow type and domain, so that prepare follows the run's context.
