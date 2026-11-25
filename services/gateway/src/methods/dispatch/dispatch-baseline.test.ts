@@ -24,8 +24,6 @@ const snapshots = await import('../../run-engine/diff-artifacts.js');
 const admission = await import('../../backlog/pr-admission.js');
 const slots = await import('../slot.js');
 const { makeVars } = await import('../../runners/test-fixtures.js');
-const { NativeWorkerOperationUncertainError } =
-  await import('../../runners/native/worker-error.js');
 const { createRun, deleteRun, getRun, persistRunNow, updateRun } =
   await import('../../runs/store.js');
 const vars = makeVars({ projectName: 'dispatch-baseline', platform: 'cli' });
@@ -603,10 +601,8 @@ test('a pinned native run with a held worker reaches reconciliation, not the mis
     () => undefined,
     (failure: unknown) => failure,
   );
-  // launchNative wraps any reconciliation failure; its cause is the fixture stop.
-  assert.ok(error instanceof NativeWorkerOperationUncertainError || error === nativeReconciliation);
   assert.equal(
-    error === nativeReconciliation ? error : (error as Error & { cause?: unknown }).cause,
+    error,
     nativeReconciliation,
     'dispatch reached native reconciliation instead of refusing the live worker',
   );
