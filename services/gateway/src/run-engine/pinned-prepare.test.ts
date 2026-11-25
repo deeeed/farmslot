@@ -13,8 +13,11 @@ import type { RawProjectJson } from '../core/index.js';
 
 import {
   isPinnedPrepareRun,
+  observedBuildFiles,
+  observedRunwayArtifact,
   pinnedDispatchRefusal,
   prepareIsPinned,
+  prepareObservesBuild,
   replayResumesNativeWorker,
   shouldReroutePinnedReplayToPrepare,
 } from './pinned-prepare.js';
@@ -214,4 +217,79 @@ test('only a held, launched primary native worker counts as live', () => {
     false,
     'a flow with no worker role has no primary worker',
   );
+});
+
+const provision = (fields: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    schemaVersion: 1,
+    appInstalled: true,
+    platform: 'ios',
+    simulator: { name: 'mm-2', udid: 'UDID-2', created: false },
+    artifact: { runId: '41900351233', revision: 'c'.repeat(40), branch: 'main' },
+    recordedAt: '2026-11-25T09:00:00.000Z',
+    ...fields,
+  });
+const slot = { slotId: 'macwork-mm-2', baseSha: BASE, platform: 'ios', simulator: 'mm-2' };
+
+test('an excluded trial records the Runway build its slot reports, unenforced', () => {
+  assert.deepEqual(observedRunwayArtifact(provision(), slot), {
+    kind: 'runway',
+    slotId: 'macwork-mm-2',
+    baseSha: BASE,
+    runId: '41900351233',
+    revision: 'c'.repeat(40),
+    platform: 'ios',
+    installedAt: '2026-11-25T09:00:00.000Z',
+    enforced: false,
+  });
+  assert.equal(
+    observedRunwayArtifact(provision(), { ...slot, simulator: 'UDID-2' })?.runId,
+    '41900351233',
+    'the simulator matches by udid too',
+  );
+  assert.equal(
+    observedRunwayArtifact(
+      provision({ artifact: { runId: '41900351233', revision: '41900351233' } }),
+      slot,
+    )?.revision,
+    undefined,
+    'an unverified record keeps the run id when the revision is not a commit',
+  );
+});
+
+test('an observed record is written only when the file vouches for this slot', () => {
+  assert.equal(observedRunwayArtifact('{', slot), undefined, 'malformed');
+  assert.equal(
+    observedRunwayArtifact(provision({ appInstalled: false }), slot),
+    undefined,
+    'a source build marks the Runway app as not installed',
+  );
+  assert.equal(observedRunwayArtifact(provision(), { ...slot, simulator: 'mm-3' }), undefined);
+  assert.equal(observedRunwayArtifact(provision(), { ...slot, simulator: undefined }), undefined);
+  assert.equal(observedRunwayArtifact(provision({ artifact: null }), slot), undefined);
+  assert.equal(observedRunwayArtifact(provision({ recordedAt: undefined }), slot), undefined);
+});
+
+test('only excluded eval trials on a taking-part project observe their build', () => {
+  const proof = { ...comparison, flowType: 'qa' as const };
+  assert.equal(prepareObservesBuild(proof, mobile), true, 'a proof trial');
+  assert.equal(prepareObservesBuild(comparison, mobile), false, 'a pinned run enforces instead');
+  assert.equal(prepareObservesBuild(proof, extension), false);
+  assert.equal(
+    prepareObservesBuild(proof, undefined),
+    false,
+    'unreadable config: best effort, nothing',
+  );
+  assert.equal(prepareObservesBuild({ ...proof, startRef: null }, mobile), false);
+  assert.equal(prepareObservesBuild({ ...proof, lane: 'production' }, mobile), false);
+});
+
+test('the provision record is read from the checkout first, then from the capsule', () => {
+  assert.deepEqual(observedBuildFiles('/slot', 'temp/runtime', '/capsules/trial-1'), [
+    '/slot/temp/runtime/runway-provision.json',
+    '/capsules/trial-1/original-ignored/temp/runtime/runway-provision.json',
+  ]);
+  assert.deepEqual(observedBuildFiles('/slot', 'temp/runtime', undefined), [
+    '/slot/temp/runtime/runway-provision.json',
+  ]);
 });

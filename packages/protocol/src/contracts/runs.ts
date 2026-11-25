@@ -2168,8 +2168,11 @@ export interface RunPrepareArtifact {
   baseSha: string;
   /** Runway workflow run id; absent for a source build. */
   runId?: string;
-  /** Commit the installed build was made from. */
-  revision: string;
+  /**
+   * Commit the installed build was made from: always set when `enforced`; an
+   * observed record keeps it only when the slot reported a full commit.
+   */
+  revision?: string;
   platform: string;
   installedAt: string;
   /** True when prepare installed and verified it; false when it was only observed. */

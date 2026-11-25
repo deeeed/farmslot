@@ -2,6 +2,7 @@ import {
   isEvalRun,
   nativeWorkerBindingIsHeld,
   type Run,
+  type RunPrepareArtifact,
   workerRoleForFlow,
 } from '@farmslot/protocol';
 
@@ -113,4 +114,87 @@ export function replayResumesNativeWorker(
     nativeWorkerBindingIsHeld(primary.nativeSession) &&
     primary.nativeSession.launchRequestedAt,
   );
+}
+
+/** The harness record of the Runway build it installed on a slot. */
+export const RUNWAY_PROVISION_RECORD = 'runway-provision.json';
+
+/**
+ * Where a slot's provision record may be, in the order to read it: the checkout,
+ * which an explicit runway prepare after isolation rewrites, then the capsule copy
+ * isolation moved every ignored file into (also where a capsule retry finds it).
+ */
+export function observedBuildFiles(
+  remoteRepo: string,
+  runtimeDir: string,
+  capsulePath: string | undefined,
+): string[] {
+  return [
+    `${remoteRepo}/${runtimeDir}/${RUNWAY_PROVISION_RECORD}`,
+    ...(capsulePath
+      ? [`${capsulePath}/original-ignored/${runtimeDir}/${RUNWAY_PROVISION_RECORD}`]
+      : []),
+  ];
+}
+
+/**
+ * Whether prepare records the build it found for this run without enforcing it: an
+ * eval run with a start ref that pinning excludes (capsule and proof trials), on a
+ * project that takes part. Analysis filters those cells by this record.
+ */
+export function prepareObservesBuild(
+  run: PinnedRunFields,
+  projectJson: RawProjectJson | undefined,
+): boolean {
+  return (
+    isEvalRun(run) &&
+    Boolean(run.startRef) &&
+    !isPinnedPrepareRun(run) &&
+    Boolean(projectJson && projectPinsPrepare(projectJson))
+  );
+}
+
+/**
+ * The observed record from a slot's `runway-provision.json`, or undefined when it
+ * cannot vouch for the app on this slot: not installed (a source build sets
+ * `appInstalled: false`), another simulator, or no Runway run id.
+ */
+export function observedRunwayArtifact(
+  raw: string,
+  slot: { slotId: string; baseSha: string; platform: string; simulator?: string },
+): RunPrepareArtifact | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const record = parsed as Record<string, unknown>;
+  if (record.appInstalled !== true || typeof record.recordedAt !== 'string') return undefined;
+  const simulator =
+    record.simulator && typeof record.simulator === 'object' && !Array.isArray(record.simulator)
+      ? (record.simulator as Record<string, unknown>)
+      : undefined;
+  if (!slot.simulator || (simulator?.name !== slot.simulator && simulator?.udid !== slot.simulator))
+    return undefined;
+  const artifact =
+    record.artifact && typeof record.artifact === 'object' && !Array.isArray(record.artifact)
+      ? (record.artifact as Record<string, unknown>)
+      : undefined;
+  if (typeof artifact?.runId !== 'string' || !artifact.runId) return undefined;
+  const revision =
+    typeof artifact.revision === 'string' && /^[0-9a-f]{40}$/.test(artifact.revision)
+      ? artifact.revision
+      : undefined;
+  return {
+    kind: 'runway',
+    slotId: slot.slotId,
+    baseSha: slot.baseSha,
+    runId: artifact.runId,
+    ...(revision ? { revision } : {}),
+    platform: slot.platform,
+    installedAt: record.recordedAt,
+    enforced: false,
+  };
 }

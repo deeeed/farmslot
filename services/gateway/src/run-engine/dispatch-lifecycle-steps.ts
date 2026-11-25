@@ -1,6 +1,11 @@
-import { Events, isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import { Events, isTerminalRunStatus, type Run, type RunPrepareArtifact } from '@farmslot/protocol';
 
-import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import {
+  loadProjectVars,
+  loadSlotVars,
+  type RawProjectJson,
+  resolveProjectRuntimeDir,
+} from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
 import { claimSlotStatusIf, nextSlotEpoch, readSlotRow } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
@@ -46,7 +51,12 @@ import { taskExecutionAtDispatch } from '../runs/task-execution.js';
 import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
-import { runPrepareIsPinned } from './pinned-prepare.js';
+import {
+  observedBuildFiles,
+  observedRunwayArtifact,
+  prepareObservesBuild,
+  runPrepareIsPinned,
+} from './pinned-prepare.js';
 import { probeRemotePath } from './remote-probes.js';
 import { runSupersededSince } from './run-generation.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
@@ -183,6 +193,44 @@ async function readPrepareProvenance(slotId: string, project: string): Promise<P
       ? safeReferenceRepoProvenance(referenceRepoProvenance)
       : undefined,
   };
+}
+
+/**
+ * For an eval trial pinning excludes, the Runway build the slot reports. Isolation
+ * moves ignored files into the capsule, so the capsule copy is read when the
+ * checkout has none; an explicit runway prepare after isolation rewrites the
+ * checkout copy, which therefore wins. Best effort: never fails a prepare.
+ */
+async function readObservedBuild(
+  run: Run,
+  slotId: string,
+): Promise<RunPrepareArtifact | undefined> {
+  const baseSha = run.startRef?.resolvedSha;
+  if (!baseSha) return undefined;
+  let projectJson: RawProjectJson | undefined;
+  try {
+    projectJson = (await loadProjectVars(run.project)).projectJson;
+  } catch {
+    return undefined;
+  }
+  if (!prepareObservesBuild(run, projectJson)) return undefined;
+  const vars = await loadSlotVars(slotId);
+  const runtimeDir = await resolveProjectRuntimeDir(run.project);
+  const capsule = run.engineState?.evalExperiment?.blind?.isolation?.capsulePath;
+  for (const file of observedBuildFiles(vars.remoteRepo, runtimeDir, capsule)) {
+    const result = await execOnSlot(vars, `cat ${shellQuote(file)} 2>/dev/null`, {
+      timeout: 5_000,
+      maxBuffer: 256 * 1024,
+    });
+    if (result.exitCode !== 0 || !result.stdout.trim()) continue;
+    return observedRunwayArtifact(result.stdout, {
+      slotId,
+      baseSha,
+      platform: vars.platform,
+      ...(vars.resourceVars.simulator ? { simulator: vars.resourceVars.simulator } : {}),
+    });
+  }
+  return undefined;
 }
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -585,6 +633,19 @@ export async function executePrepareStep(
         }),
         'pinned build recorded',
       );
+    } else {
+      try {
+        const observed = await readObservedBuild(getRun(runId)!, current.slotId);
+        if (observed)
+          await persistRunNow(
+            updateRun(runId, { prepareArtifact: observed }),
+            'observed build recorded',
+          );
+      } catch (error) {
+        console.warn(
+          `[run-engine] observed build not recorded for ${runId.slice(0, 8)}: ${(error as Error).message.slice(0, 200)}`,
+        );
+      }
     }
     const afterPrepare = getRun(runId)!;
     if (afterPrepare.flowType === 'qa' && afterPrepare.qaSource) {
