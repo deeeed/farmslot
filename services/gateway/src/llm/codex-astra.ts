@@ -1,4 +1,4 @@
-import type { Model, MutableModels } from '@earendil-works/pi-ai';
+import type { Api, Model, MutableModels } from '@earendil-works/pi-ai';
 
 export const CODEX_ASTRA_MODEL = 'gpt-6.2-astra';
 /** Saved pins keep the previous Astra id. New defaults use CODEX_ASTRA_MODEL. */
@@ -82,6 +82,41 @@ export function codexAstraModels<TApi extends 'openai-codex-responses' | 'openai
   return [CURRENT_ASTRA, PREVIOUS_ASTRA].map((spec) =>
     codexAstraDescriptor(spec, provider, api, baseUrl),
   );
+}
+
+/**
+ * A model the operator configured for a codex-lb tier. PI's OpenAI API catalog entry, when it
+ * has one (gpt-5.6-terra), supplies the model's own effort levels and limits; an id it does not
+ * know (gpt-6-luna) gets the Astra reasoning shape, whose levels the LB accepts for both.
+ * Cost stays out: an LB call is a subscription, never an API charge (reportedLlmCost).
+ */
+export function codexLbConfiguredModel(
+  id: string,
+  catalog:
+    | Pick<
+        Model<Api>,
+        'name' | 'reasoning' | 'thinkingLevelMap' | 'input' | 'contextWindow' | 'maxTokens'
+      >
+    | undefined,
+  provider: string,
+  baseUrl: string,
+): Model<'openai-responses'> {
+  const shape = codexAstraDescriptor(
+    { id, name: id, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+    provider,
+    'openai-responses',
+    baseUrl,
+  );
+  if (!catalog) return shape;
+  return {
+    ...shape,
+    name: catalog.name,
+    reasoning: catalog.reasoning,
+    thinkingLevelMap: catalog.thinkingLevelMap,
+    input: catalog.input,
+    contextWindow: catalog.contextWindow,
+    maxTokens: catalog.maxTokens,
+  };
 }
 
 /** Supplement PI's static catalog without replacing its transport or authentication. */

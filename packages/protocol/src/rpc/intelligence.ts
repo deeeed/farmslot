@@ -255,6 +255,16 @@ export interface ImprovementApplyResult {
 
 export type LLMReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+/** The model tiers callers name instead of a provider's model id. */
+export const LLM_TIER_NAMES = ['fast', 'standard', 'smart'] as const;
+export type LLMTierName = (typeof LLM_TIER_NAMES)[number];
+
+/**
+ * Per-provider model ids that replace the built-in tier map (`llm.tiers`), e.g.
+ * `{ 'codex-lb': { fast: 'gpt-5.6-terra' } }`. A tier left out keeps the built-in id.
+ */
+export type LLMTierModels = Partial<Record<string, Partial<Record<LLMTierName, string>>>>;
+
 export interface LLMConfigGetResult {
   defaultProvider: string;
   copilotModel: string;
@@ -262,6 +272,7 @@ export interface LLMConfigGetResult {
   improvementModel?: string;
   copilotEffort?: LLMReasoningEffort;
   intelligenceEffort?: LLMReasoningEffort;
+  tierModels?: LLMTierModels;
 }
 
 export interface LLMConfigSetParams {
@@ -271,6 +282,8 @@ export interface LLMConfigSetParams {
   improvementModel?: string;
   copilotEffort?: LLMReasoningEffort;
   intelligenceEffort?: LLMReasoningEffort;
+  /** Replaces every saved tier override; `{}` clears them. */
+  tierModels?: LLMTierModels;
 }
 
 export interface LLMConfigSetResult {
