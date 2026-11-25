@@ -3510,6 +3510,17 @@ export interface RunTaskExecution {
 export interface RunEngineState {
   slotCapabilityRequirements?: RunSlotCapabilityRequirements;
   /**
+   * The one automatic COMPLETE send-back a run gets for stale CI receipts
+   * (961d55d3). A completion replay drops resolved decisions; this survives it.
+   */
+  staleReceiptSendBack?: { decisionId: string; sentAt: string };
+  /**
+   * The findings the last review verdict left open when any is a blocker or major
+   * (961d55d3). A replay clears REVIEW's outputs; a refused review launch reads these
+   * so open blockers never reach COMPLETE. The next review verdict replaces them.
+   */
+  openReviewFindings?: ReviewIssue[];
+  /**
    * The engine generation a workspace review's DISPATCH admitted its reviewer
    * round under, so its MONITOR settles that attempt after a monitor-only replay
    * (ADR-063 Amendment 2).

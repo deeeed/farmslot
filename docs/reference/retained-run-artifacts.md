@@ -219,6 +219,14 @@ after admission locks are released. A missing/unwritable archive refuses the
 operation without deletion. Budget admission continues to enforce capacity and
 report explicit missing-media status; it never evicts history to make room.
 
+A bundle's `usage/<digest>.json` and `availability/<digest>.json` records move
+to the archive with its `sha256/<digest>` directory, right after it, in both the
+settled-run pass and housekeeping. Records whose bundle already left `sha256/`
+and that no run references or capture pins are archived by housekeeping, at
+most 200 per pass, under the archive key `bundle-records-<UTC hour>`. They are
+never deleted: availability may journal the archive locations of its media.
+Explicit garbage collection removes both records with each bundle it deletes.
+
 ### Settled-run retention
 
 ADR-039 Amendment 3 supersedes Amendment 2's deletion policy. The gateway MUST

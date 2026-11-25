@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   type CompleteStepOutput,
+  PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type PublicationReviewLaunchRejection,
   type RecipeRepairScope,
   type ReviewRequestContext,
@@ -23,7 +24,12 @@ import {
   finalizeEvalResultPackageForRun,
   readFrozenEvalFirstOutputPackage,
 } from '../evals/package-store.js';
-import { type ReviewOptions, shouldSkipForDisabledReviewConfig } from '../review/orchestrator.js';
+import { runReplayStep } from '../methods/run/replay-step.js';
+import {
+  type ReviewOptions,
+  type ReviewResult,
+  shouldSkipForDisabledReviewConfig,
+} from '../review/orchestrator.js';
 import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
 import {
   admitReviewRound,
@@ -3097,6 +3103,274 @@ for (const scenario of [
   });
 }
 
+// 961d55d3 (TAT-4769): review ended with 6 blockers and 8 majors, the run went on to
+// COMPLETE as if it had passed, and the stop was labelled "fix attempts exhausted"
+// although the no-verdict cap had stopped it before any fix round was spent.
+const capStop =
+  '3/3 reviewer attempts ended without a verdict, so automatic reviews stopped. Request a review to retry. Last: timeout';
+const severeFindings = [
+  { severity: 'blocker' as const, file: 'a.ts', line: 1, description: 'Crashes on empty input.' },
+  { severity: 'major' as const, file: 'b.ts', line: 2, description: 'No test covers the fix.' },
+];
+
+const deliveredMonitor = {
+  workerSignal: { status: 'complete' },
+  pushVerification: { verified: true, dirtyFiles: 0, unpushedCommits: 0 },
+};
+const deliveredOutput: NonNullable<Run['output']> = {
+  capturedAt: '2026-11-24T10:00:00.000Z',
+  workerFinished: true,
+  artifactManifest: [],
+  manifestDigest: 'd'.repeat(64),
+  reportPath: 'artifacts/pr-description.md',
+};
+
+async function deliveredPublicationRun(t: import('node:test').TestContext): Promise<string> {
+  const runId = await publicationGateRun(t, {});
+  const run = getRun(runId)!;
+  updateRun(runId, {
+    steps: [{ name: 'monitor', status: 'done', outputs: deliveredMonitor }, ...run.steps],
+    output: deliveredOutput,
+  });
+  return runId;
+}
+
+/** How the review loop ended; a spent round budget also records `maxRetriesExhausted`. */
+interface ReviewEnding {
+  issues?: ReviewResult['issues'];
+  retryCount: number;
+  maxRetries: number;
+  maxRetriesExhausted?: boolean;
+  reason?: string;
+}
+
+function reviewEnded(ending: ReviewEnding): PostDispatchStepContext {
+  const result = {
+    verdict: 'issues' as const,
+    issues: severeFindings,
+    reviewSnapshot: {
+      source: 'local-git' as const,
+      headSha: rowOneHead,
+      capturedAt: '2026-11-24T10:00:00Z',
+    },
+    ...ending,
+  };
+  return { ...restartReplayContext(), executeReviewForRun: async () => result };
+}
+
+async function heldReview(runId: string, context: PostDispatchStepContext) {
+  let held: ResultDecisionHoldError | undefined;
+  await assert.rejects(executeReviewStep(runId, context), (error: unknown) => {
+    assert.ok(error instanceof ResultDecisionHoldError, String(error));
+    held = error;
+    return true;
+  });
+  return held!;
+}
+
+test('961d55d3: spent fix rounds with an open blocker hold a delivered publishing run', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  const held = await heldReview(
+    runId,
+    reviewEnded({ retryCount: 2, maxRetries: 2, maxRetriesExhausted: true }),
+  );
+  assert.deepEqual(held.stepOutputs.issues, severeFindings);
+  assert.equal(held.stepOutputs.maxRetriesExhausted, true);
+});
+
+test('961d55d3: a no-verdict cap stop with open blockers holds and is not labelled exhausted', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  const held = await heldReview(
+    runId,
+    reviewEnded({ retryCount: 0, maxRetries: 2, reason: capStop }),
+  );
+  assert.equal(held.stepOutputs.maxRetriesExhausted, false);
+  assert.equal(held.stepOutputs.reason, capStop);
+});
+
+test('an undelivered publishing run with open blockers fails instead of reaching COMPLETE', async (t) => {
+  const runId = await publicationGateRun(t, {});
+  await assert.rejects(
+    executeReviewStep(
+      runId,
+      reviewEnded({ retryCount: 2, maxRetries: 2, maxRetriesExhausted: true }),
+    ),
+    (error: unknown) => {
+      assert.ok(!(error instanceof ResultDecisionHoldError));
+      assert.match((error as Error).message, /^Review found 2 issue\(s\) after 2\/2 fix attempts/);
+      return true;
+    },
+  );
+});
+
+test('spent fix rounds with only minor and nit findings still reach the publication gate', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  const minor = [
+    { severity: 'minor' as const, file: 'a.ts', description: 'Name the constant.' },
+    { severity: 'nit' as const, file: 'b.ts', description: 'Typo.' },
+  ];
+  const io = await executeReviewStep(
+    runId,
+    reviewEnded({ issues: minor, retryCount: 2, maxRetries: 2, maxRetriesExhausted: true }),
+  );
+  assert.equal(io.outputs?.verdict, 'issues');
+  assert.equal(io.outputs?.maxRetriesExhausted, true);
+});
+
+// B2: a publishing run whose review rounds are spent with a blocker open holds with the
+// budget stop, so Accept and the budget text are there (ADR-065 Amendment 13).
+test('961d55d3: a spent review budget with an open blocker holds a publishing run with its budget stop', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  updateRun(runId, {
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `spent-severe-${i}`)),
+  });
+  const held = await heldReview(
+    runId,
+    reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true }),
+  );
+  const rejection = held.stepOutputs.reviewLaunchRejection as PublicationReviewLaunchRejection;
+  assert.equal(rejection.code, PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached);
+  const latest = getRun(runId)!;
+  const decision = await buildResultDecision(
+    {
+      ...latest,
+      steps: latest.steps.map((step) =>
+        step.name === 'review' ? { ...step, status: 'failed', outputs: held.stepOutputs } : step,
+      ),
+    },
+    'review',
+  );
+  assert(decision.payload?.kind === 'result-decision');
+  assert.equal(decision.payload.reason, rejection.message);
+  assert.deepEqual(decision.payload.findings, severeFindings);
+  assert.equal(
+    decision.payload.actions.find((action) => action.id === 'accept-result')?.available,
+    true,
+  );
+});
+
+const refusedLaunch = (runId: string): PostDispatchStepContext => ({
+  ...restartReplayContext(),
+  executeReviewForRun: async () => {
+    await assertReviewRoundAvailable(getRun(runId)!);
+    assert.fail('a spent budget refuses the launch');
+  },
+});
+
+// Round-2 M1: a run held at REVIEW with a blocker, replayed for real, whose launch the spent
+// budget refuses. The replay clears REVIEW's outputs; the open findings must survive it
+// (3e434597, 7b553a87 and f963d8a5 had this shape and no gate reviews).
+test('961d55d3: a held blocker survives a real replay, so a refused launch holds instead of reaching COMPLETE', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  updateRun(runId, {
+    // A ticket a replay accepts; the fixture default is only a label.
+    ticketOrPr: 'ROW-4769',
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `replayed-severe-${i}`)),
+  });
+  await heldReview(runId, reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true }));
+  updateRunStep(runId, 'review', { status: 'failed' });
+  // The steps a real run passed before REVIEW, so the replay accepts it.
+  updateRun(runId, {
+    status: 'needs-decision',
+    steps: [
+      ...['find-slot', 'write-task', 'prepare', 'dispatch'].map((name) => ({
+        name,
+        status: 'done' as const,
+      })),
+      ...getRun(runId)!.steps,
+    ],
+  });
+
+  // Replayed from MONITOR, as a completion send-back does; no slot to reclaim here.
+  updateRun(runId, { slotId: null });
+  await runReplayStep({ runId, stepName: 'monitor' }, () => {}, { startEngine: async () => {} });
+  assert.equal(getRun(runId)!.steps.find((step) => step.name === 'review')?.outputs, undefined);
+  // MONITOR runs again and records the delivered result before REVIEW launches.
+  updateRun(runId, { slotId: 'isolated-review-slot', output: deliveredOutput });
+  updateRunStep(runId, 'monitor', { status: 'done', outputs: deliveredMonitor });
+
+  const held = await heldReview(runId, refusedLaunch(runId));
+  assert.deepEqual(held.stepOutputs.issues, severeFindings);
+  assert.ok(held.stepOutputs.reviewLaunchRejection);
+  const latest = getRun(runId)!;
+  const decision = await buildResultDecision(
+    {
+      ...latest,
+      steps: latest.steps.map((step) =>
+        step.name === 'review' ? { ...step, status: 'failed', outputs: held.stepOutputs } : step,
+      ),
+    },
+    'review',
+  );
+  assert(decision.payload?.kind === 'result-decision');
+  assert.match(decision.payload.reason, / The findings listed are from the last review\.$/);
+});
+
+test('a review that returns after its loop was superseded leaves the recorded findings alone', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  await executeReviewStep(runId, {
+    ...restartReplayContext(),
+    executeReviewForRun: async () => {
+      // A takeover bumps the generation while this review is still running.
+      const run = getRun(runId)!;
+      updateRun(runId, {
+        engineState: { ...run.engineState, generation: (run.engineState?.generation ?? 0) + 1 },
+      });
+      return { verdict: 'issues', issues: severeFindings, retryCount: 2, maxRetries: 2 };
+    },
+  }).catch(() => undefined);
+  assert.equal(getRun(runId)!.engineState?.openReviewFindings, undefined);
+});
+
+test('a passing review clears the recorded open findings', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  updateRun(runId, {
+    engineState: { ...getRun(runId)!.engineState, openReviewFindings: severeFindings },
+  });
+  const io = await executeReviewStep(runId, {
+    ...restartReplayContext(),
+    executeReviewForRun: async () => ({
+      verdict: 'pass',
+      issues: [],
+      retryCount: 0,
+      maxRetries: 2,
+    }),
+  });
+  assert.equal(io.outputs?.verdict, 'pass');
+  assert.equal(getRun(runId)!.engineState?.openReviewFindings, undefined);
+});
+
+test('an undelivered publishing run at a spent budget with an open blocker fails', async (t) => {
+  const runId = await publicationGateRun(t, {});
+  updateRun(runId, {
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `undelivered-severe-${i}`)),
+  });
+  const context = reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true });
+  await assert.rejects(executeReviewStep(runId, context), (error: unknown) => {
+    assert.ok(!(error instanceof ResultDecisionHoldError), String(error));
+    return true;
+  });
+  // The failed REVIEW step still shows what was open.
+  assert.deepEqual(context.stepPartialIO.get(runId)?.outputs?.issues, severeFindings);
+});
+
+// Round-2 M2: an interactive publishing run keeps its human gate at a spent budget.
+test('an interactive publishing run at a spent budget with an open blocker still reaches its gate', async (t) => {
+  const runId = await deliveredPublicationRun(t);
+  updateRun(runId, {
+    mode: 'interactive',
+    ...recordedReviewRounds(Array.from({ length: 5 }, (_, i) => `interactive-severe-${i}`)),
+  });
+  const io = await executeReviewStep(
+    runId,
+    reviewEnded({ retryCount: 1, maxRetries: 2, maxRetriesExhausted: true }),
+  );
+  assert.equal(io.outputs?.verdict, 'issues');
+  // A refused launch on the same run keeps the gate too.
+  const refused = await executeReviewStep(runId, refusedLaunch(runId));
+  assert.ok(refused.outputs?.reviewLaunchRejection);
+});
+
 test('an undelivered fix becomes a visible result decision with its findings preserved', async (t) => {
   const runId = await publicationGateRun(t, {});
   updateRun(runId, {
@@ -3518,7 +3792,14 @@ for (const outcome of ['issues', 'admission-stop'] as const)
         if (outcome === 'admission-stop') await assertReviewRoundAvailable(getRun(runId)!);
         return {
           verdict: 'issues',
-          issues: [{ file: 'src/example.ts', description: 'Person decides at publication' }],
+          // A minor finding: an open blocker or major holds before COMPLETE instead (961d55d3).
+          issues: [
+            {
+              severity: 'minor',
+              file: 'src/example.ts',
+              description: 'Person decides at publication',
+            },
+          ],
           retryCount: 4,
           maxRetries: 4,
         };

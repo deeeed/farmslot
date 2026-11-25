@@ -28,4 +28,8 @@ export class ReviewApprovalPolicyError extends Error {
 }
 
 export function normalizeReviewSeverity(value: unknown): ReviewSeverity;
+/** Findings per severity; one without a severity counts as major. */
+export function reviewSeverityCounts(
+  findings: readonly ReviewSeverityFinding[],
+): Record<ReviewSeverity, number>;
 export function renderReviewResultInstructions(resultPath: string): string;

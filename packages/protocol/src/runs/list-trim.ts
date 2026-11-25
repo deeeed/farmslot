@@ -437,10 +437,16 @@ export function runListRow(run: Run): RunListRow {
   });
 
   let engineState: RunListRow['engineState'];
+  if (run.engineState?.openReviewFindings !== undefined) {
+    // Run detail lists the findings; a row needs none of them.
+    const { openReviewFindings, ...kept } = run.engineState;
+    heavy.push(openReviewFindings);
+    engineState = kept;
+  }
   if (run.engineState?.publishGate) {
     const { gateSummary, ...publishGate } = run.engineState.publishGate;
     heavy.push(gateSummary);
-    engineState = { ...run.engineState, publishGate };
+    engineState = { ...(engineState ?? run.engineState), publishGate };
   }
   const detailTrimmed = heavy.some((value) => value !== undefined);
   const output = listRunOutput(run);

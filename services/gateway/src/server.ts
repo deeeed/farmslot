@@ -44,7 +44,7 @@ import { autoDispatchBacklogReady, listBacklogItems } from './backlog/store.js';
 import { ChatActionRejectError } from './chat/chat-actions.js';
 import { GatewayInternalError, GatewayMethodError } from './core/method-error.js';
 import { setSlotUpdateHook } from './core/state.js';
-import { unregisterByWs } from './fleet/machine-registry.js';
+import { noteNodeFrame, unregisterByWs } from './fleet/machine-registry.js';
 import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
 import { acceptNodeLinkStream } from './fleet/node-link.js';
 import { failRequestsBoundTo, handleNodeExecOutput, handleNodeResponse } from './fleet/node-rpc.js';
@@ -275,6 +275,8 @@ export function createWebSocketServer(
     }
 
     ws.on('message', (raw: Buffer, isBinary: boolean) => {
+      // A node's frames are its signs of life when admission probes its socket.
+      if (state.clientKind === 'node') noteNodeFrame(ws);
       try {
         // Handle binary frames from nodes (screen capture relay)
         if (isBinary && raw.length > 7 && raw[0] === NODE_FRAME_MAGIC) {

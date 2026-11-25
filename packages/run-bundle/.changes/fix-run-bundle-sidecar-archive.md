@@ -1,0 +1,1 @@
+- Housekeeping archives a superseded bundle's usage and availability records with it, and archives records left behind by bundles that already left the store (200 per pass), instead of leaving them in the store forever. `runBundleRecordPaths` names a bundle's records.

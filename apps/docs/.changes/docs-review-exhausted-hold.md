@@ -1,0 +1,1 @@
+- Document that a publishing review ending with open blocker or major findings waits at the result decision, how the decision names a no-verdict cap stop, and how a stale CI receipt at COMPLETE sends the worker back once.

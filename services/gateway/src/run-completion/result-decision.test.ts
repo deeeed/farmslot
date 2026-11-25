@@ -968,11 +968,60 @@ test('restart re-projection replaces the failure record, and the next result is 
 
 test('the decision states why the run stopped in one line', async () => {
   await heldOpus();
-  assert.equal(pending().payload.reason, 'Review found 1 issue after 1/2 fix attempts.');
+  assert.equal(
+    pending().payload.reason,
+    'Review found 1 issue (1 major) after 1/2 fix attempts. Automatic fixing stopped before the fix rounds were spent.',
+  );
   await heldQa();
   assert.equal(
     pending().payload.reason,
     'A declared deterministic check has no current passing receipt.',
+  );
+});
+
+// 961d55d3 (TAT-4769): the no-verdict cap stopped automatic reviews before a fix round
+// was spent, and the run said "fix attempts exhausted". Send back is only an informed
+// click when the decision says which stop it was and what is still open.
+test('961d55d3: the decision tells a no-verdict cap stop from spent fix rounds', async () => {
+  const severe = [
+    { ...findings[0]!, severity: 'blocker' as const },
+    { file: 'b.ts', line: 2, description: 'No test covers the fix.', severity: 'major' as const },
+    { file: 'c.ts', line: 3, description: 'Typo.', severity: 'nit' as const },
+  ];
+  const cap =
+    '3/3 reviewer attempts ended without a verdict, so automatic reviews stopped. Request a review to retry. Last: timeout';
+  await heldOpus(5, 'issues', severe);
+  const review = run.steps.find((step) => step.name === S.REVIEW)!;
+  review.outputs = { ...review.outputs, retryCount: 0, reason: cap, maxRetriesExhausted: false };
+  run.decisions = [await buildResultDecision(run, 'review')];
+  assert.equal(
+    pending().payload.reason,
+    `Review found 3 issues (1 blocker, 1 major, 1 nit) after 0/2 fix attempts. Automatic reviews stopped before the fix rounds were spent: ${cap}`,
+  );
+  assert.deepEqual(pending().payload.findings, severe);
+  review.outputs = {
+    ...review.outputs,
+    retryCount: 2,
+    reason: undefined,
+    maxRetriesExhausted: true,
+  };
+  run.decisions = [await buildResultDecision(run, 'review')];
+  assert.equal(
+    pending().payload.reason,
+    'Review found 3 issues (1 blocker, 1 major, 1 nit) after 2/2 fix attempts. The fix rounds are spent.',
+  );
+  const budget = 'All 5 review rounds are spent.';
+  review.outputs = { ...review.outputs, retryCount: 1, reason: budget, maxRetriesExhausted: true };
+  run.decisions = [await buildResultDecision(run, 'review')];
+  assert.equal(
+    pending().payload.reason,
+    `Review found 3 issues (1 blocker, 1 major, 1 nit) after 1/2 fix attempts. The review rounds are spent: ${budget}`,
+  );
+  review.outputs = { ...review.outputs, retryCount: 0, maxRetries: 0, reason: undefined };
+  run.decisions = [await buildResultDecision(run, 'review')];
+  assert.equal(
+    pending().payload.reason,
+    'Review found 3 issues (1 blocker, 1 major, 1 nit) after 0/0 fix attempts. Automatic fix rounds are off for this run.',
   );
 });
 
@@ -1024,11 +1073,16 @@ test('a review whose fix never reached the worker says why in its decision', asy
     'Runner out of quota: grok hit a usage/rate limit — the composer will not accept prompts until the limit resets. Fix delivery and the relaunch stopped (REVIEW-FIX.md).';
   await heldOpus();
   const review = run.steps.find((step) => step.name === S.REVIEW)!;
-  review.outputs = { ...review.outputs, fixDeliveryFailure: quota };
+  // Production sets both: the undelivered fix is the cause, not an automatic-review stop.
+  review.outputs = {
+    ...review.outputs,
+    reason: `fix-delivery-unavailable: ${quota}`,
+    fixDeliveryFailure: quota,
+  };
   run.decisions = [await buildResultDecision(run, 'review')];
   assert.equal(
     pending().payload.reason,
-    `Review found 1 issue after 1/2 fix attempts. The fix was not delivered: ${quota}`,
+    `Review found 1 issue (1 major) after 1/2 fix attempts. The fix was not delivered: ${quota}`,
   );
 });
 
