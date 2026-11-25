@@ -23,7 +23,7 @@ import {
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { invalidateWarmReviewerSessions } from '../review/session-mode.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
-import type { InterruptedCancelFence } from '../run-engine/recovery.js';
+import type { InterruptedCancelFence, InterruptedCancelResult } from '../run-engine/recovery.js';
 import { scheduledGraphOf } from '../run-engine/stack-base.js';
 import {
   isTerminalTeardownInFlight,
@@ -445,24 +445,24 @@ export async function finishCancelledSlot(
  * Finish a cancel's slot cleanup that a gateway restart interrupted, from the intent its fence
  * carries. Runs inside the run's transition and the slot's terminal teardown, and acts only while
  * the row holds exactly the fence reconcile observed, so a manual release, a replay or a revived
- * run that got in first wins. Returns null once finished; otherwise what happened instead
- * (`busy:` or `refused:` leave the fence; `not finished:` settled the cleanup hold the live cancel
- * settles on failure, which the occupied-slot retry then retries).
+ * run that got in first wins. `busy` and `refused` leave the fence; `not-finished` settled the
+ * cleanup hold the live cancel settles on failure (see InterruptedCancelResult).
  */
 export async function resumeInterruptedCancelCleanup(
   run: Run,
   slotId: string,
   observed: InterruptedCancelFence,
-): Promise<string | null> {
-  const result = await tryWithRunTransition(run.id, async () => {
+): Promise<InterruptedCancelResult> {
+  const result = await tryWithRunTransition(run.id, async (): Promise<InterruptedCancelResult> => {
     const latest = getRun(run.id);
     if (!latest || latest.status !== 'cancelled' || latest.slotId !== slotId)
-      return 'refused: the cancelled run changed';
+      return { kind: 'refused', reason: 'the cancelled run changed' };
     // Check and begin in one synchronous step: a release takeover starting now sees the teardown.
-    if (isTerminalTeardownInFlight(slotId)) return 'busy: another teardown owns this slot';
+    if (isTerminalTeardownInFlight(slotId))
+      return { kind: 'busy', reason: 'another teardown owns this slot' };
     let fence: RunSlotCleanupFence | undefined;
     try {
-      return await withTerminalTeardown(slotId, async () => {
+      return await withTerminalTeardown(slotId, async (): Promise<InterruptedCancelResult> => {
         const row = await readSlotRow(slotId);
         if (
           !row ||
@@ -479,7 +479,7 @@ export async function resumeInterruptedCancelCleanup(
           // The replay hold keeps the slot's owner: a cleanup-only row would lose it.
           (observed.intent === 'replay' && row.current_run_id !== latest.id)
         )
-          return 'refused: the release fence changed';
+          return { kind: 'refused', reason: 'the release fence changed' };
         fence = { before: row, token: observed.token };
         const stopped = await finishCancelledSlot(
           latest,
@@ -487,17 +487,20 @@ export async function resumeInterruptedCancelCleanup(
           null,
           observed.intent === 'replay',
         );
-        if (!stopped) return null;
+        if (!stopped) return { kind: 'finished' };
         // The finish settled a cleanup hold instead, or lost the fence: publish what it left.
         const { loadFleetStatus } = await import('../fleet/state.js');
         await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
-        return `not finished: ${stopped.skipped}`;
+        return { kind: 'not-finished', reason: stopped.skipped };
       });
     } catch (error) {
       if (!fence) throw error;
       // As the live cancel does: settle the fence as a visible hold, named on the run.
-      return `not finished: ${await settleFailedRunSlotCleanup(latest, fence, error)}`;
+      return {
+        kind: 'not-finished',
+        reason: await settleFailedRunSlotCleanup(latest, fence, error),
+      };
     }
   });
-  return result === undefined ? 'busy: a transition holds the run' : result;
+  return result ?? { kind: 'busy', reason: 'a transition holds the run' };
 }

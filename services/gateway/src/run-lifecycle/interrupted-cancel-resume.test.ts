@@ -138,7 +138,7 @@ test('a replay intent settles the replay hold, inside the slot’s terminal tear
     // An owner-bound release starting now finds the teardown and stands down.
     teardownSeen = registry.isTerminalTeardownInFlight(SLOT);
   };
-  assert.equal(await resumeInterruptedCancelCleanup(run, SLOT, observed), null);
+  assert.deepEqual(await resumeInterruptedCancelCleanup(run, SLOT, observed), { kind: 'finished' });
   assert.ok(teardownSeen);
   const row = await read();
   assert.equal(row?.lifecycle, 'held');
@@ -152,7 +152,7 @@ test('a replay intent settles the replay hold, inside the slot’s terminal tear
 
 test('a release intent releases the slot', async () => {
   const { run, observed } = await seed('release');
-  assert.equal(await resumeInterruptedCancelCleanup(run, SLOT, observed), null);
+  assert.deepEqual(await resumeInterruptedCancelCleanup(run, SLOT, observed), { kind: 'finished' });
   const row = await read();
   assert.equal(row?.lifecycle, 'ready');
   assert.equal(row?.current_run_id ?? null, null);
@@ -164,9 +164,9 @@ test('a teardown already on the slot, such as an owner-bound release, wins', asy
   const before = await read();
   registry.beginTerminalTeardown(SLOT);
   try {
-    assert.equal(
+    assert.deepEqual(
       await resumeInterruptedCancelCleanup(run, SLOT, observed),
-      'busy: another teardown owns this slot',
+      { kind: 'busy', reason: 'another teardown owns this slot' },
     );
   } finally {
     registry.endTerminalTeardown(SLOT);
@@ -191,9 +191,9 @@ test('a transition holding the run, such as a replay, wins', async () => {
   // The replay must hold the run key before the resume asks for it.
   await holding;
   try {
-    assert.equal(
+    assert.deepEqual(
       await resumeInterruptedCancelCleanup(run, SLOT, observed),
-      'busy: a transition holds the run',
+      { kind: 'busy', reason: 'a transition holds the run' },
     );
   } finally {
     release();
@@ -209,9 +209,9 @@ test('a run revived or rebound after the gate is left alone', async () => {
   ] satisfies Partial<Run>[]) {
     const { run, observed } = await seed('release', change);
     const before = await read();
-    assert.equal(
+    assert.deepEqual(
       await resumeInterruptedCancelCleanup(run, SLOT, observed),
-      'refused: the cancelled run changed',
+      { kind: 'refused', reason: 'the cancelled run changed' },
       JSON.stringify(change),
     );
     assert.deepEqual(await read(), before);
@@ -236,9 +236,9 @@ test('a fence that moved after the gate is left alone', async () => {
     const { run, observed } = await seed(intent, {}, row);
     const before = await read();
     const label = JSON.stringify(row(run.id));
-    assert.equal(
+    assert.deepEqual(
       await resumeInterruptedCancelCleanup(run, SLOT, observed),
-      'refused: the release fence changed',
+      { kind: 'refused', reason: 'the release fence changed' },
       label,
     );
     assert.deepEqual(await read(), before, label);
@@ -251,9 +251,9 @@ test('this gateway’s own fence is never resumed, even when it is what was obse
     release_gateway_instance: instance,
   }));
   const before = await read();
-  assert.equal(
+  assert.deepEqual(
     await resumeInterruptedCancelCleanup(run, SLOT, { ...observed, instance }),
-    'refused: the release fence changed',
+    { kind: 'refused', reason: 'the release fence changed' },
   );
   assert.deepEqual(await read(), before);
 });
@@ -265,7 +265,8 @@ test('a release that takes the fence during the finish keeps it', async () => {
     await state.updateSlotStatusIf(SLOT, () => true, { cleanup_release_token: takeover });
   };
   const result = await resumeInterruptedCancelCleanup(run, SLOT, observed);
-  assert.match(result ?? '', /^not finished: Slot ownership changed/);
+  assert.equal(result.kind, 'not-finished');
+  assert.match(result.kind === 'not-finished' ? result.reason : '', /^Slot ownership changed/);
   const row = await read();
   assert.equal(row?.phase, 'releasing');
   assert.equal(row?.cleanup_release_token, takeover);
@@ -277,9 +278,9 @@ test('a finish that fails settles the cleanup hold the live cancel would, named 
   duringFinish = async () => {
     throw new Error('node command hung');
   };
-  assert.equal(
+  assert.deepEqual(
     await resumeInterruptedCancelCleanup(run, SLOT, observed),
-    'not finished: node command hung',
+    { kind: 'not-finished', reason: 'node command hung' },
   );
   const row = await read();
   assert.equal(row?.lifecycle, 'held');
@@ -318,9 +319,9 @@ test('a blind trial whose Git restore fails is held, and the fleet hears it', as
       },
     },
   });
-  assert.equal(
+  assert.deepEqual(
     await resumeInterruptedCancelCleanup(run, SLOT, observed),
-    'not finished: Blind trial Git restore failed',
+    { kind: 'not-finished', reason: 'Blind trial Git restore failed' },
   );
   const row = await read();
   assert.equal(row?.lifecycle, 'held');
