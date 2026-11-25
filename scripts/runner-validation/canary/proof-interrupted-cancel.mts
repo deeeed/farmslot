@@ -156,16 +156,17 @@ try {
       180_000,
     );
     const finishLine = `${slot} finished the cancel a gateway restart interrupted (${intent})`;
+    // Only this restart's gateway log: the stack started gateway 1, each case restarts once.
     // The row settles before reconcile logs it, so give the line a moment to land.
+    const gatewayLog = path.join(evidence, `gateway-${cases.length + 2}.log`);
     const finishedByReconcile = await poll(
       `reconcile logs the ${intent} finish`,
-      async () =>
-        readdirSync(evidence)
-          .filter((name) => /^gateway-\d+\.log$/.test(name))
-          .some((name) => readFileSync(path.join(evidence, name), 'utf8').includes(finishLine)) ||
-        undefined,
+      async () => readFileSync(gatewayLog, 'utf8').includes(finishLine) || undefined,
       30_000,
-    ).catch(() => false);
+    ).catch((error: unknown) => {
+      if (error instanceof Error && error.message.startsWith('Timed out waiting')) return false;
+      throw error;
+    });
     const ok =
       finishedByReconcile &&
       (intent === 'replay'

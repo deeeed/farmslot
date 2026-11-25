@@ -14,7 +14,6 @@ import {
   ownsRunSlotCleanup,
   readSlotField,
   readSlotRow,
-  runCleanupTokenIntent,
   SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASE_GATEWAY_INSTANCE,
@@ -446,8 +445,9 @@ export async function finishCancelledSlot(
  * Finish a cancel's slot cleanup that a gateway restart interrupted, from the intent its fence
  * carries. Runs inside the run's transition and the slot's terminal teardown, and acts only while
  * the row holds exactly the fence reconcile observed, so a manual release, a replay or a revived
- * run that got in first wins. Returns null once finished; otherwise what happened instead: a
- * refusal leaves the fence, and a failed finish settles the cleanup hold the live cancel would.
+ * run that got in first wins. Returns null once finished; otherwise what happened instead
+ * (`busy:` or `refused:` leave the fence; `not finished:` settled the cleanup hold the live cancel
+ * settles on failure, which the occupied-slot retry then retries).
  */
 export async function resumeInterruptedCancelCleanup(
   run: Run,
@@ -459,7 +459,7 @@ export async function resumeInterruptedCancelCleanup(
     if (!latest || latest.status !== 'cancelled' || latest.slotId !== slotId)
       return 'refused: the cancelled run changed';
     // Check and begin in one synchronous step: a release takeover starting now sees the teardown.
-    if (isTerminalTeardownInFlight(slotId)) return 'refused: another teardown owns this slot';
+    if (isTerminalTeardownInFlight(slotId)) return 'busy: another teardown owns this slot';
     let fence: RunSlotCleanupFence | undefined;
     try {
       return await withTerminalTeardown(slotId, async () => {
@@ -468,7 +468,6 @@ export async function resumeInterruptedCancelCleanup(
           !row ||
           row.phase !== SLOT_PHASE_RELEASING ||
           row.cleanup_release_token !== observed.token ||
-          runCleanupTokenIntent(row.cleanup_release_token) !== observed.intent ||
           row[SLOT_RELEASE_GATEWAY_INSTANCE] !== observed.instance ||
           observed.instance === currentReleaseGatewayInstance() ||
           row[SLOT_RELEASING_SINCE] !== observed.releasingSince ||
@@ -500,5 +499,5 @@ export async function resumeInterruptedCancelCleanup(
       return `not finished: ${await settleFailedRunSlotCleanup(latest, fence, error)}`;
     }
   });
-  return result === undefined ? 'refused: a transition holds the run' : result;
+  return result === undefined ? 'busy: a transition holds the run' : result;
 }

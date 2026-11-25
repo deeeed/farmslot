@@ -166,7 +166,7 @@ test('a teardown already on the slot, such as an owner-bound release, wins', asy
   try {
     assert.equal(
       await resumeInterruptedCancelCleanup(run, SLOT, observed),
-      'refused: another teardown owns this slot',
+      'busy: another teardown owns this slot',
     );
   } finally {
     registry.endTerminalTeardown(SLOT);
@@ -178,11 +178,22 @@ test('a transition holding the run, such as a replay, wins', async () => {
   const { run, observed } = await seed('replay');
   const before = await read();
   let release: () => void = () => {};
-  const held = withRunTransition(run.id, () => new Promise<void>((done) => (release = done)));
+  let started: () => void = () => {};
+  const holding = new Promise<void>((done) => (started = done));
+  const held = withRunTransition(
+    run.id,
+    () =>
+      new Promise<void>((done) => {
+        release = done;
+        started();
+      }),
+  );
+  // The replay must hold the run key before the resume asks for it.
+  await holding;
   try {
     assert.equal(
       await resumeInterruptedCancelCleanup(run, SLOT, observed),
-      'refused: a transition holds the run',
+      'busy: a transition holds the run',
     );
   } finally {
     release();
@@ -215,6 +226,9 @@ test('a fence that moved after the gate is left alone', async () => {
     ['release', () => ({ slot_epoch: 6 })],
     ['release', () => ({ handoff_run_id: 'successor-run' })],
     ['release', () => ({ cleanup_stop_unconfirmed: true })],
+    ['release', () => ({ phase: 'occupied' })],
+    ['release', () => ({ workspace_recovery: { runId: 'cancelled' } })],
+    ['release', () => ({ current_run_id: 'successor-run' })],
     // The replay hold keeps the slot's owner, which a cleanup-only row has lost.
     ['replay', (runId) => ({ current_run_id: null, cleanup_run_id: runId })],
   ];
@@ -229,6 +243,19 @@ test('a fence that moved after the gate is left alone', async () => {
     );
     assert.deepEqual(await read(), before, label);
   }
+});
+
+test('this gateway’s own fence is never resumed, even when it is what was observed', async () => {
+  const instance = state.currentReleaseGatewayInstance();
+  const { run, observed } = await seed('release', {}, () => ({
+    release_gateway_instance: instance,
+  }));
+  const before = await read();
+  assert.equal(
+    await resumeInterruptedCancelCleanup(run, SLOT, { ...observed, instance }),
+    'refused: the release fence changed',
+  );
+  assert.deepEqual(await read(), before);
 });
 
 test('a release that takes the fence during the finish keeps it', async () => {

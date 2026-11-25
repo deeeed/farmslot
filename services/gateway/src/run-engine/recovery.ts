@@ -240,8 +240,11 @@ export interface RunRecoveryCollaborators {
   cancelledReplayBlocker?: (run: Run, slotId: string) => Promise<string | null>;
   /**
    * Finish a cancel's slot cleanup that a gateway restart interrupted, while the row still holds
-   * exactly the fence observed here. Returns null once finished, else what happened instead: a
-   * refusal leaves the fence for a later pass, a failed finish settles a hold for an operator.
+   * exactly the fence observed here. Returns null once finished, else what happened instead:
+   * `busy: …` when a transition or teardown holds it now (the fence waits for a later pass),
+   * `refused: …` when the run or the fence moved, `not finished: …` when the finish settled the
+   * cleanup hold the live cancel settles on failure. The occupied-slot retry then retries that
+   * hold, so a replay intent loses its replay hold there, as the live cancel's would.
    */
   resumeInterruptedCancel?: (
     run: Run,
@@ -1495,6 +1498,10 @@ export function startOrphanReconciler(deps: RunRecoveryCollaborators): () => voi
  */
 export const STALE_RELEASE_RECLAIM_MS = 30 * 60 * 1000;
 
+/** Named on a cancelled run while its interrupted cleanup waits for the slot's node. */
+const CANCEL_NODE_WAIT_NOTE = 'Cancel cleanup interrupted by a gateway restart waits for node ';
+const CANCEL_NODE_WAIT = /(?:^|; )Cancel cleanup interrupted by a gateway restart waits for node [^;]*$/;
+
 /**
  * How long a releasing fence has been standing, or null when it carries no
  * usable stamp.
@@ -1703,14 +1710,20 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         // Until its node is back nothing can be checked, and expiring into the manual hold
         // would undo the point of carrying the intent: wait for the reconnect pass, and say so
         // on the run, since a node that never returns leaves the slot to an operator.
+        // The note sits after any reason the cancel recorded (its survivors), and goes once the
+        // finish succeeds.
+        const noteWait = (node: string | null) => {
+          const current = deps.getRun(owner.id)?.slotTeardownSkipped;
+          const kept = current?.replace(CANCEL_NODE_WAIT, '') || undefined;
+          const next = node ? [kept, `${CANCEL_NODE_WAIT_NOTE}${node}`].filter(Boolean).join('; ') : kept;
+          if (next === current) return;
+          deps.updateRun(owner.id, { slotTeardownSkipped: next });
+          deps.broadcast(Events.RUN_UPDATED, { run: deps.getRun(owner.id) ?? owner });
+        };
         const absentNode = await deps.absentExecutionNode?.(slot.slot);
         if (absentNode) {
-          const waiting = `Cancel cleanup interrupted by a gateway restart waits for node ${absentNode}`;
-          if (owner.slotTeardownSkipped !== waiting) {
-            deps.updateRun(owner.id, { slotTeardownSkipped: waiting });
-            deps.broadcast(Events.RUN_UPDATED, { run: deps.getRun(owner.id) ?? owner });
-          }
-          console.log(`[run-engine] reconcile: ${slot.slot} ${waiting}`);
+          noteWait(absentNode);
+          console.log(`[run-engine] reconcile: ${slot.slot} ${CANCEL_NODE_WAIT_NOTE}${absentNode}`);
           continue;
         }
         const gate =
@@ -1736,6 +1749,7 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
                 (error: unknown) =>
                   `not finished: ${error instanceof Error ? error.message : String(error)}`,
               );
+        if (!stopped) noteWait(null);
         console.log(
           stopped
             ? `[run-engine] reconcile: ${slot.slot} interrupted cancel ${stopped}`
@@ -1743,7 +1757,9 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         );
         // Still fenced past the bound: the backstop below holds it for an operator, as before.
         // Its write needs the fence it observed, so a finish that settled the slot is left alone.
-        if (!stopped || stalledFor < STALE_RELEASE_RECLAIM_MS) continue;
+        // A transition or teardown busy right now is no verdict: wait for the next pass.
+        if (!stopped || stalledFor < STALE_RELEASE_RECLAIM_MS || stopped.startsWith('busy: '))
+          continue;
       }
       // A done or failed run's own cleanup fence (fenceRunSlotCleanup's run-cleanup token)
       // that a previous gateway raised has no owner left. Once the read-only census finds

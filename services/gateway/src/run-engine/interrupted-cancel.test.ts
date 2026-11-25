@@ -43,6 +43,8 @@ interface Fence {
   workspaceRecovery?: boolean;
   ownerSlot?: string;
   native?: boolean;
+  /** What the run already names as kept or deferred cleanup. */
+  skipped?: string;
 }
 
 function fenceRow(fence: Fence, owner: Run) {
@@ -83,6 +85,7 @@ async function reconcile(pass: Pass) {
       slotId: fence.ownerSlot ?? fence.slot ?? 'cancel-slot',
     }),
     ...(fence.native ? { transport: 'native' as const } : {}),
+    ...(fence.skipped ? { slotTeardownSkipped: fence.skipped } : {}),
   }));
   const rows = pass.fences.map((fence, index) => fenceRow(fence, owners[index]!));
   await writeFile(state.statusFile, JSON.stringify({ slots: rows }));
@@ -115,6 +118,7 @@ async function reconcile(pass: Pass) {
     getRun: (id) => runs.find((run) => run.id === id),
     updateRun: (id, fields) => {
       runUpdates.push([id, fields]);
+      Object.assign(runs.find((run) => run.id === id) ?? {}, fields);
     },
     resetSlot: state.resetSlot,
     resetSlotIf: state.resetSlotIf,
@@ -205,15 +209,53 @@ test('a blocked or failing gate keeps the fence inside the bound and takes the b
   }
 });
 
-test('a resume that stops past the bound leaves the slot to the backstop hold', async () => {
-  const pass = await reconcile({
-    fences: [{ intent: 'release', ageMs: STALE_RELEASE_RECLAIM_MS + 1 }],
-    resume: async () => 'refused: a transition holds the run',
-  });
-  assert.equal(pass.resumed.length, 1);
-  const row = await pass.read();
-  assert.equal(row?.lifecycle, 'held');
-  assert.equal(row?.cleanup_stop_unconfirmed, true);
+test('a resume refused past the bound leaves the slot to the backstop hold', async () => {
+  for (const refusal of ['refused: the release fence changed', 'not finished: node lost']) {
+    const pass = await reconcile({
+      fences: [{ intent: 'release', ageMs: STALE_RELEASE_RECLAIM_MS + 1 }],
+      resume: async () => refusal,
+    });
+    assert.equal(pass.resumed.length, 1, refusal);
+    const row = await pass.read();
+    assert.equal(row?.lifecycle, 'held', refusal);
+    assert.equal(row?.cleanup_stop_unconfirmed, true, refusal);
+  }
+});
+
+test('a resume busy past the bound keeps the fence for the next pass', async () => {
+  for (const busy of ['busy: a transition holds the run', 'busy: another teardown owns this slot']) {
+    const pass = await reconcile({
+      fences: [{ intent: 'release', ageMs: STALE_RELEASE_RECLAIM_MS + 1 }],
+      resume: async () => busy,
+    });
+    assert.equal(pass.resumed.length, 1, busy);
+    const row = await pass.read();
+    assert.equal(row?.phase, 'releasing', busy);
+    assert.equal(row?.cleanup_stop_unconfirmed ?? null, null, busy);
+  }
+});
+
+test('the node wait keeps the cancel’s own reason and goes once the finish succeeds', async () => {
+  const wait = 'Cancel cleanup interrupted by a gateway restart waits for node node-a';
+  for (const prior of [undefined, 'Process 7 survived the cancel']) {
+    const label = String(prior);
+    const away = await reconcile({
+      fences: [{ intent: 'replay', ...(prior ? { skipped: prior } : {}) }],
+      absentNode: 'node-a',
+    });
+    const noted = prior ? `${prior}; ${wait}` : wait;
+    assert.equal(away.owners[0]!.slotTeardownSkipped, noted, label);
+    const again = await reconcile({ fences: [{ intent: 'replay', skipped: noted }], absentNode: 'node-a' });
+    assert.deepEqual(again.runUpdates, [], `${label}: one note per wait`);
+    const busy = await reconcile({
+      fences: [{ intent: 'replay', skipped: noted }],
+      resume: async () => 'busy: a transition holds the run',
+    });
+    assert.equal(busy.owners[0]!.slotTeardownSkipped, noted, `${label}: kept while unfinished`);
+    const back = await reconcile({ fences: [{ intent: 'replay', skipped: noted }] });
+    assert.deepEqual(back.resumed, [['cancelled-0', 'cancel-slot', 'replay']], label);
+    assert.equal(back.owners[0]!.slotTeardownSkipped, prior, label);
+  }
 });
 
 test('an absent node keeps the fence, even past the reclaim bound', async () => {
