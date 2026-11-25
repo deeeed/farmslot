@@ -56,7 +56,7 @@ STATUS: pending
   git commit -m "fix: address CI feedback"
   {{BRANCH_UPDATE_PUSH_CMD}}
   ```
-- [ ] **8. Reply to each bot comment thread** [OPTIONAL: the issues are CI failures only] (skip with `{{TASK_DIR}}/mark --checklist CI-FIX.md 8 --skip "<why>"` when there are no bot comments):
+- [ ] **8. Reply to each bot comment thread** [OPTIONAL: there are no bot comments] (skip with `{{TASK_DIR}}/mark --checklist CI-FIX.md 8 --skip "<why>"` when there are no bot comments):
   ```bash
   unset GH_TOKEN && gh api "repos/{{GH_REPO}}/pulls/{{PR_NUMBER}}/comments/{COMMENT_ID}/replies" -X POST -f body="Fixed in $(git rev-parse --short HEAD)"
   ```

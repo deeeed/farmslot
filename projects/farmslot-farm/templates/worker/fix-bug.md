@@ -54,11 +54,11 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 - [ ] **7. Implement the fix** — make the minimal change needed. No refactoring, no cleanup beyond the fix.
 - [ ] **8. Changed-file CI** [DETERMINISTIC: ci.local_check] - call `{{TASK_DIR}}/mark 8`. The engine runs the frozen command and records its receipt. Read the retained failure log and fix failures, then repeat this mark. Do not select or launch tests, builds, lint or validation scripts yourself.
   Run the step 4 recipe separately when one was authored; retain its result.
-- [ ] **9. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) [OPTIONAL: step 3 listed no UI or device surface, or no project action exercises the bug] — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only: skip with `{{TASK_DIR}}/mark 9 --skip "<why>"`.
+- [ ] **9. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) [OPTIONAL: step 3 listed no UI or device surface, or no project action exercises the bug] — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only, or no project action exercises the bug: skip with `{{TASK_DIR}}/mark 9 --skip "<why>"`.
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
-- [ ] **10. Evidence** [OPTIONAL: step 3 listed no UI or device surface] — inspect the selected attempt’s engine-derived screenshots/video when step 3 listed a UI/device surface. Empty media is not visual proof.
+- [ ] **10. Evidence** [OPTIONAL: step 3 listed no UI or device surface, or no project action exercises the bug] — inspect the selected attempt’s engine-derived screenshots/video when step 3 listed a UI/device surface. Empty media is not visual proof.
 - [ ] **11. Recipe proof + acceptance review** — follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. The proof this task claims is the attempt selected in `artifacts/latest-valid-recipe-run.json`; a task-root `evidence-manifest.json` is optional and only declares extra evidence. Retain recipe results and resolve refused checks before continuing.
 - [ ] **12. Review** — read the diff (`git diff`) against `{{review_quality_path}}`.
 - [ ] **13. Blast radius** — list every caller, shared-state reader/writer, schema/doc, and test that
