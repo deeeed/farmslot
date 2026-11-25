@@ -27,7 +27,9 @@ export function tempStatePaths(projectJson: RawProjectJson): string[] {
 
 /** A run's task dir on the slot, relative to the checkout (the worker keeps flow and folder). */
 export function slotTaskRelDir(run: Pick<Run, 'taskFile'>, taskDirName: string): string | null {
-  return run.taskFile ? workerTaskDirectory(run.taskFile, '', taskDirName).replace(/^\/+/, '') : null;
+  return run.taskFile
+    ? workerTaskDirectory(run.taskFile, '', taskDirName).replace(/^\/+/, '')
+    : null;
 }
 
 /**
@@ -62,9 +64,9 @@ export function shouldScrubTempForRun(
 ): run is Run {
   return Boolean(
     run &&
-      !run.engineState?.flags?.warmSessionReuse &&
-      run.engineState?.taskInit?.status !== 'initialized' &&
-      !run.steps.some((entry) => entry.name === 'dispatch' && entry.status === 'done'),
+    !run.engineState?.flags?.warmSessionReuse &&
+    run.engineState?.taskInit?.status !== 'initialized' &&
+    !run.steps.some((entry) => entry.name === 'dispatch' && entry.status === 'done'),
   );
 }
 

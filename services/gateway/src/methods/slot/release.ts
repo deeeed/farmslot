@@ -122,7 +122,6 @@ import {
   detachRunsForReleasedSlot,
   markCompletionFailureDiscarded,
 } from './release-run-ownership.js';
-import { scrubTempForRun, taskBundleConfirmed, TEMP_TASK_ROOT } from './temp-scrub.js';
 import {
   activePrepareAborts,
   applySelectedApp,
@@ -134,6 +133,7 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from './slot-tracking.js';
+import { scrubTempForRun, taskBundleConfirmed, TEMP_TASK_ROOT } from './temp-scrub.js';
 
 // In-flight teardown coalescing: two concurrent releases for the same slot
 // must be ONE teardown — the slower duplicate previously re-killed and reset
@@ -1165,7 +1165,8 @@ async function slotReleaseImpl(
     // task dir. Delete rather than park (a park across devices fails on an external drive, and
     // a parked copy still sits on the node). Unconfirmed, temp/ stays for the next prepare.
     const tempScrub = !preserveAgents && taskDirName === TEMP_TASK_ROOT;
-    const releasing = tempScrub && releaseRunId ? await getRunWithArchived(releaseRunId) : undefined;
+    const releasing =
+      tempScrub && releaseRunId ? await getRunWithArchived(releaseRunId) : undefined;
     const bundleConfirmed = Boolean(releasing && (await taskBundleConfirmed(releasing)));
     if (tempScrub && !bundleConfirmed)
       step(

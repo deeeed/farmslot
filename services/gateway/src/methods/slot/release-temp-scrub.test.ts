@@ -167,7 +167,12 @@ const captured: RunOutput = {
   workerFinished: true,
   artifactManifest: [{ path: 'artifacts/fix.diff', purpose: 'patch' }],
   manifestDigest: 'sha256:m',
-  artifactBundle: { storeId: 'local', bundleDigest: 'sha256:b', taskKey: 't', manifestDigest: 'sha256:m' },
+  artifactBundle: {
+    storeId: 'local',
+    bundleDigest: 'sha256:b',
+    taskKey: 't',
+    manifestDigest: 'sha256:m',
+  },
 };
 
 /** A slot repo on main whose temp/ holds earlier runs' task dirs, scratch and traces. */

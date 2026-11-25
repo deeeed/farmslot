@@ -36,9 +36,8 @@ mock.module('../../run-completion/retained-artifacts.js', {
 
 const runs = await import('../../runs/store.js');
 const { makeVars } = await import('../../runners/test-fixtures.js');
-const { scrubTempForRun, shouldScrubTempForRun, taskBundleConfirmed } = await import(
-  './temp-scrub.js'
-);
+const { scrubTempForRun, shouldScrubTempForRun, taskBundleConfirmed } =
+  await import('./temp-scrub.js');
 
 const SLOT_ID = 'macpro-mme-1';
 const repo = path.join(root, 'slot');
@@ -55,7 +54,12 @@ const captured: RunOutput = {
   workerFinished: true,
   artifactManifest: [{ path: 'artifacts/fix.diff', purpose: 'patch' }],
   manifestDigest: 'sha256:m',
-  artifactBundle: { storeId: 'local', bundleDigest: 'sha256:b', taskKey: 't', manifestDigest: 'sha256:m' },
+  artifactBundle: {
+    storeId: 'local',
+    bundleDigest: 'sha256:b',
+    taskKey: 't',
+    manifestDigest: 'sha256:m',
+  },
 };
 
 function slotRun(ticket: string, flow: string, name: string, patch: Partial<Run> = {}) {

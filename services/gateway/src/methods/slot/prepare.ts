@@ -116,7 +116,6 @@ import {
   selectPrepareProfile,
 } from './prepare-profile.js';
 import { syncPrepareFixtures } from './prepare-runtime-context.js';
-import { scrubTempForRun, shouldScrubTempForRun } from './temp-scrub.js';
 import {
   acquirePrepareSentinel,
   type PrepareSentinelLock,
@@ -158,6 +157,7 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
+import { scrubTempForRun, shouldScrubTempForRun } from './temp-scrub.js';
 import { assertPublishedPrepareBranchContained } from './unmerged-work.js';
 
 export { type PrepareHealthCommands, verifyPrepareHealth } from './prepare-health.js';
@@ -760,7 +760,8 @@ async function slotPrepareInner(
           `Removed earlier task dir ${dir.path} (${dir.runId ? `run ${dir.runId.slice(0, 8)}, ${dir.bundled ? 'in its bundle' : 'NOT in a bundle'}` : 'no run record'})`,
         );
       const other = scrub.removed.length - scrub.taskDirs.length;
-      if (other > 0) step('clean', `Removed ${other} other entr${other === 1 ? 'y' : 'ies'} from temp/`);
+      if (other > 0)
+        step('clean', `Removed ${other} other entr${other === 1 ? 'y' : 'ies'} from temp/`);
       if (scrub.refused.length)
         throw new Error(
           `temp/ still holds another run's files: ${scrub.refused
