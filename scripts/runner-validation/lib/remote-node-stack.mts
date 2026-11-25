@@ -890,6 +890,7 @@ export async function startRemoteNodeStack(
       call,
       waitForNode,
       startExtraNode: (name) => {
+        if (stopping) throw new Error('The isolated node is stopping');
         const extra = spawnNode(name);
         extraNodes.push(extra);
         return extra;

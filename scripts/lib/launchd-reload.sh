@@ -15,14 +15,16 @@
 # because another process already holds the machine id at the gateway (the deploy fails, naming it).
 
 # The node log check shared by both (POSIX sh). Expects $log, $log_offset (bytes before this
-# restart) and $new_pid (empty when unknown: then any registration or refusal counts).
+# restart), $new_pid and current_pid (the node's pid now: a node restarted at boot gets a new one;
+# empty when unknown, and then any registration or refusal counts).
 node_registration_check_fragment() {
   cat <<'SCRIPT'
 checks=${FARMSLOT_DEPLOY_REGISTRATION_CHECKS:-60}; outcome=''; check_count=0; refused_line=''; \
 while [ -z "$outcome" ] && [ "$check_count" -lt "$checks" ]; do \
+  new_pid=$(current_pid); \
   recent=$(tail -c +$((log_offset + 1)) "$log" 2>/dev/null || true); \
   if [ -n "$new_pid" ]; then \
-    refused_line=$(printf '%s\n' "$recent" | grep NODE_ALREADY_CONNECTED | grep -F "refused pid $new_pid" | tail -n 1 || true); \
+    refused_line=$(printf '%s\n' "$recent" | grep NODE_ALREADY_CONNECTED | grep "refused pid $new_pid\$" | tail -n 1 || true); \
     registered_line=$(printf '%s\n' "$recent" | grep -F 'Registered with gateway as' | grep -F "pid $new_pid)" | tail -n 1 || true); \
   else \
     refused_line=$(printf '%s\n' "$recent" | grep NODE_ALREADY_CONNECTED | tail -n 1 || true); \
@@ -70,7 +72,8 @@ attempt=1; until launchctl bootstrap "\$domain" "\$plist"; do \\
   if [ "\$attempt" -ge 5 ]; then echo '[deploy] ERROR: launchd bootstrap failed after 5 attempts' >&2; exit 1; fi; \\
   attempt=\$((attempt + 1)); sleep 1; \\
 done; \\
-new_pid=''; wait_count=0; while [ -z "\$new_pid" ] && [ "\$wait_count" -lt 20 ]; do new_pid=\$(job_pid); [ -n "\$new_pid" ] || { wait_count=\$((wait_count + 1)); sleep 0.25; }; done; \\
+new_pid=''; wait_count=0; while [ -z "\$new_pid" ] && [ "\$wait_count" -lt 20 ]; do new_pid=\$(job_pid); [ -n "\$new_pid" ] || { wait_count=\$((wait_count + 1)); sleep 0.25; }; done; \
+current_pid() { p=\$(job_pid); [ -n "\$p" ] && echo "\$p" || echo "\$new_pid"; }; \\
 $(node_registration_check_fragment) )
 SCRIPT
 }
@@ -84,7 +87,8 @@ log_offset=0; if [ -f "\$log" ]; then log_offset=\$(wc -c < "\$log" | tr -d ' ')
 systemctl --user daemon-reload; \\
 systemctl --user enable $unit; \\
 systemctl --user restart $unit; \\
-new_pid=\$(systemctl --user show -p MainPID --value $unit 2>/dev/null || true); [ "\$new_pid" != 0 ] || new_pid=''; \\
+main_pid() { p=\$(systemctl --user show -p MainPID --value $unit 2>/dev/null || true); [ "\$p" != 0 ] || p=''; echo "\$p"; }; \
+new_pid=\$(main_pid); current_pid() { p=\$(main_pid); [ -n "\$p" ] && echo "\$p" || echo "\$new_pid"; }; \\
 $(node_registration_check_fragment) )
 SCRIPT
 }

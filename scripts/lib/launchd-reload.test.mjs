@@ -187,6 +187,16 @@ test("another process's refusal or registration in the log does not decide the d
   assert.match(other.stderr, /has not registered with the gateway after 2 s/);
 });
 
+test("a refusal of a longer pid that starts with the new node's pid does not fail the deploy", (t) => {
+  const f = launchdFixture(t, {
+    ignoreTerm: false,
+    newNodeLogs: [refused(Number(`${NEW_PID}1`)), registered(NEW_PID)],
+  });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /node registered with the gateway/);
+});
+
 test('an earlier refusal in the log does not fail this deploy', (t) => {
   const f = launchdFixture(t, { ignoreTerm: false });
   writeFileSync(f.log, `${refused(NEW_PID)}\n`, { flag: 'a' });

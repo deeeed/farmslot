@@ -1,4 +1,7 @@
 process.env.NODE_TEST_CONTEXT = '1';
+// A short admission probe budget keeps the silent cases fast.
+process.env.FARMSLOT_NODE_ADMISSION_PROBE_MS = '200';
+const PROBE_MS = 200;
 
 // node.connect through the real WebSocket server: a second process for a connected machine is
 // refused while the connected node answers its health check (any reply, a node error included);
@@ -24,10 +27,12 @@ const { createWebSocketServer } = await import('../server.js');
 type Answer = 'ok' | 'error' | 'stopping' | 'silent';
 
 /** A node client that answers the gateway's requests on its socket the given way. */
+const probed = new WeakSet<WebSocket>();
 async function nodeClient(url: string, answer: Answer): Promise<WebSocket> {
   const ws = await connect(url);
   ws.on('message', (data) => {
     const frame = JSON.parse(data.toString()) as RequestFrame;
+    if (frame.type === 'req' && frame.method === 'health.check') probed.add(ws);
     if (frame.type !== 'req' || answer === 'silent') return;
     const reply =
       answer === 'ok'
@@ -78,11 +83,14 @@ test('a stopping connected node is replaced and keeps its socket', { timeout: 80
     const machine = 'single-stopping';
     const incumbent = await nodeClient(harness.url, 'stopping');
     assert.equal((await request(incumbent, 'node.connect', { machine, pid: 1 })).ok, true);
+    let closed = false;
+    incumbent.once('close', () => (closed = true));
     const newcomer = await nodeClient(harness.url, 'ok');
     assert.equal((await request(newcomer, 'node.connect', { machine, pid: 2 })).ok, true);
     assert.equal(getNode(machine)?.pid, 2);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.equal(incumbent.readyState, WebSocket.OPEN, 'its accepted commands can still close out');
+    // Its ping round trip: a close sent with the registration would have arrived by now.
+    await request(incumbent, 'gateway.ping', {});
+    assert.equal(closed, false, 'its accepted commands can still close out');
   } finally {
     await harness.close();
   }
@@ -127,10 +135,10 @@ test(
           params: { machine, pid: 2 },
         }),
       );
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      // Close while the connected node is being probed, then let the probe budget run out.
+      await until(() => probed.has(incumbent));
       newcomer.close();
-      // Past the 3 s probe budget: the admission finds the newcomer gone and registers nothing.
-      await new Promise((resolve) => setTimeout(resolve, 3_500));
+      await new Promise((resolve) => setTimeout(resolve, PROBE_MS * 3));
       assert.equal(getNode(machine)?.pid, 1);
       assert.equal(
         incumbent.readyState,
@@ -142,6 +150,14 @@ test(
     }
   },
 );
+
+async function until(condition: () => boolean, ceilingMs = 2_000): Promise<void> {
+  const deadline = Date.now() + ceilingMs;
+  while (!condition()) {
+    assert.ok(Date.now() < deadline, 'condition not reached');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 async function startServer() {
   const home = mkdtempSync(join(tmpdir(), 'farmslot-node-single-'));

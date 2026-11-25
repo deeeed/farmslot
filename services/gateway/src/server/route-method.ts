@@ -660,6 +660,12 @@ async function refreshConnectedNodeBranches(
   if (refreshError) throw refreshError;
 }
 
+/** The admission probe budget; FARMSLOT_NODE_ADMISSION_PROBE_MS overrides the 3 s default. */
+function nodeAdmissionProbeMs(): number {
+  const configured = Number(process.env.FARMSLOT_NODE_ADMISSION_PROBE_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : NODE_ADMISSION_PROBE_MS;
+}
+
 /** How the connected node answers a health check on its own socket (see NodeProbeVerdict). */
 async function probeConnectedNode(node: ConnectedNode): Promise<NodeProbeVerdict> {
   try {
@@ -668,7 +674,7 @@ async function probeConnectedNode(node: ConnectedNode): Promise<NodeProbeVerdict
       'health.check',
       {},
       // Longer than the admission budget: a late NODE_SHUTTING_DOWN still marks the node stopping.
-      { timeout: NODE_ADMISSION_PROBE_MS * 2, requireSameConnection: true },
+      { timeout: nodeAdmissionProbeMs() * 2, requireSameConnection: true },
     );
     return 'answered';
   } catch (error) {
@@ -1580,6 +1586,7 @@ async function routeAuthorizedMethod(
       const admission = await admitNodeConnection(machine, pid, state.ws, {
         probe: probeConnectedNode,
         isStopping: isNodeSocketStopping,
+        budgetMs: nodeAdmissionProbeMs(),
       });
       if (admission.kind === 'refused')
         throw new GatewayMethodError(admission.code, admission.message, {
