@@ -6,8 +6,8 @@ import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-p
 
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
+  liveComposerHoldsInstruction,
   runnerPaneContainsInstruction,
-  runnerPaneHasBufferedInstruction as runnerComposerHoldsInstruction,
   runnerPaneHasQueuedInstruction,
   runnerPaneWithoutPromptSuggestion,
 } from './runner-pane-input.js';
@@ -3820,28 +3820,41 @@ export async function sendRunnerPostLaunchPrompt(
   let codexUpdatePromptAttempts = 0;
   const maxBlockerAutoAttempts = 2;
   const snapshottedBlockers = new Set<string>();
-  // At the deadline, deterministic evidence alone may still hand the runner to delivery: an
-  // authoritative idle hook reading (a pane with a ticking status line never stabilises), or the
-  // exact instruction in the live composer, which delivery then submits through its own record.
-  // A launch blocker, an open question or a busy or awaiting-input hook reading hands over nothing.
-  // Otherwise the stable-pane rule gets one more readiness window. No model is asked.
-  let deadlineActed = false;
+  // At each deadline, deterministic evidence alone may still hand the runner to delivery:
+  // - an authoritative idle hook reading (a pane with a ticking status line never stabilises),
+  //   but only over an empty composer or one holding exactly this instruction, never a draft;
+  // - with no authoritative reading, the exact instruction in the live composer, which delivery
+  //   also reads as buffered and submits through its own prompt record.
+  // A launch blocker, an open question or a busy or awaiting-input hook reading hands over
+  // nothing. The first deadline without a handover gets one more readiness window; no model is
+  // asked.
+  let extraWindowGiven = false;
   const actAtDeadline = async (): Promise<boolean> => {
-    if (deadlineActed) return false;
-    deadlineActed = true;
-    const pane = await captureTmuxPane(vars, target, 90, true);
+    // The full visible pane, as the loop's blocker detector reads it: a tail can cut off a
+    // top-anchored prompt.
+    const pane = (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(`capture-pane -p -e -t ${shellQuote(target)} 2>/dev/null`),
+      )
+    ).stdout;
     const hook = await readRunnerActivityFromObservability(vars, target, runner);
     const hookActivity =
       isObservabilityReadingAuthoritative(hook) && hook.value !== 'unknown' ? hook.value : null;
     const plainPane = pane.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+    // Delivery must also read it as buffered, or it would type the instruction again. A bordered
+    // grok composer (`│ ❯ … │`) does not match `liveComposer`: without an authoritative reading
+    // grok gets the extra window and fails closed.
+    const composerHoldsInstruction =
+      liveComposerHoldsInstruction(pane, message) &&
+      runnerPaneShouldSubmitExistingInstruction(plainPane, message, marker, runner);
+    const quiet = !detectRunnerLaunchBlocker(plainPane, runner) && !paneOpenQuestion(plainPane);
     const handover =
-      !detectRunnerLaunchBlocker(plainPane, runner) &&
-      !paneOpenQuestion(plainPane) &&
+      quiet &&
       (hookActivity
-        ? !runnerActivityIsBusy(hookActivity)
-        : // Delivery must also read it as a buffered instruction, or it would type it again.
-          runnerComposerHoldsInstruction(pane, message) &&
-          runnerPaneShouldSubmitExistingInstruction(plainPane, message, marker, runner));
+        ? !runnerActivityIsBusy(hookActivity) &&
+          (composerHoldsInstruction || runnerPaneComposerDraftState(plainPane, runner) === 'empty')
+        : composerHoldsInstruction);
     if (handover) {
       console.log(
         `[${logPrefix}] ${target} handed to delivery at the readiness deadline: ${
@@ -3852,6 +3865,8 @@ export async function sendRunnerPostLaunchPrompt(
       lastPane = plainPane;
       return false;
     }
+    if (extraWindowGiven) return false;
+    extraWindowGiven = true;
     readyDeadline = Date.now() + readyTimeoutMs;
     console.warn(
       `[${logPrefix}] ${target} not ready at the readiness deadline; waiting ${Math.round(readyTimeoutMs / 1000)}s more for a stable ready pane`,
@@ -4099,7 +4114,7 @@ export async function sendRunnerPostLaunchPrompt(
     }
     throw new Error(
       `Runner launch (${runner}) did not reach a stable ready state within ${readyTimeoutMs / 1000}s` +
-        `${deadlineActed ? ` (and ${readyTimeoutMs / 1000}s more after the deadline)` : ''} in tmux target ${target}. ` +
+        `${extraWindowGiven ? ` (and ${readyTimeoutMs / 1000}s more after the deadline)` : ''} in tmux target ${target}. ` +
         `Prompt delivery aborted to avoid sending into a half-booted runner TUI.${snapshotNote}\n` +
         `Last pane content:\n${timeoutPane}`,
     );

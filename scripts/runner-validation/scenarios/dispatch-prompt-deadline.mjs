@@ -3,42 +3,51 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { runGatewayPostLaunchPrompt } from '../lib/gateway-post-launch.mjs';
-import { capturePane, killSession, tmux } from '../lib/tmux.mjs';
+import { capturePane, killSession, tmux, waitForPaneMatch } from '../lib/tmux.mjs';
 
 export const SCENARIO_ID = 'dispatch-prompt-deadline';
 
 const MESSAGE = 'Read and execute TASK.md in this repository';
+const DRAFT = 'wait, use the other branch';
 const READY_TIMEOUT_MS = 6_000;
 
-// A Claude-shaped TUI that never settles: a ticking spinner (`busy`), or a live composer already
-// holding the task instruction above a ticking status line (`buffered`). It logs every key it
-// receives and, in `buffered` mode, starts "working" on Enter. Named `claude` so the gateway's
+// A Claude-shaped TUI that never settles, so readiness always reaches its deadline. Modes:
+// - busy: a ticking spinner;
+// - buffered: the task instruction already in the live composer, above a ticking status line;
+// - idle: an empty composer above a ticking status line, with an idle statusline signal;
+// - idle-draft: an operator's draft in the composer, with the same idle signal.
+// It logs every key it receives and starts "working" on Enter. Named `claude` so the gateway's
 // input guard sees the runner.
 const FAKE_TUI = `#!/usr/bin/env node
 const fs = require('node:fs');
-const [mode, messageFile, keyLog] = process.argv.slice(2);
+const path = require('node:path');
+const [mode, messageFile, draft, keyLog, obsDir] = process.argv.slice(2);
 const message = fs.readFileSync(messageFile, 'utf8').trim();
+const composerText = mode === 'buffered' ? message : mode === 'idle-draft' ? draft : '';
 let ticks = 0;
 let submitted = false;
 const draw = () => {
+  if (mode.startsWith('idle'))
+    fs.writeFileSync(
+      path.join(obsDir, 'statusline.json'),
+      JSON.stringify({ busy: false, observedAt: Date.now(), tmuxPane: process.env.TMUX_PANE }),
+    );
   process.stdout.write('\\x1b[2J\\x1b[H');
   if (submitted) return process.stdout.write('⏺ Reading TASK.md\\n✻ Working…\\n');
   ticks += 1;
-  if (mode === 'buffered')
-    process.stdout.write(
-      '────────────────\\n❯ ' + message + '\\n────────────────\\nctx:12% · ' + ticks + 's\\n',
-    );
-  else process.stdout.write('✻ Working… (' + ticks + 's)\\n');
+  if (mode === 'busy') return process.stdout.write('✻ Working… (' + ticks + 's)\\n');
+  process.stdout.write(
+    '────────────────\\n❯ ' + composerText + '\\n────────────────\\nctx:12% · ' + ticks + 's\\n',
+  );
 };
 setInterval(draw, 1000);
 draw();
 process.stdin.setRawMode(true);
 process.stdin.on('data', (data) => {
   fs.appendFileSync(keyLog, JSON.stringify(data.toString('latin1')) + '\\n');
-  if (mode === 'buffered' && (data.includes(13) || data.includes(10))) {
+  if (data.includes(13) || data.includes(10)) {
     submitted = true;
     draw();
   }
@@ -57,7 +66,9 @@ function keysReceived(keyLog) {
 function runCase(mode, root) {
   const repo = fs.mkdtempSync(path.join(root, `${mode}-`));
   const bin = path.join(repo, 'bin');
+  const obsDir = path.join(repo, '.observability');
   fs.mkdirSync(bin);
+  fs.mkdirSync(obsDir);
   fs.writeFileSync(path.join(bin, 'claude'), FAKE_TUI, { mode: 0o755 });
   const messageFile = path.join(repo, 'message.txt');
   const keyLog = path.join(repo, 'keys.log');
@@ -76,10 +87,11 @@ function runCase(mode, root) {
       '40',
       '-c',
       repo,
-      `${path.join(bin, 'claude')} ${mode} ${messageFile} ${keyLog}`,
+      `${path.join(bin, 'claude')} ${mode} ${messageFile} '${DRAFT}' ${keyLog} ${obsDir}`,
     ]);
-    sleepMs(1500);
     const paneId = tmux(['display-message', '-p', '-t', session, '#{pane_id}']);
+    if (!waitForPaneMatch(paneId, (pane) => /Working|ctx:12%/.test(pane), 10_000, 200))
+      throw new Error(`${mode}: the scripted TUI never drew`);
     const started = Date.now();
     const result = runGatewayPostLaunchPrompt({
       repo,
@@ -89,6 +101,7 @@ function runCase(mode, root) {
       marker: 'TASK.md',
       timeoutMs: READY_TIMEOUT_MS,
       artifactsDir,
+      runnerObservabilityDir: obsDir,
     });
     return {
       mode,
@@ -103,13 +116,46 @@ function runCase(mode, root) {
   }
 }
 
+const isSubmit = (key) => /^[\r\n]+$/.test(key);
+const typedText = (keys) => keys.filter((key) => !isSubmit(key)).join('');
+// The scripted TUI has no hooks, so an exact-ack delivery ends "uncertain", never a plain send
+// failure or a readiness timeout.
+const UNACKNOWLEDGED = /Exact prompt acknowledgement did not arrive/;
+const BOTH_WAITS = /and \d+s more after the deadline/;
+
+function check(report) {
+  const { buffered, busy, idle, idleDraft } = report;
+  if (buffered.keys.filter(isSubmit).length !== 1 || typedText(buffered.keys))
+    throw new Error(`buffered: expected one submit key only, got ${JSON.stringify(buffered.keys)}`);
+  if (!UNACKNOWLEDGED.test(buffered.result.error ?? ''))
+    throw new Error(`buffered: delivery did not end unacknowledged: ${buffered.result.error}`);
+  if (busy.result.ok) throw new Error('busy: a never-settling runner was accepted');
+  if (!BOTH_WAITS.test(busy.result.error ?? ''))
+    throw new Error(`busy: the failure does not name both waits: ${busy.result.error}`);
+  if (!busy.snapshotWritten) throw new Error('busy: no ready-timeout snapshot');
+  if (busy.keys.length) throw new Error(`busy: keys were sent: ${busy.keys}`);
+  if (!typedText(idle.keys).includes(MESSAGE))
+    throw new Error(`idle: the instruction was not delivered: ${JSON.stringify(idle.keys)}`);
+  if (!UNACKNOWLEDGED.test(idle.result.error ?? ''))
+    throw new Error(`idle: delivery did not end unacknowledged: ${idle.result.error}`);
+  if (idleDraft.keys.length)
+    throw new Error(`idle-draft: keys were sent over a draft: ${JSON.stringify(idleDraft.keys)}`);
+  if (!BOTH_WAITS.test(idleDraft.result.error ?? ''))
+    throw new Error(
+      `idle-draft: expected the extra window, then failure: ${idleDraft.result.error}`,
+    );
+}
+
 /**
- * Real tmux, real gateway `sendRunnerPostLaunchPrompt`, a scripted TUI (no model):
- * - `buffered`: the instruction sits in the live composer above a status line that never settles.
- *   At the readiness deadline it is handed to delivery, which sends the submit key once and
- *   types nothing.
- * - `busy`: a spinner that never settles gets one more readiness window, then fails naming both
- *   waits and writing the ready-timeout snapshot, with no key sent.
+ * Real tmux, the real gateway `sendRunnerPostLaunchPrompt`, a scripted TUI (no model). At the
+ * readiness deadline:
+ * - `buffered`: the instruction in the live composer is handed to delivery, which sends the
+ *   submit key once, types nothing, and ends through its own unacknowledged-delivery error;
+ * - `idle`: an idle signal over an empty composer hands the runner to delivery, which types the
+ *   instruction;
+ * - `idle-draft`: the same idle signal over an operator's draft hands over nothing;
+ * - `busy`: one more readiness window, then a failure naming both waits, with the ready-timeout
+ *   snapshot written and no key sent.
  */
 export async function runScenario({ runnerAdapter, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
@@ -125,25 +171,18 @@ export async function runScenario({ runnerAdapter, outDir }) {
   }
   execFileSync('tmux', ['-V'], { stdio: 'pipe' });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `runner-validate-${SCENARIO_ID}-`));
-  const report = { runner, buffered: null, busy: null, pass: false, error: null };
+  const report = { runner, pass: false, error: null };
   try {
     report.buffered = runCase('buffered', root);
-    const typed = report.buffered.keys.filter((key) => !/^[\r\n]+$/.test(key));
-    const submits = report.buffered.keys.filter((key) => /^[\r\n]+$/.test(key));
-    if (submits.length !== 1 || typed.length !== 0)
-      throw new Error(
-        `buffered: expected one submit key and no typed text, got ${JSON.stringify(report.buffered.keys)}`,
-      );
-
     report.busy = runCase('busy', root);
-    if (report.busy.result.ok) throw new Error('busy: a never-settling runner was accepted');
-    if (!/and \d+s more after the deadline/.test(report.busy.result.error ?? ''))
-      throw new Error(`busy: the failure does not name both waits: ${report.busy.result.error}`);
-    if (!report.busy.snapshotWritten) throw new Error('busy: no ready-timeout snapshot');
-    if (report.busy.keys.length) throw new Error(`busy: keys were sent: ${report.busy.keys}`);
+    report.idle = runCase('idle', root);
+    report.idleDraft = runCase('idle-draft', root);
+    check(report);
     report.pass = true;
   } catch (error) {
     report.error = error?.message || String(error);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
   const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
   return { scenario: SCENARIO_ID, runner, outPath, pass: report.pass, report };
