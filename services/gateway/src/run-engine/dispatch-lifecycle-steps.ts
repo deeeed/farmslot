@@ -54,9 +54,9 @@ import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.j
 import { taskExecutionAtDispatch } from '../runs/task-execution.js';
 
 import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
-import { foreignTaskDirRefusal } from './foreign-task-dir.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
+import { foreignTaskDirRefusal } from './foreign-task-dir.js';
 import {
   isObservedBuildRun,
   observedBuildFiles,

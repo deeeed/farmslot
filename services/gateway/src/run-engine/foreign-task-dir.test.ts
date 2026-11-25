@@ -19,15 +19,28 @@ mock.module('../core/config.js', {
   namedExports: {
     ...realConfig,
     loadSlotVars: async () => ({ slotId: 'slot-1', remoteRepo }) as realConfig.SlotVars,
-    loadProjectVars: async () =>
-      ({ projectJson: { name: 'fixture', task_dir: 'temp/tasks' } }) as realConfig.ProjectVars,
+    loadProjectVars: async (): Promise<realConfig.ProjectVars> => ({
+      projectName: 'fixture',
+      projectConfig: '/fixture/project.json',
+      projectFixturesDir: '/fixture/fixtures',
+      projectTemplatesDir: '/fixture/templates',
+      projectJson: { name: 'fixture', paths: { artifact_dir: 'temp/tasks' } },
+      runtimeDir: '.agent',
+      artifactDir: '.task',
+    }),
   },
 });
 mock.module('../core/slot-io.js', {
-  namedExports: { ...realSlotIo, slotFileExists: async (_slot: unknown, file: string) => slotFiles.has(file) },
+  namedExports: {
+    ...realSlotIo,
+    slotFileExists: async (_slot: unknown, file: string) => slotFiles.has(file),
+  },
 });
 mock.module('../runs/store.js', {
-  namedExports: { ...realStore, getRunWithArchived: async (id: string) => knownRuns.get(id) as Run | undefined },
+  namedExports: {
+    ...realStore,
+    getRunWithArchived: async (id: string) => knownRuns.get(id) as Run | undefined,
+  },
 });
 const owner: string = './foreign-task-dir.js?foreign-task-dir-test';
 const { foreignTaskDirRefusal }: typeof import('./foreign-task-dir.js') = await import(owner);
@@ -86,7 +99,7 @@ test('an authored task adopted under its own attempt is not refused, with or wit
 
 test("a run's own attempt (replay, resume) is not refused", async (t) => {
   const dir = taskDir(t, 'new-run');
-  knownRuns.set('new-run', { id: 'new-run', status: 'running' });
+  knownRuns.set('new-run', { id: 'new-run', status: 'monitoring' });
   assert.equal(await foreignTaskDirRefusal(run(dir)), null);
 });
 

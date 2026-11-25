@@ -275,14 +275,19 @@ test('a failed observed read never fails the prepare and leaves no stale record'
 
 test('a task dir another run initialized is refused before slot prepare runs', async () => {
   run = { ...run, project: 'extension' };
-  foreignTaskDir = 'Task dir /tasks/dev/rerun was initialized by run archived-run; author a fresh task dir (copy TASK.md to a new folder) or re-dispatch with --ticket.';
-  await assert.rejects(prepareRun(), /was initialized by run archived-run; author a fresh task dir/);
+  foreignTaskDir =
+    'Task dir /tasks/dev/rerun was initialized by run archived-run; author a fresh task dir (copy TASK.md to a new folder) or re-dispatch with --ticket.';
+  await assert.rejects(
+    prepareRun(),
+    /was initialized by run archived-run; author a fresh task dir/,
+  );
   assert.equal(prepareOptions, undefined, 'slot prepare never ran');
 });
 
 test('a skipped prepare (warm handoff, operator skip) is not refused for its task dir', async () => {
   run = { ...run, project: 'extension' };
-  foreignTaskDir = 'Task dir /tasks/dev/rerun was initialized by run archived-run; author a fresh task dir (copy TASK.md to a new folder) or re-dispatch with --ticket.';
+  foreignTaskDir =
+    'Task dir /tasks/dev/rerun was initialized by run archived-run; author a fresh task dir (copy TASK.md to a new folder) or re-dispatch with --ticket.';
   assert.equal((await prepareRun({ skipPrepare: true })).outputs?.skipped, true);
   assert.equal(prepareOptions, undefined);
 });

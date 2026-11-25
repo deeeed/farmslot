@@ -33,9 +33,11 @@ export async function foreignTaskDirRefusal(run: Run): Promise<string | null> {
   if (!existsSync(path.join(taskDir, RECEIPT))) return null;
   let attemptId: unknown;
   try {
-    attemptId = (JSON.parse(await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8')) as {
-      attemptId?: unknown;
-    }).attemptId;
+    attemptId = (
+      JSON.parse(await readFile(path.join(taskDir, 'inputs/handoff.json'), 'utf8')) as {
+        attemptId?: unknown;
+      }
+    ).attemptId;
   } catch {
     return null;
   }
