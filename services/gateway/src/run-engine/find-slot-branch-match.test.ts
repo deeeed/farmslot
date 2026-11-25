@@ -868,7 +868,11 @@ test("reclaim's own failed recovery fails the pinned run with its reason, not a 
       workspace_recovery: { id: 'own-failed-recovery' },
       head_sha: 'f'.repeat(40),
     });
-  await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /fixtures failed/);
+  // Only reclaim's own error says "cleanup refused"; the held slot's later refusal does not.
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, context),
+    /cleanup refused: Recovery verify: fixtures failed/,
+  );
   assert.deepEqual(finishedReclaims, [slotId]);
   assert.deepEqual(claims, []);
 });
