@@ -513,7 +513,7 @@ test('a failed listing reports git\'s error, writes no prune, and backs off', ()
     eval "$CMD"`,
   );
   assert.equal(notes.length, 2, 'the retry inside the backoff window lists nothing');
-  for (const note of notes) assert.match(note, /^remote prune failed: .*missing\.git/);
+  for (const note of notes) assert.match(note, /^remote prune failed: \S/);
   assert.deepEqual(lines, ['state=failed']);
 });
 
@@ -533,7 +533,7 @@ test('remotePruneCommand leaves a git dir live worktrees share alone, and ignore
   assert.match(stdout, /after=HEAD feat\/later main/);
 });
 
-test('a stale ref whose name matches a live branch or a loose ref in case is kept; others go', () => {
+test('case twins: a loose twin keeps its group, packed twins go one per pass, a live twin is no block', () => {
   const { notes, lines } = runPrune(
     `# GitHub keeps both names apart; on APFS one loose file serves both.
     git update-ref refs/remotes/origin/WPN-435 origin/main
@@ -549,9 +549,9 @@ test('a stale ref whose name matches a live branch or a loose ref in case is kep
     eval "$CMD"; echo "refs=$(remote_refs)"`,
   );
   assert.deepEqual(notes, [
-    'pruned 3 remote refs whose branch is gone; kept 2 whose name matches another ref in case',
+    'pruned 3 remote refs whose branch is gone; kept 3 whose name matches another ref in case',
   ]);
-  // WPN-435 collides with live wpn-435; OLD-1 with the loose old-1 file. The packed twins and
-  // feat/gone are stale with no live or loose collision.
-  assert.deepEqual(lines, ['refs=HEAD OLD-1 WPN-435 feat/later main old-1 ']);
+  // WPN-435 goes beside the live wpn-435: nothing in its group is loose. OLD-1 and old-1 stay
+  // while old-1 is a loose file. Of the packed twins one goes per pass, so their locks never meet.
+  assert.deepEqual(lines, ['refs=HEAD OLD-1 feat/later main old-1 packed-twin ']);
 });

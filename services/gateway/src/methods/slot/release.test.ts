@@ -505,16 +505,45 @@ test('release drops a published branch whose PR was squash-merged and deleted on
     await rm(remote, { recursive: true, force: true });
   });
   const git = (...args: string[]) =>
-    execFileSync('git', ['-C', vars.remoteRepo, '-c', 'commit.gpgsign=false', '-c', 'user.email=t@example.com', '-c', 'user.name=T', ...args], { encoding: 'utf8' }).trim();
+    execFileSync(
+      'git',
+      [
+        '-C',
+        vars.remoteRepo,
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'user.name=T',
+        ...args,
+      ],
+      { encoding: 'utf8' },
+    ).trim();
+  const base = git('rev-parse', 'HEAD');
   git('commit', '-q', '--allow-empty', '-m', 'the PR');
   execFileSync('git', ['clone', '-q', '--bare', vars.remoteRepo, remote]);
   git('remote', 'add', 'origin', remote);
-  git('push', '-q', 'origin', 'HEAD:main', 'PROJ-2-merged');
+  git('push', '-q', 'origin', `${base}:refs/heads/main`, 'PROJ-2-merged');
   git('fetch', '-q', 'origin');
   // GitHub deletes the branch on merge; the slot still has origin/PROJ-2-merged.
   execFileSync('git', ['-C', remote, 'update-ref', '-d', 'refs/heads/PROJ-2-merged']);
-  await seedSlotRow(t, slotId, { lifecycle: 'busy', phase: 'working', agent: 'working' });
-  const result = await slotRelease({ slotId }, noopEmit);
+  const run = createRun({ flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'PROJ-2' });
+  t.after(() => cleanupRun(run.id));
+  updateRun(run.id, {
+    status: 'done',
+    completedAt: new Date().toISOString(),
+    slotId,
+    branch: 'PROJ-2-merged',
+    worktreeHeadAtDispatch: base,
+  });
+  await seedSlotRow(t, slotId, {
+    lifecycle: 'held',
+    phase: 'pr-watch',
+    agent: 'idle',
+    current_run_id: run.id,
+  });
+  const result = await slotRelease({ slotId, expectedRunId: run.id }, noopEmit);
   assert.equal(result.released, true);
   assert.equal(await readSlotField(slotId, 'lifecycle'), 'ready');
   assert.equal(git('branch', '--list', 'PROJ-2-merged*'), '', 'no kept branch and no -kept- copy');
