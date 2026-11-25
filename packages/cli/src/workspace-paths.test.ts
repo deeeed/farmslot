@@ -2,65 +2,117 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import ts from 'typescript';
 
 const packageDir = fileURLToPath(new URL('..', import.meta.url));
+const repoRoot = path.resolve(packageDir, '../..');
 
-/** Every non-test source file under packages/cli/src. */
+/** Every non-test source file under a package's src. */
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const file = path.join(dir, entry.name);
     if (entry.isDirectory()) return sources(file);
-    return /\.tsx?$/.test(entry.name) && !/\.(test|live)\.tsx?$/.test(entry.name) ? [file] : [];
+    return /\.tsx?$/.test(entry.name) && !/\.(test|live|d)\.tsx?$/.test(entry.name) ? [file] : [];
   });
 }
 
-/** The source a `paths` target names, completed as bin/prebuilt-resolve.mjs completes it. */
-function complete(file: string): string | undefined {
-  return [file, `${file}.ts`, `${file}.tsx`, path.join(file, 'index.ts')].find(
-    (candidate) => /\.tsx?$/.test(candidate) && existsSync(candidate),
-  );
+/**
+ * The `@farmslot/*` specifiers a file loads at run time: import and export declarations that
+ * are not type-only, `import()`, `require()`, `require.resolve()`, `createRequire(...)(...)` and
+ * `import.meta.resolve()`. Type queries (`import('x').T`) and comments are not run-time loads.
+ */
+function runtimeImports(file: string): string[] {
+  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest);
+  const found: string[] = [];
+  const add = (node: ts.Node | undefined) => {
+    if (node && ts.isStringLiteralLike(node) && node.text.startsWith('@farmslot/'))
+      found.push(node.text);
+  };
+  const visit = (node: ts.Node) => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      !ts.isTypeOnlyImportOrExportDeclaration(node)
+    )
+      add(node.moduleSpecifier);
+    else if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const loads =
+        callee.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(callee) && callee.text === 'require') ||
+        ts.isCallExpression(callee) ||
+        (ts.isPropertyAccessExpression(callee) && callee.name.text === 'resolve');
+      if (loads) add(node.arguments[0]);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }
 
 // The node CLI install (scripts/lib/node-cli-refresh.sh) builds dist/ only for the packages
-// recipe-cli depends on, and the CLI loads workspace packages through its tsconfig `paths`.
-// A workspace import that reaches a dist/ fails there when the install never built it
-// (ERR_MODULE_NOT_FOUND for @farmslot/handoff/dist/scrub/index.js from `runs traces export`).
-test('every workspace package the CLI imports at runtime resolves to its source', () => {
+// recipe-cli depends on, and the CLI loads workspace packages through its tsconfig `paths`,
+// for every importing file (bin/prebuilt-resolve.mjs). An import that reaches a dist/ fails
+// where the install never built it (ERR_MODULE_NOT_FOUND for @farmslot/handoff/dist/scrub
+// from `runs traces export`).
+test('every workspace import the CLI loads resolves to a source file, not a dist/ build', async () => {
+  const resolver: unknown = await import(
+    pathToFileURL(path.join(packageDir, 'bin/prebuilt-resolve.mjs')).href
+  );
+  const complete =
+    resolver && typeof resolver === 'object' && 'complete' in resolver ? resolver.complete : null;
+  assert.equal(typeof complete, 'function');
+  const completeSource = (file: string): string | undefined => {
+    const found: unknown = (complete as (file: string) => unknown)(file);
+    return typeof found === 'string' ? found : undefined;
+  };
   const { compilerOptions } = JSON.parse(
     readFileSync(path.join(packageDir, 'tsconfig.json'), 'utf8'),
   ) as { compilerOptions: { paths: Record<string, [string]> } };
   const throughPaths = (specifier: string) => {
     for (const [pattern, [target]] of Object.entries(compilerOptions.paths)) {
       const prefix = pattern.endsWith('/*') ? pattern.slice(0, -1) : undefined;
-      if (prefix ? specifier.startsWith(prefix) : specifier === pattern) {
-        const file = complete(
-          path.resolve(
-            packageDir,
-            prefix ? target.replace('*', specifier.slice(prefix.length)) : target,
-          ),
-        );
-        if (file) return file;
-      }
+      if (prefix ? !specifier.startsWith(prefix) : specifier !== pattern) continue;
+      const file = completeSource(
+        path.resolve(
+          packageDir,
+          prefix ? target.replace('*', specifier.slice(prefix.length)) : target,
+        ),
+      );
+      if (file) return file;
     }
     return undefined;
   };
   // Without a mapping the resolver falls back to the package's exports, which must name a file
-  // that ships as is (such as a script), not a build output.
-  const resolve = (specifier: string) => {
-    const file = throughPaths(specifier) ?? fileURLToPath(import.meta.resolve(specifier));
-    return file.split(path.sep).includes('dist') ? undefined : file;
-  };
-  const unresolved = new Set<string>();
-  for (const file of sources(path.join(packageDir, 'src'))) {
-    const code = readFileSync(file, 'utf8');
-    // Type-only imports are erased; every other static or dynamic import loads at runtime.
-    for (const match of code.matchAll(
-      /(?:^|\n)\s*(?:import|export)\s+(?!type\s)[^;]*?from\s+'(@farmslot\/[^']+)'|import\(\s*'(@farmslot\/[^']+)'\s*\)/g,
-    )) {
-      const specifier = match[1] ?? match[2];
-      if (!resolve(specifier)) unresolved.add(`${specifier} (${path.relative(packageDir, file)})`);
+  // that ships as it is (a script), not a build output.
+  const resolve = (specifier: string): string | undefined => {
+    let file = throughPaths(specifier);
+    if (!file) {
+      try {
+        file = fileURLToPath(import.meta.resolve(specifier));
+      } catch {
+        return undefined;
+      }
     }
-  }
+    if (!existsSync(file) || path.relative(repoRoot, file).split(path.sep).includes('dist'))
+      return undefined;
+    return file;
+  };
+  // The CLI's sources, and those of every workspace package they reach.
+  const queue = [path.join(packageDir, 'src')];
+  const unresolved = new Set<string>();
+  for (const dir of queue)
+    for (const file of sources(dir))
+      for (const specifier of runtimeImports(file)) {
+        const target = resolve(specifier);
+        if (!target) {
+          unresolved.add(`${specifier} (${path.relative(repoRoot, file)})`);
+          continue;
+        }
+        const src = /^(.*[/\\](?:packages|services)[/\\][^/\\]+[/\\]src)[/\\]/.exec(target)?.[1];
+        if (src && !queue.includes(src)) queue.push(src);
+      }
+  assert.ok(queue.length > 1, 'the scan follows mapped packages');
   assert.deepEqual([...unresolved], []);
 });

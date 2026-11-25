@@ -1,8 +1,9 @@
 // ADR-039 Amendment 10: `farmslot runs traces export`. Offline, on the gateway host: reads the
 // gateway's stores read-only and writes only the export directory. Never invents a value.
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -12,7 +13,7 @@ import { readRetainedTaskFileReadOnly, runBundleRetentionSettings } from '@farms
 import { loadProfiles, profilesPath } from '../gateway-profiles.js';
 
 import { grokToSessionTrace, priceCost } from './formats.js';
-import { type ScrubInputs, TraceScrubber } from './scrub.js';
+import { SCRUB_RULES, type ScrubInputs, TraceScrubber } from './scrub.js';
 
 type Json = Record<string, unknown>;
 
@@ -25,6 +26,8 @@ export interface TraceExportOptions {
   family?: string;
   hasGrade?: boolean;
   update?: boolean;
+  /** The scan hook command; defaults to FARMSLOT_TRACE_SCAN_HOOK. */
+  scanHook?: string;
 }
 
 export interface TraceExportStores {
@@ -43,11 +46,29 @@ export interface TraceExportResult {
   exported: number;
   skipped: { runId: string; reason: string }[];
   transcripts: { present: number; missing: number };
+  /** Whether the operator's scan hook ran and passed; a refusal throws instead. */
+  scanHook: 'passed' | 'none';
 }
 
 /** The gateway's stores, as `farmslot paths --json` resolves them for the gateway role. */
-export function gatewayTraceStores(env: NodeJS.ProcessEnv = process.env): TraceExportStores {
-  const paths = resolveReportedFarmPaths({ role: 'gateway', env });
+export function gatewayTraceStores(
+  env: NodeJS.ProcessEnv = process.env,
+  checkoutRoot?: string,
+): TraceExportStores {
+  const paths = resolveReportedFarmPaths({ role: 'gateway', env, checkoutRoot });
+  // In the legacy layout the stores, projects and pool sit in the gateway checkout. Without
+  // FARMSLOT_ROOT the installed CLI takes its own snapshot (no .git) for it: an episode store
+  // named by FARMSLOT_RUNS_DIR is still found, but the snapshot's projects and pool would export
+  // opted-out projects and leave the real machine names and SSH users unredacted.
+  if (
+    paths.layout === 'legacy' &&
+    !env.FARMSLOT_ROOT &&
+    !(env.FARMSLOT_PROJECTS_DIR && env.FARMSLOT_POOL_DIR) &&
+    !existsSync(path.join(paths.code.checkout, '.git'))
+  )
+    throw new Error(
+      `The gateway checkout is unknown: ${paths.code.checkout} is the installed CLI. Set FARMSLOT_ROOT to the gateway checkout, with the gateway's FARMSLOT_* environment.`,
+    );
   const stores = {
     episodes: paths.state.episodes,
     runs: paths.state.runs,
@@ -60,9 +81,7 @@ export function gatewayTraceStores(env: NodeJS.ProcessEnv = process.env): TraceE
   };
   if (!existsSync(stores.episodes))
     throw new Error(
-      // The installed CLI resolves the gateway's stores from its own snapshot unless told
-      // where the gateway checkout is: its environment does not name it.
-      `No gateway episode store at ${stores.episodes}. Run the export on the gateway host with the gateway's FARMSLOT_* environment, and FARMSLOT_ROOT set to the gateway checkout.`,
+      `No gateway episode store at ${stores.episodes}. Run the export on the gateway host with the gateway's FARMSLOT_* environment: FARMSLOT_HOME for a farm home layout, and FARMSLOT_ROOT set to the gateway checkout for a legacy one.`,
     );
   return stores;
 }
@@ -300,6 +319,8 @@ export async function exportRunTraces(
   stores: TraceExportStores = gatewayTraceStores(),
 ): Promise<TraceExportResult> {
   options = { ...options, ...normalizeTraceRange(options) };
+  // Off unless configured: Farmslot's own scrub is the basic one.
+  const hook = (options.scanHook ?? process.env[SCAN_HOOK_ENV])?.trim() || undefined;
   const out = path.resolve(options.out);
   if (existsSync(out) && (await readdir(out)).length && !options.update)
     throw new Error(`${out} is not empty; pass --update to refresh an existing export`);
@@ -532,7 +553,10 @@ export async function exportRunTraces(
         `Filter: ${JSON.stringify({ project: options.project, flow: options.flow, since: options.since, until: options.until, family: options.family, hasGrade: options.hasGrade ?? false })}`,
         `Runs in index: ${runIndex.size}; exported this time: ${exported}`,
         `Transcripts present: ${totals.present}; missing: ${totals.missing}`,
-        'Redaction rules: secret-value, publication-pattern, private-key, dsn, email, secret-variable, username, home-path, machine',
+        `Redaction rules (basic, text only; image payloads are not scanned): ${SCRUB_RULES.join(', ')}`,
+        hook
+          ? `Scan hook: ${hook} (runs on this directory after it is written; a failure refuses the export)`
+          : `Scan hook: none (set ${SCAN_HOOK_ENV} to a command for a full scan)`,
         `Redactions this time: ${JSON.stringify(allCounts)}`,
         ...(skipped.length
           ? ['', 'Skipped:', ...skipped.map((entry) => `- ${entry.runId}: ${entry.reason}`)]
@@ -546,5 +570,45 @@ export async function exportRunTraces(
     path.join(out, 'redaction.json'),
     `${JSON.stringify({ runs: allCounts, indexAndReadme: indexScrubber.report() }, null, 2)}\n`,
   );
-  return { exported, skipped, transcripts: totals };
+  if (hook) await runScanHook(hook, out);
+  return { exported, skipped, transcripts: totals, scanHook: hook ? 'passed' : 'none' };
+}
+
+export const SCAN_HOOK_ENV = 'FARMSLOT_TRACE_SCAN_HOOK';
+const REFUSED = 'REFUSED.md';
+
+/**
+ * The operator's full scan: a shell command run with the export directory as its argument (and
+ * in FARMSLOT_TRACE_EXPORT_DIR) once every file is written. It may redact files in place; a
+ * non-zero exit refuses the export, which leaves REFUSED.md with the hook's message.
+ */
+async function runScanHook(hook: string, out: string): Promise<void> {
+  const result = await new Promise<{ code: number | null; signal: string | null; stderr: string }>(
+    (resolve, reject) => {
+      const child = spawn('/bin/sh', ['-c', `${hook} "$1"`, 'farmslot-trace-scan', out], {
+        cwd: out,
+        env: { ...process.env, FARMSLOT_TRACE_EXPORT_DIR: out },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      // The CLI's own stdout carries its JSON result, so the hook's output goes to stderr.
+      child.stdout.on('data', (chunk: Buffer) => process.stderr.write(chunk));
+      child.stderr.on('data', (chunk: Buffer) => {
+        process.stderr.write(chunk);
+        stderr = (stderr + chunk.toString('utf8')).slice(-4000);
+      });
+      child.on('error', reject);
+      child.on('close', (code, signal) => resolve({ code, signal, stderr }));
+    },
+  );
+  if (result.code === 0) {
+    await rm(path.join(out, REFUSED), { force: true });
+    return;
+  }
+  const how = result.signal ? `signal ${result.signal}` : `exit ${result.code}`;
+  await writeFile(
+    path.join(out, REFUSED),
+    `# Refused by the scan hook\n\n${SCAN_HOOK_ENV} (${how}) refused this export. Do not use it until the hook passes.\n\n${result.stderr.trim()}\n`,
+  );
+  throw new Error(`The scan hook refused the export (${how}); see ${path.join(out, REFUSED)}`);
 }

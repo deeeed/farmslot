@@ -1,10 +1,12 @@
 // ADR-039 Amendment 10: the replacing scrubber run trace export applies to every file it writes.
+// A basic, fast backstop over text: a small fixed set of obvious secret shapes, each pattern
+// anchored on a literal or a run boundary, so its cost grows with the input, not its square.
+// Full scanning is the operator's scan hook (FARMSLOT_TRACE_SCAN_HOOK), off by default.
 // Best effort, not a guarantee: an export stays on the local machine.
-import { FLOOR_PATTERNS, GITLEAKS_RULES } from '@farmslot/handoff/scrub';
 
 export type ScrubRule =
   | 'secret-value'
-  | 'publication-pattern'
+  | 'token'
   | 'private-key'
   | 'email'
   | 'dsn'
@@ -12,6 +14,19 @@ export type ScrubRule =
   | 'username'
   | 'home-path'
   | 'machine';
+
+/** The rules in the order they apply, as the exported README lists them. */
+export const SCRUB_RULES: readonly ScrubRule[] = [
+  'secret-value',
+  'token',
+  'private-key',
+  'dsn',
+  'email',
+  'secret-variable',
+  'username',
+  'home-path',
+  'machine',
+];
 
 export interface ScrubInputs {
   /** Exact configured secret values (provider environment, tokens, LiteLLM keys). */
@@ -23,23 +38,58 @@ export interface ScrubInputs {
 }
 
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const global = (pattern: RegExp) =>
-  new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
 
+/**
+ * Credentials whose shape names them: GitHub, OpenAI and Anthropic, Slack, AWS access keys,
+ * Google API keys, GitLab, npm, JWTs and bearer tokens. Each starts with a fixed prefix.
+ */
+const TOKEN = new RegExp(
+  [
+    String.raw`\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}`,
+    String.raw`\bgithub_pat_[A-Za-z0-9_]{22,}`,
+    String.raw`\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}`,
+    String.raw`\bxox[abposr]-[A-Za-z0-9-]{10,}`,
+    String.raw`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`,
+    String.raw`\bAIza[0-9A-Za-z_-]{35}`,
+    String.raw`\bglpat-[A-Za-z0-9_-]{20,}`,
+    String.raw`\bnpm_[A-Za-z0-9]{36}`,
+    String.raw`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`,
+    String.raw`\b[Bb]earer +[A-Za-z0-9._~+/-]{20,}=*`,
+  ].join('|'),
+  'g',
+);
+/** A PEM private key block, to its end line or the end of the value. */
+const PEM_KEY =
+  /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,30}PRIVATE KEY-----|$)/g;
+const PEM_BEGIN = /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----/;
+const PEM_END = /-----END [A-Z ]{0,30}PRIVATE KEY-----/;
 /** Hex of 64+ characters labelled as a key: a key-like name on the line, or assigned the value. */
 const LABELLED_KEY =
   /((?:private[_-]?key|privateKey|secret|seed|mnemonic)[^\n]{0,40}?[:=>"'\s]{1,4})(0x)?[0-9a-fA-F]{64,}/gi;
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
-const DSN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/"']+(?::[^\s@/"']*)?@[^\s/"']+/gi;
+// The domain is taken whole (a lookahead capture does not backtrack), then must end in a TLD.
+const EMAIL = /(?<![\w.%+-])[\w.%+-]+@(?=([A-Za-z0-9.-]+))\1(?<=\.[A-Za-z]{2,})/g;
+const DSN = /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s:@/"']+(?::[^\s@/"']*)?@[^\s/"']+/gi;
 const SECRET_VARIABLE =
   /\b([A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET|PASSWORD))(\s*[=:]\s*["']?)([^\s"']+)/g;
 const HOME = /(\/Users\/|\/home\/)([^/\s"'\\]+)/g;
+
+/**
+ * An image's base64 payload is not text, so it is not scanned: a match inside it would only
+ * corrupt the image. A value counts as one only with an `image/*` type beside it (or in its
+ * data URL) and an image format's own leading bytes (PNG, JPEG, GIF, WebP).
+ */
+const IMAGE_BASE64 = /^(?:iVBORw0KGgo|\/9j\/|R0lGOD|UklGR)[A-Za-z0-9+/]*={0,2}$/;
+const IMAGE_DATA_URL = /^data:image\/(?:png|jpeg|gif|webp);base64,/;
+/** Payload keys of Pi and Claude `image` blocks, Anthropic sources and Claude's `file` copy. */
+const IMAGE_PAYLOAD_KEYS = new Set(['data', 'base64']);
+const IMAGE_TYPE_KEYS = ['mimeType', 'media_type', 'mediaType', 'type'];
+const isImageType = (value: unknown) => typeof value === 'string' && value.startsWith('image/');
 
 /** A JSON key whose string value is a secret: replaced whole, whatever the value looks like. */
 const SECRET_KEY =
   /(?:^|[_-])(?:token|secret|password|passwd)$|(?:privatekey|private_key|secretkey|secret_key|secret|password|passwd|mnemonic|seedphrase|seed_phrase|apikey|api_key|accesskey|access_key|accesstoken|access_token|refreshtoken|refresh_token|authtoken|auth_token|clientsecret|client_secret)$/i;
 const KEY_IS_PRIVATE_KEY = /private|mnemonic|seed/i;
-/** JSON keys Farmslot writes digests and SHAs under: never redacted by the publication patterns. */
+/** JSON keys Farmslot writes digests and SHAs under: never redacted by the key rules. */
 const OWN_DIGEST_KEYS = new Set([
   'sha256',
   'diffSha256',
@@ -51,19 +101,6 @@ const OWN_DIGEST_KEYS = new Set([
   'prHead',
   'mergeSha',
 ]);
-
-/**
- * Blocks whose `data` is a base64 image: Pi and Claude content (`image`), and an Anthropic
- * image `source` (`base64`).
- */
-const IMAGE_BLOCK_TYPES = new Set(['image', 'base64']);
-const BASE64 = /^[A-Za-z0-9+/=]*$/;
-/** A whole value that is an inline image, as OpenAI-style `image_url` content carries it. */
-const BASE64_IMAGE_URL = /^data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]*$/;
-
-/** Farmslot's own digests and SHA fields are kept: they are not secrets. */
-const OWN_DIGEST =
-  /("(?:sha256|diffSha256|templateSha256|bundleDigest|startRef|dispatchHead|finalHead|prHead|mergeSha|ref)"\s*:\s*")|sha256:/;
 
 export class TraceScrubber {
   readonly counts = new Map<ScrubRule, number>();
@@ -80,10 +117,8 @@ export class TraceScrubber {
             },
           ]
         : []),
-      ...[...FLOOR_PATTERNS, ...GITLEAKS_RULES].map(({ pattern }) => ({
-        rule: 'publication-pattern' as const,
-        pattern: global(pattern),
-      })),
+      { rule: 'token', pattern: TOKEN },
+      { rule: 'private-key', pattern: PEM_KEY },
       { rule: 'private-key', pattern: LABELLED_KEY, replace: '$1{token}' },
       { rule: 'dsn', pattern: DSN },
       { rule: 'email', pattern: EMAIL },
@@ -120,18 +155,11 @@ export class TraceScrubber {
   ): string {
     let out = text;
     for (const { rule, pattern, replace } of this.rules) {
-      if (options.ownDigest && (rule === 'publication-pattern' || rule === 'private-key')) continue;
+      // A digest Farmslot wrote itself is left in place.
+      if (options.ownDigest && rule === 'private-key') continue;
       pattern.lastIndex = 0;
       let n = 0;
       out = out.replace(pattern, (...match: string[]) => {
-        const whole = match[0];
-        const offset = Number(match[match.length - 2]);
-        // A digest Farmslot wrote itself is left in place.
-        if (
-          rule === 'publication-pattern' &&
-          OWN_DIGEST.test(out.slice(Math.max(0, offset - 40), offset))
-        )
-          return whole;
         n += 1;
         if (!replace) return token(rule);
         return replace
@@ -146,37 +174,35 @@ export class TraceScrubber {
   /**
    * One JSON value, scrubbed with its key in view: a value under a secret-like key is replaced
    * whole (labelled rules cannot see the key once a value is scrubbed alone), keys are scrubbed,
-   * and Farmslot's own digest fields skip the publication patterns.
+   * and Farmslot's own digest fields skip the private-key rules.
    */
-  private value(value: unknown, key?: string): unknown {
+  private value(value: unknown, key?: string, imageType = false): unknown {
     const token = (rule: ScrubRule) => `[REDACTED:${rule}]`;
     if (typeof value === 'string') {
-      if (BASE64_IMAGE_URL.test(value)) return value;
       if (key && value.length >= 6 && SECRET_KEY.test(key)) {
         const rule: ScrubRule = KEY_IS_PRIVATE_KEY.test(key) ? 'private-key' : 'secret-variable';
         this.count(rule, 1);
         return token(rule);
       }
+      const image = IMAGE_DATA_URL.exec(value);
+      if (image && IMAGE_BASE64.test(value.slice(image[0].length))) return value;
+      if (imageType && key && IMAGE_PAYLOAD_KEYS.has(key) && IMAGE_BASE64.test(value)) return value;
       return this.apply(value, token, { ownDigest: key !== undefined && OWN_DIGEST_KEYS.has(key) });
     }
     if (Array.isArray(value)) return value.map((entry) => this.value(entry, key));
     if (value && typeof value === 'object') {
-      // An image's base64 payload is kept as is. The text patterns cannot see into an image,
-      // a match inside base64 would only corrupt it, and scanning megabytes of screenshots
-      // with every publication pattern took an export minutes per run.
-      const image = IMAGE_BLOCK_TYPES.has((value as { type?: unknown }).type as string);
+      const entries = Object.entries(value);
+      const typed = entries.some(
+        ([entryKey, entry]) => IMAGE_TYPE_KEYS.includes(entryKey) && isImageType(entry),
+      );
       // No prototype: `constructor` or `__proto__` keys are plain own keys, as in the input.
       const out: Record<string, unknown> = Object.create(null);
-      for (const [entryKey, entry] of Object.entries(value)) {
-        if (image && entryKey === 'data' && typeof entry === 'string' && BASE64.test(entry)) {
-          out[entryKey] = entry;
-          continue;
-        }
+      for (const [entryKey, entry] of entries) {
         const base = this.apply(entryKey, token);
         let scrubbedKey = base;
         // Two keys redacted to the same token stay apart instead of overwriting each other.
         for (let n = 2; Object.hasOwn(out, scrubbedKey); n++) scrubbedKey = `${base}#${n}`;
-        out[scrubbedKey] = this.value(entry, entryKey);
+        out[scrubbedKey] = this.value(entry, entryKey, typed);
       }
       return out;
     }
@@ -185,12 +211,18 @@ export class TraceScrubber {
 
   /**
    * File contents, line by line. A JSON line is scrubbed value by value and written back, so
-   * JSONL stays valid even when a pattern would span quotes; other lines are scrubbed as text.
+   * JSONL stays valid even when a pattern would span quotes; other lines are scrubbed as text,
+   * and the body lines of a PEM private key that spans lines are replaced too.
    */
   text(content: string): string {
+    let inKey = false;
     return content
       .split('\n')
       .map((line) => {
+        if (inKey) {
+          if (PEM_END.test(line)) inKey = false;
+          return '[REDACTED:private-key]';
+        }
         const trimmed = line.trim();
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
           let parsed: unknown;
@@ -205,6 +237,7 @@ export class TraceScrubber {
             return scrubbed === JSON.stringify(parsed) ? line : scrubbed;
           }
         }
+        if (PEM_BEGIN.test(line) && !PEM_END.test(line)) inKey = true;
         return this.apply(line, (rule) => `[REDACTED:${rule}]`);
       })
       .join('\n');
