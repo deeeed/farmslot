@@ -23,6 +23,8 @@ export interface PaneClassifierResult {
   confidence: number;
   suggestedAction: PaneClassifierAction;
   reason: string;
+  /** The classifier could not be asked (auth refused, provider error); the verdict is a placeholder. */
+  unavailable?: true;
 }
 
 const STATES: ReadonlySet<PaneClassifierState> = new Set([
@@ -47,9 +49,7 @@ const ACTIONS: ReadonlySet<PaneClassifierAction> = new Set([
 
 export function parsePaneClassifierResult(text: string): PaneClassifierResult | null {
   const trimmed = text.trim();
-  const jsonText = trimmed.startsWith('{')
-    ? trimmed
-    : (trimmed.match(/\{[\s\S]*\}/)?.[0] ?? '');
+  const jsonText = trimmed.startsWith('{') ? trimmed : (trimmed.match(/\{[\s\S]*\}/)?.[0] ?? '');
   if (!jsonText) return null;
 
   let parsed: unknown;
@@ -142,6 +142,7 @@ export async function classifyRunnerPaneStateBestEffort(opts: {
       confidence: 0,
       suggestedAction: 'manual',
       reason: `classifier unavailable: ${(err as Error).message.slice(0, 180)}`,
+      unavailable: true,
     };
   }
 }

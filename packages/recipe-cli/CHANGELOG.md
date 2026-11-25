@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-cli` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `status --watch` and the task view list only the worker checklist's child units. A reviewer's unit on `REVIEW.<context>.md` step N no longer shows as child work under the worker's step N.
 
 ## 0.35.32 - 2026-11-23
 
