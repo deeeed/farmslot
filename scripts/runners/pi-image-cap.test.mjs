@@ -71,6 +71,24 @@ test('consecutive tool results share one per-message count, as Pi sends them', (
   assert.deepEqual(images(capped.messages), ['img-1', 'img-2', 'img-3', 'img-4']);
 });
 
+test('a system message or an excluded bash run among tool results does not split them', () => {
+  const messages = [
+    ...screenshots(2),
+    { role: 'system', content: '', sections: { preamble: 'prompt' } },
+    { role: 'bashExecution', command: 'ls', output: '', excludeFromContext: true },
+    ...screenshots(1, 2),
+  ];
+  // Pi sends the three results as one provider message: over two, the oldest image goes.
+  const capped = capContextImages(messages, { perMessage: 2 });
+  assert.equal(capped.dropped, 1);
+  assert.deepEqual(images(capped.messages), ['img-1', 'img-2']);
+  // A bash run that is sent becomes a user message between them.
+  const sent = messages.map((message) =>
+    message.role === 'bashExecution' ? { ...message, excludeFromContext: false } : message,
+  );
+  assert.equal(capContextImages(sent, { perMessage: 2 }), undefined);
+});
+
 test('a user or custom message counts its own images, before the request cap applies', () => {
   const messages = [
     { role: 'user', content: [text('compare'), image('a'), image('b'), image('c')] },
@@ -108,6 +126,8 @@ test("a model's declared cap comes first; the pool fills a missing per-request c
     perRequest: 50,
     perMessage: 20,
   });
+  // The router alias takes the same settings as the source it names.
+  assert.equal(caps({ ...sparks, provider: 'router' }).perRequest, 50);
   // Another provider takes nothing from the router settings.
   assert.deepEqual(caps({ provider: 'anthropic', id: 'claude' }), {
     perRequest: undefined,
@@ -163,13 +183,22 @@ async function checkHook(extensionUrl) {
 
   const root = mkdtempSync(path.join(tmpdir(), 'pi-image-cap-'));
   const events = new Map();
-  process.env = {
+  const entries = [];
+  const pi = {
+    on: (name, handler) => events.set(name, handler),
+    appendEntry: (type, data) => entries.push({ type, data }),
+  };
+  const env = {
     PI_CODING_AGENT_DIR: path.join(root, 'agent'),
     FARMSLOT_PI_OLLAMA: '0',
     FARMSLOT_OBS_DIR: root,
     FARMSLOT_PI_ROUTER_ID: 'localsparks',
     FARMSLOT_PI_ROUTER_MAX_IMAGES: '50',
   };
+  // A bad setting refuses configuration at load, even for a source that is not configured.
+  process.env = { ...env, FARMSLOT_PI_LITELLM_MAX_IMAGES: 'many' };
+  await assert.rejects(install({ on() {} }), /FARMSLOT_PI_LITELLM_MAX_IMAGES/);
+  process.env = env;
   const system = { role: 'system', content: '', sections: { preamble: 'prompt' } };
   const shots = Array.from({ length: 51 }, (_, n) => ({
     role: 'toolResult',
@@ -183,15 +212,25 @@ async function checkHook(extensionUrl) {
       .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
       .filter((block) => block.type === 'image').length;
   try {
-    await install({ on: (name, handler) => events.set(name, handler) });
+    await install(pi);
     assert.equal(events.has('context'), false, 'the trim does not rewrite the system messages');
     const hook = events.get('context_with_system');
     // The selected model declares no cap: the pool's router setting applies.
     const model = { provider: 'localsparks', id: 'GLM-5.3-Flash-s1234' };
-    const capped = await hook({ type: 'context_with_system', messages }, { model });
+    const request = (list, hasUI) =>
+      hook({ type: 'context_with_system', messages: list }, { model, hasUI });
+    const capped = await request(messages, true);
     assert.equal(count(capped.messages), 41);
     assert.equal(capped.messages[0], system, 'the leading system message is kept as it was');
     assert.equal(capped.messages.length, messages.length);
+    // The drop is recorded once per batch: repeating it adds nothing.
+    await request(messages, true);
+    const record = { type: 'farmslot-image-cap', data: { dropped: 10, images: 51 } };
+    assert.deepEqual(entries, [record]);
+    // Under the cap again (after compaction), the next drop is recorded even at the same count.
+    assert.equal(await request(messages.slice(0, 40), true), undefined);
+    await request(messages, false);
+    assert.deepEqual(entries, [record, record]);
     assert.equal(
       await hook(
         { type: 'context_with_system', messages },
@@ -220,5 +259,10 @@ test('the pi observability extension trims each request to the selected model ca
   );
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stderr, /\[farmslot-pi\] image cap \{"dropped":10,"images":51\}/);
+  // Only the request without a TUI writes the line to stderr.
+  assert.equal(
+    result.stderr.match(/\[farmslot-pi\] image cap \{"dropped":10,"images":51\}/g)?.length,
+    1,
+    result.stderr,
+  );
 });

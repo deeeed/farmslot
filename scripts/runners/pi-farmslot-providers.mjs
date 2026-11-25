@@ -119,6 +119,19 @@ export function piModelImageCaps(model, env = process.env) {
   return caps;
 }
 
+/**
+ * Refuse a bad image setting when the extension loads. A source that is not configured skips
+ * discovery, so its settings would otherwise first be read by a request, which Pi then sends
+ * untrimmed when the read throws.
+ */
+export function assertPiImageSettings(env = process.env) {
+  for (const kind of Object.keys(PI_PROVIDER_ENVIRONMENT)) {
+    const prefix = `FARMSLOT_PI_${kind.toUpperCase()}`;
+    positiveInteger(env[`${prefix}_MAX_IMAGES`], `${prefix}_MAX_IMAGES`);
+    configuredModelLimits(env[`${prefix}_MODEL_LIMITS`], `${prefix}_MODEL_LIMITS`);
+  }
+}
+
 /** Bound worker HTTP requests through the final response byte. Pi owns retries. */
 export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted, mode = 'total') {
   let consecutiveTimeouts = 0;

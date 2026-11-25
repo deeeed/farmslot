@@ -133,6 +133,10 @@ message; consecutive tool results count as one message, as Pi sends them. Over t
 request cap, images go in batches of a fifth of the cap, so the trimmed prefix (and
 the provider's prompt cache) stays the same until that many more images arrive.
 `maxImages` is a cap of its own, not a budget against reported limits.
+Each new batch adds a `farmslot-image-cap` entry (dropped and total images) to the
+session; without a TUI (print or JSON mode) it is also logged to stderr as
+`[farmslot-pi] image cap`. A bad image setting refuses configuration when the
+extension loads, even for a source that is not configured.
 
 For a comparison budget on a shared provider, use `FARMSLOT_PI_LITELLM_MODEL_LIMITS`,
 a JSON object keyed by exact model ID, for example:

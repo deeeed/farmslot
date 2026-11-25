@@ -15,12 +15,23 @@ export const IMAGE_OMITTED = "[image omitted: an older image over this model's i
 export function capContextImages(messages, { perRequest, perMessage }) {
   if (perRequest === undefined && perMessage === undefined) return undefined;
   const groups = [];
+  let open;
+  let previousRole;
   messages.forEach((message, m) => {
-    const joined = message?.role === 'toolResult' && messages[m - 1]?.role === 'toolResult';
-    if (!joined) groups.push([]);
+    const role = message?.role;
+    // Pi sends a system message that lands among tool results after them, and leaves out an
+    // excluded bash execution: neither splits the provider message the results merge into.
+    const aside = role === 'system' || (role === 'bashExecution' && message.excludeFromContext);
+    let group;
+    if (aside) groups.push((group = []));
+    else {
+      if (role !== 'toolResult' || previousRole !== 'toolResult') groups.push((open = []));
+      group = open;
+      previousRole = role;
+    }
     if (!Array.isArray(message?.content)) return;
     message.content.forEach((block, b) => {
-      if (block?.type === 'image') groups.at(-1).push(`${m}:${b}`);
+      if (block?.type === 'image') group.push(`${m}:${b}`);
     });
   });
   const drop = new Set();
