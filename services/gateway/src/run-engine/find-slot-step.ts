@@ -101,6 +101,7 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
+import { recoveryFromRow } from '../methods/slot/workspace.js';
 import { type GatewayResourceRevisions, resourceRevisions } from '../resources/revisions.js';
 import {
   isCancelledSlotHolder,
@@ -576,7 +577,7 @@ async function claimAdmittedSlot(
       } catch (error) {
         // Someone else acting on the slot (a recovery, a rival claim) ends by itself, whatever
         // refusal it caused here: select again or wait rather than fail the run.
-        if (slotChangedUnderAttempt(slotId, runId, before, await readSlotRow(slotId)))
+        if (slotChangedUnderAttempt(slotId, before, await readSlotRow(slotId)))
           throw slotClaimRefusedError(slotId, 'the slot changed during reclaim', true);
         throw error;
       }
@@ -590,8 +591,9 @@ async function claimAdmittedSlot(
 }
 
 /** A workspace recovery (an automatic idle return, a refresh) is running on the slot now. It
- * holds the prepare guard and its fenced row only while it runs; a failed one is held for an
- * operator instead, so this ends by itself. */
+ * holds the prepare guard and its fenced row while it runs; a failed one is held for an operator
+ * instead. After a gateway crash the fenced row stays until the reconciler resumes the recovery,
+ * which needs the slot's node back, so a wait on it ends once that node returns. */
 function workspaceRecoveryInFlight(
   slotId: string,
   row: Readonly<Record<string, unknown>> | null | undefined,
@@ -605,20 +607,21 @@ function workspaceRecoveryInFlight(
   );
 }
 
-/** Another actor changed the slot while this run tried it: a recovery is running, a rival run
- * took it, or its ownership epoch moved (a recovery or claim that already finished). An owner
- * that held it before the attempt is an ordinary refusal, not a change. */
+/** Another actor changed the slot while this run tried it: a recovery is running, a claim moved
+ * its ownership epoch (every claim does), or a recovery started or finished meanwhile (its
+ * marker, head or branch differs; recovery keeps the epoch). */
 function slotChangedUnderAttempt(
   slotId: string,
-  runId: string,
   before: Readonly<Record<string, unknown>> | null | undefined,
   after: Readonly<Record<string, unknown>> | null | undefined,
 ): boolean {
-  const ownerChanged = (after?.current_run_id ?? null) !== (before?.current_run_id ?? null);
+  const recoveryId = (row: typeof before) => (row ? recoveryFromRow(row)?.id : undefined);
   return (
     workspaceRecoveryInFlight(slotId, after) ||
-    (ownerChanged && !!after && slotClaimBlocker(after, runId, getRun)?.kind === 'live-owner') ||
-    (Number(before?.slot_epoch) || 0) !== (Number(after?.slot_epoch) || 0)
+    (Number(before?.slot_epoch) || 0) !== (Number(after?.slot_epoch) || 0) ||
+    recoveryId(before) !== recoveryId(after) ||
+    (before?.head_sha ?? null) !== (after?.head_sha ?? null) ||
+    (before?.branch ?? null) !== (after?.branch ?? null)
   );
 }
 
@@ -2222,7 +2225,7 @@ async function findSlotAttempt(
         break;
       }
       // A recovery or claim that took it after the guard filter ends by itself: select again.
-      if (slotChangedUnderAttempt(candidate.slot, runId, before, await readSlotRow(candidate.slot)))
+      if (slotChangedUnderAttempt(candidate.slot, before, await readSlotRow(candidate.slot)))
         throw slotClaimRefusedError(candidate.slot, 'the slot changed during safe reuse', true);
       if (outcome.kind === 'local-work') localWorkSlots.add(candidate.slot);
       reuseReasons[candidate.slot] = outcome.reason;

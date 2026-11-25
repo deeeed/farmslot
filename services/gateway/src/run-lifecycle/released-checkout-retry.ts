@@ -61,6 +61,8 @@ export const RELEASED_CHECKOUT_RETRY_MAX_MS = 60 * 60 * 1000;
 export const RELEASED_CHECKOUT_STABLE_PASSES = 2;
 
 interface SlotRetryState {
+  /** The run whose checkout this state counts for; another run starts afresh. */
+  runId?: string;
   streak: number;
   /** The node connection the streak was counted on. */
   session?: string;
@@ -70,11 +72,14 @@ interface SlotRetryState {
 }
 
 const states = new Map<string, SlotRetryState>();
+/** A slot whose project config could not be read, and why, while it keeps failing. */
+const configErrors = new Map<string, string>();
 let passInFlight = false;
 
 /** For tests: forget per-slot retry state. */
 export function resetReleasedCheckoutRetryState(): void {
   states.clear();
+  configErrors.clear();
   passInFlight = false;
 }
 
@@ -156,9 +161,13 @@ function noteOnce(
   deps.log(`[slot.release] ${slotId}: released checkout not returned to idle yet: ${reason}`);
 }
 
-function stateFor(slotId: string): SlotRetryState {
+function stateFor(slotId: string, runId?: string): SlotRetryState {
   let state = states.get(slotId);
-  if (!state) states.set(slotId, (state = { streak: 0, nextAttemptAt: 0, backoffMs: 0 }));
+  if (!state || (runId && state.runId && state.runId !== runId)) {
+    state = { streak: 0, nextAttemptAt: 0, backoffMs: 0 };
+    states.set(slotId, state);
+  }
+  if (runId) state.runId = runId;
   return state;
 }
 
@@ -172,19 +181,25 @@ export async function retryReleasedCheckoutIdleReturns(
     const now = deps.now();
     const candidates: SlotStatus[] = [];
     for (const slot of (await deps.fleetSlots()).filter(unownedReady)) {
+      let idle: { defaultBranch: string; tracking: string };
       try {
-        const { defaultBranch, tracking } = await deps.idleBranches(slot);
-        if (!isSlotIdleBranch(slot.branch, tracking, defaultBranch, !!slot.linkedWorktree))
-          candidates.push(slot);
+        idle = await deps.idleBranches(slot);
       } catch (error) {
-        // An unreadable project config is this slot's problem, not the pass's.
-        noteOnce(deps, slot.slot, stateFor(slot.slot), errorText(error));
+        // An unreadable project config is this slot's problem, not the pass's: logged once
+        // while it keeps failing.
+        const reason = errorText(error);
+        if (configErrors.get(slot.slot) !== reason)
+          deps.log(`[slot.release] ${slot.slot}: released checkout not checked: ${reason}`);
+        configErrors.set(slot.slot, reason);
+        continue;
       }
+      configErrors.delete(slot.slot);
+      if (!isSlotIdleBranch(slot.branch, idle.tracking, idle.defaultBranch, !!slot.linkedWorktree))
+        candidates.push(slot);
     }
     const candidateIds = new Set(candidates.map((slot) => slot.slot));
-    for (const [slotId, state] of [...states])
-      if (!candidateIds.has(slotId) && state.nextAttemptAt === 0 && !state.lastReason)
-        states.delete(slotId);
+    // A slot that drops out (claimed, refreshed, back on its idle branch) starts afresh next time.
+    for (const slotId of [...states.keys()]) if (!candidateIds.has(slotId)) states.delete(slotId);
     if (candidates.length === 0) return;
     // One run scan per pass, indexed by slot.
     const bySlot = new Map<string, Run[]>();
@@ -215,7 +230,7 @@ async function retrySlot(
     states.delete(slot.slot);
     return;
   }
-  const state = stateFor(slot.slot);
+  const state = stateFor(slot.slot, owner.id);
   // Keep the back-off through a busy or absent pass; only the streak starts over.
   if (deps.slotBusy(slot.slot) || (await deps.absentNode(slot.slot))) {
     state.streak = 0;

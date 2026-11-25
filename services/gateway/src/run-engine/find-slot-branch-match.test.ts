@@ -803,7 +803,7 @@ test('a fenced recovery row on the pinned slot is waited out, without the guard'
   run.slotId = slotId;
   finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot is returning to idle`;
   finishedRefusalOnce = true;
-  // A recovery in another gateway process: only its fenced row shows.
+  // A recovery this gateway did not start (one a crash left fenced): only its row shows.
   onFinishedRefusal = () =>
     liveRows.set(slotId, {
       workspace_recovery: { id: 'recovery-1' },
@@ -819,13 +819,35 @@ test('a fenced recovery row on the pinned slot is waited out, without the guard'
   assert.deepEqual(claims, [slotId]);
 });
 
-test('a rival that moved the slot during reclaim sends the pin back, not to failure', async () => {
+test('a rival that claimed the slot during reclaim makes the pin wait, not fail', async () => {
   reset('fix-bug', 'TAT-4137');
   const slotId = slots[0]!.slot;
   run.slotId = slotId;
   finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot ownership changed; inspect again`;
   finishedRefusalOnce = true;
-  onFinishedRefusal = () => liveRows.set(slotId, { slot_epoch: 9 });
+  // The rival's claim moved the epoch and still holds the slot.
+  onFinishedRefusal = () => {
+    cancelledHolder = makeRun({ id: 'rival', slotId, status: 'reviewing' });
+    liveRows.set(slotId, { slot_epoch: 9, current_run_id: 'rival', lifecycle: 'busy' });
+  };
+  afterLoadWait = () => {
+    cancelledHolder = undefined;
+    liveRows.set(slotId, { slot_epoch: 10, current_run_id: null, lifecycle: 'ready' });
+  };
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.ok(loadWaits.includes(5_000), 'the pin waited for the rival');
+  assert.deepEqual(finishedReclaims, [slotId, slotId]);
+  assert.deepEqual(claims, [slotId]);
+});
+
+test('a recovery that finished during reclaim sends the pin back: same epoch, new head', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const slotId = slots[0]!.slot;
+  run.slotId = slotId;
+  finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot ownership changed; inspect again`;
+  finishedRefusalOnce = true;
+  // No guard, no fenced row and no epoch move: only the reset checkout shows the recovery.
+  onFinishedRefusal = () => liveRows.set(slotId, { head_sha: 'c'.repeat(40), branch: 'main' });
   afterLoadWait = () => {};
   await executeFindSlotStep(run.id, run, 0, context);
   assert.deepEqual(finishedReclaims, [slotId, slotId]);

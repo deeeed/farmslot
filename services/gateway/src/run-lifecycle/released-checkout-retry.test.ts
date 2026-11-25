@@ -222,19 +222,85 @@ test('an absent pass or a node reconnect between passes starts the streak over',
   assert.deepEqual(returned, ['artifact-run']);
 });
 
-test('a slot whose release met a node disconnect is settled once the node stays back', async () => {
-  // Release's idle return was refused at its first inspection (the node's socket closed), so the
-  // slot is ready, unowned and on the run branch. The node flaps, then reconnects for good.
-  absent = 'mini';
+test("an attempt that meets a node disconnect settles after the node's reconnect holds", async () => {
+  // The retry's own attempt loses the node mid-inspection, as release's did on mini-mmt-3.
+  outcomes = [
+    {
+      kind: 'unavailable',
+      reason: 'Execution gw-1-1 on mini has unconfirmed closeout (disconnected)',
+    },
+  ];
   await twoPasses();
-  assert.deepEqual(returned, [], 'nothing while the node is away');
+  assert.deepEqual(returned, ['artifact-run']);
+  absent = 'mini';
+  await pass(RELEASED_CHECKOUT_RETRY_MIN_MS);
+  assert.deepEqual(returned, ['artifact-run'], 'nothing while the node is away');
   absent = null;
   session = 'mini@2026-11-25T05:02:00.000Z';
   await pass();
-  assert.deepEqual(returned, [], 'one pass on the new connection is not enough');
+  assert.deepEqual(returned, ['artifact-run'], 'the new connection must hold for two passes');
+  await pass();
+  assert.deepEqual(returned, ['artifact-run', 'artifact-run']);
+  assert.match(logs.join('\n'), /unconfirmed closeout \(disconnected\)/);
+  assert.match(logs.join('\n'), /returned run artifact's released checkout to idle/);
+});
+
+test("a later run's checkout on the same slot starts with no streak, back-off or logged reason", async () => {
+  outcomes = Array.from({ length: 4 }, () => ({
+    kind: 'unavailable' as const,
+    reason: 'Slot agent is working',
+  }));
+  await twoPasses();
+  await pass(RELEASED_CHECKOUT_RETRY_MIN_MS);
+  assert.deepEqual(returned, ['artifact-run', 'artifact-run'], 'run X backed off to 10 min');
+  // An operator refreshes the slot; run Y uses it, finishes and is refused the same way.
+  runs = [
+    finished(),
+    finished({
+      id: 'run-y',
+      createdAt: '2026-11-25T12:00:00.000Z',
+      releasedCheckout: { ...RELEASED, headSha: 'd'.repeat(40) },
+    }),
+  ];
+  await pass();
+  assert.deepEqual(returned, ['artifact-run', 'artifact-run'], 'Y needs its own two passes');
+  await pass();
+  assert.deepEqual(returned, ['artifact-run', 'artifact-run', 'run-y'], "not X's back-off");
+  assert.equal(
+    logs.filter((line) => line.includes('Slot agent is working')).length,
+    2,
+    "Y's refusal is logged although X's read the same",
+  );
+});
+
+test('a slot that drops out between passes starts its streak over', async () => {
+  await pass();
+  fleet = [slot({ currentRunId: 'claimed-briefly' })];
+  await pass();
+  fleet = [slot()];
+  await pass();
+  assert.deepEqual(returned, [], 'one pass since it came back');
   await pass();
   assert.deepEqual(returned, ['artifact-run']);
-  assert.match(logs.join('\n'), /returned run artifact's released checkout to idle/);
+});
+
+test('a project config error is logged once while it lasts, and again if it returns', async () => {
+  let broken = true;
+  await withDep(
+    'idleBranches',
+    async () => {
+      if (broken) throw new Error('project.json is invalid');
+      return { defaultBranch: 'main', tracking: 'main' };
+    },
+    async () => {
+      await twoPasses();
+      broken = false;
+      await pass();
+      broken = true;
+      await pass();
+    },
+  );
+  assert.equal(logs.filter((line) => line.includes('project.json is invalid')).length, 2);
 });
 
 test('a busy or absent pass keeps the back-off', async () => {
