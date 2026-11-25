@@ -66,6 +66,7 @@ import {
   cleanupSlotStorage,
   normalizeTaskRelativeDir,
   parkTaskScratch,
+  removeRetainedTaskDirs,
 } from '../../fleet/slot-storage-cleanup.js';
 import { publicationStatusForRun } from '../../run-completion/publication-status.js';
 import {
@@ -122,6 +123,7 @@ import {
   detachRunsForReleasedSlot,
   markCompletionFailureDiscarded,
 } from './release-run-ownership.js';
+import { retainedPriorTaskDirs, runOutputRetained } from './retained-task-dirs.js';
 import {
   activePrepareAborts,
   applySelectedApp,
@@ -1101,13 +1103,15 @@ async function slotReleaseImpl(
       taskDirName,
     );
 
+    // The run this release ends: the expected or bound owner, else the slot's last finished run.
+    const recent = listRunsForSlotHistory(params.slotId, { limit: 1 }).runs[0];
+    const releaseRunId =
+      params.expectedRunId ??
+      boundOwner ??
+      (recent && isTerminalRunStatus(recent.status) ? recent.id : null);
     if (!preserveAgents) {
       await assertReleaseClaim();
-      const recent = listRunsForSlotHistory(params.slotId, { limit: 1 }).runs[0];
-      const runId =
-        params.expectedRunId ??
-        boundOwner ??
-        (recent && isTerminalRunStatus(recent.status) ? recent.id : null);
+      const runId = releaseRunId;
       const destination = runId
         ? path.join(runSessionArchiveDir(runId), 'slot-scaffolding')
         : path.join(runsDirectory(), 'slot-scaffolding', vars.slotId);
@@ -1175,8 +1179,15 @@ async function slotReleaseImpl(
     if (!preserveAgents) {
       await assertReleaseClaim();
       try {
-        const scratch = await parkTaskScratch(vars, projectJson);
+        // Scratch is deleted once the releasing run's bundle retains its output; it is
+        // parked off the checkout otherwise, so a later run never sees it either way.
+        const releasing = releaseRunId ? await getRunWithArchived(releaseRunId) : undefined;
+        const scratch = await parkTaskScratch(vars, projectJson, {
+          remove: Boolean(releasing && runOutputRetained(releasing)),
+        });
         scratchKeep = scratch.refused.map((entry) => entry.path);
+        for (const entry of scratch.removed)
+          step('storage-clean', `Removed scratch ${entry.path}`);
         for (const entry of scratch.parked)
           step('storage-clean', `Parked scratch ${entry.path} at ${entry.to}`);
         for (const entry of scratch.refused)
@@ -1184,6 +1195,29 @@ async function slotReleaseImpl(
       } catch (err) {
         scratchFailed = true;
         step('storage-clean', `Scratch parking failed: ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
+
+    // Earlier runs' task dirs go as soon as their bundles hold them, not after the age prune:
+    // a held-out trial on this slot must not find another run's task or answers.
+    if (!preserveAgents) {
+      await assertReleaseClaim();
+      try {
+        const removed = await removeRetainedTaskDirs(
+          vars,
+          projectJson,
+          retainedPriorTaskDirs(
+            listRunsForSlotHistory(params.slotId, { limit: 100 }).runs,
+            vars.remoteRepo,
+            taskDirName,
+          ),
+        );
+        for (const entry of removed.removed)
+          step('storage-clean', `Removed retained task dir ${entry.path}`);
+        for (const entry of removed.refused)
+          step('storage-clean', `Left task dir ${entry.path}: ${entry.reason}`);
+      } catch (err) {
+        step('storage-clean', `Task dir removal failed: ${(err as Error).message.slice(0, 200)}`);
       }
     }
 

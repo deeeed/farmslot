@@ -298,6 +298,8 @@ export function parseSlotStorageCleanupOutput(stdout: string): SlotStorageCleanu
 
 export interface TaskScratchParkResult {
   parked: Array<{ path: string; to: string }>;
+  /** Deleted outright: the releasing run's retained bundle already holds its output. */
+  removed: Array<{ path: string }>;
   refused: Array<{ path: string; reason: string }>;
 }
 
@@ -312,7 +314,9 @@ const FLOW_TYPES = ['fix-bug', 'review-pr', 'qa', 'dev', 'pr-complete', 'update-
  * flow folders to a fresh `<parkHome>/parked-scratch/<slot>/<time>/`, by atomic rename only:
  * never delete, and refuse rather than copy across devices. A directory holding TASK.md is a
  * task dir (a SCRATCH-12 Jira key or a QA title can produce `scratch-…`) and is never moved;
- * a TASK.md that cannot be checked counts as present.
+ * a TASK.md that cannot be checked counts as present. With `remove`, set only once the
+ * releasing run's output is retained in its bundle, the scratch is deleted instead: it is
+ * regenerable, and a parked copy would keep another run's answers on the node.
  */
 export function buildTaskScratchParkCommand(input: {
   repo: string;
@@ -321,6 +325,7 @@ export function buildTaskScratchParkCommand(input: {
   parkHome: string;
   /** Fixed parking directory name; tests use it to force a collision. */
   parkStamp?: string;
+  remove?: boolean;
 }): string {
   const taskRoot = safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR).replace(/\/+$/, '');
   const config = {
@@ -331,12 +336,13 @@ export function buildTaskScratchParkCommand(input: {
     // unrelated data, or be the task root's own scratch-named ancestor.
     tempParent: taskRoot === 'temp/tasks' ? 'temp' : null,
     parkStamp: input.parkStamp ?? null,
+    remove: input.remove === true,
     parkRoot: `${input.parkHome.replace(/\/+$/, '')}/parked-scratch/${input.slotId.replace(/[^A-Za-z0-9._-]/g, '_')}`,
   };
   return [
     `__fs_config=${shellQuote(JSON.stringify(config))}`,
     'python3 - "$__fs_config" <<\'PY\'',
-    'import json, os, sys, time',
+    'import json, os, shutil, sys, time',
     'cfg = json.loads(sys.argv[1])',
     'repo = os.path.realpath(cfg["repo"])',
     'def emit(kind, path, detail):',
@@ -372,6 +378,13 @@ export function buildTaskScratchParkCommand(input: {
     'for path in found:',
     '    if not plain_dir(path) or task_marker(path):',
     '        continue',
+    '    if cfg["remove"]:',
+    '        try:',
+    '            shutil.rmtree(path)',
+    '            emit("removed", path, "")',
+    '        except OSError as error:',
+    '            emit("refused", path, str(error))',
+    '        continue',
     '    try:',
     '        if park is None:',
     '            if unsafe_home():',
@@ -399,12 +412,13 @@ export function buildTaskScratchParkCommand(input: {
 }
 
 export function parseTaskScratchParkOutput(stdout: string): TaskScratchParkResult {
-  const result: TaskScratchParkResult = { parked: [], refused: [] };
+  const result: TaskScratchParkResult = { parked: [], removed: [], refused: [] };
   for (const line of stdout.split('\n')) {
     if (!line.trim()) continue;
     const record = JSON.parse(line) as { kind?: string; path?: string; detail?: string };
     if (typeof record.path !== 'string' || typeof record.detail !== 'string') continue;
     if (record.kind === 'parked') result.parked.push({ path: record.path, to: record.detail });
+    else if (record.kind === 'removed') result.removed.push({ path: record.path });
     else if (record.kind === 'refused')
       result.refused.push({ path: record.path, reason: record.detail });
   }
@@ -427,12 +441,14 @@ export function slotFarmHome(vars: Pick<SlotVars, 'machine' | 'host' | 'machineE
 export async function parkTaskScratch(
   vars: SlotVars,
   projectJson: RawProjectJson,
+  options: { remove?: boolean } = {},
 ): Promise<TaskScratchParkResult> {
   const command = buildTaskScratchParkCommand({
     repo: vars.remoteRepo,
     taskDirName: resolveProjectTaskDirName(projectJson),
     slotId: vars.slotId,
     parkHome: slotFarmHome(vars),
+    remove: options.remove,
   });
   const result = await execOnSlot(vars, command, {
     cwd: vars.remoteRepo,
@@ -441,6 +457,66 @@ export async function parkTaskScratch(
   if (result.exitCode !== 0)
     throw new Error(
       `scratch parking failed for ${vars.slotId}: ${result.stderr.trim() || `exit ${result.exitCode}`}`,
+    );
+  return parseTaskScratchParkOutput(result.stdout);
+}
+
+/**
+ * Delete earlier runs' task dirs, named relative to the task root, once each run's bundle
+ * retains its output. Only a plain directory directly under the task root that holds a
+ * TASK.md is removed; anything else is refused and left in place.
+ */
+export function buildRetainedTaskDirRemoveCommand(input: {
+  repo: string;
+  taskDirName: string;
+  relDirs: string[];
+}): string {
+  const config = {
+    root: remoteJoin(input.repo, safeRelativeDir(input.taskDirName, DEFAULT_TASK_DIR)),
+    relDirs: unique(input.relDirs.map(safeRelativePath).filter(Boolean)),
+  };
+  return [
+    `__fs_config=${shellQuote(JSON.stringify(config))}`,
+    'python3 - "$__fs_config" <<\'PY\'',
+    'import json, os, shutil, sys',
+    'cfg = json.loads(sys.argv[1])',
+    'root = os.path.realpath(cfg["root"])',
+    'for rel in cfg["relDirs"]:',
+    '    path = os.path.join(root, rel)',
+    '    if not os.path.lexists(path):',
+    '        continue',
+    '    if os.path.realpath(path) != path or os.path.commonpath([root, path]) != root or path == root:',
+    '        print(json.dumps({"kind": "refused", "path": path, "detail": "not a plain directory under the task root"}))',
+    '    elif not os.path.isfile(os.path.join(path, "TASK.md")):',
+    '        print(json.dumps({"kind": "refused", "path": path, "detail": "no TASK.md"}))',
+    '    else:',
+    '        try:',
+    '            shutil.rmtree(path)',
+    '            print(json.dumps({"kind": "removed", "path": path, "detail": ""}))',
+    '        except OSError as error:',
+    '            print(json.dumps({"kind": "refused", "path": path, "detail": str(error)}))',
+    'PY',
+  ].join('\n');
+}
+
+export async function removeRetainedTaskDirs(
+  vars: SlotVars,
+  projectJson: RawProjectJson,
+  relDirs: string[],
+): Promise<TaskScratchParkResult> {
+  if (!relDirs.length) return { parked: [], removed: [], refused: [] };
+  const command = buildRetainedTaskDirRemoveCommand({
+    repo: vars.remoteRepo,
+    taskDirName: resolveProjectTaskDirName(projectJson),
+    relDirs,
+  });
+  const result = await execOnSlot(vars, command, {
+    cwd: vars.remoteRepo,
+    timeout: CLEANUP_TIMEOUT_MS,
+  });
+  if (result.exitCode !== 0)
+    throw new Error(
+      `task dir removal failed for ${vars.slotId}: ${result.stderr.trim() || `exit ${result.exitCode}`}`,
     );
   return parseTaskScratchParkOutput(result.stdout);
 }

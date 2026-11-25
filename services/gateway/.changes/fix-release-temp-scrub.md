@@ -1,0 +1,1 @@
+- Release deletes a finished run's scratch once its bundle retains the output (it is parked off the checkout otherwise) and removes earlier runs' retained task dirs; prepare does the same before a new run. A held-out trial no longer finds another run's task or answers in temp/.

@@ -7,6 +7,7 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 
 import {
+  buildRetainedTaskDirRemoveCommand,
   buildSlotStorageCleanupCommand,
   buildTaskScratchParkCommand,
   normalizeTaskRelativeDir,
@@ -420,4 +421,79 @@ test('scratch directly under temp/ is parked for the temp/tasks layout only', as
     true,
     'the TASK.md guard still applies',
   );
+});
+
+test('scratch of a run whose bundle retains its output is deleted, not parked', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-remove-'));
+  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-remove-home-'));
+  const write = async (rel: string) => {
+    await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
+    await writeFile(path.join(repo, rel), 'x');
+  };
+  await write('temp/scratch-tat4752/fix-notes.md');
+  await write('temp/tasks/feat/scratch-tat4555-pc23/answer.json');
+  await write('temp/tasks/fix/scratch-12-1123-101010/TASK.md');
+  const result = parseTaskScratchParkOutput(
+    (
+      await execFileAsync('/bin/sh', [
+        '-c',
+        buildTaskScratchParkCommand({
+          repo,
+          taskDirName: 'temp/tasks',
+          slotId: 'macpro-mme-1',
+          parkHome: home,
+          remove: true,
+        }),
+      ])
+    ).stdout,
+  );
+  const realRepo = await realpath(repo);
+  assert.deepEqual(result.removed.map((entry) => path.relative(realRepo, entry.path)).sort(), [
+    'temp/scratch-tat4752',
+    'temp/tasks/feat/scratch-tat4555-pc23',
+  ]);
+  assert.deepEqual(result.parked, []);
+  assert.equal(await exists(path.join(repo, 'temp/scratch-tat4752')), false);
+  assert.equal(await exists(path.join(repo, 'temp/tasks/feat/scratch-tat4555-pc23')), false);
+  assert.equal(await exists(path.join(home, 'parked-scratch')), false, 'nothing kept on the node');
+  assert.equal(await exists(path.join(repo, 'temp/tasks/fix/scratch-12-1123-101010/TASK.md')), true);
+});
+
+test('earlier runs\' task dirs are removed by name; anything not a task dir under the root is left', async () => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-taskdir-remove-'));
+  const write = async (rel: string) => {
+    await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
+    await writeFile(path.join(repo, rel), 'x');
+  };
+  await write('temp/tasks/feat/tat-4752-1123-101010/TASK.md');
+  await write('temp/tasks/feat/tat-4752-1123-101010/artifacts/fix.diff');
+  await write('temp/tasks/fix/no-marker/notes.md');
+  await write('temp/tasks/feat/current/TASK.md');
+  await write('outside/TASK.md');
+  await symlink(path.join(repo, 'outside'), path.join(repo, 'temp/tasks/feat/linked'));
+  const result = parseTaskScratchParkOutput(
+    (
+      await execFileAsync('/bin/sh', [
+        '-c',
+        buildRetainedTaskDirRemoveCommand({
+          repo,
+          taskDirName: 'temp/tasks',
+          relDirs: ['feat/tat-4752-1123-101010', 'fix/no-marker', 'feat/linked', '../../outside', 'fix/gone'],
+        }),
+      ])
+    ).stdout,
+  );
+  const realRepo = await realpath(repo);
+  assert.deepEqual(
+    result.removed.map((entry) => path.relative(realRepo, entry.path)),
+    ['temp/tasks/feat/tat-4752-1123-101010'],
+  );
+  assert.deepEqual(
+    result.refused.map((entry) => path.relative(realRepo, entry.path)).sort(),
+    ['temp/tasks/feat/linked', 'temp/tasks/fix/no-marker'],
+  );
+  assert.equal(await exists(path.join(repo, 'temp/tasks/feat/tat-4752-1123-101010')), false);
+  assert.equal(await exists(path.join(repo, 'temp/tasks/fix/no-marker/notes.md')), true);
+  assert.equal(await exists(path.join(repo, 'temp/tasks/feat/current/TASK.md')), true);
+  assert.equal(await exists(path.join(repo, 'outside/TASK.md')), true);
 });

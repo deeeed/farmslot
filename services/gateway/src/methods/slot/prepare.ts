@@ -37,11 +37,13 @@ import {
   updateSlotStatus,
   withProjectMachineEnv,
 } from '../../core/index.js';
+import { resolveProjectTaskDirName } from '../../core/config.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
 import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { farmCommandRootsForSlot } from '../../fleet/farm-paths.js';
 import { excludeSlotScaffolding } from '../../fleet/slot-scaffolding.js';
+import { parkTaskScratch, removeRetainedTaskDirs } from '../../fleet/slot-storage-cleanup.js';
 import { waitForSlotGitIndex } from '../../host-services/parked-work.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
 import {
@@ -68,7 +70,7 @@ import {
   retireNativeWorkersForSlot,
 } from '../../runners/native/worker.js';
 import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
-import { getRun, getRunWithArchived } from '../../runs/store.js';
+import { getRun, getRunWithArchived, listRunsForSlotHistory } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withSlotSources } from '../../sources/runtime.js';
 
@@ -116,6 +118,7 @@ import {
   selectPrepareProfile,
 } from './prepare-profile.js';
 import { syncPrepareFixtures } from './prepare-runtime-context.js';
+import { retainedPriorTaskDirs } from './retained-task-dirs.js';
 import {
   acquirePrepareSentinel,
   type PrepareSentinelLock,
@@ -743,6 +746,30 @@ async function slotPrepareInner(
   };
 
   await excludeSlotScaffolding(vars, projectJson);
+
+  // 1b. No earlier run's work in the task root: a new run (a held-out trial above all) must not
+  // read another run's task or scratch. Retained task dirs are deleted, other scratch is parked
+  // off the checkout. A warm handoff keeps its parent's live worker files.
+  const preparingRun = params.runId ? getRun(params.runId) : undefined;
+  if (!preparingRun?.engineState?.flags?.warmSessionReuse) {
+    const scratch = await parkTaskScratch(vars, projectJson);
+    for (const entry of scratch.parked)
+      step('clean', `Parked an earlier run's scratch ${entry.path} at ${entry.to}`);
+    const removed = await removeRetainedTaskDirs(
+      vars,
+      projectJson,
+      retainedPriorTaskDirs(
+        listRunsForSlotHistory(params.slotId, { limit: 100 }).runs.filter(
+          (run) => run.id !== preparingRun?.parentRunId,
+        ),
+        vars.remoteRepo,
+        resolveProjectTaskDirName(projectJson),
+        params.runId,
+      ),
+    );
+    for (const entry of removed.removed)
+      step('clean', `Removed an earlier run's task dir ${entry.path}`);
+  }
 
   // 2. Verify clean state / checkout branch
   let current = (
