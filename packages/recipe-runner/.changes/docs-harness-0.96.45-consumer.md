@@ -1,0 +1,1 @@
+- mm-harness 0.96.45 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0, and adapter-web 0.19.33. Pinned Mobile Runway provisioning matches builds on native inputs only, can keep a resolved build (`--pin`), and can build and cache the checkout when nothing matches (`--build-fallback`).

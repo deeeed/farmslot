@@ -140,7 +140,7 @@ from the environment per request, so those remain visible to Pi's tool shells.
 
 Pi admits shared non-secret timeout, mode, debug and workspace trust settings
 from `PI_CONFIG_ENVIRONMENT`. The extension's `piProviderEnvironment` export adds
-only the selected provider's endpoint, authentication and context, token,
+only the selected provider's endpoint, authentication and context, token, image,
 reasoning and per-model limit settings. Router selection uses the configured
 machine router id, including `sparks` or `localsparks`, or its `router` alias.
 Unselected provider configuration and keys remain absent. Blind discovery uses

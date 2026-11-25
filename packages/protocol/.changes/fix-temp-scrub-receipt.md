@@ -1,0 +1,1 @@
+- `PrepareStepOutput` and `SlotPrepareResult` gain `tempScrub` (`TempScrubReceipt`: the files a new run's prepare cleared from `temp/`), `keptBranches` and `lockfilesRewritten`. The run evidence summary never counts `tempScrub` paths as artifacts.
