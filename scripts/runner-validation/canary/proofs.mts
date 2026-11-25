@@ -176,7 +176,7 @@ export async function stopProofTree(
  * stopped cleanly: whatever could not be stopped stays with it, which tries again when the canary
  * exits. True when dismissed.
  */
-export function dismissReaper(reaper: Reaper, ...cleanupErrors: readonly string[][]): boolean {
+export function dismissReaper(reaper: Reaper, ...cleanupErrors: (readonly string[])[]): boolean {
   if (cleanupErrors.some((errors) => errors.length)) return false;
   reaper.done();
   return true;
