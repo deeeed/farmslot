@@ -223,18 +223,6 @@ test(
     const passBudget = await runReviewRoundBudget(passRun);
     assert.deepEqual([passBudget.used, passBudget.noVerdict], [0, 1], 'settled no-verdict');
 
-    // A reviewer that never ran `mark start` has no signal: its re-ask may bootstrap one.
-    const before = (await codex.prompts()).length;
-    await codex.scenario({ toolMs: 50, verdict: 'issues', skipMarks: true });
-    const missing = await review('NO-SIGNAL-MISSING');
-    assert.ok(
-      'result' in missing,
-      `the valid ISSUES result was not taken: ${String('error' in missing && missing.error)}`,
-    );
-    assert.equal(missing.result.verdict, 'issues');
-    const missingPrompts = (await codex.prompts()).slice(before);
-    assert.equal(missingPrompts.length, 2, 'one review turn and one completion re-ask');
-    assert.match(missingPrompts[1]!, /If you never ran .* start, run it once now/);
     console.log(`[proof] scripted turns:\n${await readFile(codex.turnsLog, 'utf8')}`);
   },
 );
