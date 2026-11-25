@@ -198,11 +198,15 @@ test('a gate replay still runs for a loop parked on its open gate decision', asy
       settled = true;
     };
     void engine?.then(done, done);
-    while (!settled) {
+    const ceiling = performance.now() + 5_000;
+    while (!settled && performance.now() < ceiling) {
       for (const decision of getRun(runId)?.decisions ?? [])
         if (!decision.resolvedAt) resolveEngineDecision(decision.id, 'approve');
       await flushed();
     }
+    assert.ok(settled, 'the parked loop settled once its gate was answered');
+    // Settled: this only surfaces a rejection the loop ended with.
+    await engine;
     suspendPublicationReviewRecoveryForRun(runId);
     // A finished loop ends in a completion failure, which deleteRun refuses while the run names a
     // slot; this fixture slot exists only in the run.
@@ -232,4 +236,33 @@ test('a gate replay still runs for a loop parked on its open gate decision', asy
   while (replays.length === before && performance.now() < deadline) await flushed();
 
   assert.deepEqual(replays.slice(before), [runId], 'the parked gate is replayed');
+});
+
+// The release is sticky: a loop that only reaches HUMAN_GATE after the test released it passes
+// through, so a teardown awaiting it cannot hang on a gate nobody will release.
+test('a loop that enters the gate after its release is not held', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const runId = preparingGate();
+  let engine: Promise<void> | undefined;
+  t.after(async () => {
+    await engine;
+    updateRun(runId, {
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      slotId: undefined,
+    });
+    await deleteRun(runId);
+  });
+  const entered = gateEntered;
+  releaseGate();
+  engine = startRun(runId);
+  let settled = false;
+  const done = () => {
+    settled = true;
+  };
+  void engine.then(done, done);
+  const ceiling = performance.now() + 5_000;
+  while (!settled && performance.now() < ceiling) await flushed();
+  assert.equal(gateEntered, entered + 1, 'the loop entered HUMAN_GATE');
+  assert.ok(settled, 'a gate entered after its release does not hold the loop');
 });
