@@ -1,0 +1,21 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "A run-less prepare scope stops after its idle window; a foreign process survives",
+  "description": "With disposable farm roots and an isolated tmux server, start a real keep-alive prepare scope (the prepare wrapper, its holder and a provider child) and a foreign sleeper on a ready slot. The idle sweep's scope pass must keep the scope while a run owns the slot, record the window on the slot row once it is ownerless, then stop the scope's group and holder when the persisted window has ended, leaving the foreign process running and the slot ready. No operator slot, run or tmux server is used; cleanup signals only the processes the proof started.",
+  "workflow": {
+    "entry": "idle-prepare-scope",
+    "nodes": {
+      "idle-prepare-scope": {
+        "action": "command",
+        "cmd": "TSX_TSCONFIG_PATH=services/gateway/tsconfig.json node --import tsx scripts/runner-validation/gateway/idle-prepare-scope.mts",
+        "timeout_ms": 60000,
+        "intent": "A run-less prepare scope on an idle slot stops after its window, and only it stops.",
+        "next": "done"
+      },
+      "done": {
+        "action": "end",
+        "status": "pass"
+      }
+    }
+  }
+}

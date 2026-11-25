@@ -905,9 +905,11 @@ async function sweepIdleDevServers(): Promise<void> {
   if (idleSweepInFlight) return;
   idleSweepInFlight = true;
   try {
-    const { forgetIdleDevServers, reapIdleDevServers } = await loadIdleDevServer();
-    const slotIds = (await loadFleetStatus()).slots
-      .map((s) => s.slot)
+    const { forgetIdleDevServers, reapIdleDevServers, reapIdlePrepareScopes } =
+      await loadIdleDevServer();
+    const slots = (await loadFleetStatus()).slots;
+    const slotIds = slots
+      .map((slot) => slot.slot)
       .filter((id) => {
         const live = [...(statusCache.get(id)?.values() ?? [])].some(
           (status) => status === 'running' || status === 'stale',
@@ -930,6 +932,9 @@ async function sweepIdleDevServers(): Promise<void> {
         `[idle-devserver] ${failures.length}/${slotIds.length} slot sweeps failed: ${failures.slice(0, 5).join('; ')}${suffix}`,
       );
     }
+    // A prepare scope can outlive its dev server, and a simulator or browser left up must not
+    // hide it: every slot is offered; the scope pass decides from its dev servers alone.
+    if (idleSweepTimer) await reapIdlePrepareScopes(slots);
   } catch (err) {
     console.error(`[idle-devserver] sweep error: ${(err as Error).message}`);
   } finally {
