@@ -1940,7 +1940,9 @@ test('a ci-watch replay hands a held PR back to automation', async (t) => {
   });
 
   await assert.doesNotReject(() =>
-    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
   );
 
   const after = getRun(run.id);

@@ -6,6 +6,8 @@ import type { RunDecision } from '@farmslot/protocol';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
+  ciHoldBarrier,
+  ciHoldIsQuiet,
   ciHoldSince,
   emptyCiWatchState,
   readDedup,
@@ -154,5 +156,77 @@ test('a later retry or a ci-watch replay hands the PR back', () => {
       ciWatchState: { ...emptyCiWatchState(), holdReleasedAt: '2026-11-24T13:00:00.000Z' },
     }),
     '2026-11-24T13:28:57.000Z',
+  );
+});
+
+test('only the latest "Keep holding", for this state, in this hold, quiets a gate', () => {
+  const hold = decision(
+    'ci_inline_fix_blocked',
+    [DISPATCH, WAIT],
+    'wait',
+    '2026-11-24T13:28:57.000Z',
+  );
+  const kept = (resolvedAt: string, holdKey: string): RunDecision => ({
+    ...decision('ci_merge_conflict', [WAIT], 'wait', resolvedAt),
+    context: { holdKey },
+  });
+  const run = { decisions: [hold, kept('2026-11-24T13:40:00.000Z', 'A')] };
+  assert.equal(ciHoldIsQuiet(run, 'ci_merge_conflict', 'A'), true);
+  assert.equal(ciHoldIsQuiet(run, 'ci_merge_conflict', 'B'), false, 'another state asks');
+  assert.equal(ciHoldIsQuiet(run, 'ci_ci_failed', 'A'), false, 'another gate asks');
+  assert.equal(
+    ciHoldIsQuiet(run, 'ci_merge_conflict', 'A', '2026-11-24T13:50:00.000Z'),
+    false,
+    'the state was seen to clear after the answer',
+  );
+  assert.equal(
+    ciHoldIsQuiet(
+      {
+        decisions: [
+          hold,
+          kept('2026-11-24T13:40:00.000Z', 'A'),
+          kept('2026-11-24T13:45:00.000Z', 'B'),
+        ],
+      },
+      'ci_merge_conflict',
+      'A',
+    ),
+    false,
+    'a later answer for another state replaces it',
+  );
+  assert.equal(
+    ciHoldIsQuiet(
+      { decisions: [kept('2026-11-24T13:00:00.000Z', 'A'), hold] },
+      'ci_merge_conflict',
+      'A',
+    ),
+    false,
+    'an answer from before the hold does not count',
+  );
+  assert.equal(
+    ciHoldIsQuiet({ decisions: [kept('2026-11-24T13:40:00.000Z', 'A')] }, 'ci_merge_conflict', 'A'),
+    false,
+  );
+});
+
+test('the reuse barrier is the latest wait on any CI gate in the hold', () => {
+  const hold = decision(
+    'ci_inline_fix_blocked',
+    [DISPATCH, WAIT],
+    'wait',
+    '2026-11-24T13:28:57.000Z',
+  );
+  assert.equal(ciHoldBarrier({ decisions: [hold] }), '2026-11-24T13:28:57.000Z');
+  assert.equal(
+    ciHoldBarrier({
+      decisions: [hold, decision('ci_ci_failed', [WAIT], 'wait', '2026-11-24T14:00:00.000Z')],
+    }),
+    '2026-11-24T14:00:00.000Z',
+  );
+  assert.equal(
+    ciHoldBarrier({
+      decisions: [decision('ci_ci_failed', [WAIT], 'wait', '2026-11-24T14:00:00.000Z')],
+    }),
+    undefined,
   );
 });

@@ -951,6 +951,7 @@ export function projectPRData(
     merged,
     mergeable: mergeable || 'UNKNOWN',
     mergeConflict,
+    ...(raw.headSha ? { headSha: raw.headSha } : {}),
     reviewDecision: reviewDecision || '',
     reviewVerdicts: reviewMeta.reviewVerdicts,
     reviewRequests: reviewMeta.reviewRequests,

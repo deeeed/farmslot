@@ -23,6 +23,12 @@ const snapshots: Array<{
   allPassed: boolean;
   comments?: (typeof comment)[];
   mergeConflict?: boolean;
+  /** GitHub's `headRefOid`; defaults to one fixed head. */
+  headSha?: string;
+  /** Defaults to CONFLICTING or MERGEABLE from `mergeConflict`. */
+  mergeable?: string;
+  /** Raw failing check names, finer than the watched groups. */
+  allFailedNames?: string[];
 }> = [];
 const forcedReads: boolean[] = [];
 
@@ -40,6 +46,9 @@ mock.module('../methods/pr.js', {
           prState: 'OPEN',
           merged: false,
           mergeConflict: snapshot.mergeConflict ?? false,
+          mergeable: snapshot.mergeable ?? (snapshot.mergeConflict ? 'CONFLICTING' : 'MERGEABLE'),
+          headSha: snapshot.headSha ?? 'pr-head-1',
+          allFailedNames: snapshot.allFailedNames ?? (failed > 0 ? ['Check changelog'] : []),
           checks: snapshot.checks,
           checkSnapshot: {
             pr: 10384,
@@ -73,18 +82,23 @@ mock.module('../methods/pr.js', {
   },
 });
 
+const BLOCKED_FIX = {
+  attempted: true,
+  success: false,
+  blocked: true,
+  blockedReason: 'Worker reported success without advancing HEAD',
+  attempts: 1,
+};
+// A held PR's real tryInlineCIFix returns null (fix-scope.test.ts covers that); the
+// held cases below set it so the gates after the inline fix are reached.
+const inlineFix: { result: typeof BLOCKED_FIX | null } = { result: BLOCKED_FIX };
+
 mock.module('./inline-fix.js', {
   namedExports: {
     getSlotHeadSha: async () => 'unchanged-head',
     isInlineFixDedupedNow: async () => false,
     rerunFailedChecks: async () => {},
-    tryInlineCIFix: async () => ({
-      attempted: true,
-      success: false,
-      blocked: true,
-      blockedReason: 'Worker reported success without advancing HEAD',
-      attempts: 1,
-    }),
+    tryInlineCIFix: async () => inlineFix.result,
   },
 });
 
@@ -190,6 +204,7 @@ const HOLD_GATE = {
   ],
 };
 const conflicted = { checks: [failedCheck], allPassed: false, mergeConflict: true };
+const HELD_AT = '2026-11-24T13:28:57.000Z';
 
 function holdDecision(resolvedAt: string) {
   return {
@@ -200,6 +215,21 @@ function holdDecision(resolvedAt: string) {
     createdAt: resolvedAt,
     resolvedAt,
     resolvedAction: 'wait',
+  };
+}
+
+/** A "Keep holding" answered at a gate, for the state named by `holdKey`. */
+function keptHolding(type: `ci_${string}`, resolvedAt: string, holdKey: string) {
+  return {
+    id: `kept-${type}-${resolvedAt}`,
+    type,
+    title: type,
+    description: type,
+    actions: [{ id: 'wait', label: 'Keep holding', style: 'secondary' as const }],
+    createdAt: resolvedAt,
+    resolvedAt,
+    resolvedAction: 'wait',
+    context: { holdKey },
   };
 }
 
@@ -222,6 +252,7 @@ function watch(seed: (runId: string) => void = () => {}) {
   );
   const decisions = (type: string) =>
     getRun(run.id)?.decisions.filter((item) => item.type === type) ?? [];
+  const openCards = () => getRun(run.id)?.decisions.filter((item) => !item.resolvedAt) ?? [];
   const open = async (type: string) => {
     for (let attempts = 0; attempts < 200; attempts++) {
       const found = decisions(type).find((item) => !item.resolvedAt);
@@ -230,63 +261,110 @@ function watch(seed: (runId: string) => void = () => {}) {
     }
     return undefined;
   };
-  // A wait sleeps a full poll interval; wake it the way a push would, once armed.
-  const poke = async () => {
-    for (let attempts = 0; attempts < 200 && !pokeCIPoll(run.id).woken; attempts++)
+  const nextPollAt = () =>
+    (
+      getRun(run.id)?.steps.find((step) => step.name === 'ci-watch')?.outputs as
+        | { nextPollAt?: string | null }
+        | undefined
+    )?.nextPollAt ?? null;
+  // Wait until the loop has handled a read: it either armed a new sleep (a fresh
+  // nextPollAt) or stopped to ask (nextPollAt cleared), or the watch ended.
+  const handled = async (reads: number, before: string | null) => {
+    for (let attempts = 0; attempts < 200; attempts++) {
+      if (settled || (forcedReads.length > reads && nextPollAt() !== before)) return;
       await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail('the poll was not handled');
   };
-  return { run, controller, monitoring, decisions, open, poke, settled: () => settled };
+  // A wait sleeps a full poll interval; wake it the way a push would, once armed,
+  // and wait for that poll to be handled.
+  const pollOnce = async () => {
+    for (let attempts = 0; attempts < 200 && !nextPollAt(); attempts++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    const reads = forcedReads.length;
+    const before = nextPollAt();
+    let woken = false;
+    for (let attempts = 0; attempts < 200 && !woken; attempts++) {
+      woken = pokeCIPoll(run.id).woken === true;
+      if (!woken) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(woken, 'the watch was asleep and took the poke');
+    await handled(reads, before);
+  };
+  return {
+    run,
+    controller,
+    monitoring,
+    decisions,
+    openCards,
+    open,
+    pollOnce,
+    firstPoll: () => handled(0, null),
+    settled: () => settled,
+  };
+}
+
+async function held(body: () => Promise<void>, fix: typeof inlineFix.result = BLOCKED_FIX) {
+  snapshots.length = 0;
+  forcedReads.length = 0;
+  inlineFix.result = fix;
+  try {
+    await body();
+  } finally {
+    snapshots.length = 0;
+    inlineFix.result = BLOCKED_FIX;
+  }
 }
 
 test('control: with no hold, a conflicted PR auto-dispatches', async () => {
   // This is the behaviour the hold must stop, and it proves the project config
   // really enables merge_conflict auto-dispatch: without it, the hold cases below
   // would pass vacuously.
-  snapshots.length = 0;
-  snapshots.push(conflicted, conflicted);
-  const w = watch();
-  try {
-    await w.open('ci_merge_conflict');
-    assert.equal(w.settled(), true, 'the watch ended by dispatching');
-    assert.equal(w.decisions('ci_merge_conflict').length, 0, 'nobody was asked');
-  } finally {
-    w.controller.abort();
-    snapshots.length = 0;
-  }
+  await held(async () => {
+    snapshots.push(conflicted, conflicted);
+    const w = watch();
+    try {
+      await w.open('ci_merge_conflict');
+      assert.equal(w.settled(), true, 'the watch ended by dispatching');
+      assert.equal(w.decisions('ci_merge_conflict').length, 0, 'nobody was asked');
+    } finally {
+      w.controller.abort();
+    }
+  });
 });
 
 test('choosing wait at an inline-fix gate holds the PR through a later merge conflict', async () => {
   // Run fcfb5124: wait at inline_fix_blocked, then the expected conflict.
-  snapshots.length = 0;
-  snapshots.push(
-    { checks: [failedCheck], allPassed: false },
-    { checks: [failedCheck], allPassed: false },
-    conflicted,
-  );
-  const w = watch();
-  try {
-    const blocked = await w.open('ci_inline_fix_blocked');
-    assert.ok(blocked, 'the inline-fix gate is raised first');
-    assert.ok(
-      blocked.actions.some((action) => action.id === 'dispatch-pr-complete'),
-      'the gate offered a dispatch, so wait here is a hold',
+  await held(async () => {
+    snapshots.push(
+      { checks: [failedCheck], allPassed: false },
+      { checks: [failedCheck], allPassed: false },
+      conflicted,
     );
-    resolveCIDecision(blocked.id, 'wait');
-    await w.poke();
+    const w = watch();
+    try {
+      const blocked = await w.open('ci_inline_fix_blocked');
+      assert.ok(blocked, 'the inline-fix gate is raised first');
+      assert.ok(
+        blocked.actions.some((action) => action.id === 'dispatch-pr-complete'),
+        'the gate offered a dispatch, so wait here is a hold',
+      );
+      resolveCIDecision(blocked.id, 'wait');
+      await w.pollOnce();
 
-    const conflict = await w.open('ci_merge_conflict');
-    assert.equal(w.settled(), false, 'the watch must not finish by auto-dispatching');
-    assert.ok(conflict, 'the conflict is put to the operator');
-    assert.ok(
-      conflict.actions.some((action) => action.id === 'wait' && action.label === 'Keep holding'),
-      'and they can keep holding',
-    );
-    resolveCIDecision(conflict.id, 'skip');
-    assert.equal((await w.monitoring).result, 'passed');
-  } finally {
-    w.controller.abort();
-    snapshots.length = 0;
-  }
+      const conflict = await w.open('ci_merge_conflict');
+      assert.equal(w.settled(), false, 'the watch must not finish by auto-dispatching');
+      assert.ok(conflict, 'the conflict is put to the operator');
+      assert.ok(
+        conflict.actions.some((action) => action.id === 'wait' && action.label === 'Keep holding'),
+        'and they can keep holding',
+      );
+      resolveCIDecision(conflict.id, 'skip');
+      assert.equal((await w.monitoring).result, 'passed');
+    } finally {
+      w.controller.abort();
+    }
+  });
 });
 
 test('a hold chosen before a gateway restart still holds', async () => {
@@ -294,76 +372,309 @@ test('a hold chosen before a gateway restart still holds', async () => {
   // operator's wait is persisted on run.decisions with no live resolver. The next
   // monitorCI must read the hold from there; a flag set only by a live gate would
   // be missing and the conflict would auto-dispatch.
-  snapshots.length = 0;
-  snapshots.push(conflicted, conflicted);
-  const w = watch((runId) =>
-    updateRun(runId, { decisions: [holdDecision('2026-11-24T13:28:57.000Z')] }),
-  );
-  try {
-    const conflict = await w.open('ci_merge_conflict');
-    assert.equal(w.settled(), false, 'no auto-dispatch after the restart');
-    assert.ok(conflict, 'the conflict is put to the operator');
-  } finally {
-    w.controller.abort();
-    snapshots.length = 0;
-  }
+  await held(async () => {
+    snapshots.push(conflicted, conflicted);
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const conflict = await w.open('ci_merge_conflict');
+      assert.equal(w.settled(), false, 'no auto-dispatch after the restart');
+      assert.ok(conflict, 'the conflict is put to the operator');
+    } finally {
+      w.controller.abort();
+    }
+  });
 });
 
-test('keep holding does not re-ask while the head and the conflict are unchanged', async () => {
-  snapshots.length = 0;
-  snapshots.push(conflicted, conflicted, conflicted);
-  const w = watch((runId) =>
-    updateRun(runId, { decisions: [holdDecision('2026-11-24T13:28:57.000Z')] }),
-  );
-  try {
-    const first = await w.open('ci_merge_conflict');
-    assert.ok(first);
-    resolveCIDecision(first.id, 'wait');
-    await w.poke();
-    // Give the loop the poll it was woken for; an unchanged state must stay quiet.
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    assert.equal(w.settled(), false);
-    assert.equal(
-      w.decisions('ci_merge_conflict').filter((item) => !item.resolvedAt).length,
-      0,
-      'no new card for the same head and conflict',
+test('keep holding at a conflict stays quiet while the PR head and the conflict are unchanged', async () => {
+  await held(async () => {
+    snapshots.push(conflicted, conflicted, conflicted);
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const first = await w.open('ci_merge_conflict');
+      assert.ok(first);
+      resolveCIDecision(first.id, 'wait');
+      await w.pollOnce();
+      assert.equal(w.settled(), false);
+      assert.deepEqual(w.openCards(), [], 'no new card for the same head and conflict');
+    } finally {
+      w.controller.abort();
+    }
+  });
+});
+
+test('a "Keep holding" given before a gateway restart stays quiet after it', async () => {
+  // The answer is read from run.decisions, not a variable of the monitor that gave it.
+  await held(async () => {
+    snapshots.push(conflicted, conflicted);
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [
+          holdDecision(HELD_AT),
+          keptHolding('ci_merge_conflict', '2026-11-24T13:40:00.000Z', 'pr-head-1'),
+        ],
+      }),
     );
-  } finally {
-    w.controller.abort();
-    snapshots.length = 0;
-  }
+    try {
+      await w.firstPoll();
+      assert.equal(w.settled(), false);
+      assert.deepEqual(w.openCards(), [], 'the restarted watch does not ask again');
+    } finally {
+      w.controller.abort();
+    }
+  });
+});
+
+test('a new PR head re-raises a held conflict, even when the slot HEAD has not moved', async () => {
+  // The operator holds, then pushes a rebase from their own machine. The slot's
+  // checkout is unchanged (the mocked slot HEAD never moves); the PR head is not.
+  await held(async () => {
+    snapshots.push(conflicted, { ...conflicted, headSha: 'pr-head-2' });
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const first = await w.open('ci_merge_conflict');
+      assert.ok(first);
+      resolveCIDecision(first.id, 'wait');
+      await w.pollOnce();
+      assert.ok(await w.open('ci_merge_conflict'), 'the conflict on the new head is asked about');
+    } finally {
+      w.controller.abort();
+    }
+  });
+});
+
+test('a held conflict that clears and returns at the same head asks again', async () => {
+  await held(async () => {
+    snapshots.push({ checks: [pendingCheck], allPassed: false }, conflicted);
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [
+          holdDecision(HELD_AT),
+          keptHolding('ci_merge_conflict', '2026-11-24T13:40:00.000Z', 'pr-head-1'),
+        ],
+      }),
+    );
+    try {
+      await w.firstPoll();
+      assert.deepEqual(w.openCards(), [], 'GitHub reports the PR mergeable: nothing to ask');
+      await w.pollOnce();
+      assert.ok(await w.open('ci_merge_conflict'), 'the returning conflict is asked about');
+    } finally {
+      w.controller.abort();
+    }
+  });
+});
+
+test('a held conflict stays quiet through an UNKNOWN mergeability read', async () => {
+  // GitHub reports UNKNOWN while it recomputes after the base moves. Read as "no
+  // conflict", the failed check beside the conflict (as in fcfb5124) is put to the
+  // operator on every recompute.
+  await held(async () => {
+    snapshots.push(conflicted, {
+      checks: [failedCheck],
+      allPassed: false,
+      mergeConflict: false,
+      mergeable: 'UNKNOWN',
+    });
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const first = await w.open('ci_merge_conflict');
+      assert.ok(first);
+      resolveCIDecision(first.id, 'wait');
+      await w.pollOnce();
+      assert.equal(w.settled(), false);
+      assert.deepEqual(w.openCards(), [], 'no failed-check card at the UNKNOWN read');
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('a held conflict still reaches the CI wait cap', async () => {
+  // Keep holding on a Friday while the blocking PR takes days: the slot must not stay
+  // occupied past the wait cap with no "Release slot" card.
+  await held(async () => {
+    snapshots.push(conflicted, conflicted);
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [
+          holdDecision(HELD_AT),
+          keptHolding('ci_merge_conflict', '2026-11-24T13:40:00.000Z', 'pr-head-1'),
+        ],
+        ciWatchState: {
+          consecutiveAttempts: 0,
+          totalAttempts: 0,
+          skips: 0,
+          timeoutWindowStartedAt: '2025-11-24T13:40:00.000Z',
+        },
+      }),
+    );
+    try {
+      const timeout = await w.open('ci_ci_timeout');
+      assert.ok(timeout, 'the wait cap asks');
+      assert.ok(
+        timeout.actions.some((action) => action.id === 'skip' && action.label === 'Release slot'),
+      );
+      assert.equal(w.decisions('ci_merge_conflict').filter((item) => !item.resolvedAt).length, 0);
+    } finally {
+      w.controller.abort();
+    }
+  });
 });
 
 test('a dispatch answered before the hold is not reused after it', async () => {
   // A dispatch-update-branch answered earlier at this gate, then the hold. Reusing
   // the earlier answer would dispatch straight past the operator's hold.
-  snapshots.length = 0;
-  snapshots.push(conflicted, conflicted);
-  const w = watch((runId) =>
-    updateRun(runId, {
-      decisions: [
-        {
-          id: 'earlier-dispatch',
-          type: 'ci_merge_conflict',
-          title: 'merge conflict',
-          description: 'merge conflict',
-          actions: [
-            { id: 'dispatch-update-branch', label: 'Dispatch update-branch', style: 'primary' },
-          ],
-          createdAt: '2026-11-24T12:00:00.000Z',
-          resolvedAt: '2026-11-24T12:00:00.000Z',
-          resolvedAction: 'dispatch-update-branch',
-        },
-        holdDecision('2026-11-24T13:28:57.000Z'),
-      ],
-    }),
-  );
-  try {
-    const conflict = await w.open('ci_merge_conflict');
-    assert.equal(w.settled(), false, 'the earlier dispatch was not replayed');
-    assert.ok(conflict, 'a fresh question is asked instead');
-  } finally {
-    w.controller.abort();
-    snapshots.length = 0;
-  }
+  await held(async () => {
+    snapshots.push(conflicted, conflicted);
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [
+          {
+            id: 'earlier-dispatch',
+            type: 'ci_merge_conflict',
+            title: 'merge conflict',
+            description: 'merge conflict',
+            actions: [
+              { id: 'dispatch-update-branch', label: 'Dispatch update-branch', style: 'primary' },
+            ],
+            createdAt: '2026-11-24T12:00:00.000Z',
+            resolvedAt: '2026-11-24T12:00:00.000Z',
+            resolvedAction: 'dispatch-update-branch',
+          },
+          holdDecision(HELD_AT),
+        ],
+      }),
+    );
+    try {
+      const conflict = await w.open('ci_merge_conflict');
+      assert.equal(w.settled(), false, 'the earlier dispatch was not replayed');
+      assert.ok(conflict, 'a fresh question is asked instead');
+    } finally {
+      w.controller.abort();
+    }
+  });
+});
+
+test('a dispatch answered before a later "Keep holding" is not reused after it', async () => {
+  // Answered after the hold (it then found no snapshot to dispatch from), followed
+  // by Keep holding on another head. The operator's latest word is to wait.
+  await held(async () => {
+    snapshots.push(conflicted, conflicted);
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [
+          holdDecision(HELD_AT),
+          {
+            id: 'refused-dispatch',
+            type: 'ci_merge_conflict',
+            title: 'merge conflict',
+            description: 'merge conflict',
+            actions: [
+              { id: 'dispatch-update-branch', label: 'Dispatch update-branch', style: 'primary' },
+            ],
+            createdAt: '2026-11-24T13:35:00.000Z',
+            resolvedAt: '2026-11-24T13:35:00.000Z',
+            resolvedAction: 'dispatch-update-branch',
+          },
+          keptHolding('ci_merge_conflict', '2026-11-24T13:40:00.000Z', 'pr-head-0'),
+        ],
+      }),
+    );
+    try {
+      const conflict = await w.open('ci_merge_conflict');
+      assert.equal(w.settled(), false, 'the earlier dispatch was not replayed');
+      assert.ok(conflict, 'a fresh question is asked instead');
+    } finally {
+      w.controller.abort();
+    }
+  });
+});
+
+test('keep holding at a failed-check gate stays quiet for the same failure', async () => {
+  await held(async () => {
+    snapshots.push(
+      { checks: [failedCheck], allPassed: false },
+      { checks: [failedCheck], allPassed: false },
+    );
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const failed = await w.open('ci_ci_failed');
+      assert.ok(failed);
+      assert.ok(
+        failed.actions.some((action) => action.id === 'wait' && action.label === 'Keep holding'),
+      );
+      resolveCIDecision(failed.id, 'wait');
+      await w.pollOnce();
+      assert.equal(w.settled(), false, 'Keep holding keeps watching; it does not finish the watch');
+      assert.deepEqual(w.openCards(), [], 'no new card for the same failure');
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('a changed set of failing checks re-raises a held failed-check gate', async () => {
+  // Same watched group, same head: shards 3 and 6 were fixed and shard 9 now fails.
+  await held(async () => {
+    snapshots.push(
+      {
+        checks: [failedCheck],
+        allPassed: false,
+        allFailedNames: ['Unit tests (3)', 'Unit tests (6)'],
+      },
+      { checks: [failedCheck], allPassed: false, allFailedNames: ['Unit tests (9)'] },
+    );
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const first = await w.open('ci_ci_failed');
+      assert.ok(first);
+      resolveCIDecision(first.id, 'wait');
+      await w.pollOnce();
+      assert.ok(await w.open('ci_ci_failed'), 'the new failure is asked about');
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('keep holding at a review-comments gate stays quiet for the same comments', async () => {
+  await held(async () => {
+    const commented = { checks: [passedCheck], allPassed: true, comments: [comment] };
+    snapshots.push(commented, commented);
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const card = await w.open('ci_review_comments');
+      assert.ok(card);
+      assert.ok(
+        card.actions.some((action) => action.id === 'wait' && action.label === 'Keep holding'),
+      );
+      resolveCIDecision(card.id, 'wait');
+      await w.pollOnce();
+      assert.equal(w.settled(), false);
+      assert.deepEqual(w.openCards(), []);
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('a held PR is not asked about early review comments on every poll', async () => {
+  await held(async () => {
+    const early = { checks: [pendingCheck], allPassed: false, comments: [comment] };
+    snapshots.push(early, early);
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const card = await w.open('ci_review_comments_early');
+      assert.ok(card);
+      assert.ok(
+        card.actions.some((action) => action.id === 'wait' && action.label === 'Keep holding'),
+      );
+      resolveCIDecision(card.id, 'wait');
+      await w.pollOnce();
+      assert.equal(w.settled(), false);
+      assert.deepEqual(w.openCards(), []);
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
 });

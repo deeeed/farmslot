@@ -6,8 +6,10 @@ import {
   Events,
   type Run,
   type RunCiWatchState,
+  type RunDecision,
 } from '@farmslot/protocol';
 
+import { resolveCIWatchChainFlowType } from '../run-engine/ci-watch-chain-flow.js';
 import { clearRunActiveTaskFile, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -148,7 +150,7 @@ export function ciHoldSince(
   for (const decision of run.decisions ?? []) {
     if (decision.type !== 'ci_inline_fix_blocked') continue;
     if (decision.resolvedAction !== 'wait' || !decision.resolvedAt) continue;
-    if (!decision.actions?.some((action) => action.id.startsWith('dispatch-'))) continue;
+    if (!decision.actions?.some((action) => resolveCIWatchChainFlowType(action.id))) continue;
     if (!hold || decision.resolvedAt > hold) hold = decision.resolvedAt;
   }
   if (!hold) return undefined;
@@ -163,6 +165,48 @@ export function ciHoldSince(
   const releasedAt = run.ciWatchState?.holdReleasedAt;
   if (retried || (releasedAt && releasedAt > heldAt)) return undefined;
   return heldAt;
+}
+
+/**
+ * The operator's latest `wait` on any CI gate in the current hold, the hold itself
+ * included; undefined when the PR is not held. A dispatch answered at or before it
+ * is not reused: the operator has said to wait since.
+ */
+export function ciHoldBarrier(
+  run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
+): string | undefined {
+  const since = ciHoldSince(run);
+  if (!run || !since) return undefined;
+  let barrier = since;
+  for (const decision of run.decisions ?? []) {
+    if (!decision.type.startsWith('ci_') || decision.resolvedAction !== 'wait') continue;
+    if (decision.resolvedAt && decision.resolvedAt > barrier) barrier = decision.resolvedAt;
+  }
+  return barrier;
+}
+
+/**
+ * Whether a gate of this type may stay quiet: in the current hold, the operator's
+ * latest "Keep holding" there was given for exactly this state (`context.holdKey`)
+ * and after `notBefore`, the last time the monitor saw that state clear. Read from
+ * `run.decisions`, so it survives a gateway restart.
+ */
+export function ciHoldIsQuiet(
+  run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
+  type: string,
+  holdKey: string,
+  notBefore?: string,
+): boolean {
+  const since = ciHoldSince(run);
+  if (!run || !since) return false;
+  let latest: RunDecision | undefined;
+  for (const decision of run.decisions ?? []) {
+    if (decision.type !== type || decision.resolvedAction !== 'wait') continue;
+    if (!decision.resolvedAt || decision.resolvedAt <= since) continue;
+    if (!latest?.resolvedAt || decision.resolvedAt > latest.resolvedAt) latest = decision;
+  }
+  if (!latest?.resolvedAt || (notBefore && latest.resolvedAt <= notBefore)) return false;
+  return latest.context?.holdKey === holdKey;
 }
 
 /** Operator chose Retry CI — allow inline fix another consecutive-attempt window. */

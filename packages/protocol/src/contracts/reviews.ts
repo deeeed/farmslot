@@ -100,6 +100,8 @@ export interface PRStatus {
   merged: boolean;
   mergeable: string;
   mergeConflict: boolean;
+  /** The PR's head commit on GitHub (`headRefOid`), when the read returned it. */
+  headSha?: string;
   reviewDecision: string;
   /**
    * Each reviewer's standing verdict. Later plain comments from the same
