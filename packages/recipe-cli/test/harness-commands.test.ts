@@ -249,9 +249,6 @@ test('start does not re-open a completed run through the tool path', async (t) =
   assert.equal(JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status, 'running');
 });
 
-// `mark N` on the row that says to run `mark complete` completes the run
-// (agent-runtime runs it), so completion staging must follow the signal, not
-// the typed step: before, the run completed with no learning package staged.
 function completionRowTask(t: TestContext, lastRow: string, { report = true } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'host-completion-row-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -276,6 +273,9 @@ function completionRowTask(t: TestContext, lastRow: string, { report = true } = 
   return { dir, calls, options, signal };
 }
 
+// `mark N` on the row that says to run `mark complete` completes the run
+// (agent-runtime runs it), so completion staging must follow the signal, not
+// the typed step: before, the run completed with no learning package staged.
 test('marking the completion row stages learnings and shows completion guidance', async (t) => {
   const { dir, calls, options, signal } = completionRowTask(
     t,
@@ -325,7 +325,6 @@ test('a refused completion row and an ordinary last row run no completion hooks'
 test('a non-numbered mark still reaches the mark script with an invalid checklist target', async (t) => {
   const dir = task(t);
   writeFileSync(path.join(dir, 'checklist-target.json'), '{ not json');
-  const status = await handleChecklist(['mark', dir, 'blocked', 'waiting on review']);
-  assert.equal(typeof status, 'number');
-  assert.notEqual(status, 0);
+  // With a valid reason, only the target error makes the mark script exit 2.
+  assert.equal(await handleChecklist(['mark', dir, 'blocked', '--reason', 'waiting on review']), 2);
 });

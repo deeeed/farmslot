@@ -11,6 +11,7 @@ import {
   enumerateChecklistCheckboxes,
   isTerminalWorkerSignalStatus,
   type SubtaskIndex,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import { harnessHost } from '../host.js';
@@ -158,31 +159,42 @@ function stageLearningPackage(
   );
 }
 
-// The signal after a mark, when it is complete: whether learnings were waived.
+type SignalView = Partial<Pick<WorkerSignal, 'status' | 'artifactWaivers'>>;
+
+// A signal file; throws when it is missing or unreadable, and each caller
+// decides what that means.
+function readSignal(signalPath: string): SignalView {
+  return JSON.parse(fs.readFileSync(signalPath, 'utf8')) as SignalView;
+}
+
+// The signal after a successful mark, when it is complete: whether learnings were waived.
 function completedSignal(
   taskDir: string,
   overrides: ChecklistTargetOverrides,
 ): { learningsWaived: boolean } | null {
+  let signal: SignalView;
   try {
-    const target = resolveChecklistTargetWithOverrides(taskDir, overrides);
-    const signal = JSON.parse(fs.readFileSync(path.join(taskDir, target.signal), 'utf8')) as {
-      status?: string;
-      artifactWaivers?: { learnings?: unknown };
-    };
-    if (signal.status !== 'complete') return null;
-    return { learningsWaived: Boolean(signal.artifactWaivers?.learnings) };
-  } catch {
-    // The mark succeeded; an unreadable signal only means no completion staging.
+    signal = readSignal(
+      path.join(taskDir, resolveChecklistTargetWithOverrides(taskDir, overrides).signal),
+    );
+  } catch (error) {
+    // The mark wrote or matched the signal, so this is unexpected. Its verdict
+    // stands; only completion staging can't be decided, so say how to finish it.
+    console.error(
+      `Warning: the signal could not be read after the mark (${error instanceof Error ? error.message : String(error)}); if the run completed, rerun: ${harnessHost().name} checklist closeout ${taskDir}; task verdict is unchanged.`,
+    );
     return null;
   }
+  if (signal.status !== 'complete') return null;
+  return { learningsWaived: signal.artifactWaivers?.learnings === true };
 }
 
 function terminalSignalStatus(taskDir: string, overrides: ChecklistTargetOverrides): string | null {
+  // A target error is the caller's to report; only a missing or unreadable signal is normal here.
   const target = resolveChecklistTargetWithOverrides(taskDir, overrides);
-  const signalPath = path.join(taskDir, target.signal);
-  let signal: { status?: string };
+  let signal: SignalView;
   try {
-    signal = JSON.parse(fs.readFileSync(signalPath, 'utf8')) as { status?: string };
+    signal = readSignal(path.join(taskDir, target.signal));
   } catch {
     // No signal yet (or a half-written one): the task has no terminal verdict to
     // preserve, which is the normal state before the first mark.
