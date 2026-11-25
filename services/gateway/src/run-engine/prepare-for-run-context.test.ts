@@ -37,7 +37,11 @@ const realPrepareCommand = await import('../methods/slot/prepare-command.js');
 mock.module('../methods/slot/prepare-command.js', {
   namedExports: {
     ...realPrepareCommand,
-    runPrepareCommand: async (): Promise<ExecResult> => ({ stdout: 'ok\n', stderr: '', exitCode: 0 }),
+    runPrepareCommand: async (): Promise<ExecResult> => ({
+      stdout: 'ok\n',
+      stderr: '',
+      exitCode: 0,
+    }),
   },
 });
 const fixtureSyncs: Array<{ flowType?: string; domain?: string }> = [];
@@ -65,13 +69,16 @@ test('a prepare for a run uses the run flow type and domain', needsTmuxSandbox, 
   const originRepo = path.join(root, 'origin.git');
   const slotId = `prepare-for-run-${process.pid}`;
   const poolPath = path.join(poolDirectory(), `${slotId}.json`);
-  t.after(async () => {
-    spawnSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`], { stdio: 'ignore' });
-    await rm(poolPath, { force: true });
-    await rm(root, { recursive: true, force: true });
-  });
   const git = (cwd: string, ...args: string[]) =>
-    execFileAsync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args]);
+    execFileAsync('git', [
+      '-C',
+      cwd,
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@example.invalid',
+      ...args,
+    ]);
   await execFileAsync('git', ['init', '--initial-branch=main', slotRepo]);
   await execFileAsync('git', ['init', '--bare', '--initial-branch=main', originRepo]);
   await writeFile(path.join(slotRepo, 'README.md'), 'fixture\n');
@@ -106,9 +113,15 @@ test('a prepare for a run uses the run flow type and domain', needsTmuxSandbox, 
     mode: 'autonomous',
     domain: 'perps',
   });
+  // One teardown, in order: the run record goes before the directory that holds it.
   t.after(async () => {
     await persistRunNow(updateRun(run.id, { status: 'done' }));
     await deleteRun(run.id);
+    spawnSync('tmux', ['-S', tmuxSandbox!, 'kill-session', '-t', `=${slotId}`], {
+      stdio: 'ignore',
+    });
+    await rm(poolPath, { force: true });
+    await rm(root, { recursive: true, force: true });
   });
   await claimSlotStatusIf(slotId, () => true, {
     lifecycle: 'ready',

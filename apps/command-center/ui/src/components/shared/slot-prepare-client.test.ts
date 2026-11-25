@@ -40,7 +40,12 @@ test('a prepare for a run sends the run flow type and domain', async () => {
 
 test('a prepare for a run without a known flow or domain sends neither', async () => {
   requests.length = 0;
-  await runSlotPrepareForRun({ slotId: 'slot-1', runId: 'run-1', branch: 'feat/x', slotBranch: 'main' });
+  await runSlotPrepareForRun({
+    slotId: 'slot-1',
+    runId: 'run-1',
+    branch: 'feat/x',
+    slotBranch: 'main',
+  });
   assert.equal('flowType' in (requests[0]?.params ?? {}), false);
   assert.equal('domain' in (requests[0]?.params ?? {}), false);
 });

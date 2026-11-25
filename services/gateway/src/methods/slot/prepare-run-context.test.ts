@@ -17,7 +17,10 @@ test('a prepare for a run takes the run flow type, domain and app where they are
 
 test('explicit prepare params win over the run', () => {
   assert.deepEqual(
-    withRunPrepareContext({ slotId: 's', runId: 'r', flowType: 'qa', domain: 'money-movement', app: 'x' }, run),
+    withRunPrepareContext(
+      { slotId: 's', runId: 'r', flowType: 'qa', domain: 'money-movement', app: 'x' },
+      run,
+    ),
     { slotId: 's', runId: 'r', flowType: 'qa', domain: 'money-movement', app: 'x' },
   );
 });
