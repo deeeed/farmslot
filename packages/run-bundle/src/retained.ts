@@ -1169,6 +1169,14 @@ interface StableStoreCharge {
   stamps: string[];
   bytes: number;
   retentionCharges: [string, number][];
+  /** How many entries sha256/ held, as walked and as this process's publishes changed it. */
+  bundleCount: number;
+  /**
+   * Set when this process adopted a stamp of its own write. On a jiffy-grained volume another
+   * process's change in that same tick leaves the stamp equal, so until then a hit also counts
+   * sha256/ (only within that window, which closes 10 ms after the write).
+   */
+  trustAfterNs?: bigint;
 }
 
 /**
@@ -1221,11 +1229,14 @@ async function walkStableStoreCharge(
 ): Promise<Omit<StableStoreCharge, 'stamps'>> {
   stableStoreWalks += 1;
   let bytes = 0;
+  let bundleCount = 0;
   const retentionCharges: [string, number][] = [];
   for (const entry of await readdir(store.root, { withFileTypes: true })) {
     const file = path.join(store.root, entry.name);
     if (entry.name === 'sha256' && entry.isDirectory()) {
-      for (const name of await readdir(file)) {
+      const names = await readdir(file);
+      bundleCount += names.length;
+      for (const name of names) {
         const directory = path.join(file, name);
         const charged = BUNDLE_DIGEST.test(name)
           ? await recordedBundleBytes(store, name)
@@ -1241,7 +1252,7 @@ async function walkStableStoreCharge(
       continue;
     bytes += entry.isDirectory() ? await physicalBytes(file) : (await stat(file)).size;
   }
-  return { bytes, retentionCharges };
+  return { bytes, retentionCharges, bundleCount };
 }
 
 /**
@@ -1249,6 +1260,15 @@ async function walkStableStoreCharge(
  * pass moved aside under it (its archive finish). Checking that each one the cache charged is
  * still there bounds the check by those few entries, not by the store's bundles.
  */
+async function sha256EntryCount(store: RunBundleStore): Promise<number> {
+  try {
+    return (await readdir(path.join(store.root, 'sha256'))).length;
+  } catch (error) {
+    if (!hasCode(error, 'ENOENT')) throw error;
+    return 0;
+  }
+}
+
 async function retentionEntriesPresent(charge: StableStoreCharge): Promise<boolean> {
   for (const [directory] of charge.retentionCharges) {
     try {
@@ -1270,7 +1290,10 @@ async function stableStoreCharge(store: RunBundleStore): Promise<StableStoreChar
   if (
     cached &&
     cached.stamps.every((stamp, i) => stamp === before[i]) &&
-    (await retentionEntriesPresent(cached))
+    (await retentionEntriesPresent(cached)) &&
+    (cached.trustAfterNs === undefined ||
+      BigInt(Date.now()) * 1_000_000n >= cached.trustAfterNs ||
+      (await sha256EntryCount(store)) === cached.bundleCount)
   )
     return cached;
   stableStoreCharges.delete(key);
@@ -1321,7 +1344,16 @@ async function adjustStableStoreCharge(
     if (!addedBundle || !(await retentionEntriesPresent(cached)))
       return void stableStoreCharges.delete(key);
   }
-  stableStoreCharges.set(key, { ...cached, bytes: cached.bytes + delta, stamps: after });
+  const newest = after
+    .flatMap(stampTimesNs)
+    .reduce((latest, time) => (time > latest ? time : latest), 0n);
+  stableStoreCharges.set(key, {
+    ...cached,
+    bytes: cached.bytes + delta,
+    stamps: after,
+    bundleCount: cached.bundleCount + (directory === 'sha256' ? 1 : 0),
+    trustAfterNs: newest + STABLE_CHARGE_QUIET_NS,
+  });
 }
 
 async function chargedStoreBytesUntimed(
