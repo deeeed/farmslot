@@ -261,3 +261,20 @@ test('idle refresh turns off git auto-maintenance and removes temporary packs a 
   assert.equal(git(repo, 'config', '--local', '--get', 'maintenance.auto'), 'false');
   assert.equal(git(repo, 'config', '--local', '--get', 'gc.auto'), '0');
 });
+
+test('the idle reset that release, prepare, find-slot and recovery share never prunes remote refs', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'idle-reset-no-prune-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'slot');
+  const origin = path.join(root, 'origin.git');
+  initPrimaryRepo(repo, origin);
+  git(repo, 'push', 'origin', 'main:refs/heads/feat/merged');
+  git(repo, 'fetch', 'origin');
+  // A squash-merged PR: origin deleted the branch; release still needs origin/feat/merged.
+  git(origin, 'update-ref', '-d', 'refs/heads/feat/merged');
+  await reset(slotVars(repo, 'no-prune'), {}, undefined, 'main');
+  assert.equal(
+    git(repo, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/feat/merged').length,
+    40,
+  );
+});

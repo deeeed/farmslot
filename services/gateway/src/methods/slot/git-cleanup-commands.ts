@@ -44,6 +44,60 @@ export const FETCH_MAINTENANCE_COMMAND = `${DISABLE_AUTO_MAINTENANCE_COMMAND}; $
 /** Before a fetch: stale remote ref locks, git's own auto-maintenance off, stale temporary packs. */
 export const PRE_FETCH_CLEANUP_COMMAND = `${REFRESH_REMOTE_REF_LOCKS_COMMAND}; ${FETCH_MAINTENANCE_COMMAND}`;
 
+/** Hours between two remote prunes of one slot repo. */
+export const REMOTE_PRUNE_INTERVAL_HOURS = 24;
+/** Hours before a failed remote prune is tried again. */
+export const REMOTE_PRUNE_RETRY_HOURS = 1;
+/**
+ * A remote ref is deleted only once it has been seen stale for this long: a replay of a
+ * squash-merged PR resolves a start ref given as a SHA through any remote ref that holds it.
+ */
+export const REMOTE_PRUNE_MIN_STALE_DAYS = 14;
+/** Minutes taken off each prune window, so the hourly pass reaching a slot early still runs it. */
+export const REMOTE_PRUNE_MARGIN_MINUTES = 5;
+/** Exit status of a prune that could not list origin or delete refs; the caller backs off. */
+export const REMOTE_PRUNE_FAILED_EXIT = 3;
+
+// The prune's shell, in named parts. `$git_dir`/`$common_dir` are absolute, `$stamp` holds `ok` or
+// `failed`, `$seen` holds `<ref> <first-seen epoch>` per stale ref.
+const PRUNE_LOCATE = `export LC_ALL=C; repo_paths=$(git rev-parse --git-dir --git-common-dir 2>&1) || { echo "${GIT_MAINTENANCE_NOTE} remote prune failed: $(printf '%s\\n' "$repo_paths" | tail -n 1)"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }; git_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 1p)" && pwd -P) && common_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 2p)" && pwd -P) || { echo "${GIT_MAINTENANCE_NOTE} remote prune failed: could not resolve the git dir"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }; stamp="$git_dir/farmslot-remote-prune.stamp"; seen="$git_dir/farmslot-remote-prune.seen"; prune_err="$git_dir/farmslot-remote-prune.err"; rm -f "$prune_err"`;
+const pruneWindowSkip = (minutes: number, retryMinutes: number) =>
+  `state=$(cat "$stamp" 2>/dev/null); if { [ "$state" = ok ] && [ -n "$(find "$stamp" -mmin -${minutes} 2>/dev/null)" ]; } || { [ "$state" = failed ] && [ -n "$(find "$stamp" -mmin -${retryMinutes} 2>/dev/null)" ]; }; then exit 0; fi`;
+const PRUNE_FAIL = (why: string) =>
+  `{ printf failed > "$stamp"; echo "${GIT_MAINTENANCE_NOTE} remote prune failed: ${why}"; rm -f "$prune_err"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }`;
+// A listing with no worktree entry fails closed: the shared-dir check can't be trusted without one.
+const PRUNE_SHARED_SKIP = `worktrees=$(git worktree list --porcelain 2>"$prune_err") || ${PRUNE_FAIL('$(tail -n 1 "$prune_err")')}; live_worktrees=$(printf '%s\\n' "$worktrees" | awk '/^worktree /{n++} /^prunable/{p++} END{if (n < 1) exit 1; print n-p}') || ${PRUNE_FAIL('git worktree list showed no worktree')}; if [ "$git_dir" != "$common_dir" ] || [ "$live_worktrees" -gt 1 ]; then rm -f "$prune_err"; echo "${GIT_MAINTENANCE_DEBUG} remote prune skipped: $common_dir is shared by $live_worktrees worktrees"; exit 0; fi`;
+// Local refs are read before origin is listed: a ref a concurrent fetch writes later is absent
+// from the plan, and each delete names the value it was read with.
+const PRUNE_LIST = `local_refs=$(git for-each-ref --format='ref %(refname) %(objectname)' refs/remotes/origin; cd "$common_dir" && find refs/remotes/origin -type f 2>/dev/null | sed 's/^/loose /'); live_heads=$(git ls-remote --heads origin 2>"$prune_err") || ${PRUNE_FAIL('$(tail -n 1 "$prune_err")')}; [ -n "$live_heads" ] || ${PRUNE_FAIL('origin listed no branches')}`;
+// Plans the deletes. A ref is a candidate when origin has no branch of its name. On APFS, names that
+// differ only in case share a loose file and a lock: a candidate whose case group has another name
+// is kept while any of the group is loose, and only one of the group goes per pass.
+const pruneAwk = (minStaleSeconds: number) =>
+  `awk -v now="$(date +%s)" -v min=${minStaleSeconds} 'function name(n) { k = tolower(n) SUBSEP n; if (!(k in seen)) { seen[k] = 1; names[tolower(n)]++ } } $1 == "seen" { first[$2] = $3; next } $1 == "live" { n = substr($2, 12); live[n] = 1; name(n); next } $1 == "loose" { loose[tolower(substr($2, 21))] = 1; next } $1 == "ref" { n = substr($2, 21); count++; ref[count] = n; oid[n] = $3; name(n) } END { for (i = 1; i <= count; i++) { n = ref[i]; if (n == "HEAD" || (n in live)) continue; l = tolower(n); full = "refs/remotes/origin/" n; since = (full in first) ? first[full] : now; if (names[l] > 1 && ((l in loose) || (l in planned))) { print "seen " full " " since; twin++; continue } if (now - since < min) { print "seen " full " " since; young++; continue } print "delete " full " " oid[n]; planned[l] = 1; deleted++ } printf "summary %d %d %d\\n", deleted, twin, young }'`;
+const pruneApply = (minStaleDays: number) =>
+  `plan=$({ sed 's/^/seen /' "$seen" 2>/dev/null; printf '%s\\n' "$live_heads" | awk 'NF == 2 { print "live " $2 }'; printf '%s\\n' "$local_refs"; } | ${pruneAwk(minStaleDays * 86400)}); printf '%s\\n' "$plan" | grep '^delete ' | git update-ref --stdin 2>"$prune_err" || ${PRUNE_FAIL('$(tail -n 1 "$prune_err")')}; printf '%s\\n' "$plan" | sed -n 's/^seen //p' > "$seen.new" && mv "$seen.new" "$seen"; printf ok > "$stamp"; rm -f "$prune_err"; set -- $(printf '%s\\n' "$plan" | sed -n 's/^summary //p'); if [ "$1" -gt 0 ] || [ "$2" -gt 0 ]; then echo "${GIT_MAINTENANCE_NOTE} pruned $1 remote ref$([ "$1" = 1 ] || echo s) whose branch is gone$([ "$2" -gt 0 ] && echo "; kept $2 that share a case group with a loose or deleted ref")$([ "$3" -gt 0 ] && echo "; $3 more wait ${minStaleDays} days from when they were first seen stale")"; fi`;
+
+/**
+ * Deletes remote-tracking refs whose branch is gone from origin: one `ls-remote --heads` and one
+ * `update-ref --stdin` (each delete names the value it read), at most once per `hours`, or once
+ * per `REMOTE_PRUNE_RETRY_HOURS` after a failure (each less `REMOTE_PRUNE_MARGIN_MINUTES`), timed
+ * by a stamp in the git dir. For a released idle slot only, inside the parked-work retention fence
+ * (see `idle-remote-prune.ts`).
+ * - A git dir other live worktrees share is left alone (a debug note).
+ * - A ref is deleted only after `REMOTE_PRUNE_MIN_STALE_DAYS` of being seen stale (a seen file in
+ *   the git dir records when).
+ * - An empty listing, or a failed worktree listing, origin listing or delete, deletes nothing and
+ *   exits `REMOTE_PRUNE_FAILED_EXIT` with git's last error line in the note.
+ */
+export function remotePruneCommand(
+  hours = REMOTE_PRUNE_INTERVAL_HOURS,
+  minStaleDays = REMOTE_PRUNE_MIN_STALE_DAYS,
+): string {
+  const window = (h: number) => h * 60 - REMOTE_PRUNE_MARGIN_MINUTES;
+  return `( ${PRUNE_LOCATE}; ${pruneWindowSkip(window(hours), window(REMOTE_PRUNE_RETRY_HOURS))}; ${PRUNE_SHARED_SKIP}; ${PRUNE_LIST}; ${pruneApply(minStaleDays)} )`;
+}
+
 /** The notes a fetch maintenance command printed: kept or removed packs, a failed config write. */
 export function gitMaintenanceNotes(output: string): string[] {
   return output
