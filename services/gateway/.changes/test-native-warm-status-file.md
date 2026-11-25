@@ -1,1 +1,0 @@
-- Test-only: the native warm-review live proof keeps its test fleet status off the fixture farm's shared status path, and its hand-written fleet row names its machine.

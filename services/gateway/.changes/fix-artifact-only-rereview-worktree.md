@@ -1,1 +1,0 @@
-- An artifact-only run's re-review reads its uncommitted working tree instead of refusing with "fix not committed": the task tells its worker not to commit, so the re-review gate no longer waits for a commit, and the continuation scope points the reviewer at the working-tree diff.

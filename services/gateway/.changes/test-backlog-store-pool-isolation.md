@@ -1,1 +1,0 @@
-- Test-only: gateway test files keep their pool configs in a private directory, so a pool file one test writes no longer leaks into the slot lookups of a test running beside it. The test runner fails a run that writes the shared pool directory.

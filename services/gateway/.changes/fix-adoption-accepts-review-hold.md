@@ -1,1 +1,0 @@
-- An attested publication adoption settles a run held for a REVIEW result decision as accepted, with the adoption reason, and keeps the PR link. Before, a run with a spent review budget could only be closed after its PR was adopted.

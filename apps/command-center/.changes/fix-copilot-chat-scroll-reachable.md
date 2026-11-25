@@ -1,1 +1,0 @@
-- New Co-Pilot browser proof (FARMSLOT_LAYOUT_COPILOT=1 with prove-stable-layout): at 1005x504 with settings open and a running transfer, a pending approval's title and Approve button are visible and clear of the bottom rows, and a click delivers native.session.respond. Proof scripts share one probe polling helper that fails on page errors.

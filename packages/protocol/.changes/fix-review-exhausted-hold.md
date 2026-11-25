@@ -1,1 +1,0 @@
-- `RunEngineState.staleReceiptSendBack` records the one automatic COMPLETE send-back a run gets for stale deterministic CI receipts, and `RunEngineState.openReviewFindings` keeps the findings a review verdict left open with a blocker or major across a replay. `review-approval-policy.cjs` exports `reviewSeverityCounts`, the per-severity count `reviewRecommendation` uses.

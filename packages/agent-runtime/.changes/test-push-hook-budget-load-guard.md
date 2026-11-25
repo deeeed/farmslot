@@ -1,1 +1,0 @@
-- Test-only: the TASK.md worker push test allows the guarded push 30 s instead of 4 s before it counts as hung, so it no longer times out on a loaded macOS host. Runtime behaviour is unchanged.

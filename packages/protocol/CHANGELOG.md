@@ -6,6 +6,36 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.92.1 - 2026-11-25
+
+- Shared eval-run helpers for run lists: isEvalRun (comparison lane), evalRunBadge, productRunsFirst and productFamiliesFirst, and RunListQuery lane 'product' to hide eval runs. selectRecentRunFamilyGroups lists product families before eval-only ones. Command Center and Companion use them.
+- `prepare.pinned_profiles` (`ProjectPrepareConfig.pinnedProfiles`) and `pinned_kind` (`PrepareProfileConfig.pinnedKind`, `PREPARE_PINNED_KINDS`) declare what a pinned comparison run prepares with. `Run.prepareArtifact` (`RunPrepareArtifact`) records the build on the slot for the run's `startRef`: installed and verified (`enforced: true`) or observed (`enforced: false`).
+- `releaseAtLeast(version, minimum)` answers whether a peer's reported release is at least `minimum`, with an unreported or unparseable version answering false. A caller gating a new behavior on node support degrades instead of assuming the node is current.
+- `PREPARE_REQUIREMENTS` gains `required_skills_present`, so a prepare profile can require that the files its pack's `required_skills` rules name exist in the checkout before it is selected.
+- Run traces (ADR-039 Amendment 10): per-session archive refs (`runnerSessionArchives`, `sessionKey`, `answersRound`), the run fields `gradedOutput`, `finalHead`, `prHead`, `mergeSha`, `completionAcceptance` and `attemptLog`, `traces.enabled` in project config, and the `run.grade.external.record`, `run.interview.record` and `run.episode.recapture` method types.
+- `NodeInfo.observationCapabilities` reports what a node declared at connect. `NODE_FS_READ_FILES_MAX_FILES` caps one `fs.readFiles` request at 64 files.
+- `RunCiWatchState.holdReleasedAt` records when a replay that re-ran ci-watch handed a held PR back to automation. An operator hold is derived from `Run.decisions` (a `wait` at `inline_fix_blocked` while that gate offered a dispatch). A post-gate replay keeps those resolved decisions, so a hold resolved before this time no longer applies; a pr-complete replay drops them.
+- `PRStatus.headSha` is the PR's head commit on GitHub, when the read returned it.
+- `RunCiWatchState.holdClearedAt` records, per held gate, the last time a complete read showed its state clear; a "Keep holding" answered before it no longer quiets the gate.
+- `PRStatus.readErrors` lists the component reads GitHub could not complete for that snapshot.
+- Add `reviewEndsWithAcceptedFix` and `isAcceptedFixAttempt`. A review whose final attempt is a gateway-accepted worker fix no longer counts as passing in `qualifyingPassingReviews` or the gate review counts, and its freshness label reads "fix accepted without re-review".
+- Document `watch.port` on PID-file resource watches: the port the watched process serves.
+- `runLinkedTicketsView` reports each ticket's `title` and whether the run `named` it — through its fetched key, a recorded linked ticket or an operator addition — so a caller can render the recorded summary and tell a real ticket from a ref that merely matches the Jira key shape. A backlog run's `MANUAL-000124` matches that shape, and treating it as a ticket publishes a dead browse URL.
+- `TaskProgressParams.summary` asks `task.progress` for `TaskProgressResult.summary` (done/total, current phase and step) instead of the full checklist. A summary read depends on `progress` and `run` only; a full read still follows `artifacts`, which acceptance and evidence views need.
+- `LLMConfigGetResult.tierModels` and `LLMConfigSetParams.tierModels` (`LLMTierModels`, `LLMTierName`): per-provider tier model overrides. A set replaces every saved override; `{}` clears them.
+- `LLM_TIER_NAMES` (`['fast', 'standard', 'smart']`): the tier names callers use instead of a model id, shared by the gateway and Command Center.
+- `readLegacyStorageFacts` reports a Run bundle store whose volume is not mounted as `unavailable` with its bound root, instead of throwing `ENOENT` from `realpath`. The binding is validated first. A store that is present still has its pairing checked, a configured root unlike the bound one still fails, and a root that exists but cannot be read is an error, not an unmounted volume. `readLegacyStorageFacts` is exported from `@farmslot/protocol/node/farm-paths`.
+- `NodeInfo.lastRefusedDuplicate` records the last connection refused because that node already held the machine.
+- A static review's replay refusal names the run that holds its workspace (its successor, or the predecessor a never-launched continuation handed it back to), and the `transferredTo` contract documents the hand-back.
+- `RunEngineState.staleReceiptSendBack` records the one automatic COMPLETE send-back a run gets for stale deterministic CI receipts, and `RunEngineState.openReviewFindings` keeps the findings a review verdict left open with a blocker or major across a replay. `review-approval-policy.cjs` exports `reviewSeverityCounts`, the per-severity count `reviewRecommendation` uses.
+- `reviewPublicationPending(run)` is true for a finished review whose requested PR publication has neither a published receipt nor an error. While it is true, `runDisplayStatus` and `deriveRunLifecycleView` show the run as `Publishing review` instead of done.
+- `TaskStepSubtaskProgress.ownerEnded` (display only): the unit is unsettled but the context owning its parent checklist has ended. The child's status is unchanged.
+- `PrepareStepOutput` and `SlotPrepareResult` gain `tempScrub` (`TempScrubReceipt`: the files a new run's prepare cleared from `temp/`), `keptBranches` and `lockfilesRewritten`. The run evidence summary never counts `tempScrub` paths as artifacts.
+- `NodeFsReadFilesParams`/`NodeFsReadFilesResult` describe the node `fs.readFiles` method, and `NodeObservationCapabilities.batchReads` declares it.
+- Add `CompleteStepOutput.timing` (`CompleteStepTiming`: per-phase wall time, run-bundle lock wait and hold, processes by kind) and `Run.slotRelease` (the run's latest slot release that freed its slot, with its duration).
+- `CompleteStepTiming.bundleLock` gains optional `holds` (wait and hold by kind of holder) and `opsMs` (self time of each store operation the step ran, non-overlapping).
+- `Run.slotRelease` gains optional `phasesMs` and `bundleLock`: where a finished-run release spent its time.
+
 ## 0.92.0 - 2026-11-21
 
 - Allow Command Center review links to share the recording, recipe attempt, and timeline page.

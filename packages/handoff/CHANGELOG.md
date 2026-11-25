@@ -6,6 +6,10 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.4.13 - 2026-11-25
+
+- `@farmslot/handoff/scrub` no longer exports the publication floor patterns and gitleaks rules: run trace export no longer uses them.
+
 ## 0.4.12 - 2026-11-21
 
 - Pin the Protocol 0.92.0 producer cohort.

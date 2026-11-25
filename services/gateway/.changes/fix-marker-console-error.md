@@ -1,1 +1,0 @@
-- A BUG_MARKER baseline is also admitted as `console.error`, alongside `DevLogger.log`, `Logger.log` and `console.log`.
