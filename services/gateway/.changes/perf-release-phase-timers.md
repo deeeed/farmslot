@@ -1,0 +1,1 @@
+- A finished run's slot release records where its time went on `run.slotRelease.phasesMs`: the wait for the slot's teardown registry, native worker retirement, worker stop, capabilities, runtime resources, checkout return and idle reset, ownership release and the fleet broadcast, plus the run-bundle lock time when the release measured its own.
