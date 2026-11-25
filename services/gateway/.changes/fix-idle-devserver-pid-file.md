@@ -1,1 +1,0 @@
-- The idle dev-server cap stops a dev server watched by a PID file after a gateway restart when its watch also declares the `port` it serves: it reads the PID file and requires the process to predate the file, to hold that listener and to run in the slot checkout. A PID-file watch without a port keeps its existing cleanup.

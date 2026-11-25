@@ -1,1 +1,0 @@
-- A second node process for an already connected machine is refused (`NODE_ALREADY_CONNECTED`, naming both pids) while the connected node still answers, instead of the two evicting each other on every reconnect. A connected node that is closed, shutting down or silent is still replaced, and the same process reconnecting is admitted as before.

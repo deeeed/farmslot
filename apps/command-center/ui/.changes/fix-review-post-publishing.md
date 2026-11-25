@@ -1,1 +1,0 @@
-- A review run's PR publication reads `Publishing…` until its receipt or an error lands, and Publish now is hidden meanwhile, so a pending post isn't duplicated.

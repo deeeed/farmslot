@@ -60,6 +60,9 @@ export interface RunSlotPrepareForRunInput {
   forcePrepare?: boolean;
   rebind?: boolean;
   label?: string;
+  /** The run's flow type and domain: prepare reads its run context from them (gateway prepare-run-context.ts). */
+  flowType?: string;
+  domain?: string;
 }
 
 export function slotPrepareLabel(slotId: string, runId: string, bindOnly: boolean): string {
@@ -87,6 +90,8 @@ export async function runSlotPrepareForRun(
     bindOnly,
     bindRunId: input.runId,
     runId: input.runId,
+    ...(input.flowType ? { flowType: input.flowType } : {}),
+    ...(input.domain ? { domain: input.domain } : {}),
     rebind: input.rebind,
     label: input.label ?? slotPrepareLabel(input.slotId, input.runId, bindOnly === true),
   });

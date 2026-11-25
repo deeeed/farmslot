@@ -1,1 +1,0 @@
-- Document `watch.port` on PID-file resource watches: the port the watched process serves.

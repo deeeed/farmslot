@@ -1,11 +1,11 @@
 {
-  "version": "0.36.11",
-  "date": "2026-11-21",
+  "version": "0.36.12",
+  "date": "2026-11-25",
   "items": [
-    "View the full execution timeline in evidence review, including setup and steps with no verified video position",
-    "View the known run cost by phase, receipt coverage, and verified costs for individual review rounds",
-    "View inclusive and self timing, criterion rollups, and unassigned time in composed recipe evidence",
-    "View the active recipe flow in Run Detail while a recipe runs, before its first step completes",
-    "Keep worker terminals, Sessions layout and End session focus steady during inventory refreshes"
+    "Eval and comparison runs carry an EVAL badge with their variant on run list rows and in the run detail header, and list after product runs (eval-only families after product families). The lane filter adds Hide evals",
+    "The eval-run predicate, badge text and product-first ordering now come from the shared protocol helpers that Companion also uses; behaviour is unchanged",
+    "Co-Pilot chat scrolls on short windows, including with Settings open, and a new pending approval scrolls into view with its title and buttons. The native session composer scrolls as a whole instead of squeezing pending requests (every native session view). The cache status and the file transfer bar sit below the content instead of covering the bottom of every view",
+    "The publish gate labels a fix the gateway accepted without a reviewer \"fix accepted without re-review\" instead of showing it as a pass",
+    "The run list and the fleet canvas read the task progress summary (done/total and the current step) instead of the full checklist. The fleet canvas expanded run panel reads the full checklist for that one slot, with the same slot and run as its row"
   ]
 }

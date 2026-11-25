@@ -1,4 +1,0 @@
-- Run traces (ADR-039 Amendment 10): agent sessions are archived as each ends (worker completion, each review round, each review fix, before a replay, and on `bundle retain`), per session and atomically, with slot release as the backstop; `traces.enabled: false` opts a project out.
-- Episodes list every session in `trajectory.agents` and carry `labels.*` values (task, roles, cost, acceptance, review rounds with the fix that answered them, gate, attempts, `infraOnly`, graded output, git heads).
-- The graded diff is recorded at finalize or release and kept beside the episode; the PR head and merge commit and the failures a replay resets are recorded on the run.
-- New methods `run.grade.external.record`, `run.interview.record` and `run.episode.recapture`.

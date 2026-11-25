@@ -1,1 +1,0 @@
-- When prepare deletes or resets a work branch (a reused branch name, a reset to origin or a start ref, a linked worktree's reset to base), it first keeps commits no remote has on `<branch>-kept-<sha12>` and records them in the prepare step's `keptBranches`, instead of leaving them only in a parked ref that retention prunes after 14 days.

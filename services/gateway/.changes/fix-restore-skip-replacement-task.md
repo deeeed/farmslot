@@ -1,1 +1,0 @@
-- A find-slot replay of a run whose failed task was retained no longer stops in prepare with "Retained task inputs differ": the replacement task restores nothing from the task it replaced. A changed frozen input in the same task is still refused.

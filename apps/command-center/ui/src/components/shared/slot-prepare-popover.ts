@@ -23,6 +23,8 @@ export class SlotPreparePopover extends LitElement {
   @property() project = '';
   @property({ attribute: 'run-id' }) runId = '';
   @property({ attribute: 'run-branch' }) runBranch = '';
+  @property({ attribute: 'run-flow-type' }) runFlowType = '';
+  @property({ attribute: 'run-domain' }) runDomain = '';
   @property({ attribute: 'button-label' }) buttonLabel = 'Prepare slot →';
   @property({ type: Boolean }) rebind = false;
   @property({ type: Boolean }) disabled = false;
@@ -191,6 +193,8 @@ export class SlotPreparePopover extends LitElement {
         slotId,
         runId,
         branch: this.runBranch,
+        flowType: this.runFlowType || undefined,
+        domain: this.runDomain || undefined,
         slotBranch: this.slotBranch,
         prepareProfile,
         strictProfile,

@@ -90,6 +90,7 @@ import { runInventoryHashFromDetail } from './run-detail-url-state.js';
 import { runProgressSummary } from './run-list-model.js';
 import { stepInspectorTaskProgress } from './run-pipeline-model.js';
 import { renderReviewProcess, renderRunReviewResult } from './run-review-result-renderer.js';
+import { renderRunSlotPreparePopover } from './run-slot-prepare-popover.js';
 import {
   collectRunEvidenceArtifacts,
   dispositionColor,
@@ -1592,19 +1593,11 @@ function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail:
           `
         : nothing}
       ${boundSlotId && r.branch && canActivateRunOnSlot(r.status)
-        ? html`
-            <slot-prepare-popover
-              slot-id=${boundSlotId}
-              slot-branch=${ctx._slotBranchForRun(r)}
-              project=${r.project}
-              run-id=${r.id}
-              run-branch=${r.branch}
-              button-label="Load ${boundSlotId} with this run →"
-              button-style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
-              .slotHealth=${ctx._slotHealthForRun(r)}
-              ?disabled=${actionsBlocked}
-            ></slot-prepare-popover>
-          `
+        ? renderRunSlotPreparePopover(
+            r,
+            { id: boundSlotId, branch: ctx._slotBranchForRun(r), health: ctx._slotHealthForRun(r) },
+            actionsBlocked,
+          )
         : nothing}
       ${r.status === 'failed'
         ? html`
