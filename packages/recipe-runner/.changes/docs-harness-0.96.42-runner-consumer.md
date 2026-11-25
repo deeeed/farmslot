@@ -1,3 +1,0 @@
-- mm-harness 0.96.40 keeps recipe-runner 0.52.0 and Recipe CLI 0.35.30 with protocol 0.91.0. The HTML evidence viewer jumps to the active step when live flow data is available.
-- mm-harness 0.96.41 consumes recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0. `logs` exits unless `--follow` is passed.
-- mm-harness 0.96.42 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0. `help` shows a minimal task recipe.
