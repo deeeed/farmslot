@@ -54,7 +54,7 @@ wait_count=0; while launchctl print "\$domain/\$label" >/dev/null 2>&1 || same_o
   if [[ \$wait_count -ge 20 ]]; then echo '[deploy] ERROR: the previous node service did not stop' >&2; exit 1; fi; \\
   sleep 0.25; \\
 done; \\
-log_offset=\$(wc -c < "\$log" 2>/dev/null | tr -d ' ' || true); log_offset=\${log_offset:-0}; \\
+log_offset=0; if [[ -f "\$log" ]]; then log_offset=\$(wc -c < "\$log" | tr -d ' '); fi; \\
 launchctl enable "\$domain/\$label"; \\
 attempt=1; until launchctl bootstrap "\$domain" "\$plist"; do \\
   if [[ \$attempt -ge 5 ]]; then echo '[deploy] ERROR: launchd bootstrap failed after 5 attempts' >&2; exit 1; fi; \\
@@ -69,7 +69,7 @@ systemd_restart_script() {
   log_path=$(printf '%q' "$2")
   cat <<SCRIPT
 set -e; log=$log_path; \\
-log_offset=\$(wc -c < "\$log" 2>/dev/null | tr -d ' ' || true); log_offset=\${log_offset:-0}; \\
+log_offset=0; if [[ -f "\$log" ]]; then log_offset=\$(wc -c < "\$log" | tr -d ' '); fi; \\
 systemctl --user daemon-reload && systemctl --user enable $unit && systemctl --user restart $unit; \\
 $(node_registration_check_fragment)
 SCRIPT

@@ -792,6 +792,8 @@ esac
         FARMSLOT_GATEWAY_TOKEN: 'fixture-operator-secret',
         FARMSLOT_NODE_TOKEN: '',
         FARMSLOT_GATEWAY_PASSWORD: '',
+        // No node starts behind the fake systemctl: don't wait 30 s for one to register.
+        FARMSLOT_DEPLOY_REGISTRATION_CHECKS: '0',
         ...extraEnv,
       };
       for (const name of ['FARMSLOT_HOME', 'BASH_ENV', 'ZDOTDIR', 'TMUX', 'TMUX_PANE'])
