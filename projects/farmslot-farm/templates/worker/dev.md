@@ -57,10 +57,11 @@ fixture when the claim is that the gateway _derives_ the value; asserting a call
 claim is its side effect. Endpoint/assertion table: `{{recipe_quality_path}}`.
 
 Skip Phase 2 only when no manifest action reaches the change through **any** endpoint above; state
-the limitation and replacement validation here.
+the limitation and replacement validation here, then skip the recipe steps (6, 7, 11-15 and 19) with
+`{{TASK_DIR}}/mark N --skip "<why>"`.
 
-- [ ] **6. Write `{{TASK_DIR}}/artifacts/recipe.json`** — cover all acceptance criteria using manifest actions from `{{recipe_manifest_path}}`. The document must include the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`. For modifications, the recipe should fail on current code before your fix.
-- [ ] **7. Baseline recipe run** — must exit non-zero on unfixed code (or document `Baseline: N/A — purely additive` with rationale):
+- [ ] **6. Write `{{TASK_DIR}}/artifacts/recipe.json`** [OPTIONAL: no manifest action reaches the change] — cover all acceptance criteria using manifest actions from `{{recipe_manifest_path}}`. The document must include the required `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"`, `description`, and `workflow`. For modifications, the recipe should fail on current code before your fix.
+- [ ] **7. Baseline recipe run** [OPTIONAL: no manifest action reaches the change] — must exit non-zero on unfixed code (or document `Baseline: N/A — purely additive` with rationale):
   ```bash
   cd {{REPO}}
   bash {{recipe_validate_wrapper}} \
@@ -76,12 +77,12 @@ the limitation and replacement validation here.
 ### Phase 3: Implement
 
 - [ ] **8. Implement** — types in `packages/protocol`, gateway logic in `services/gateway`, UI in `apps/command-center/ui`.
-- [ ] **9. Unit tests** — add `node:test` coverage for new gateway logic when applicable.
+- [ ] **9. Unit tests** [OPTIONAL: the change adds no gateway logic] — add `node:test` coverage for new gateway logic.
 
 ### Phase 4: Validate
 
 - [ ] **10. Changed-file CI** [DETERMINISTIC: ci.local_check] - call `{{TASK_DIR}}/mark 10`. The engine runs the frozen command and records its receipt. Read the retained failure log and fix failures, then repeat this mark. Do not select or launch tests, builds, lint or validation scripts yourself.
-- [ ] **11. Recipe regression (fast)** — must exit 0 after the fix (no video):
+- [ ] **11. Recipe regression (fast)** [OPTIONAL: no manifest action reaches the change] — must exit 0 after the fix (no video):
   ```bash
   cd {{REPO}}
   bash {{recipe_validate_wrapper}} \
@@ -94,11 +95,11 @@ the limitation and replacement validation here.
     --slot-id {{SLOT}}
   ```
 
-### Phase 5: PR-grade recipe evidence (required when step 1 listed a UI/device surface)
+### Phase 5: PR-grade recipe evidence
 
-Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion device ACs) — state why in this TASK file. For `command-center`, keep the CDP video path below. For `companion-device`, capture real device/sim screenshots (not catalog-only HTML) into `artifacts/` and list them in `evidence-manifest.json`.
+Steps 12 and 13 apply only when step 1 listed a UI/device surface (Command Center UI or Companion device ACs): for a `gateway-cli`-only run, skip each with `{{TASK_DIR}}/mark N --skip "<why>"`. Steps 14 and 15 apply to every run with a recipe, and step 16 to every run. For `command-center`, keep the CDP video path below. For `companion-device`, capture real device/sim screenshots (not catalog-only HTML) into `artifacts/` and list them in `evidence-manifest.json`.
 
-- [ ] **12. Proof run with video** — slow playback + full-run MP4 for publication:
+- [ ] **12. Proof run with video** [OPTIONAL: step 1 listed no UI or device surface, or no manifest action reaches the change] — slow playback + full-run MP4 for publication:
   ```bash
   cd {{REPO}}
   bash {{recipe_validate_wrapper}} \
@@ -114,9 +115,9 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
     --task-dir {{TASK_DIR}}
   ```
   The engine writes the selected attempt's `evidence-manifest.json`; no evidence sync step is needed.
-- [ ] **13. Validate screenshots (HARD GATE)** — Read each screenshot referenced by `evidence-manifest.json` via the Read tool. The claimed UI must be visible — not off-screen, wrong route, or generic shell. Re-run step 12 if not.
-- [ ] **14. Check the selected attempt’s `evidence-manifest.json`** (the attempt named in `artifacts/latest-valid-recipe-run.json`; completion refuses attempts nothing selects) — the engine generated the retained screenshot/video paths. Keep those original paths. Use an optional task-root declaration only for external captures or comparison labels.
-- [ ] **15. Recipe coverage** — `recipe-coverage.md` (gateway computes recipe-quality). Visual ACs cannot be `pass` without screenshot/video proof.
+- [ ] **13. Validate screenshots (HARD GATE)** [OPTIONAL: step 1 listed no UI or device surface, or no manifest action reaches the change] — Read each screenshot referenced by `evidence-manifest.json` via the Read tool. The claimed UI must be visible — not off-screen, wrong route, or generic shell. Re-run step 12 if not.
+- [ ] **14. Check the selected attempt’s `evidence-manifest.json`** (the attempt named in `artifacts/latest-valid-recipe-run.json`; completion refuses attempts nothing selects) [OPTIONAL: no manifest action reaches the change] — the engine generated the retained paths, including screenshots and video for a UI/device run. Keep those original paths. Use an optional task-root declaration only for external captures or comparison labels.
+- [ ] **15. Recipe coverage** [OPTIONAL: no manifest action reaches the change] — `recipe-coverage.md` (gateway computes recipe-quality). Visual ACs cannot be `pass` without screenshot/video proof.
 - [ ] **16. Artifact contract**:
   ```bash
   node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe
@@ -128,7 +129,7 @@ Skip when step 1 is `gateway-cli` only (no Command Center UI and no Companion de
 - [ ] **18. Blast radius** — for each thing you changed, list every caller, other reader/writer of the
       same state, schema/doc describing it, and its tests; verify each. If one site had the bug, fix its
       siblings in the same pass rather than waiting for review to find them.
-- [ ] **19. Extend + re-run the recipe for anything you changed since Phase 2** — every review or review fix
+- [ ] **19. Extend + re-run the recipe for anything you changed since Phase 2** [OPTIONAL: no manifest action reaches the change] — every review or review fix
       needs a node proving its claim, then a full re-run. Act on the result: failing node means fix the code, or fix an
       assertion that over-claims. Prove each new node can fail before trusting it. Unit tests do not cover wiring.
 - [ ] **20. Commit** — atomic commit(s) following Conventional Commits.

@@ -29,6 +29,15 @@ test('post-review dry run renders the exact reviewed commit', (t) => {
     }),
   );
   const commitId = 'c43949daf0c2a35f4a293f7078b5a00d3afa036b';
+  // Pin every farm path: a worker pane exports the operator's, and a layout-2
+  // FARMSLOT_HOME would take the pool from itself instead of FARMSLOT_POOL_DIR.
+  const env = {
+    ...process.env,
+    FARMSLOT_HOME: path.join(fixtureRoot, 'home'),
+    FARMSLOT_POOL_DIR: poolDir,
+    FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
+    FARMSLOT_CLI: path.join(root, 'packages/cli/bin/farmslot.mjs'),
+  };
 
   const args = [
     path.join(root, 'scripts/post-review.sh'),
@@ -51,7 +60,7 @@ test('post-review dry run renders the exact reviewed commit', (t) => {
   ];
   const options = {
     cwd: root,
-    env: { ...process.env, FARMSLOT_POOL_DIR: poolDir },
+    env,
     encoding: 'utf8',
   };
   const output = execFileSync('bash', args, options);
@@ -64,7 +73,7 @@ test('post-review dry run renders the exact reviewed commit', (t) => {
   const metricsOutput = execFileSync(
     'bash',
     [...args.slice(0, -1), '--include-internal-metrics', '--dry-run'],
-    { cwd: root, env: { ...process.env, FARMSLOT_POOL_DIR: poolDir }, encoding: 'utf8' },
+    { cwd: root, env, encoding: 'utf8' },
   );
   assert.match(metricsOutput, /\| \*\*Runner\*\* \| unknown \/ unknown \|/);
   assert.match(metricsOutput, /\| \*\*Cost\*\* \| N\/A \(N\/A tokens\) \|/);
