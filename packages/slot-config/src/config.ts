@@ -180,6 +180,16 @@ export function normalizeRawReviewWorkspaces(
   return { maxConcurrent: config.max_concurrent };
 }
 
+/**
+ * A slot's effective mode. `enabled: false` always disables it, whatever `mode` says: a pool that
+ * still carries `mode: "dispatch"` beside `enabled: false` (a hold written by flipping only the
+ * flag) must not stay dispatchable. Otherwise an explicit mode wins, then `dispatch`.
+ */
+export function effectiveSlotMode(slot: Pick<RawPoolSlot, 'mode' | 'enabled'>): PoolSlotMode {
+  if (slot.enabled === false) return 'disabled';
+  return slot.mode || 'dispatch';
+}
+
 export interface RawPoolSlot {
   id: string;
   enabled?: boolean;
@@ -833,15 +843,7 @@ export async function loadSlotVars(slotId: string, pools?: SlotPools): Promise<S
   const repo = slot.repo;
   const session = slot.session;
 
-  // Slot mode: explicit mode > enabled flag > dispatch
-  let slotMode: PoolSlotMode;
-  if (slot.mode) {
-    slotMode = slot.mode as PoolSlotMode;
-  } else if (slot.enabled === false) {
-    slotMode = 'disabled';
-  } else {
-    slotMode = 'dispatch';
-  }
+  const slotMode = effectiveSlotMode(slot);
 
   const slotEnabled = slotMode !== 'disabled';
   const sshTarget = `${sshUser}@${host}`;

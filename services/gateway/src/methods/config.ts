@@ -32,6 +32,7 @@ import type {
   TemplatePreview,
 } from '@farmslot/protocol';
 import {
+  effectiveSlotMode,
   projectPackRoot,
   projectsDirectory,
   readSourceRuntimeSettings,
@@ -460,8 +461,8 @@ export async function configPoolUpdate(
   for (const slot of parsed.slots as RawPoolSlot[]) {
     const prev = prevSlots.get(slot.id);
     if (!prev) continue;
-    const newMode = slot.mode ?? (slot.enabled === false ? 'disabled' : 'dispatch');
-    const newEnabled = slot.enabled !== false;
+    const newMode = effectiveSlotMode(slot);
+    const newEnabled = newMode !== 'disabled';
     // Infer previous mode from fleet status lifecycle/enabled
     const prevMode = !prev.enabled
       ? 'disabled'

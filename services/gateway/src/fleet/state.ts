@@ -33,7 +33,7 @@ import {
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { readCachedPoolFile } from '@farmslot/protocol/node/slot-by-repo';
-import { poolDirectory, projectsDirectory } from '@farmslot/slot-config';
+import { effectiveSlotMode, poolDirectory, projectsDirectory } from '@farmslot/slot-config';
 
 import {
   declaredProjectNames,
@@ -1138,7 +1138,7 @@ export async function loadPoolConfigs(directory = poolDirectory()): Promise<Pool
           slots: (raw.slots || []).map((s: any) => ({
             id: s.id,
             enabled: s.enabled,
-            mode: s.mode || 'dispatch',
+            mode: effectiveSlotMode(s),
             project: s.project || raw.project,
             repo: s.repo,
             session: s.session,
