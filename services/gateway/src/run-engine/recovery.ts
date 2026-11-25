@@ -28,6 +28,8 @@ import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
 import {
   currentReleaseGatewayInstance,
   RUN_CLEANUP_TOKEN_PREFIX,
+  type RunCleanupIntent,
+  runCleanupTokenIntent,
   SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASE_GATEWAY_INSTANCE,
@@ -107,6 +109,25 @@ interface ReviewArtifactsSnapshot {
   hasReview: boolean;
   reviewMd: string;
   lineComments: Array<{ path: string; line: number; body: string; severity: string }>;
+}
+
+/**
+ * What resuming an interrupted cancel did. `busy`: a transition or teardown holds it now, so the
+ * fence waits for a later pass. `refused`: the run or the fence moved. `not-finished`: the finish
+ * settled the cleanup hold the live cancel settles on failure, which the occupied-slot retry then
+ * retries (a replay intent loses its replay hold there, as the live cancel's would).
+ */
+export type InterruptedCancelResult =
+  | { kind: 'finished' }
+  | { kind: 'busy' | 'refused' | 'not-finished'; reason: string };
+
+/** A cancel's run-cleanup fence a previous gateway left, as reconcile observed it. */
+export interface InterruptedCancelFence {
+  intent: RunCleanupIntent;
+  token: string;
+  instance: string;
+  releasingSince: unknown;
+  slotEpoch: number;
 }
 
 export interface RunRecoveryCollaborators {
@@ -222,6 +243,20 @@ export interface RunRecoveryCollaborators {
    * there, else null. Refuses when the run is no longer bound to that slot.
    */
   releaseFenceBlocker?: (run: Run, slotId: string) => Promise<string | null>;
+  /**
+   * Ownership check for a cancel's replay fence a restart interrupted. A replay hold keeps the
+   * checkout and its survivors, as the cancel itself did, so it needs no quiescence census.
+   */
+  cancelledReplayBlocker?: (run: Run, slotId: string) => Promise<string | null>;
+  /**
+   * Finish a cancel's slot cleanup that a gateway restart interrupted, while the row still holds
+   * exactly the fence observed here.
+   */
+  resumeInterruptedCancel?: (
+    run: Run,
+    slotId: string,
+    fence: InterruptedCancelFence,
+  ) => Promise<InterruptedCancelResult>;
   /** Settles when the node connects, or rejects when its reconnect wait runs out. */
   waitForExecutionNode?: (machine: string) => Promise<void>;
   /** Clear a run error that only settled native workers carry, from recorded state. */
@@ -1469,6 +1504,11 @@ export function startOrphanReconciler(deps: RunRecoveryCollaborators): () => voi
  */
 export const STALE_RELEASE_RECLAIM_MS = 30 * 60 * 1000;
 
+/** Named on a cancelled run while its interrupted cleanup waits for the slot's node. */
+const CANCEL_NODE_WAIT_NOTE = 'Cancel cleanup interrupted by a gateway restart waits for node ';
+const escapedNodeWaitNote = CANCEL_NODE_WAIT_NOTE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const CANCEL_NODE_WAIT = new RegExp(`(?:^|; )${escapedNodeWaitNote}[^;]*$`);
+
 /**
  * How long a releasing fence has been standing, or null when it carries no
  * usable stamp.
@@ -1520,6 +1560,8 @@ type OrphanRecoveryCollaborators = Pick<
   | 'resumeInterruptedRecovery'
   | 'absentExecutionNode'
   | 'releaseFenceBlocker'
+  | 'cancelledReplayBlocker'
+  | 'resumeInterruptedCancel'
 >;
 
 export function reconcileOrphanedSlots(deps: OrphanRecoveryCollaborators): Promise<void> {
@@ -1543,7 +1585,20 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
   // this pass to retry the previous run's cleanup, so they must not stop it. Slot teardown
   // ignores them by the same rule (`findOtherActiveRunOnSlot`).
   const heldOnlyForPendingPins = async (slot: FleetSlotSnapshot) => {
-    if (slot.lifecycle !== 'held' || slot.phase !== 'occupied') return false;
+    const heldForCleanup = slot.lifecycle === 'held' && slot.phase === 'occupied';
+    // A run cleanup a previous gateway fenced: a pin waiting for the slot must not stop it either.
+    const fenceInstance =
+      slot.phase === SLOT_PHASE_RELEASING
+        ? await deps.readSlotField(slot.slot, SLOT_RELEASE_GATEWAY_INSTANCE)
+        : undefined;
+    const interruptedRunCleanup =
+      typeof fenceInstance === 'string' &&
+      fenceInstance !== '' &&
+      fenceInstance !== currentReleaseGatewayInstance() &&
+      String((await deps.readSlotField(slot.slot, 'cleanup_release_token')) ?? '').startsWith(
+        RUN_CLEANUP_TOKEN_PREFIX,
+      );
+    if (!heldForCleanup && !interruptedRunCleanup) return false;
     const handoff = await deps.readSlotField(slot.slot, 'handoff_run_id');
     const row = { current_run_id: slot.currentRunId ?? null, handoff_run_id: handoff ?? null };
     return !active.some(
@@ -1631,18 +1686,106 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         );
         continue;
       }
-      // A done or failed run's own cleanup fence (fenceRunSlotCleanup's run-cleanup token)
-      // that a previous gateway raised has no owner left. Once the read-only census finds
-      // nothing still live in the checkout, reopen it as the hold that cleanup settles on
-      // failure and let the occupied-slot retry redo the same terminal cleanup. A cancelled
-      // owner, a release retry's token, a native owner and an expired fence keep the wait
-      // and the backstop: their intent or their quiescence is not provable here.
       const instance = await deps.readSlotField(slot.slot, SLOT_RELEASE_GATEWAY_INSTANCE);
       const token = await deps.readSlotField(slot.slot, 'cleanup_release_token');
       const ownerId =
         (await deps.readSlotField(slot.slot, 'current_run_id')) ??
         (await deps.readSlotField(slot.slot, 'cleanup_run_id'));
       const owner = typeof ownerId === 'string' ? deps.getRun(ownerId) : undefined;
+      // A cancel's own fence names what it settles on, so a restarted gateway can finish it
+      // instead of leaving the slot to an operator: the replay hold, or a released slot.
+      const cancelIntent = runCleanupTokenIntent(token);
+      if (
+        cancelIntent &&
+        deps.resumeInterruptedCancel &&
+        typeof token === 'string' &&
+        typeof instance === 'string' &&
+        instance &&
+        instance !== currentReleaseGatewayInstance() &&
+        owner &&
+        owner.status === 'cancelled' &&
+        owner.slotId === slot.slot &&
+        owner.transport !== 'native' &&
+        !isCompletionPrerequisiteFailure(owner) &&
+        // The replay hold is written for the slot's owner: a cleanup-only row would lose it.
+        (cancelIntent === 'release' ||
+          (await deps.readSlotField(slot.slot, 'current_run_id')) === owner.id) &&
+        (await deps.readSlotField(slot.slot, SLOT_CLEANUP_STOP_UNCONFIRMED)) !== true &&
+        !(await deps.readSlotField(slot.slot, 'handoff_run_id')) &&
+        !(await deps.readSlotField(slot.slot, 'workspace_recovery'))
+      ) {
+        // Until its node is back nothing can be checked, and expiring into the manual hold
+        // would undo the point of carrying the intent: wait for the reconnect pass, and say so
+        // on the run, since a node that never returns leaves the slot to an operator.
+        // The note sits after any reason the cancel recorded (its survivors), and goes as soon as
+        // the node is back: it means exactly that the node is absent.
+        const noteWait = (node: string | null) => {
+          const current = deps.getRun(owner.id)?.slotTeardownSkipped;
+          const kept = current?.replace(CANCEL_NODE_WAIT, '') || undefined;
+          const next = node
+            ? [kept, `${CANCEL_NODE_WAIT_NOTE}${node}`].filter(Boolean).join('; ')
+            : kept;
+          if (next === current) return;
+          deps.updateRun(owner.id, { slotTeardownSkipped: next });
+          deps.broadcast(Events.RUN_UPDATED, { run: deps.getRun(owner.id) ?? owner });
+        };
+        const absentNode = await deps.absentExecutionNode?.(slot.slot);
+        if (absentNode) {
+          noteWait(absentNode);
+          console.log(`[run-engine] reconcile: ${slot.slot} ${CANCEL_NODE_WAIT_NOTE}${absentNode}`);
+          continue;
+        }
+        noteWait(null);
+        const gate =
+          cancelIntent === 'release' ? deps.releaseFenceBlocker : deps.cancelledReplayBlocker;
+        const blocker = gate
+          ? await gate(owner, slot.slot).catch(
+              (error: unknown) =>
+                `interrupted cancel check failed: ${error instanceof Error ? error.message : String(error)}`,
+            )
+          : 'no check is available for this intent';
+        const outcome: InterruptedCancelResult | { kind: 'blocked'; reason: string } = blocker
+          ? { kind: 'blocked', reason: blocker }
+          : // One slot's failure must not stop the pass for the slots after it.
+            await deps
+              .resumeInterruptedCancel(owner, slot.slot, {
+                intent: cancelIntent,
+                token,
+                instance,
+                releasingSince: observedSince,
+                slotEpoch: slot.slotEpoch ?? 0,
+              })
+              .catch((error: unknown) => ({
+                kind: 'not-finished' as const,
+                reason: error instanceof Error ? error.message : String(error),
+              }));
+        console.log(
+          outcome.kind === 'finished'
+            ? `[run-engine] reconcile: ${slot.slot} finished the cancel a gateway restart interrupted (${cancelIntent})`
+            : `[run-engine] reconcile: ${slot.slot} interrupted cancel ${outcome.kind}: ${outcome.reason}`,
+        );
+        // Still fenced past the bound: the backstop below holds it for an operator, as before.
+        // Its write needs the fence it observed, so a finish that settled the slot is left alone.
+        // A transition or teardown busy right now is no verdict: wait for the next pass.
+        if (
+          outcome.kind === 'finished' ||
+          outcome.kind === 'busy' ||
+          stalledFor < STALE_RELEASE_RECLAIM_MS
+        )
+          continue;
+      }
+      // A done or failed run's own cleanup fence (fenceRunSlotCleanup's run-cleanup token)
+      // that a previous gateway raised has no owner left. Once the read-only census finds
+      // nothing still live in the checkout, reopen it as the hold that cleanup settles on
+      // failure and let the occupied-slot retry redo the same terminal cleanup. A cancel's
+      // fence with an intent is finished above instead. A release retry's token, a native
+      // owner and an expired fence keep the wait and the backstop: their quiescence is not
+      // provable here.
+      const cancelledCleanupHold =
+        owner?.status === 'cancelled' &&
+        !cancelIntent &&
+        !(await deps.readSlotField(slot.slot, 'current_run_id')) &&
+        (await deps.readSlotField(slot.slot, 'cleanup_run_id')) === owner.id;
       if (
         stalledFor < STALE_RELEASE_RECLAIM_MS &&
         deps.releaseFenceBlocker &&
@@ -1653,7 +1796,8 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         token.startsWith(RUN_CLEANUP_TOKEN_PREFIX) &&
         owner &&
         owner.slotId === slot.slot &&
-        (owner.status === 'done' || owner.status === 'failed') &&
+        // A cancelled run's own cleanup hold (no longer the slot owner) retries like a finished one.
+        (owner.status === 'done' || owner.status === 'failed' || cancelledCleanupHold) &&
         // The occupied-slot retry refuses these; reopening them would only relabel the hold.
         !isCompletionPrerequisiteFailure(owner) &&
         owner.transport !== 'native'

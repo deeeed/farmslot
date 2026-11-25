@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -49,5 +50,25 @@ test('role-template mark guard is not vacuous — farmslot-farm worker templates
 for (const { rel, abs } of templates) {
   test(`${rel}: role templates mark the selected task`, () => {
     assertRoleTemplateUsesTaskDirMark(abs);
+  });
+}
+
+// A step a template tells the worker to skip must carry [OPTIONAL:], or `mark N --skip`
+// is refused and the worker blocks (d2174be1). Pin the rows each conditional rule names.
+const checklistOrder = createRequire(import.meta.url)(
+  path.join(repoRoot, 'packages/agent-runtime/scripts/checklist-order.cjs'),
+);
+for (const [rel, steps] of [
+  ['projects/farmslot-farm/templates/worker/dev.md', [6, 7, 9, 11, 12, 13, 14, 15, 19]],
+  ['projects/farmslot-farm/templates/worker/fix-bug.md', [9, 10, 18]],
+  ['projects/farmslot-farm/templates/worker/review-pr.md', [10, 11, 12, 13, 14, 15, 16, 18, 19]],
+  ['templates/worker/ci-fix.md', [8]],
+]) {
+  test(`${rel}: conditional steps are declared optional`, () => {
+    const markdown = readFileSync(path.join(repoRoot, rel), 'utf8');
+    assert.deepEqual(
+      checklistOrder.declarations(markdown, 'CHECKLIST.md').map((step) => step.stepNumber),
+      steps,
+    );
   });
 }

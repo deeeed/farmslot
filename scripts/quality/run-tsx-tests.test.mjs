@@ -334,6 +334,7 @@ const GATEWAY_SERIAL_INVENTORY = [
   'src/roadmap/store.test.ts', //                     real dirs under repo projects/
   'src/run-completion/artifact-mirror.test.ts', //    real JSON under repo pool/
   'src/run-engine/gate-refresh-review-policy.test.ts', // isolation pragma reviewed with its fixture
+  'src/run-engine/interrupted-cancel.test.ts', //       real status-file backstop fixture
   'src/run-engine/interrupted-release.test.ts', //      real status-file backstop fixture
   'src/run-engine/monitor-transport-abort.test.ts', // isolation pragma reviewed with its fixture
   'src/run-engine/publish-package-refresh.test.ts', // real JSON under repo pool/
@@ -341,6 +342,7 @@ const GATEWAY_SERIAL_INVENTORY = [
   'src/run-engine/run-monitor-operator.test.ts', // isolation pragma reviewed with its fixture
   'src/run-engine/runner-resume-text.test.ts', //      writes a pool row for the real sender
   'src/run-engine/runner-unavailable-continue.test.ts', // real project + pool fixtures per case
+  'src/run-lifecycle/interrupted-cancel-resume.test.ts', // real status file + run store
   'src/security/principal-core.test.ts', //           fixed credential-store fixtures
   'src/tasks/writer-golden.test.ts', //               shared .sandbox task directories
   'src/tasks/writer-split.test.ts', //                shared .sandbox task directories
