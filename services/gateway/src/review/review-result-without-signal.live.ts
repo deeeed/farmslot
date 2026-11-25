@@ -1,6 +1,6 @@
 // Live proof (961d55d3): a native reviewer that writes a valid ISSUES result and ends its
 // completion re-ask without the terminal mark has that result taken as the verdict; a PASS
-// written the same way is not. Real gateway review path, run store and local native host; the
+// written the same way is not. A reviewer that marks only after its turn ends is waited for. Real gateway review path, run store and local native host; the
 // Codex app-server is scripted, so no model runs.
 // Run from services/gateway: yarn test:review-result-without-signal-live
 import assert from 'node:assert/strict';
@@ -222,6 +222,18 @@ test(
     assert.equal(passRun.agentContexts?.find((entry) => entry.role === 'review')?.status, 'failed');
     const passBudget = await runReviewRoundBudget(passRun);
     assert.deepEqual([passBudget.used, passBudget.noVerdict], [0, 1], 'settled no-verdict');
+
+    // A reviewer whose turn ends before it writes its result and marks is waited for, not
+    // re-asked, so a PASS marked after the turn is accepted.
+    const before = (await codex.prompts()).length;
+    await codex.scenario({ toolMs: 50, verdict: 'pass', lateMarkMs: 3_000 });
+    const late = await review('LATE-SIGNAL-PASS');
+    assert.ok(
+      'result' in late,
+      `the late-marked PASS was not accepted: ${String('error' in late && late.error)}`,
+    );
+    assert.equal(late.result.verdict, 'pass');
+    assert.equal((await codex.prompts()).length - before, 1, 'one review turn and no re-ask');
 
     console.log(`[proof] scripted turns:\n${await readFile(codex.turnsLog, 'utf8')}`);
   },

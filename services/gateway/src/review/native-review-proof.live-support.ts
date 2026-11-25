@@ -1,6 +1,7 @@
 // A scripted Codex app-server for review proofs over the real gateway review path and native
 // host. It follows the reviewer prompt mechanically: one shell tool call, the checklist marks,
-// then the result files (withholdMark: without the closing marks).
+// then the result files (withholdMark: without the closing marks; lateMarkMs: all of it after the
+// turn has ended).
 // No model is called. Each turn's prompt, with the task file it names,
 // is kept as prompt-<n>.txt for the proof to read.
 import { chmod, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -13,6 +14,8 @@ export interface ScriptedReviewScenario {
   verdict?: 'pass' | 'issues';
   /** Write the result files but end the turn without the closing marks. */
   withholdMark?: boolean;
+  /** End the turn first, then run the marks and write the result files this many ms later. */
+  lateMarkMs?: number;
 }
 
 const script = `#!/usr/bin/env node
@@ -51,7 +54,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   setTimeout(() => {
     send({ method: 'item/completed', params: { threadId: thread, turnId: turn, item: { ...item, status: 'completed', aggregatedOutput: '' } } });
     // A completion re-ask names no fresh checklist command; it only ends the turn.
-    if (mark) {
+    const finish = () => {
       const verdict = scenario.verdict || 'pass';
       const issues = verdict === 'pass' ? [] : [{ file: 'message.txt', line: 1, description: 'scripted finding', severity: 'major' }];
       execSync(mark + ' start', { stdio: 'ignore' });
@@ -62,9 +65,12 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
         execSync(mark + ' 2', { stdio: 'ignore' });
         execSync(mark + ' complete', { stdio: 'ignore' });
       }
-    }
-    log({ completed: true, marked: Boolean(mark) && !scenario.withholdMark });
+    };
+    if (mark && scenario.lateMarkMs === undefined) finish();
+    log({ completed: true, marked: Boolean(mark) && !scenario.withholdMark && scenario.lateMarkMs === undefined });
     send({ method: 'turn/completed', params: { threadId: thread, turn: { id: turn, status: 'completed' } } });
+    if (mark && scenario.lateMarkMs !== undefined)
+      setTimeout(() => { finish(); log({ lateMarked: true }); }, scenario.lateMarkMs);
   }, scenario.toolMs);
 });
 `;
