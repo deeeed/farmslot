@@ -51,31 +51,46 @@ mock.module('../methods/run/replay-step.js', {
     },
   },
 });
-const { rearmPublicationReviewRecoveryForRun, startRun, suspendPublicationReviewRecoveryForRun } =
-  await import('./orchestrator.js');
+const {
+  isRunEngineDriven,
+  rearmPublicationReviewRecoveryForRun,
+  startRun,
+  suspendPublicationReviewRecoveryForRun,
+} = await import('./orchestrator.js');
 const { createRun, deleteRun, getRun, updateRun } = await import('../runs/store.js');
 const { createEngineDecision, resolveEngineDecision } = await import('./engine-decisions.js');
 
-/** A run whose HUMAN_GATE is still preparing its decision on a slot. */
+const created: string[] = [];
+/**
+ * A run whose HUMAN_GATE is still preparing its decision, on a slot of its own. No earlier test's
+ * engine may still drive a run: one left running finishes on its slot while the next test watches
+ * its gate (gateway-7 on #2496 saw the retry take the replay path that way).
+ */
 function preparingGate(): string {
-  const created = createRun({
+  assert.deepEqual(
+    created.filter((id) => isRunEngineDriven(id)),
+    [],
+    "an earlier test's engine still drives its run",
+  );
+  const run = createRun({
     flowType: 'dev',
     project: 'farmslot-farm',
     ticketOrPr: `PROJ-${Date.now()}${replays.length}`,
-    slotId: 'watcher-slot',
+    slotId: `watcher-slot-${created.length + 1}`,
   });
-  updateRun(created.id, {
+  created.push(run.id);
+  updateRun(run.id, {
     status: 'human-gating',
-    steps: created.steps.map((step) =>
+    steps: run.steps.map((step) =>
       step.name === 'human-gate'
         ? { ...step, status: 'running', detail: 'Preparing operator decision' }
         : step.name === 'finalize' || step.name === 'ci-watch'
           ? step
           : { ...step, status: 'done' },
     ),
-    engineState: { ...created.engineState, generation: 3 },
+    engineState: { ...run.engineState, generation: 3 },
   });
-  return created.id;
+  return run.id;
 }
 
 // F311: recovery's replay was refused (the node was still away) and re-armed this retry. An
@@ -118,15 +133,20 @@ for (const answered of ['before', 'after'] as const) {
   test(`a pending gate retry stands down while the operator's answer drives the gate (${answered} arming)`, async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     const runId = preparingGate();
+    let engine: Promise<void> | undefined;
     t.after(async () => {
       releaseGate();
+      // Its loop finishes here, before the next test starts.
+      await engine;
       suspendPublicationReviewRecoveryForRun(runId);
       updateRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
       await deleteRun(runId);
     });
     const before = replays.length;
     const entered = gateEntered;
-    const answer = () => void startRun(runId);
+    const answer = () => {
+      engine = startRun(runId);
+    };
     if (answered === 'before') answer();
     assert.ok(rearmPublicationReviewRecoveryForRun(runId, { replayPending: true }));
     if (answered === 'after') answer();
@@ -150,16 +170,18 @@ test('a gate replay still runs for a loop parked on its open gate decision', asy
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const runId = preparingGate();
   parkOnGateDecision = true;
+  let engine: Promise<void> | undefined;
   t.after(async () => {
     parkOnGateDecision = false;
     for (const decision of getRun(runId)?.decisions ?? [])
       resolveEngineDecision(decision.id, 'approve');
+    await engine;
     suspendPublicationReviewRecoveryForRun(runId);
     updateRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
     await deleteRun(runId);
   });
   const before = replays.length;
-  void startRun(runId);
+  engine = startRun(runId);
   const parked = performance.now() + 2_000;
   while (
     !getRun(runId)?.decisions.some((decision) => !decision.resolvedAt) &&
