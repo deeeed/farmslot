@@ -1,11 +1,19 @@
+import { isTerminalRunStatus, type SlotStatus } from '@farmslot/protocol';
+
 import { withCleanupSignal } from '../core/cleanup-scope.js';
-import { loadProjectVars, loadSlotVars } from '../core/config.js';
+import { loadProjectVars, loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { activePrepareSlots } from '../core/native-worker-exclusion.js';
 import { reportSlotResourceLifecycle } from '../core/resource-lifecycle-log.js';
 import { slotRealpath } from '../core/slot-io.js';
-import { markSlotStatusIf, readSlotRow, sameSlotField } from '../core/state.js';
+import {
+  markSlotStatusIf,
+  readSlotRow,
+  sameSlotField,
+  slotReleasingFenceFields,
+  updateSlotStatusIf,
+} from '../core/state.js';
 import {
   resolveTmuxSession,
   shellQuote,
@@ -47,6 +55,7 @@ import {
   isWithinPath,
   parseLsofNames,
   parseProcessCensus,
+  type ProcessCensusRow,
 } from './process-census.js';
 import { reapIdentifiedSlotProcesses } from './process-reap.js';
 import { tryWithRunTransition } from './transition-coordinator.js';
@@ -157,6 +166,84 @@ interface OwnedListener extends IdleDevServerPointer {
 }
 const ownedListeners = new Map<string, OwnedListener>();
 
+/** Whether a capability lease keeps `resourceId`, or any resource of the slot when omitted. */
+async function capabilityRetains(slotId: string, resourceId?: string): Promise<boolean> {
+  const status = await getRuntimeCapabilityRegistry().settledStatus(slotId);
+  return status.leases.some((lease) => {
+    if (lease.state === 'released' && !lease.keepWarmUntil && !lease.providerCleanupDeferred)
+      return false;
+    if (resourceId === undefined) return true;
+    const entry = status.catalog.find((entry) => entry.id === lease.capabilityId);
+    if (!entry) return true; // A removed provider with surviving ownership is still protected.
+    if (entry.affectedResources)
+      return entry.affectedResources.some((claim) => claim.resourceId === resourceId);
+    const actions = Object.values(entry.actions);
+    // Legacy slot actions have no declared resource mapping; guessing could stop another owner.
+    return actions.some(
+      (action) =>
+        action.kind === 'slot-action' ||
+        (action.kind === 'resource' && action.resourceId === resourceId),
+    );
+  });
+}
+
+async function slotProcessCensus(slotId: string): Promise<ProcessCensusRow[]> {
+  const result = await execOnSlot(
+    await loadSlotVars(slotId),
+    'ps -axo pid=,ppid=,pgid=,lstart=,comm=',
+    { cwd: '/', timeout: 5_000 },
+  );
+  if (result.exitCode !== 0) throw new Error('Idle dev server process census unavailable');
+  return parseProcessCensus(result.stdout);
+}
+
+/** A tmux pane in the slot's session or checkout that may hold a worker no run records. */
+async function unrecordedWorkerPane(
+  slotId: string,
+  vars: SlotVars,
+  rows: ProcessCensusRow[],
+  owner: unknown,
+): Promise<string | null> {
+  const panes = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `list-panes -a -F '${tmuxFieldFormat(
+        '#{session_name}',
+        '#{pane_id}',
+        '#{pane_pid}',
+        '#{pane_current_path}',
+        '#{session_path}',
+      )}'`,
+    ),
+    { cwd: '/', timeout: 5_000 },
+  );
+  const noTmuxServer =
+    panes.exitCode === 1 && !panes.stdout.trim() && !rows.some((row) => isTmuxProcess(row.command));
+  if (panes.exitCode !== 0 && !noTmuxServer)
+    throw new Error('Idle dev server worker census unavailable');
+  const session = noTmuxServer ? null : await resolveTmuxSession(slotId, vars, { strict: true });
+  const repo = (await slotRealpath(vars, vars.remoteRepo)).replace(/\/$/, '');
+  const recorded = new Set(
+    slotWorkerRuns(getAllRuns(), slotId, owner).flatMap((run) =>
+      (run.agentContexts ?? []).flatMap((context) =>
+        context.target ? [contextPaneId(context.target)] : [],
+      ),
+    ),
+  );
+  for (const line of panes.stdout.split('\n')) {
+    const [paneSession, paneId, panePid, cwd, origin] = splitTmuxFields(line, 5);
+    if (
+      (paneSession === session ||
+        (cwd && isWithinPath(repo, cwd)) ||
+        (origin && isWithinPath(repo, origin))) &&
+      !recorded.has(paneId) &&
+      (await probeRunnerDescendantPid(vars, panePid)).state !== 'absent'
+    )
+      return `pane ${paneId} may hold an unrecorded worker`;
+  }
+  return null;
+}
+
 const idleDevServers = new IdleDevServerReaper({
   now: () => Date.now(),
   row: readSlotRow,
@@ -164,24 +251,7 @@ const idleDevServers = new IdleDevServerReaper({
   observed: resourceObservationLosses,
   progress: async (run) => (await readRunProgress(run)).kind,
   preparing: (slotId) => activePrepareSlots.has(slotId) && !stoppingSlots.has(slotId),
-  retained: async (slotId, resourceId) => {
-    const status = await getRuntimeCapabilityRegistry().settledStatus(slotId);
-    return status.leases.some((lease) => {
-      if (lease.state === 'released' && !lease.keepWarmUntil && !lease.providerCleanupDeferred)
-        return false;
-      const entry = status.catalog.find((entry) => entry.id === lease.capabilityId);
-      if (!entry) return true; // A removed provider with surviving ownership is still protected.
-      if (entry.affectedResources)
-        return entry.affectedResources.some((claim) => claim.resourceId === resourceId);
-      const actions = Object.values(entry.actions);
-      // Legacy slot actions have no declared resource mapping; guessing could stop another owner.
-      return actions.some(
-        (action) =>
-          action.kind === 'slot-action' ||
-          (action.kind === 'resource' && action.resourceId === resourceId),
-      );
-    });
-  },
+  retained: capabilityRetains,
   resources: resolveSlotResources,
   decide: logDecision,
   explain: (slotId, resourceId) => {
@@ -298,15 +368,7 @@ const idleDevServers = new IdleDevServerReaper({
     ownedListeners.set(key, { ...process, epoch });
     return process;
   },
-  census: async (slotId) => {
-    const result = await execOnSlot(
-      await loadSlotVars(slotId),
-      'ps -axo pid=,ppid=,pgid=,lstart=,comm=',
-      { cwd: '/', timeout: 5_000 },
-    );
-    if (result.exitCode !== 0) throw new Error('Idle dev server process census unavailable');
-    return parseProcessCensus(result.stdout);
-  },
+  census: slotProcessCensus,
   write: async (slotId, expected, fields, admit) =>
     (
       await markSlotStatusIf(
@@ -324,46 +386,17 @@ const idleDevServers = new IdleDevServerReaper({
     if (!(await stillOwned()) || activePrepareSlots.has(slotId))
       return 'ownership changed or the slot is preparing';
     const vars = await loadSlotVars(slotId);
-    const panes = await execOnSlot(
-      vars,
-      tmuxShellSnippet(
-        `list-panes -a -F '${tmuxFieldFormat(
-          '#{session_name}',
-          '#{pane_id}',
-          '#{pane_pid}',
-          '#{pane_current_path}',
-          '#{session_path}',
-        )}'`,
-      ),
-      { cwd: '/', timeout: 5_000 },
-    );
-    const noTmuxServer =
-      panes.exitCode === 1 &&
-      !panes.stdout.trim() &&
-      !rows.some((row) => isTmuxProcess(row.command));
-    if (panes.exitCode !== 0 && !noTmuxServer)
-      throw new Error('Idle dev server worker census unavailable');
-    const session = noTmuxServer ? null : await resolveTmuxSession(slotId, vars, { strict: true });
-    const repo = (await slotRealpath(vars, vars.remoteRepo)).replace(/\/$/, '');
     const currentOwner = (await readSlotRow(slotId))?.current_run_id;
-    const recorded = new Set(
-      slotWorkerRuns(getAllRuns(), slotId, currentOwner).flatMap((run) =>
-        (run.agentContexts ?? []).flatMap((context) =>
-          context.target ? [contextPaneId(context.target)] : [],
-        ),
-      ),
+    const pane = await unrecordedWorkerPane(slotId, vars, rows, currentOwner);
+    if (pane) return pane;
+    // Read before any signal: the scope this server ran in, fenced at its stop below.
+    const identityPath = prepareIdentityPath(
+      vars.remoteRepo,
+      await resolvePrepareRuntimeDir(vars.projectName),
     );
-    for (const line of panes.stdout.split('\n')) {
-      const [paneSession, paneId, panePid, cwd, origin] = splitTmuxFields(line, 5);
-      if (
-        (paneSession === session ||
-          (cwd && isWithinPath(repo, cwd)) ||
-          (origin && isWithinPath(repo, origin))) &&
-        !recorded.has(paneId) &&
-        (await probeRunnerDescendantPid(vars, panePid)).state !== 'absent'
-      )
-        return `pane ${paneId} may hold an unrecorded worker`;
-    }
+    const scopeBefore = currentOwner
+      ? undefined
+      : await readRecordedPrepareScope(vars, identityPath);
     if (!(await stillOwned()) || activePrepareSlots.has(slotId))
       return 'ownership changed or the slot is preparing';
     // Synchronous exclusion uses prepare's existing admission guard while signals run.
@@ -394,14 +427,15 @@ const idleDevServers = new IdleDevServerReaper({
         }
       }
       // No run owns the slot, so nothing else ends the preflight scope that kept this server
-      // (its holders, log tail and recipe providers): stop it here, by its recorded identity.
-      if (!currentOwner) {
-        await reapSlotPrepareScope(vars, {
-          identityPath: prepareIdentityPath(
-            vars.remoteRepo,
-            await resolvePrepareRuntimeDir(vars.projectName),
-          ),
-        });
+      // (its holders, log tail and recipe providers). It stops only when the slot is still
+      // quiet, no other dev server is up and no lease holds it, fenced to the scope read above.
+      if (scopeBefore) {
+        const row = await readSlotRow(slotId);
+        const kept = row
+          ? (scopeQuietBlocker(row, slotId, liveRunSlots()) ?? (await devServersBlocker(slotId)))
+          : 'slot row unavailable';
+        if (kept) logDecision(slotId, undefined, `kept prepare scope: ${kept}`);
+        else if (row) await stopPrepareScope(slotId, vars, identityPath, scopeBefore, row, true);
       }
       return true;
     } finally {
@@ -421,75 +455,238 @@ export function forgetIdleDevServers(slotId: string): void {
   idleDevServers.forget(slotId);
 }
 
-/** Why a slot's recorded prepare scope is not idle, or null when no run or prepare holds it. */
-function prepareScopeBlocker(row: Readonly<Record<string, unknown>>, slotId: string) {
-  if (row.current_run_id) return 'slot owned';
+type SlotRow = Readonly<Record<string, unknown>>;
+/** Slot-row field holding when the sweep first saw a run-less prepare scope: survives restarts. */
+const IDLE_SCOPE_FIELD = 'idle_prepare_scope';
+interface IdleScope {
+  scope: string;
+  epoch: unknown;
+  since: number;
+}
+
+function idleScopeOf(row: SlotRow): IdleScope | null {
+  const value = row[IDLE_SCOPE_FIELD];
+  if (!value || typeof value !== 'object') return null;
+  const scope = Reflect.get(value, 'scope');
+  const since = Reflect.get(value, 'since');
+  return typeof scope === 'string' && typeof since === 'number'
+    ? { scope, since, epoch: Reflect.get(value, 'epoch') }
+    : null;
+}
+
+/** Slots any non-terminal run names: built once per pass, not per slot. */
+function liveRunSlots(): Set<string> {
+  return new Set(
+    getAllRuns().flatMap((run) => (run.slotId && !isTerminalRunStatus(run.status) ? [run.slotId] : [])),
+  );
+}
+
+/**
+ * Why a slot's prepare scope is not idle: the slot must be ready, with no owner, cleanup,
+ * handoff, recovery, working agent or live run. The callers hold or check prepare's guard.
+ */
+function scopeQuietBlocker(row: SlotRow, slotId: string, live: Set<string>): string | null {
+  if (row.lifecycle !== 'ready') return `slot ${String(row.lifecycle)}`;
   if (row.phase === 'releasing') return 'slot releasing';
-  if (row.lifecycle === 'manual') return 'manual slot';
-  if (row.handoff_run_id) return 'slot handoff in progress';
-  if (activePrepareSlots.has(slotId)) return 'slot preparing';
-  if (slotWorkerRuns(getAllRuns(), slotId, null).length) return 'slot has a live run';
+  if (row.current_run_id || row.cleanup_run_id || row.handoff_run_id || row.workspace_recovery)
+    return 'slot owned';
+  if (row.agent === 'working') return 'slot agent working';
+  if (live.has(slotId)) return 'slot has a live run';
   return null;
 }
 
-const idleScopes = new Map<string, { scope: string; epoch: unknown; since: number }>();
+/** A dev server not definitely stopped (unknown counts as up), or a lease on the slot. */
+async function devServersBlocker(slotId: string): Promise<string | null> {
+  for (const resource of await resolveSlotResources(slotId))
+    if (resource.definition.type === 'dev-server' && resource.status !== 'stopped')
+      return `dev server ${resource.id} ${resource.status}`;
+  return (await capabilityRetains(slotId)) ? 'retained by a capability lease' : null;
+}
 
 /**
- * A prepare scope on a slot no run owns, whose dev server is gone or was never watched: the
- * dev-server cap never reaches it (mini-mmt-3 kept one for two days). One identity read per
- * idle slot; the scope stops after the dev-server idle window (keep-warm: 2 h), fenced to the
- * scope that was timed.
+ * Stop the slot's recorded prepare scope `scope` under the upkeep fence parked-work retention
+ * uses: prepare's guard plus a releasing mark on the same ready, ownerless epoch, restored after.
+ * A stopped scope also clears `warm`: nothing is left warm. The dev-server stop already holds
+ * the guard (`guardHeld`).
  */
-async function reapIdlePrepareScope(slotId: string): Promise<void> {
-  const row = await readSlotRow(slotId);
-  if (!row || prepareScopeBlocker(row, slotId)) {
-    idleScopes.delete(slotId);
-    return;
+async function stopPrepareScope(
+  slotId: string,
+  vars: SlotVars,
+  identityPath: string,
+  scope: string,
+  row: SlotRow,
+  guardHeld: boolean,
+): Promise<boolean> {
+  if (!guardHeld) {
+    if (activePrepareSlots.has(slotId)) return false;
+    activePrepareSlots.add(slotId);
   }
-  const vars = await loadSlotVars(slotId);
-  const identityPath = prepareIdentityPath(
-    vars.remoteRepo,
-    await resolvePrepareRuntimeDir(vars.projectName),
+  let claimed = false;
+  let stopped = false;
+  const free = (current: SlotRow) =>
+    current.slot_epoch === row.slot_epoch &&
+    !current.current_run_id &&
+    !current.cleanup_run_id &&
+    !current.handoff_run_id &&
+    !current.workspace_recovery;
+  try {
+    const mark = await markSlotStatusIf(
+      slotId,
+      (current) => free(current) && current.lifecycle === 'ready' && current.phase !== 'releasing',
+      slotReleasingFenceFields(),
+    );
+    if (!mark.applied) return false;
+    claimed = true;
+    stopped = await reapSlotPrepareScope(vars, { identityPath, expectedScope: scope });
+    return stopped;
+  } finally {
+    // Free the guard before the slot reads ready again, so a claim right after can prepare.
+    if (!guardHeld) activePrepareSlots.delete(slotId);
+    if (claimed)
+      await updateSlotStatusIf(
+        slotId,
+        (current) => free(current) && current.phase === 'releasing',
+        {
+          lifecycle: row.lifecycle,
+          phase: row.phase,
+          releasing_since: null,
+          [IDLE_SCOPE_FIELD]: null,
+          ...(stopped ? { warm: false } : {}),
+        },
+      );
+  }
+}
+
+interface ScopeCandidate {
+  slotId: string;
+  row: SlotRow;
+  vars: SlotVars;
+  identityPath: string;
+}
+
+/** Each slot's recorded scope token, one command per machine. */
+async function recordedScopes(group: ScopeCandidate[]): Promise<Map<string, string>> {
+  const paths = group.map((entry) => shellQuote(entry.identityPath)).join(' ');
+  const result = await execOnSlot(
+    group[0]!.vars,
+    `for f in ${paths}; do l=$(head -n 1 "$f" 2>/dev/null); printf '%s\t%s\n' "$f" "$l"; done`,
+    { cwd: '/', timeout: 10_000 },
   );
-  const scope = await readRecordedPrepareScope(vars, identityPath);
-  const timed = idleScopes.get(slotId);
-  if (!scope) {
-    idleScopes.delete(slotId);
-    return;
+  if (result.exitCode !== 0) throw new Error(`identity read failed (exit ${result.exitCode})`);
+  const scopes = new Map<string, string>();
+  for (const line of result.stdout.split('\n')) {
+    // `<path>\t<pgid>\t<sentinel pid>\t<scope>`, as the prepare wrapper records it.
+    const [file, , , scope] = line.split('\t');
+    if (file && scope) scopes.set(file, scope);
   }
-  if (!timed || timed.scope !== scope || timed.epoch !== row.slot_epoch) {
-    idleScopes.set(slotId, { scope, epoch: row.slot_epoch, since: Date.now() });
+  return scopes;
+}
+
+async function timeScope(entry: ScopeCandidate, scope: string | undefined): Promise<void> {
+  const { slotId, row, vars, identityPath } = entry;
+  const saved = idleScopeOf(row);
+  const sameEpoch = (current: SlotRow) => current.slot_epoch === row.slot_epoch;
+  if (!scope) {
+    if (saved) await updateSlotStatusIf(slotId, sameEpoch, { [IDLE_SCOPE_FIELD]: null });
     return;
   }
   const limit = row.warm === true ? WARM_DEVSERVER_IDLE_LIMIT_MS : DEVSERVER_IDLE_LIMIT_MS;
-  if (Date.now() - timed.since < limit) return;
-  const current = await readSlotRow(slotId);
-  const late = current
-    ? (prepareScopeBlocker(current, slotId) ??
-      (current.slot_epoch !== timed.epoch ? 'slot epoch changed' : null))
-    : 'slot row unavailable';
-  if (late) {
-    idleScopes.delete(slotId);
-    logDecision(slotId, undefined, `skip scope stop: ${late}`);
+  const label = `prepare scope ${scope.slice(0, 8)}`;
+  if (!saved || saved.scope !== scope || saved.epoch !== row.slot_epoch) {
+    const since = Date.now();
+    await updateSlotStatusIf(slotId, (current) => sameEpoch(current) && !current.current_run_id, {
+      [IDLE_SCOPE_FIELD]: { scope, epoch: row.slot_epoch, since },
+    });
+    logDecision(
+      slotId,
+      undefined,
+      `idle: ${label} stops after ${new Date(since + limit).toISOString()}${limit === WARM_DEVSERVER_IDLE_LIMIT_MS ? ' (keep-warm)' : ''}`,
+    );
     return;
   }
-  // Same exclusion as the dev-server stop: a prepare cannot start while the scope is signalled.
-  activePrepareSlots.add(slotId);
-  try {
-    await reapSlotPrepareScope(vars, { identityPath, expectedScope: scope });
-  } finally {
-    activePrepareSlots.delete(slotId);
+  if (Date.now() - saved.since < limit) return;
+  const pane = await unrecordedWorkerPane(slotId, vars, await slotProcessCensus(slotId), null);
+  const current = await readSlotRow(slotId);
+  const late =
+    pane ??
+    (!current || !sameEpoch(current)
+      ? 'slot epoch changed'
+      : (scopeQuietBlocker(current, slotId, liveRunSlots()) ?? (await devServersBlocker(slotId))));
+  if (late || !current) {
+    logDecision(slotId, undefined, `skip ${label} stop: ${late}`);
+    return;
   }
-  idleScopes.delete(slotId);
-  logDecision(slotId, undefined, 'stopped an idle prepare scope with no run');
+  const stopped = await stopPrepareScope(slotId, vars, identityPath, scope, current, false);
+  logDecision(
+    slotId,
+    undefined,
+    stopped ? `stopped idle ${label} with no run` : `${label}: nothing left to stop`,
+  );
+}
+
+/**
+ * Once per idle sweep, for slots with no live resource: a prepare scope that outlived its dev
+ * server on a quiet, ownerless slot (mini-mmt-3 kept one for two days) stops after the dev-server
+ * idle window (2 h on a keep-warm slot), timed from the slot row. Local checks first; then one
+ * identity read per machine. Ghost, misconfigured and offline slots are skipped.
+ */
+export async function reapIdlePrepareScopes(
+  slots: ReadonlyArray<Pick<SlotStatus, 'slot' | 'machine' | 'missingFromPool' | 'configError' | 'health'>>,
+): Promise<void> {
+  const live = liveRunSlots();
+  const byMachine = new Map<string, ScopeCandidate[]>();
+  for (const slot of slots) {
+    if (slot.missingFromPool || slot.configError || slot.health?.ssh === 'FAIL') continue;
+    const slotId = slot.slot;
+    try {
+      const row = await readSlotRow(slotId);
+      if (!row) continue;
+      const blocker =
+        scopeQuietBlocker(row, slotId, live) ??
+        (activePrepareSlots.has(slotId) ? 'slot preparing' : null) ??
+        (await devServersBlocker(slotId));
+      if (blocker) {
+        if (idleScopeOf(row))
+          await updateSlotStatusIf(slotId, (current) => current.slot_epoch === row.slot_epoch, {
+            [IDLE_SCOPE_FIELD]: null,
+          });
+        continue;
+      }
+      const vars = await loadSlotVars(slotId);
+      const identityPath = prepareIdentityPath(
+        vars.remoteRepo,
+        await resolvePrepareRuntimeDir(vars.projectName),
+      );
+      const group = byMachine.get(slot.machine) ?? [];
+      group.push({ slotId, row, vars, identityPath });
+      byMachine.set(slot.machine, group);
+    } catch (error) {
+      logDecision(slotId, undefined, `skip prepare scope: ${(error as Error).message}`);
+    }
+  }
+  for (const [machine, group] of byMachine) {
+    let scopes: Map<string, string>;
+    try {
+      scopes = await recordedScopes(group);
+    } catch (error) {
+      // An unreachable machine skips this pass; its windows stay recorded on the slot rows.
+      logDecision(machine, undefined, `skip prepare scopes: ${(error as Error).message}`);
+      continue;
+    }
+    for (const entry of group) {
+      try {
+        await timeScope(entry, scopes.get(entry.identityPath));
+      } catch (error) {
+        logDecision(entry.slotId, undefined, `skip prepare scope: ${(error as Error).message}`);
+      }
+    }
+  }
 }
 
 /** Runs on the idle sweep, serialized with run resume and machine parking. */
 export async function reapIdleDevServers(slotId: string): Promise<void> {
-  // No quiet checks or transition lock for a slot without a dev server the cap may stop;
-  // only a prepare scope no run owns is left to time.
-  if (!(await idleDevServers.eligible(slotId)).length) return reapIdlePrepareScope(slotId);
-  idleScopes.delete(slotId);
+  // No quiet checks or transition lock for a slot without a dev server the cap may stop.
+  if (!(await idleDevServers.eligible(slotId)).length) return;
   const owner = (await readSlotRow(slotId))?.current_run_id;
   if (typeof owner !== 'string') return idleDevServers.sweep(slotId);
   const swept = await tryWithRunTransition(owner, async () => {

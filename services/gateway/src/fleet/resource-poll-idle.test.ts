@@ -88,7 +88,7 @@ function captureTick(t: { mock: typeof mock }): { tick: () => unknown; timer: No
   };
 }
 
-test('the idle sweep runs without full-fleet polling, on every slot', async (t) => {
+test('the idle dev-server sweep runs without full-fleet polling, on slots with live resources', async (t) => {
   t.mock.method(console, 'info', () => {});
   setCachedResourceStatus('slot-a', 'server', 'stopped', { broadcast: false });
   setCachedResourceStatus('slot-b', 'browser', 'stopped', { broadcast: false });
@@ -99,8 +99,7 @@ test('the idle sweep runs without full-fleet polling, on every slot', async (t) 
   try {
     startIdleDevServerSweep();
     await clock.tick();
-    // A slot with no live dev server may still hold a prepare scope no run owns.
-    assert.deepEqual(swept, ['slot-a', 'slot-b', 'slot-c']);
+    assert.deepEqual(swept, ['slot-c']);
     assert.deepEqual(forgotten, ['slot-a', 'slot-b'], 'unobserved slots lose their idle windows');
     const lost = resourceObservationLosses('slot-c', 'server');
     setCachedResourceStatus('slot-c', 'server', 'unknown', { broadcast: false });

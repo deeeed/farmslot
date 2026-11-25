@@ -39,6 +39,12 @@ let realStatus = false;
 let promptDelivered = false;
 let slotRunsGone = false;
 let identityReads = 0;
+let identityReadFails = false;
+let siblingStatus: 'running' | 'stopped' | undefined;
+let serverStatus: 'unknown' | undefined;
+let reapThrows = false;
+// A real prepare scope token: 32 hex characters.
+let recordedScope = '0123456789abcdef0123456789abcdef';
 const run: Run = {
   id: 'run-a',
   familyId: 'family-a',
@@ -57,10 +63,23 @@ const run: Run = {
   createdAt: '2024-01-01',
   updatedAt: '2024-01-01',
 };
+const devServer = (id: string, status: SlotResource['status']): SlotResource => ({
+  id,
+  status,
+  definition: {
+    type: 'dev-server',
+    label: id,
+    controllable: true,
+    streamable: false,
+    watch: { type: 'port-listen', port: '9100' },
+    hooks: { boot: 'fixture-prepare', health: 'fixture-health' },
+  },
+});
 const resources = (): SlotResource[] => [
+  ...(siblingStatus ? [devServer('metro', siblingStatus)] : []),
   {
     id: 'server',
-    status: alive ? 'running' : 'stopped',
+    status: serverStatus ?? (alive ? 'running' : 'stopped'),
     definition: {
       type: 'dev-server',
       label: 'Fixture server',
@@ -96,6 +115,16 @@ mock.module('../core/state.js', {
       const applied = predicate(row);
       if (applied) row = { ...row, ...fields };
       return { applied, epoch: row.slot_epoch };
+    },
+    updateSlotStatusIf: async (
+      _slot: string,
+      predicate: (row: Record<string, unknown>) => boolean,
+      fields: Record<string, unknown>,
+    ) => {
+      if (realStatus) return realState.updateSlotStatusIf(_slot, predicate, fields);
+      const applied = predicate(row);
+      if (applied) row = { ...row, ...fields };
+      return applied;
     },
   },
 });
@@ -144,7 +173,16 @@ const fixtureExec = async (_vars: unknown, command: string) => {
     return { stdout: `p101\nn${foreign ? '/foreign' : '/fixture'}\n`, stderr: '', exitCode: 0 };
   if (command === "cat '/fixture/.agent/preflight.identity' 2>/dev/null; true") {
     identityReads++;
-    return { stdout: '500\t501\tscope-a\n', stderr: '', exitCode: 0 };
+    return { stdout: `500\t501\t${recordedScope}\n`, stderr: '', exitCode: 0 };
+  }
+  if (command.startsWith("for f in '/fixture/.agent/preflight.identity'; do")) {
+    identityReads++;
+    if (identityReadFails) return { stdout: '', stderr: 'ssh: connect timed out', exitCode: 255 };
+    return {
+      stdout: `/fixture/.agent/preflight.identity\t500\t501\t${recordedScope}\n`,
+      stderr: '',
+      exitCode: 0,
+    };
   }
   if (command.startsWith('ps -p'))
     return {
@@ -314,6 +352,10 @@ mock.module('../methods/slot/prepare-command.js', {
       _vars: unknown,
       options: { identityPath?: string; expectedScope?: string },
     ) => {
+      // The reap runs under the upkeep fence: prepare's guard and a releasing mark.
+      assert.equal(activePrepareSlots.has('slot-a'), true, 'prepare guard held');
+      assert.equal(row.phase, 'releasing', 'claims fenced off');
+      if (reapThrows) throw new Error('Prepare scope cleanup failed: group survived');
       scopeReaps.push(options.identityPath ?? '');
       scopeReapScopes.push(options.expectedScope);
       return true;
@@ -330,7 +372,9 @@ mock.module('../runs/store.js', {
   },
 });
 const { withRunTransitionWhileMachineHeld } = await import('./transition-coordinator.js');
-const { reapIdleDevServers, restoreIdleDevServers } = await import('./idle-devserver-service.js');
+const { reapIdleDevServers, reapIdlePrepareScopes, restoreIdleDevServers } =
+  await import('./idle-devserver-service.js');
+const { activePrepareSlots } = await import('../core/native-worker-exclusion.js');
 mock.method(Date, 'now', () => clock);
 const { DEVSERVER_IDLE_LIMIT_MS, WARM_DEVSERVER_IDLE_LIMIT_MS } =
   await import('./idle-devserver.js');
@@ -364,6 +408,11 @@ beforeEach(() => {
   scopeReapScopes.length = 0;
   slotRunsGone = false;
   identityReads = 0;
+  identityReadFails = false;
+  siblingStatus = undefined;
+  serverStatus = undefined;
+  reapThrows = false;
+  recordedScope = '0123456789abcdef0123456789abcdef';
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -393,53 +442,184 @@ test('a pid-file dev server with no cached pointer is still reaped after the idl
   assert.equal(alive, false);
 });
 
-test('a pid-file dev server on an ownerless ready slot is reaped', async () => {
+const SCOPE = '0123456789abcdef0123456789abcdef';
+const ownerless = (extra: Record<string, unknown> = {}) => ({
+  current_run_id: null,
+  slot_epoch: epoch,
+  lifecycle: 'ready',
+  phase: null,
+  ...extra,
+});
+const fleetSlot = (extra: Record<string, unknown> = {}) => ({
+  slot: 'slot-a',
+  machine: 'fixture-node',
+  health: { ssh: 'LOCAL', device: '-', devserver: 'OFF', cdp: '-', fixtures: '-' },
+  ...extra,
+});
+const scopePass = () => reapIdlePrepareScopes([fleetSlot()]);
+
+test('a pid-file dev server on an ownerless ready slot is reaped, and its scope with it', async () => {
   pidFileWatch = true;
-  row = { current_run_id: null, slot_epoch: epoch, lifecycle: 'ready' };
-  await reapIdleDevServers('slot-a');
-  clock += DEVSERVER_IDLE_LIMIT_MS;
-  await reapIdleDevServers('slot-a');
-  // mini-mmt-3: no run owns the slot, so the preflight scope that kept the server goes too.
-  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
-  assert.equal(stops, 1);
-});
-
-// mini-mmt-3: a run-less prepare scope outlives its dev server, which the cap no longer sees.
-test('a run-less prepare scope whose dev server already died stops after the idle window', async () => {
-  alive = false;
   slotRunsGone = true;
-  row = { current_run_id: null, slot_epoch: epoch, lifecycle: 'ready' };
-  await reapIdleDevServers('slot-a');
-  clock += DEVSERVER_IDLE_LIMIT_MS - 1;
-  await reapIdleDevServers('slot-a');
-  assert.deepEqual(scopeReaps, [], 'kept inside the idle window');
-  clock += 1;
-  await reapIdleDevServers('slot-a');
-  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
-  assert.deepEqual(scopeReapScopes, ['scope-a'], 'fenced to the scope that was timed');
-  assert.equal(stops, 0);
-});
-
-test('a keep-warm run-less prepare scope gets the warm window', async () => {
-  alive = false;
-  slotRunsGone = true;
-  row = { current_run_id: null, slot_epoch: epoch, lifecycle: 'ready', warm: true };
-  await reapIdleDevServers('slot-a');
-  clock += DEVSERVER_IDLE_LIMIT_MS;
-  await reapIdleDevServers('slot-a');
-  assert.deepEqual(scopeReaps, [], 'kept past the plain idle limit');
-  clock += WARM_DEVSERVER_IDLE_LIMIT_MS - DEVSERVER_IDLE_LIMIT_MS;
-  await reapIdleDevServers('slot-a');
-  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
-});
-
-test("an owned slot's prepare scope is never read by the cap", async () => {
-  alive = false;
-  slotRunsGone = true; // the owner alone keeps it, not a listed run
+  row = ownerless({ warm: true });
   await reapIdleDevServers('slot-a');
   clock += WARM_DEVSERVER_IDLE_LIMIT_MS;
   await reapIdleDevServers('slot-a');
+  // mini-mmt-3: no run owns the slot, so the preflight scope that kept the server goes too.
+  assert.equal(stops, 1);
+  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
+  assert.deepEqual(scopeReapScopes, [SCOPE], 'fenced to the scope read before the stop');
+  assert.equal(row.phase, null, 'the fence is lifted');
+  assert.equal(row.lifecycle, 'ready');
+  assert.equal(row.warm, false, 'nothing is left warm');
+  assert.equal(activePrepareSlots.has('slot-a'), false);
+});
+
+// #2500's parent hold: no current owner while child C is still live on the slot.
+test("an ownerless slot's dev server stops but a live run keeps its scope", async () => {
+  pidFileWatch = true;
+  row = ownerless();
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  assert.deepEqual(scopeReaps, []);
+});
+
+test("one dev server's timeout keeps the scope while a sibling dev server is up", async () => {
+  pidFileWatch = true;
+  slotRunsGone = true;
+  siblingStatus = 'running';
+  row = ownerless();
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  assert.deepEqual(scopeReaps, [], 'the sibling may run in that scope');
+});
+
+// mini-mmt-3: a run-less prepare scope outlives its dev server, which the cap no longer sees.
+test('a run-less scope whose dev server is stopped is timed on the slot row, then stopped', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  const window = row.idle_prepare_scope;
+  assert.deepEqual(window, { scope: SCOPE, epoch, since: clock }, 'the window survives a restart');
+  clock += DEVSERVER_IDLE_LIMIT_MS - 1;
+  await scopePass();
+  assert.deepEqual(row.idle_prepare_scope, window, 'the same window, not restarted');
+  assert.deepEqual(scopeReaps, [], 'kept inside the idle window');
+  clock += 1;
+  await scopePass();
+  assert.deepEqual(scopeReapScopes, [SCOPE], 'fenced to the scope that was timed');
+  assert.equal(row.idle_prepare_scope, null);
+  assert.equal(row.phase, null);
+  assert.equal(activePrepareSlots.has('slot-a'), false);
+  assert.equal(stops, 0);
+});
+
+test('a keep-warm run-less scope gets the warm window, then the slot is no longer warm', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless({ warm: true });
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  assert.deepEqual(scopeReaps, [], 'kept past the plain idle limit');
+  clock += WARM_DEVSERVER_IDLE_LIMIT_MS - DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
+  assert.equal(row.warm, false);
+});
+
+test('a new scope token or slot epoch restarts the window', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  recordedScope = 'fedcba9876543210fedcba9876543210';
+  await scopePass();
+  assert.deepEqual(scopeReaps, [], 'another prepare recorded a new scope');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  row = { ...row, slot_epoch: epoch + 100 };
+  await scopePass();
+  assert.deepEqual(scopeReaps, [], 'a new epoch is a new slot owner history');
+});
+
+test('no scope is read or stopped on a slot that is not quiet and ready', async () => {
+  alive = false;
+  slotRunsGone = true;
+  const blocked: Array<[string, () => void]> = [
+    ['owned', () => (row = ownerless({ current_run_id: run.id }))],
+    ['releasing', () => (row = ownerless({ phase: 'releasing' }))],
+    ['handoff', () => (row = ownerless({ handoff_run_id: 'run-b' }))],
+    ['cleanup', () => (row = ownerless({ cleanup_run_id: 'run-b' }))],
+    ['manual', () => (row = ownerless({ lifecycle: 'manual' }))],
+    ['held', () => (row = ownerless({ lifecycle: 'held' }))],
+    ['disabled', () => (row = ownerless({ lifecycle: 'disabled' }))],
+    ['agent working', () => (row = ownerless({ agent: 'working' }))],
+    ['live run', () => ((slotRunsGone = false), (row = ownerless()))],
+    ['preparing', () => (activePrepareSlots.add('slot-a'), (row = ownerless()))],
+    ['unknown dev server', () => ((serverStatus = 'unknown'), (row = ownerless()))],
+    ['sibling up', () => ((siblingStatus = 'running'), (row = ownerless()))],
+    ['leased', () => ((warmLease = true), (row = ownerless()))],
+  ];
+  for (const [label, setUp] of blocked) {
+    setUp();
+    await scopePass();
+    clock += WARM_DEVSERVER_IDLE_LIMIT_MS;
+    await scopePass();
+    assert.equal(identityReads, 0, label);
+    assert.deepEqual(scopeReaps, [], label);
+    activePrepareSlots.delete('slot-a');
+    slotRunsGone = true;
+    serverStatus = undefined;
+    siblingStatus = undefined;
+    warmLease = false;
+  }
+});
+
+test('ghost, misconfigured and offline slots are skipped without a read', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  for (const skipped of [
+    fleetSlot({ missingFromPool: true }),
+    fleetSlot({ configError: 'bad pool' }),
+    fleetSlot({ health: { ssh: 'FAIL', device: '-', devserver: '-', cdp: '-', fixtures: '-' } }),
+  ])
+    await reapIdlePrepareScopes([skipped]);
   assert.equal(identityReads, 0);
+});
+
+test('an unreachable machine or a failed reap is logged; the guard and fence are freed', async (t) => {
+  t.mock.method(console, 'info', () => {});
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  identityReadFails = true;
+  await scopePass();
+  assert.equal(row.idle_prepare_scope, undefined, 'nothing read, nothing timed');
+  identityReadFails = false;
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  reapThrows = true;
+  await scopePass();
+  assert.equal(activePrepareSlots.has('slot-a'), false, 'guard freed on throw');
+  assert.equal(row.phase, null, 'fence lifted on throw');
+  assert.equal(row.lifecycle, 'ready');
+});
+
+test('an unrecorded worker pane found at expiry keeps the scope', async () => {
+  alive = false;
+  slotRunsGone = true;
+  unrecordedWorker = true;
+  row = ownerless();
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
   assert.deepEqual(scopeReaps, []);
 });
 
