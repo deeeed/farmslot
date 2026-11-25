@@ -10,9 +10,8 @@ import { after } from 'node:test';
 
 process.env.GIT_CONFIG_GLOBAL = '/dev/null';
 process.env.GIT_CONFIG_NOSYSTEM = '1';
-// loadGitIdentity reads <FARMSLOT_HOME>/git-identity.json; a file that pins its own home keeps it.
-if (!process.env.FARMSLOT_HOME) {
-  const home = mkdtempSync(path.join(tmpdir(), 'farmslot-git-home-'));
-  process.env.FARMSLOT_HOME = home;
-  after(() => rmSync(home, { recursive: true, force: true }));
-}
+// loadGitIdentity reads <FARMSLOT_HOME>/git-identity.json: always a private home, even when the
+// shell running the suite exports the farm's (a Farmslot-started machine shell does).
+const home = mkdtempSync(path.join(tmpdir(), 'farmslot-git-home-'));
+process.env.FARMSLOT_HOME = home;
+after(() => rmSync(home, { recursive: true, force: true }));
