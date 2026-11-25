@@ -185,10 +185,10 @@ function ownedPaths(
     'review-workspaces': owned('review-workspaces'),
     'native-sessions': owned('native-sessions'),
     'run-bundles': bundles
-      ? // Records first: a pass interrupted before the bundle selects it again.
+      ? // The directory before its records; housekeeping archives records a crash leaves behind.
         owned('run-bundles').flatMap((digest) => [
-          ...runBundleRecordPaths(bundles.root, digest),
           path.join(bundles.root, 'sha256', digest),
+          ...runBundleRecordPaths(bundles.root, digest),
         ])
       : [],
   };
@@ -343,7 +343,12 @@ export async function measureRetention(
       bytes += await diskBytes(file);
     }
     paths[store] = present;
-    stores[store] = { entries: present.length, bytes };
+    // A run bundle is one entry: its usage and availability records travel with it.
+    const entries =
+      store === 'run-bundles'
+        ? present.filter((file) => path.basename(path.dirname(file)) === 'sha256').length
+        : present.length;
+    stores[store] = { entries, bytes };
   }
   return { runs: runs.map((run) => run.id), held, paths, stores };
 }

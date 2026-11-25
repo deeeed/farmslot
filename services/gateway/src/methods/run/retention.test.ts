@@ -574,12 +574,13 @@ test('a retention plan lists only storage that removable runs alone own on this 
   assert.deepEqual(plan.paths['task-dirs'], [own], 'not the shared one or the slot copy');
   assert.deepEqual(plan.paths['review-workspaces'], [localWorkspace]);
   assert.deepEqual(plan.paths['native-sessions'].sort(), [native, workspaceNative].sort());
-  // A bundle's usage and availability records leave with it, ahead of its directory.
+  // A bundle's usage and availability records leave with it, after its directory.
   assert.deepEqual(plan.paths['run-bundles'], [
+    path.join(bundleRoot, 'sha256', 'own'),
     path.join(bundleRoot, 'usage', 'own.json'),
     path.join(bundleRoot, 'availability', 'own.json'),
-    path.join(bundleRoot, 'sha256', 'own'),
   ]);
+  assert.equal(plan.stores['run-bundles'].entries, 1, 'one bundle, not its three paths');
   assert.deepEqual(plan.paths['task-pins'], [retired]);
   assert.equal(plan.stores['task-dirs'].entries, 1);
   assert.ok(plan.stores['task-dirs'].bytes >= 4096);

@@ -77,8 +77,8 @@ function referenceOwnedPaths(removed: Run[], kept: Run[], roots: RunRetentionRoo
           (run) => bundleDigests(run, bundles.id),
           () => true,
         ).flatMap((digest) => [
-          ...runBundleRecordPaths(bundles.root, digest),
           path.join(bundles.root, 'sha256', digest),
+          ...runBundleRecordPaths(bundles.root, digest),
         ])
       : [],
   };

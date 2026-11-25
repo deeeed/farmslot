@@ -800,10 +800,10 @@ test('an archived bundle takes its usage and availability records, and records a
   assert.deepEqual(
     own.filter((entry) => entry.store !== 'bundle-intents').map((entry) => entry.path),
     [
-      ...records(superseded.ref.bundleDigest),
       path.join(f.store.root, 'sha256', superseded.ref.bundleDigest),
+      ...records(superseded.ref.bundleDigest),
     ],
-    'records first, so an interrupted pass leaves the bundle to select again',
+    'the directory, then its records',
   );
   assert.equal(
     selected.some((entry) => records(live.ref.bundleDigest).includes(entry.path)),
@@ -818,6 +818,11 @@ test('an archived bundle takes its usage and availability records, and records a
     assert.equal(entry.runId, key);
     assert.ok(gone.includes(path.basename(entry.path, '.json')));
   }
+  // Garbage collection deletes an unreferenced bundle together with both of its records.
+  await collectRunBundleGarbage(f.store);
+  for (const record of records(superseded.ref.bundleDigest))
+    await assert.rejects(stat(record), { code: 'ENOENT' });
+  await stat(records(live.ref.bundleDigest)[1]);
 });
 
 test('a cached manifest cannot hide loss of the retained bundle directory', async (t) => {

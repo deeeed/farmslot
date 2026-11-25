@@ -2511,11 +2511,14 @@ async function runBundleHousekeepingInventoryUntimed(store: RunBundleStore, now:
     // Intents first: a host interrupted between entries leaves the bundle to select again.
     for (const intent of committedIntents.get(digest) ?? [])
       archivable.push({ path: intent, runId, store: 'bundle-intents' });
+    // The directory before its records: a staged bundle keeps its usage record charged until it
+    // leaves, and records a crash leaves behind are the orphans selected below.
+    archivable.push({ path: directory, runId, store: 'run-bundles' });
     for (const record of runBundleRecordPaths(store.root, digest))
       if (records.has(record)) archivable.push({ path: record, runId, store: 'bundle-records' });
-    archivable.push({ path: directory, runId, store: 'run-bundles' });
   }
-  // Records whose bundle already left the store (archived before its records moved with it).
+  // Records whose bundle already left the store (archived before its records moved with it, an
+  // interrupted pass, or garbage collection).
   // Availability may journal archived media locations, so these are archived, never deleted.
   const present = new Set(digests);
   const runId = `bundle-records-${new Date(now).toISOString().slice(0, 13).replace(/\D/gu, '')}`;
@@ -2792,7 +2795,8 @@ export async function collectRunBundleGarbage(
         reclaimedBytes +=
           (await readBundleRecord(store, digest)) ?? (await physicalBytes(directory));
         await rm(directory, { recursive: true });
-        await rm(bundleUsagePath(store, digest), { force: true });
+        for (const record of runBundleRecordPaths(store.root, digest))
+          await rm(record, { force: true });
         stableStoreCharges.delete(stableChargeKey(store));
         // A reclaimed payload cannot satisfy its old retry intent. Future explicit
         // acquisition of these bytes starts a new capture instead of a lost stage.
