@@ -55,6 +55,7 @@ import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
+import { PINNED_SKIP_PREPARE_REFUSAL } from '../../projects/pinned-prepare-policy.js';
 import {
   canRecoverReviewFixPass,
   pipelineReviewSelection,
@@ -83,6 +84,11 @@ import {
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
+import {
+  replayResumesNativeWorker,
+  runPrepareIsPinned,
+  shouldReroutePinnedReplayToPrepare,
+} from '../../run-engine/pinned-prepare.js';
 import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
 import {
   probeWorkerSignalForRun,
@@ -1617,6 +1623,32 @@ async function replayRunStep(
       `[run] replay from ${params.stepName} — starting at prepare so eval harness is reinstalled`,
     );
   }
+  // A pinned run restarts from prepare when the replay would re-dispatch, so the
+  // slot gets its build again; an eval experiment already took the branch above.
+  const pinnedRun = !existing.engineState?.evalExperiment && (await runPrepareIsPinned(existing));
+  if (
+    replayStepName !== PS.FIND_SLOT &&
+    shouldReroutePinnedReplayToPrepare({
+      pinned: pinnedRun,
+      liveNativeWorker:
+        pinnedRun &&
+        replayResumesNativeWorker(existing, {
+          freshDispatch: params.freshDispatch,
+          workerRunnerOverride: hasWorkerRunnerOverride,
+        }),
+      targetIdx,
+      prepareIdx,
+      dispatchIdx,
+    })
+  ) {
+    replayStepName = PS.PREPARE;
+    targetIdx = prepareIdx;
+    console.log(
+      `[run] replay from ${params.stepName} — starting at prepare so the pinned build is installed again`,
+    );
+  }
+  if (params.skipPrepare && pinnedRun && targetIdx >= 0 && targetIdx <= dispatchIdx)
+    throw new Error(PINNED_SKIP_PREPARE_REFUSAL);
   if (replayStepName === PS.MONITOR && probeBlockedMonitor && !blockedAttempt) {
     if (
       probe?.signal?.attemptId &&

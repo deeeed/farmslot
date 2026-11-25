@@ -39,6 +39,7 @@ import {
   isActiveSlotHolder,
   slotPinIsRequestOnly,
 } from '../methods/dispatch/slot-scoring.js';
+import { prepareIsPinned } from '../projects/pinned-prepare-policy.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import {
@@ -52,6 +53,7 @@ import { withSourcePlanning } from '../sources/runtime.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import { pendingReviewContinuation } from './gate-policy.js';
+import { pinnedDispatchRefusal } from './pinned-prepare.js';
 import {
   publicationFinalizationAction,
   shouldResumePublicationGate,
@@ -1355,11 +1357,16 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             // kill or incomplete sub-steps means a passing health probe can only
             // reflect stale artifacts, not a genuinely prepared slot.
             const substepsComplete = prepareSubstepsShowCompletion(prepareStep);
-            const canTrustHealth = !killedPrepareProcess && substepsComplete;
+            // A healthy app proves nothing about which build it is: a pinned run
+            // whose prepare recorded no matching build prepares again.
+            const pinnedBuildMissing =
+              prepareIsPinned(run, pv?.projectJson) &&
+              pinnedDispatchRefusal(deps.getRun(run.id) ?? run) !== undefined;
+            const canTrustHealth = !killedPrepareProcess && substepsComplete && !pinnedBuildMissing;
             if (!canTrustHealth) {
               console.log(
                 `[run-engine] run ${run.id.slice(0, 8)} — not trusting recovery health ` +
-                  `(killedPrepareProcess=${killedPrepareProcess}, substepsComplete=${substepsComplete}), re-running prepare (warm)`,
+                  `(killedPrepareProcess=${killedPrepareProcess}, substepsComplete=${substepsComplete}, pinnedBuildMissing=${pinnedBuildMissing}), re-running prepare (warm)`,
               );
             }
             const healthHook =

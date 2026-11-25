@@ -33,7 +33,9 @@ const captured: string[] = [];
 let prepares = 0;
 let runtimeBoots = 0;
 let projectJson: RawProjectJson = {};
+let projectConfigBroken = false;
 const stop = new Error('Fixture stops before worker task copy or launch');
+const nativeReconciliation = new Error('Fixture stops at native reconciliation');
 
 mock.module('../../core/config.js', {
   namedExports: {
@@ -58,7 +60,10 @@ mock.module('../../core/index.js', {
   namedExports: {
     ...core,
     loadSlotVars: async () => vars,
-    loadProjectVars: async () => ({ projectJson, projectConfig: 'project.json' }),
+    loadProjectVars: async () => {
+      if (projectConfigBroken) throw new Error('project.json is unreadable');
+      return { projectJson, projectConfig: 'project.json' };
+    },
   },
 });
 mock.module('../../run-engine/declared-capabilities.js', {
@@ -66,6 +71,10 @@ mock.module('../../run-engine/declared-capabilities.js', {
     ...capabilities,
     prepareDispatchRunCapabilities: async () => {
       throw stop;
+    },
+    // Only native reconciliation calls this, before any launch.
+    prepareRetainedRunCapabilities: async () => {
+      throw nativeReconciliation;
     },
   },
 });
@@ -435,3 +444,166 @@ for (const scenario of [
     assert.equal(runtimeBoots, scenario.boots);
   });
 }
+
+const PINNED_BASE = '260bd3a5b20c3f9126510b7b71d0e5527f395b5d';
+for (const scenario of [
+  { name: 'no record', record: false, broken: false, refusal: /no record of the build/ },
+  { name: 'a matching record', record: true, broken: false, refusal: null },
+  {
+    name: 'an unreadable project config',
+    record: false,
+    broken: true,
+    refusal: /no record of the build/,
+  },
+]) {
+  test(`dispatch of a pinned run with ${scenario.name} ${scenario.refusal ? 'is refused' : 'proceeds'}`, async (t) => {
+    const task = path.join(root, 'PINNED-TASK.md');
+    await writeFile(task, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');
+    const run = createRun({
+      flowType: 'dev',
+      project: vars.projectName,
+      ticketOrPr: 'TAT-4616',
+      slotId: vars.slotId,
+      transport: 'tmux',
+      mode: 'autonomous',
+    });
+    updateRun(run.id, {
+      lane: 'comparison',
+      startRef: { requestedRef: '260bd3a5', resolvedSha: PINNED_BASE },
+      ...(scenario.record
+        ? {
+            prepareArtifact: {
+              kind: 'runway' as const,
+              slotId: vars.slotId,
+              baseSha: PINNED_BASE,
+              runId: '41900351233',
+              revision: PINNED_BASE,
+              platform: 'ios',
+              installedAt: '2026-11-25T10:00:00.000Z',
+              enforced: true,
+            },
+          }
+        : {}),
+    });
+    const previous = projectJson;
+    projectJson = { hooks: { artifact_check: 'probe' } };
+    projectConfigBroken = scenario.broken;
+    t.after(async () => {
+      projectJson = previous;
+      projectConfigBroken = false;
+      await persistRunNow(updateRun(run.id, { status: 'done' }));
+      await deleteRun(run.id);
+    });
+    await core.rewriteStatusFile(() => ({
+      slots: [
+        {
+          slot: vars.slotId,
+          current_run_id: run.id,
+          slot_epoch: 1,
+          lifecycle: 'ready',
+          phase: null,
+          agent: 'idle',
+        },
+      ],
+    }));
+    prepares = 0;
+    const dispatching = dispatchExecute(
+      {
+        slotId: vars.slotId,
+        runId: run.id,
+        taskFile: task,
+        runner: 'claude',
+        model: 'opus',
+        mode: 'autonomous',
+        skipPrepare: true,
+      },
+      () => {},
+    );
+    if (scenario.refusal) await assert.rejects(dispatching, scenario.refusal);
+    else await assert.rejects(dispatching, (error: unknown) => error === stop);
+    assert.equal(prepares, 0);
+  });
+}
+
+test('a pinned native run with a held worker reaches reconciliation, not the missing-record refusal', async (t) => {
+  // Deployed while a native comparison run was dispatching: its worker predates the
+  // record, and recovery sends it back through dispatch to reconcile, not relaunch.
+  const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'pinned-native-owner';
+  const task = path.join(root, 'PINNED-NATIVE-TASK.md');
+  await writeFile(task, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');
+  const run = createRun(
+    {
+      flowType: 'dev',
+      project: vars.projectName,
+      ticketOrPr: 'TAT-4617',
+      slotId: vars.slotId,
+      transport: 'native',
+      mode: 'autonomous',
+    },
+    { nativeOwnerPrincipalId: 'pinned-native-owner' },
+  );
+  updateRun(run.id, {
+    lane: 'comparison',
+    startRef: { requestedRef: '260bd3a5', resolvedSha: PINNED_BASE },
+    agentContexts: [
+      {
+        id: 'dev',
+        role: 'dev',
+        label: 'Dev',
+        status: 'working',
+        slotId: vars.slotId,
+        runId: run.id,
+        nativeSession: {
+          sessionId: 'session',
+          executionNodeId: 'node',
+          ownerPrincipalId: 'pinned-native-owner',
+          leaseId: 'lease',
+          commandId: 'command',
+          launchRequestedAt: '2026-11-25T10:00:00.000Z',
+        },
+      },
+    ],
+  });
+  const previous = projectJson;
+  projectJson = { hooks: { artifact_check: 'probe' } };
+  t.after(async () => {
+    projectJson = previous;
+    if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+    const current = getRun(run.id)!;
+    // The store keeps a held native binding; close it so the fixture can go.
+    updateRun(run.id, {
+      agentContexts: current.agentContexts?.map((context) =>
+        context.nativeSession
+          ? {
+              ...context,
+              nativeSession: { ...context.nativeSession, closedAt: new Date().toISOString() },
+            }
+          : context,
+      ),
+    });
+    await persistRunNow(updateRun(run.id, { status: 'done' }));
+    await deleteRun(run.id);
+  });
+  const error = await dispatchExecute(
+    {
+      slotId: vars.slotId,
+      runId: run.id,
+      taskFile: task,
+      runner: 'claude',
+      model: 'opus',
+      mode: 'autonomous',
+      skipPrepare: true,
+    },
+    () => {},
+  ).then(
+    () => undefined,
+    (failure: unknown) => failure,
+  );
+  assert.equal(
+    error,
+    nativeReconciliation,
+    'dispatch reached native reconciliation instead of refusing the live worker',
+  );
+});

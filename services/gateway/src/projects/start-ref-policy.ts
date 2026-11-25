@@ -10,7 +10,9 @@ import { execOnSlot } from '../core/exec.js';
 import { withFarmGitConfig } from '../core/farm-git.js';
 import { loadSlotVars } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
+import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
 
+import { PINNED_SKIP_PREPARE_REFUSAL, prepareIsPinned } from './pinned-prepare-policy.js';
 import { resolveStartRefInRepo, sanitizeStartRef } from './start-ref-resolution.js';
 
 type UnsupportedStartRefSource = { kind: 'prior-run'; runId?: string };
@@ -110,9 +112,24 @@ export function normalizeStartRefRequest(
 }
 
 export async function assertStartRefSkipPrepareEligible(
-  params: Pick<RunCreateParams, 'startRef' | 'skipPrepare' | 'slotId'>,
+  params: Pick<RunCreateParams, 'startRef' | 'skipPrepare' | 'slotId' | 'project' | 'flowType'>,
 ): Promise<void> {
   if (!params.startRef?.trim() || !params.skipPrepare) return;
+  // A matching HEAD says nothing about the installed app: a project that pins
+  // prepare installs the start commit's build there, so it cannot be skipped.
+  // normalizeStartRefRequest already limits a start ref to comparison dev/fix-bug runs.
+  const projectVars = await loadProjectVarsOrNull(params.project, 'start ref policy');
+  if (
+    prepareIsPinned(
+      {
+        lane: 'comparison',
+        flowType: params.flowType,
+        startRef: { requestedRef: params.startRef },
+      },
+      projectVars?.projectJson,
+    )
+  )
+    throw new StartRefPolicyError(PINNED_SKIP_PREPARE_REFUSAL);
   if (!params.slotId?.trim()) {
     throw new StartRefPolicyError(
       'startRef with skipPrepare requires slotId so slot HEAD can be verified against the requested startRef',
