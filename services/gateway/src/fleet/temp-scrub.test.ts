@@ -86,6 +86,7 @@ test('a nested checkout, bare repos included, moves out of the checkout; its tas
     'temp/tasks/feat/tat-4800/clone/fix.ts',
     'temp/scratch-x/bare.git/HEAD',
     'temp/scratch-x/notes.md',
+    'temp/clone-top/.git/HEAD',
   ]);
   await mkdir(path.join(repo, 'temp/scratch-x/bare.git/objects'), { recursive: true });
   await mkdir(path.join(repo, 'temp/scratch-x/bare.git/refs'), { recursive: true });
@@ -97,7 +98,7 @@ test('a nested checkout, bare repos included, moves out of the checkout; its tas
   assert.deepEqual(result.refused, []);
   assert.deepEqual(
     result.retained.map(({ path: p }) => p).sort(),
-    ['temp/scratch-x/bare.git', 'temp/tasks/feat/tat-4800/clone'],
+    ['temp/clone-top', 'temp/scratch-x/bare.git', 'temp/tasks/feat/tat-4800/clone'],
   );
   assert.equal(existsSync(path.join(retainRoot, 'temp/tasks/feat/tat-4800/clone/fix.ts')), true);
   assert.equal(existsSync(path.join(retainRoot, 'temp/scratch-x/bare.git/HEAD')), true);
