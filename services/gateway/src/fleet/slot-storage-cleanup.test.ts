@@ -8,10 +8,10 @@ import { promisify } from 'node:util';
 
 import {
   buildSlotStorageCleanupCommand,
-  buildTaskScratchParkCommand,
+  buildTaskScratchDeleteCommand,
   normalizeTaskRelativeDir,
   parseSlotStorageCleanupOutput,
-  parseTaskScratchParkOutput,
+  parseTaskScratchDeleteOutput,
 } from './slot-storage-cleanup.js';
 
 const execFileAsync = promisify(execFile);
@@ -209,10 +209,16 @@ test('slot storage cleanup keeps every task inside the retention window', async 
 
 // mini-mm-2 run 442a9a42 left temp/tasks/scratch-probe and macpro-mmt-4 kept
 // temp/tasks/feat/scratch-tat-4753; release kept them and the next blind dataset run's
-// preflight refused the slot. Release parks scratch* there by rename, never deleting.
-test('release parks scratch directories by rename and leaves task dirs, even scratch-named ones', async () => {
+// preflight refused the slot. Release deletes scratch* there: it is regenerable.
+const deleteScratch = async (repo: string, taskDirName = 'temp/tasks') =>
+  parseTaskScratchDeleteOutput(
+    (
+      await execFileAsync('/bin/sh', ['-c', buildTaskScratchDeleteCommand({ repo, taskDirName })])
+    ).stdout,
+  );
+
+test('release deletes scratch directories and leaves task dirs, even scratch-named ones', async () => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-repo-'));
-  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-home-'));
   const write = async (rel: string) => {
     await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
     await writeFile(path.join(repo, rel), 'x');
@@ -224,38 +230,24 @@ test('release parks scratch directories by rename and leaves task dirs, even scr
   await write('temp/tasks/feat/real-task/TASK.md');
   // Only the task root and Farmslot's flow folders: not any other directory's children.
   await write('temp/tasks/manual-notes/scratch-export/notes.md');
+  // A checkout in scratch is left for prepare, which parks its work before deleting it.
+  await write('temp/tasks/scratch-clone/repo/.git/HEAD');
   await mkdir(path.join(repo, 'outside'), { recursive: true });
   await symlink(path.join(repo, 'outside'), path.join(repo, 'temp/tasks/scratch-link'));
-  const run = async () =>
-    parseTaskScratchParkOutput(
-      (
-        await execFileAsync('/bin/sh', [
-          '-c',
-          buildTaskScratchParkCommand({
-            repo,
-            taskDirName: 'temp/tasks',
-            slotId: 'macpro-mmt-4',
-            parkHome: home,
-          }),
-        ])
-      ).stdout,
-    );
 
-  const result = await run();
+  const result = await deleteScratch(repo);
+
   const realRepo = await realpath(repo);
-  assert.deepEqual(result.parked.map((entry) => path.relative(realRepo, entry.path)).sort(), [
+  assert.deepEqual(result.deleted.map((entry) => path.relative(realRepo, entry)).sort(), [
     'temp/tasks/feat/scratch-tat-4753',
     'temp/tasks/scratch-probe',
   ]);
-  for (const entry of result.parked) {
-    assert.equal(await exists(entry.path), false);
-    assert.ok(
-      entry.to.startsWith(path.join(await realpath(home), 'parked-scratch/macpro-mmt-4/')) ||
-        entry.to.startsWith(path.join(home, 'parked-scratch/macpro-mmt-4/')),
-      entry.to,
-    );
-    assert.equal(await exists(entry.to), true, 'moved, not deleted');
-  }
+  for (const entry of result.deleted) assert.equal(await exists(entry), false);
+  assert.deepEqual(
+    result.refused.map((entry) => path.relative(realRepo, entry.path)),
+    ['temp/tasks/scratch-clone'],
+  );
+  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-clone/repo/.git/HEAD')), true);
   assert.equal(
     await exists(path.join(repo, 'temp/tasks/fix/scratch-12-1123-101010/TASK.md')),
     true,
@@ -267,7 +259,6 @@ test('release parks scratch directories by rename and leaves task dirs, even scr
     'symlinks are not followed',
   );
   assert.equal(await exists(path.join(repo, 'temp/tasks/manual-notes/scratch-export')), true);
-  assert.deepEqual(result.refused, []);
 });
 
 test('the age prune keeps refused scratch, what it holds and what holds it, and can skip task dirs', async () => {
@@ -294,16 +285,15 @@ test('the age prune keeps refused scratch, what it holds and what holds it, and 
       }),
     ]);
   await prune({ skipTaskPrune: true });
-  assert.equal(await exists(stale), true, 'no task pruning when scratch parking failed');
+  assert.equal(await exists(stale), true, 'no task pruning when the scratch delete failed');
   await prune({ keepPaths: [refused, heldScratch] });
   assert.equal(await exists(inside), true, 'a stale candidate inside refused scratch stays');
   assert.equal(await exists(heldScratch), true, 'a stale candidate holding refused scratch stays');
   assert.equal(await exists(stale), false);
 });
 
-test('scratch parking refuses a symlinked parking root, reads a trailing-slash task dir, and keeps an unreadable task', async (t) => {
+test('scratch delete reads a trailing-slash task dir and keeps an unreadable task', async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-edge-'));
-  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-edge-home-'));
   await mkdir(path.join(repo, 'temp/tasks/scratch-a'), { recursive: true });
   await writeFile(path.join(repo, 'temp/tasks/scratch-a/x.json'), 'x');
   const locked = path.join(repo, 'temp/tasks/scratch-locked');
@@ -311,71 +301,16 @@ test('scratch parking refuses a symlinked parking root, reads a trailing-slash t
   await writeFile(path.join(locked, 'TASK.md'), '# task');
   await chmod(locked, 0o000);
   t.after(() => chmod(locked, 0o755));
-  const run = async (parkHome: string) =>
-    parseTaskScratchParkOutput(
-      (
-        await execFileAsync('/bin/sh', [
-          '-c',
-          buildTaskScratchParkCommand({
-            repo,
-            taskDirName: 'temp/tasks/',
-            slotId: 'slot-a',
-            parkHome,
-          }),
-        ])
-      ).stdout,
-    );
-  // A parked-scratch directory that is a symlink is refused, even to a target outside the checkout.
-  await mkdir(path.join(home, 'linked'), { recursive: true });
-  await mkdir(path.join(home, 'elsewhere'), { recursive: true });
-  await symlink(path.join(home, 'elsewhere'), path.join(home, 'linked/parked-scratch'));
-  const refusedRun = await run(path.join(home, 'linked'));
-  assert.deepEqual(refusedRun.parked, []);
-  assert.equal(refusedRun.refused.length, 1);
-  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-a/x.json')), true);
-  const parkedRun = await run(path.join(home, 'plain'));
-  assert.equal(parkedRun.parked.length, 1, 'a trailing slash on the task dir still parks');
+  const result = await deleteScratch(repo, 'temp/tasks/');
+  assert.equal(result.deleted.length, 1, 'a trailing slash on the task dir still deletes');
+  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-a')), false);
   assert.equal(await exists(locked), true, 'an unreadable TASK.md counts as present');
-});
-
-test('a parking directory that already exists is never reused, for any candidate', async () => {
-  const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-collide-'));
-  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-collide-home-'));
-  for (const name of ['scratch-a', 'scratch-b']) {
-    await mkdir(path.join(repo, 'temp/tasks', name), { recursive: true });
-    await writeFile(path.join(repo, 'temp/tasks', name, 'x'), 'x');
-  }
-  const taken = path.join(home, 'parked-scratch/slot-a/fixed');
-  await mkdir(taken, { recursive: true });
-  const result = parseTaskScratchParkOutput(
-    (
-      await execFileAsync('/bin/sh', [
-        '-c',
-        buildTaskScratchParkCommand({
-          repo,
-          taskDirName: 'temp/tasks',
-          slotId: 'slot-a',
-          parkHome: home,
-          parkStamp: 'fixed',
-        }),
-      ])
-    ).stdout,
-  );
-  assert.deepEqual(result.parked, []);
-  assert.equal(
-    result.refused.length,
-    2,
-    'each candidate is refused, none moves into the existing directory',
-  );
-  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-a/x')), true);
-  assert.equal(await exists(path.join(repo, 'temp/tasks/scratch-b/x')), true);
 });
 
 // macpro-mmt-5 after run 41fc25bd: a worker left temp/scratch-tat4567 directly under temp/.
 // temp/ is scanned only for the temp/tasks layout; never a custom root's parent or the checkout root.
-test('scratch directly under temp/ is parked for the temp/tasks layout only', async () => {
+test('scratch directly under temp/ is deleted for the temp/tasks layout only', async () => {
   const repo = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-'));
-  const home = await mkdtemp(path.join(tmpdir(), 'farmslot-scratch-temp-home-'));
   for (const rel of [
     'temp/scratch-tat4567/run.json',
     'temp/scratch-task/TASK.md',
@@ -386,23 +321,9 @@ test('scratch directly under temp/ is parked for the temp/tasks layout only', as
     await mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
     await writeFile(path.join(repo, rel), 'x');
   }
-  const park = async (taskDirName: string) =>
-    parseTaskScratchParkOutput(
-      (
-        await execFileAsync('/bin/sh', [
-          '-c',
-          buildTaskScratchParkCommand({
-            repo,
-            taskDirName,
-            slotId: 'macpro-mmt-5',
-            parkHome: home,
-          }),
-        ])
-      ).stdout,
-    );
-  // Other layouts first, while temp/scratch-tat4567 is still in place: they must not move it.
-  assert.deepEqual((await park('.task')).parked, []);
-  assert.deepEqual((await park('support/tasks')).parked, []);
+  // Other layouts first, while temp/scratch-tat4567 is still in place: they must not delete it.
+  assert.deepEqual((await deleteScratch(repo, '.task')).deleted, []);
+  assert.deepEqual((await deleteScratch(repo, 'support/tasks')).deleted, []);
   assert.equal(await exists(path.join(repo, 'temp/scratch-tat4567/run.json')), true);
   assert.equal(
     await exists(path.join(repo, 'scratch-root/x')),
@@ -410,9 +331,9 @@ test('scratch directly under temp/ is parked for the temp/tasks layout only', as
     'the checkout root is never scanned',
   );
   assert.equal(await exists(path.join(repo, 'support/scratch-assets/x')), true);
-  const temp = await park('temp/tasks');
+  const temp = await deleteScratch(repo);
   assert.deepEqual(
-    temp.parked.map((entry) => path.basename(entry.path)),
+    temp.deleted.map((entry) => path.basename(entry)),
     ['scratch-tat4567'],
   );
   assert.equal(

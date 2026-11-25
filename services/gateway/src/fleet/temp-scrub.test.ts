@@ -7,7 +7,12 @@ import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 
-import { buildTempScrubCommand, parseTempScrubOutput } from './temp-scrub.js';
+import {
+  buildTempScrubCommand,
+  buildTempSurveyCommand,
+  parseTempScrubOutput,
+  parseTempSurveyOutput,
+} from './temp-scrub.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -22,15 +27,11 @@ async function slotWith(files: string[]) {
   return { parent, repo };
 }
 
+const run = async (command: string) => (await execFileAsync('/bin/sh', ['-c', command])).stdout;
 const scrub = async (repo: string, keep: string[]) =>
-  parseTempScrubOutput(
-    (
-      await execFileAsync('/bin/sh', [
-        '-c',
-        buildTempScrubCommand({ repo, keep, taskRoot: 'temp/tasks', stamp: 'stamp' }),
-      ])
-    ).stdout,
-  );
+  parseTempScrubOutput(await run(buildTempScrubCommand({ repo, keep, taskRoot: 'temp/tasks' })));
+const survey = async (repo: string, keep: string[]) =>
+  parseTempSurveyOutput(await run(buildTempSurveyCommand({ repo, keep, taskRoot: 'temp/tasks' })));
 
 test('temp/ is cleared of every run leftover except farm state and the kept task dirs', async (t) => {
   const { parent, repo } = await slotWith([
@@ -79,32 +80,37 @@ test('temp/ is cleared of every run leftover except farm state and the kept task
   assert.equal(result.removed.find(({ path: p }) => p === 'temp/linked-outside')?.kind, 'link');
 });
 
-test('a nested checkout, bare repos included, moves out of the checkout; its task dir goes', async (t) => {
+test('every checkout is found before anything is entered, and the scrub never deletes one', async (t) => {
   const { parent, repo } = await slotWith([
     'temp/tasks/feat/tat-4800/TASK.md',
-    'temp/tasks/feat/tat-4800/clone/.git/HEAD',
-    'temp/tasks/feat/tat-4800/clone/fix.ts',
-    'temp/scratch-x/bare.git/HEAD',
+    'temp/tasks/goal3-clone/src/answer.ts',
     'temp/scratch-x/notes.md',
-    'temp/clone-top/.git/HEAD',
   ]);
-  await mkdir(path.join(repo, 'temp/scratch-x/bare.git/objects'), { recursive: true });
-  await mkdir(path.join(repo, 'temp/scratch-x/bare.git/refs'), { recursive: true });
   t.after(() => rm(parent, { recursive: true, force: true }));
+  // A checkout directly under the task root: its src/ must not be cleared before it is seen.
+  await execFileAsync('git', ['init', '-q', '-b', 'main', path.join(repo, 'temp/tasks/goal3-clone')]);
+  await execFileAsync('git', ['init', '-q', '--bare', path.join(repo, 'temp/scratch-x/bare.git')]);
+
+  const found = await survey(repo, []);
+
+  assert.deepEqual(found.refused, []);
+  assert.deepEqual(
+    found.checkouts.map(({ path: p, bare, linked }) => [p, bare, linked]).sort(),
+    [
+      ['temp/scratch-x/bare.git', true, false],
+      ['temp/tasks/goal3-clone', false, false],
+    ],
+  );
+  assert.deepEqual(found.taskDirs, ['temp/tasks/feat/tat-4800']);
 
   const result = await scrub(repo, []);
-
-  const retainRoot = path.join(parent, '.farmslot-retained/slot/stamp');
-  assert.deepEqual(result.refused, []);
-  assert.deepEqual(result.retained.map(({ path: p }) => p).sort(), [
-    'temp/clone-top',
+  assert.deepEqual(result.refused.map(({ path: p }) => p).sort(), [
     'temp/scratch-x/bare.git',
-    'temp/tasks/feat/tat-4800/clone',
+    'temp/tasks/goal3-clone',
   ]);
-  assert.equal(existsSync(path.join(retainRoot, 'temp/tasks/feat/tat-4800/clone/fix.ts')), true);
-  assert.equal(existsSync(path.join(retainRoot, 'temp/scratch-x/bare.git/HEAD')), true);
+  assert.equal(existsSync(path.join(repo, 'temp/tasks/goal3-clone/src/answer.ts')), true);
+  assert.equal(existsSync(path.join(repo, 'temp/scratch-x/bare.git/HEAD')), true);
   assert.equal(existsSync(path.join(repo, 'temp/tasks/feat/tat-4800')), false);
-  assert.equal(existsSync(path.join(repo, 'temp/scratch-x')), false);
 });
 
 test('a symlinked ancestor of a kept path is left, and a symlinked temp/ is refused', async (t) => {
@@ -114,6 +120,7 @@ test('a symlinked ancestor of a kept path is left, and a symlinked temp/ is refu
 
   const kept = await scrub(repo, ['temp/recipe/runtime/terminal']);
   assert.deepEqual(kept.removed, []);
+  assert.deepEqual(kept.kept, [{ path: 'temp/recipe', reason: 'a symlink holding a kept path' }]);
   assert.equal(existsSync(path.join(repo, 'temp/recipe/runtime/terminal/browser.pid')), true);
 
   await rm(path.join(repo, 'temp'), { recursive: true });

@@ -5,16 +5,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, mock, test } from 'node:test';
 
-import type { RunOutput } from '@farmslot/protocol';
-
-// Release drops its own run's task dir only once the bundle holds every file in it; other runs'
-// dirs are prepare's to clear. Release runs for real against a temp repo; the slot row lives in
-// memory, the bundle store is a dir per run, and tmux, process and runtime probes stay inert.
-const root = mkdtempSync(path.join(tmpdir(), 'release-temp-scrub-'));
+// A full release deletes worker scratch instead of parking it under the farm home, where a later
+// trial could read it; other runs' task dirs are prepare's to clear. Release runs for real
+// against a temp repo; the slot row lives in memory and tmux, process and runtime probes stay
+// inert.
+const root = mkdtempSync(path.join(tmpdir(), 'release-scratch-'));
 const runRoot = path.join(root, 'runs');
 const parkHome = path.join(root, 'park-home');
-const bundles = path.join(root, 'bundles');
-for (const dir of [runRoot, path.join(root, 'home'), path.join(root, 'pool'), parkHome, bundles])
+for (const dir of [runRoot, path.join(root, 'home'), path.join(root, 'pool'), parkHome])
   mkdirSync(dir);
 process.env.FARMSLOT_RUNS_DIR = runRoot;
 process.env.FARMSLOT_HOME = path.join(root, 'home');
@@ -139,33 +137,12 @@ mock.module('../terminal-attachment.js', {
   namedExports: { ...realAttachments, terminalAttachmentCleanup: async () => ({ removed: [] }) },
 });
 
-const realRetained = await import('../../run-completion/retained-artifacts.js');
-mock.module('../../run-completion/retained-artifacts.js', {
-  namedExports: {
-    ...realRetained,
-    retainedRunTaskDirectory: async (run: { id: string }) => path.join(bundles, run.id, 'tasks/t'),
-  },
-});
-
 const realRuns = await import('../../runs/store.js');
 const { slotRelease } = await import('./release.js');
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-C', cwd, ...args], { env: gitEnv, encoding: 'utf8' }).trim();
 }
-
-const captured: RunOutput = {
-  capturedAt: '2026-11-25T00:00:00.000Z',
-  workerFinished: true,
-  artifactManifest: [{ path: 'artifacts/fix.diff', purpose: 'patch' }],
-  manifestDigest: 'sha256:m',
-  artifactBundle: {
-    storeId: 'local',
-    bundleDigest: 'sha256:b',
-    taskKey: 't',
-    manifestDigest: 'sha256:m',
-  },
-};
 
 /** A slot repo on main whose temp/ holds earlier runs' task dirs, scratch and traces. */
 function slotWithLeftovers(label: string) {
@@ -199,8 +176,8 @@ function slotWithLeftovers(label: string) {
   slotRow = { ...slotRow, task_file: 'temp/tasks/feat/tat-4801-1124-100000/TASK.md' };
 }
 
-/** The releasing run, its orchestrator task path, and (when `bundled`) its bundle copy. */
-function releasingRun(bundled: string[]) {
+/** The releasing run, on its orchestrator task path. */
+function releasingRun() {
   const run = realRuns.createRun(
     { flowType: 'dev', project: 'fixture', ticketOrPr: 'TAT-4801', slotId: SLOT_ID },
     { deferBackgroundPersist: true },
@@ -208,26 +185,7 @@ function releasingRun(bundled: string[]) {
   realRuns.updateRun(run.id, {
     status: 'done',
     taskFile: '/farm/projects/fixture/tasks/feat/tat-4801-1124-100000/TASK.md',
-    output: captured,
   });
-  const dir = path.join(bundles, run.id);
-  for (const rel of bundled) {
-    mkdirSync(path.dirname(path.join(dir, 'tasks/t', rel)), { recursive: true });
-    writeFileSync(path.join(dir, 'tasks/t', rel), 'x');
-  }
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    path.join(dir, 'manifest.json'),
-    JSON.stringify({
-      runs: [
-        {
-          originalRunId: run.id,
-          taskRelativePath: 'projects/fixture/tasks/feat/tat-4801-1124-100000',
-        },
-      ],
-    }),
-  );
-  return run.id;
 }
 
 const tempEntries = () => {
@@ -243,42 +201,22 @@ const tempEntries = () => {
   return out.sort();
 };
 
-const foreign = [
-  'temp/farmslot/deps.lock-hash',
-  'temp/tasks/feat/tat-4752-1123-101010/TASK.md',
-  'temp/tasks/fix/tat-4591-1111-173307/TASK.md',
-  'temp/tat4505-trace.json',
-];
-
 beforeEach(() => {
   slotRow = { slot: SLOT_ID, lifecycle: 'ready', phase: null, slot_epoch: 9 };
 });
 
-test('a release drops its own task dir once the bundle holds every file; foreign dirs stay', async () => {
-  slotWithLeftovers('confirmed');
-  writeFileSync(path.join(repo, 'temp/tasks/feat/tat-4801-1124-100000/fix.diff'), 'answer');
-  releasingRun(['TASK.md', 'fix.diff', 'artifacts/fix.diff']);
+test('a full release deletes scratch rather than parking it; other runs\' dirs are left', async () => {
+  slotWithLeftovers('scratch');
+  releasingRun();
 
   const result = await slotRelease({ slotId: SLOT_ID, forceReset: true }, () => {});
 
   assert.deepEqual(result, { released: true });
-  assert.deepEqual(tempEntries(), foreign, "release clears only its own run's dir");
-});
-
-test('a release keeps its own task dir when a file in it is not in the bundle', async () => {
-  slotWithLeftovers('unconfirmed');
-  writeFileSync(path.join(repo, 'temp/tasks/feat/tat-4801-1124-100000/late.md'), 'answer');
-  releasingRun(['TASK.md', 'artifacts/fix.diff']);
-
-  const result = await slotRelease({ slotId: SLOT_ID, forceReset: true }, () => {});
-
-  assert.deepEqual(result, { released: true });
-  assert.deepEqual(
-    tempEntries(),
-    [
-      ...foreign,
-      'temp/tasks/feat/tat-4801-1124-100000/TASK.md',
-      'temp/tasks/feat/tat-4801-1124-100000/late.md',
-    ].sort(),
-  );
+  assert.deepEqual(tempEntries(), [
+    'temp/farmslot/deps.lock-hash',
+    'temp/tasks/feat/tat-4752-1123-101010/TASK.md',
+    'temp/tasks/fix/tat-4591-1111-173307/TASK.md',
+    'temp/tat4505-trace.json',
+  ]);
+  assert.throws(() => lstatSync(path.join(parkHome, 'parked-scratch')), 'nothing is parked');
 });

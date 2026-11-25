@@ -746,22 +746,29 @@ async function slotPrepareInner(
   await excludeSlotScaffolding(vars, projectJson);
 
   // 1d. A new run starts on a temp/ holding nothing of another run's: a held-out trial must not
-  // read an earlier task, its scratch or its traces. Farm state and this run's own and its
-  // parent chain's task dirs stay; nested checkouts move out of the checkout. A warm handoff, a
-  // replay or a resumed task keeps its files. Anything that stays fails prepare, by name.
+  // read an earlier task, its scratch or its traces. Farm state and the task dirs of this run,
+  // its parent chain and runs still bound to the slot stay. A nested checkout is parked as refs,
+  // then deleted. A warm handoff, a replay or a resumed task keeps its files. Anything that
+  // cannot be parked or deleted fails prepare, by name.
   const scrubbingRun = params.runId ? getRun(params.runId) : undefined;
   if (shouldScrubTempForRun(scrubbingRun)) {
     checkAborted();
     const scrub = await scrubTempForRun(vars, projectJson, scrubbingRun);
     if (scrub) {
+      for (const entry of scrub.parked)
+        step(
+          'clean',
+          `Parked nested checkout ${entry.path} at ${entry.refs.join(', ') || 'no refs (nothing to keep)'}; removed it`,
+        );
       for (const dir of scrub.taskDirs)
         step(
           'clean',
           `Removed earlier task dir ${dir.path} (${dir.runId ? `run ${dir.runId.slice(0, 8)}, ${dir.bundle}` : dir.bundle})`,
         );
-      for (const entry of scrub.retained)
-        step('clean', `Moved nested checkout ${entry.path} out of the checkout to ${entry.to}`);
-      const other = scrub.removed.length - scrub.taskDirs.length;
+      for (const entry of scrub.kept) step('clean', `Left ${entry.path}: ${entry.reason}`);
+      const other = scrub.removed.filter(
+        (entry) => !scrub.taskDirs.some((dir) => dir.path === entry.path),
+      ).length;
       if (other > 0)
         step('clean', `Removed ${other} other entr${other === 1 ? 'y' : 'ies'} from temp/`);
       if (scrub.refused.length)

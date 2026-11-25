@@ -65,7 +65,7 @@ import {
 import {
   cleanupSlotStorage,
   normalizeTaskRelativeDir,
-  parkTaskScratch,
+  deleteTaskScratch,
 } from '../../fleet/slot-storage-cleanup.js';
 import { publicationStatusForRun } from '../../run-completion/publication-status.js';
 import {
@@ -133,7 +133,6 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from './slot-tracking.js';
-import { ownTaskDirInBundle, TEMP_TASK_ROOT } from './temp-scrub.js';
 
 // In-flight teardown coalescing: two concurrent releases for the same slot
 // must be ONE teardown — the slower duplicate previously re-killed and reset
@@ -1159,39 +1158,7 @@ async function slotReleaseImpl(
       }
       await refreshRetention(moved);
     }
-    // The temp/tasks layout: the run's own task dir goes only once its bundle holds every file
-    // in it. Kept otherwise; the next run's prepare clears temp/, so the leak ends there.
-    let keepOwnTaskDir = false;
-    if (taskRel && taskDirName === TEMP_TASK_ROOT) {
-      const recent = listRunsForSlotHistory(params.slotId, { limit: 1 }).runs[0];
-      const ownerId =
-        params.expectedRunId ??
-        boundOwner ??
-        (recent && isTerminalRunStatus(recent.status) ? recent.id : null);
-      const owner = ownerId ? await getRunWithArchived(ownerId) : undefined;
-      let reason = 'no finished run owns it';
-      if (owner) {
-        try {
-          const check = await ownTaskDirInBundle(
-            vars,
-            owner,
-            `${vars.remoteRepo}/${taskDirName}/${taskRel}`,
-          );
-          reason = check.confirmed ? '' : check.reason;
-        } catch (error) {
-          // The bundle store could not be read: keep the dir and say why.
-          reason = `bundle check failed: ${(error as Error).message}`;
-        }
-      }
-      keepOwnTaskDir = reason !== '';
-      if (keepOwnTaskDir)
-        step(
-          'clean',
-          `Kept task dir ${taskDirName}/${taskRel}: ${reason}; the next prepare clears it`,
-        );
-      await assertReleaseClaim();
-    }
-    if (taskRel && !keepOwnTaskDir) {
+    if (taskRel) {
       await execOnSlot(
         vars,
         `rm -rf ${shellQuote(`${vars.remoteRepo}/${taskDirName}/${taskRel}`)}`,
@@ -1200,23 +1167,22 @@ async function slotReleaseImpl(
       step('clean', `Task dir ${taskDirName}/${taskRel} cleaned`);
     }
 
-    // Before the age prune, so stale scratch is parked rather than deleted; refused scratch
-    // is kept out of the prune, and the prune skips task dirs when parking failed. Full
+    // Before the age prune: scratch is regenerable, so it is deleted; refused scratch
+    // is kept out of the prune, and the prune skips task dirs when the delete failed. Full
     // release only: a preserveAgents release keeps workers that may still own it.
     let scratchKeep: string[] = [];
     let scratchFailed = false;
     if (!preserveAgents) {
       await assertReleaseClaim();
       try {
-        const scratch = await parkTaskScratch(vars, projectJson);
+        const scratch = await deleteTaskScratch(vars, projectJson);
         scratchKeep = scratch.refused.map((entry) => entry.path);
-        for (const entry of scratch.parked)
-          step('storage-clean', `Parked scratch ${entry.path} at ${entry.to}`);
+        for (const entry of scratch.deleted) step('storage-clean', `Deleted scratch ${entry}`);
         for (const entry of scratch.refused)
           step('storage-clean', `Left scratch ${entry.path}: ${entry.reason}`);
       } catch (err) {
         scratchFailed = true;
-        step('storage-clean', `Scratch parking failed: ${(err as Error).message.slice(0, 200)}`);
+        step('storage-clean', `Scratch delete failed: ${(err as Error).message.slice(0, 200)}`);
       }
     }
 
