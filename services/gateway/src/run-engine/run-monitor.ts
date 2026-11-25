@@ -1596,7 +1596,7 @@ export async function monitorRun(
     terminalCommand: ArtifactTerminalCommand,
   ): Promise<ArtifactContractNotice> {
     const currentRun = getRun(runId) ?? initialRun;
-    if (isArtifactOnlyScriptedCommandRun(currentRun)) return 'no-worker';
+    if (currentRun.metrics.runner === 'scripted') return 'no-worker';
     const context = currentMonitorContext();
     try {
       return await sendOneShotWorkerInstruction(
@@ -2736,11 +2736,11 @@ function buildNudgeMessage(violation: MonitorViolation): string {
 export type WorkerInstructionDelivery = 'confirmed' | 'attempted' | 'queued' | 'not-attempted';
 
 type ArtifactTerminalCommand = NonNullable<ReturnType<typeof artifactTerminalCommandForSignal>>;
-/** A worker notice's delivery, or `no-worker` for a scripted command run. */
-export type ArtifactContractNotice = WorkerInstructionDelivery | 'no-worker';
+/** A worker notice's delivery, or `no-worker` for a scripted run. */
+type ArtifactContractNotice = WorkerInstructionDelivery | 'no-worker';
 
 /** What the artifact-contract card says about the notice it sent the worker. */
-export function artifactContractNoticeText(
+function artifactContractNoticeText(
   notice: ArtifactContractNotice,
   terminalCommand: ArtifactTerminalCommand,
 ): string {
@@ -2749,17 +2749,17 @@ export function artifactContractNoticeText(
       return 'The worker was notified.';
     case 'attempted':
     case 'queued':
-      return 'The notice may not have reached the worker yet: check its pane before sending it again.';
+      return 'The notice may not have reached the worker yet: check the worker before sending it again.';
     case 'no-worker':
-      return 'This scripted command run has no worker to notify.';
+      return 'This scripted run has no worker to notify.';
     case 'not-attempted':
       return `The worker was not notified: tell it to fix the problem below and run ./mark ${terminalCommand} again.`;
   }
 }
 
 /**
- * One-shot instruction into the worker pane: a usage-budget warning, or the
- * resume that follows an operator clearing a runner failure. Does not increment
+ * One-shot instruction into the worker pane: a usage-budget warning, the resume
+ * that follows an operator clearing a runner failure, or an artifact-contract notice. Does not increment
  * metrics.nudgeCount (stuck/idle max_nudges is a separate escalation budget, and
  * a provider outage the operator fixed must not burn it).
  *

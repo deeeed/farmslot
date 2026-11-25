@@ -17,9 +17,9 @@ import type { WorkerInstructionDelivery } from './run-monitor.js';
 
 // A stale receipt rejected f613c8af's completion signal; the card said "The worker was
 // notified" while the worker pane sat idle. The card now reports what the send did.
-const rejection = (detail: string) =>
+const rejection = (detail: string, command = 'complete') =>
   'Terminal SIGNAL.json was rejected by the worker artifact contract. Fix the listed artifacts, ' +
-  `then run ./mark complete again.\n\nTASK_ARTIFACT_CONTRACT_FAIL\n- ${detail}`;
+  `then run ./mark ${command} again.\n\nTASK_ARTIFACT_CONTRACT_FAIL\n- ${detail}`;
 const STALE = rejection(
   'CHECKLIST.md step 10 (ci.local_check): Command or publishable inputs changed; rerun this mark step',
 );
@@ -79,9 +79,14 @@ const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { monitorRun, resolveMonitorDecision } = await import('./run-monitor.js');
 const { deleteTestRunIfPresent } = await import('./test-fixtures.js');
 
-type Transport = 'tmux' | 'native' | 'scripted';
+type Transport = 'tmux' | 'native' | 'scripted' | 'scripted-non-artifact';
 
-async function fixture(t: TestContext, transport: Transport, signal: Partial<WorkerSignal> = {}) {
+async function fixture(
+  t: TestContext,
+  transport: Transport,
+  signal: Partial<WorkerSignal> = {},
+  launchCommand?: string,
+) {
   contractMessage = STALE;
   tmuxOutcome = 'sent';
   nativeOutcome = 'confirmed';
@@ -176,6 +181,22 @@ async function fixture(t: TestContext, transport: Transport, signal: Partial<Wor
           metrics: { ...current.metrics, runner: 'scripted' },
         }
       : {}),
+    // A scripted run that is not an artifact-only command run has no worker either.
+    ...(transport === 'scripted-non-artifact'
+      ? {
+          scripted: { mode: 'command' as const, commandRef: 'fixture-command' },
+          metrics: { ...current.metrics, runner: 'scripted' },
+        }
+      : {}),
+    ...(launchCommand
+      ? {
+          steps: current.steps.map((step) =>
+            step.name === 'dispatch'
+              ? { ...step, outputs: { ...step.outputs, launchCommand } }
+              : step,
+          ),
+        }
+      : {}),
     slotId,
     taskFile: path.join(taskDir, 'TASK.md'),
     agentContexts: [
@@ -226,7 +247,7 @@ async function nextCard(runId: string, seen = 0): Promise<RunDecision> {
 
 const NOTIFIED = /The worker was notified\./;
 const UNCONFIRMED =
-  /The notice may not have reached the worker yet: check its pane before sending it again\./;
+  /The notice may not have reached the worker yet: check the worker before sending it again\./;
 const notNotified = (command: string) =>
   new RegExp(
     `The worker was not notified: tell it to fix the problem below and run \\./mark ${command} again\\.`,
@@ -320,21 +341,42 @@ test('a new rejection is sent again and reported on its own', { timeout: 5000 },
   assert.equal(sent.length, 2, 'a changed rejection is a new notice');
 });
 
+test(
+  'a headless worker that takes no pane input is not sent the notice',
+  { timeout: 5000 },
+  async (t) => {
+    const f = await fixture(
+      t,
+      'tmux',
+      {},
+      "cd /repo && claude --model sonnet --print 'Read TASK.md'",
+    );
+    void f.start();
+    assertCard(await nextCard(f.run.id), NOT_NOTIFIED);
+    assert.equal(sent.length, 0);
+  },
+);
+
 test('a no-change signal names ./mark no-change', { timeout: 5000 }, async (t) => {
   const f = await fixture(t, 'tmux', {
     disposition: 'already_fixed',
     evidence: { reportPath: 'artifacts/no-change-report.md' },
   });
+  contractMessage = rejection(
+    'CHECKLIST.md step 10 (ci.local_check): Command or publishable inputs changed; rerun this mark step',
+    'no-change',
+  );
   tmuxOutcome = 'held-untouched';
   void f.start();
-  const card = await nextCard(f.run.id);
-  assert.match(card.description ?? '', notNotified('no-change'));
+  assertCard(await nextCard(f.run.id), notNotified('no-change'));
   assert.match(sent[0]!, /run \.\/mark no-change again/);
 });
 
-test('a scripted command run sends no worker notice', { timeout: 5000 }, async (t) => {
-  const f = await fixture(t, 'scripted');
-  void f.start();
-  assertCard(await nextCard(f.run.id), /has no worker to notify/);
-  assert.equal(sent.length, 0);
-});
+for (const transport of ['scripted', 'scripted-non-artifact'] as const) {
+  test(`a ${transport} run sends no worker notice`, { timeout: 5000 }, async (t) => {
+    const f = await fixture(t, transport);
+    void f.start();
+    assertCard(await nextCard(f.run.id), /has no worker to notify/);
+    assert.equal(sent.length, 0);
+  });
+}
