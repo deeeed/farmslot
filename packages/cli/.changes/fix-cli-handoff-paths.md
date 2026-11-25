@@ -1,0 +1,2 @@
+- `farmslot runs traces export` runs from the installed CLI: it loads the handoff scrub patterns from source instead of a `dist/` the install never builds (it failed with `ERR_MODULE_NOT_FOUND`).
+- Trace export keeps image payloads (base64 screenshots) as they are instead of scanning them, which took minutes per run with screenshots; its missing-store error names `FARMSLOT_ROOT`.

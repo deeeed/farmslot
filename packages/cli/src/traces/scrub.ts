@@ -52,6 +52,15 @@ const OWN_DIGEST_KEYS = new Set([
   'mergeSha',
 ]);
 
+/**
+ * Blocks whose `data` is a base64 image: Pi and Claude content (`image`), and an Anthropic
+ * image `source` (`base64`).
+ */
+const IMAGE_BLOCK_TYPES = new Set(['image', 'base64']);
+const BASE64 = /^[A-Za-z0-9+/=]*$/;
+/** A whole value that is an inline image, as OpenAI-style `image_url` content carries it. */
+const BASE64_IMAGE_URL = /^data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]*$/;
+
 /** Farmslot's own digests and SHA fields are kept: they are not secrets. */
 const OWN_DIGEST =
   /("(?:sha256|diffSha256|templateSha256|bundleDigest|startRef|dispatchHead|finalHead|prHead|mergeSha|ref)"\s*:\s*")|sha256:/;
@@ -142,6 +151,7 @@ export class TraceScrubber {
   private value(value: unknown, key?: string): unknown {
     const token = (rule: ScrubRule) => `[REDACTED:${rule}]`;
     if (typeof value === 'string') {
+      if (BASE64_IMAGE_URL.test(value)) return value;
       if (key && value.length >= 6 && SECRET_KEY.test(key)) {
         const rule: ScrubRule = KEY_IS_PRIVATE_KEY.test(key) ? 'private-key' : 'secret-variable';
         this.count(rule, 1);
@@ -151,9 +161,17 @@ export class TraceScrubber {
     }
     if (Array.isArray(value)) return value.map((entry) => this.value(entry, key));
     if (value && typeof value === 'object') {
+      // An image's base64 payload is kept as is. The text patterns cannot see into an image,
+      // a match inside base64 would only corrupt it, and scanning megabytes of screenshots
+      // with every publication pattern took an export minutes per run.
+      const image = IMAGE_BLOCK_TYPES.has((value as { type?: unknown }).type as string);
       // No prototype: `constructor` or `__proto__` keys are plain own keys, as in the input.
       const out: Record<string, unknown> = Object.create(null);
       for (const [entryKey, entry] of Object.entries(value)) {
+        if (image && entryKey === 'data' && typeof entry === 'string' && BASE64.test(entry)) {
+          out[entryKey] = entry;
+          continue;
+        }
         const base = this.apply(entryKey, token);
         let scrubbedKey = base;
         // Two keys redacted to the same token stay apart instead of overwriting each other.

@@ -219,7 +219,10 @@ Run retention is not changed by the opt-out.
 runs in the CLI process, offline from the gateway, on the gateway's host: it reads
 the gateway's stores directly, resolved through `farmslot paths --json` for the
 gateway role (ADR-039 Amendment 6), and refuses on a host where those stores are
-absent. It reads them read-only and writes only `<dir>`. `--has-grade` keeps runs
+absent. The installed CLI resolves them from its own snapshot unless
+`FARMSLOT_ROOT` names the gateway checkout, so run it with the gateway's
+`FARMSLOT_*` environment plus `FARMSLOT_ROOT`. It reads the stores read-only and
+writes only `<dir>`. `--has-grade` keeps runs
 with at least one external grade line; a run's `humanGrade` is exported but does
 not count.
 
@@ -313,6 +316,13 @@ scrubbed value by value with its key in view: a string under a secret-like key
 rules 2 and 3, and a line with nothing redacted keeps its exact bytes. A file the
 scrubber cannot read is left out, never exported raw, and one unreadable store
 file skips only its run, with the reason in `README.md`.
+
+Image payloads are kept as they are: the base64 `data` of an `image` block (Pi,
+Claude) or of a `base64` image source (Anthropic), and a whole
+`data:image/...;base64,` value. Text patterns cannot see into an image, a match
+inside base64 would only corrupt it, and scanning screenshots took minutes per
+run. A screenshot can still show a secret, which is one more reason an export
+needs a human review before it is shared.
 
 Redaction is a best-effort backstop, not a guarantee. An export is for the local
 machine only; sharing it, even internally, needs a human review first.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import test from 'node:test';
 
 import { TraceScrubber } from './scrub.js';
@@ -143,4 +144,34 @@ test('keys named like Object members stay plain keys and unchanged lines stay by
     scrubber().text('{"__proto__":{"home":"/Users/deeeed/x"},"constructor":1}'),
   );
   assert.deepEqual(Object.keys(changed), ['__proto__', 'constructor']);
+});
+
+test('an image payload is kept byte for byte, unscanned, while the text around it is scrubbed', () => {
+  const s = scrubber();
+  // A 1 MB screenshot, three times. Scanning base64 with every publication pattern took about
+  // 12 s a megabyte (a pi session with 21 MB of screenshots held its export for minutes).
+  const data = randomBytes(750_000).toString('base64');
+  const url = `data:image/png;base64,${data}`;
+  const line = JSON.stringify({
+    message: {
+      content: [
+        { type: 'text', text: 'see /Users/deeeed/shot.png' },
+        { type: 'image', data, mimeType: 'image/png' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data } },
+        { type: 'image_url', image_url: { url } },
+        // Not base64: an image block's text is still scrubbed.
+        { type: 'image', data: 'mail someone@example.org' },
+      ],
+    },
+  });
+  const started = performance.now();
+  const out = JSON.parse(s.text(line)) as { message: { content: Record<string, unknown>[] } };
+  assert.ok(performance.now() - started < 2000, 'the image payloads are not scanned');
+  const [text, pi, anthropic, openai, notImage] = out.message.content;
+  assert.equal(text.text, 'see ~/shot.png');
+  assert.equal(pi.data, data);
+  assert.equal((anthropic.source as { data: string }).data, data);
+  assert.equal((openai.image_url as { url: string }).url, url);
+  assert.equal(notImage.data, 'mail [REDACTED:email]');
+  assert.equal(s.report()['publication-pattern'], undefined);
 });

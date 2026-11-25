@@ -60,7 +60,9 @@ export function gatewayTraceStores(env: NodeJS.ProcessEnv = process.env): TraceE
   };
   if (!existsSync(stores.episodes))
     throw new Error(
-      `No gateway episode store at ${stores.episodes}. Run the export on the gateway host, with the gateway's FARMSLOT_* environment.`,
+      // The installed CLI resolves the gateway's stores from its own snapshot unless told
+      // where the gateway checkout is: its environment does not name it.
+      `No gateway episode store at ${stores.episodes}. Run the export on the gateway host with the gateway's FARMSLOT_* environment, and FARMSLOT_ROOT set to the gateway checkout.`,
     );
   return stores;
 }
