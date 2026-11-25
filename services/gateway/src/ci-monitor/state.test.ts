@@ -171,11 +171,21 @@ test('only the latest "Keep holding", for this state, in this hold, quiets a gat
     context: { holdKey },
   });
   const run = { decisions: [hold, kept('2026-11-24T13:40:00.000Z', 'A')] };
-  assert.equal(ciHoldIsQuiet(run, 'ci_merge_conflict', 'A'), true);
-  assert.equal(ciHoldIsQuiet(run, 'ci_merge_conflict', 'B'), false, 'another state asks');
-  assert.equal(ciHoldIsQuiet(run, 'ci_ci_failed', 'A'), false, 'another gate asks');
+  assert.equal(ciHoldIsQuiet(run, 'merge_conflict', 'A'), true);
+  assert.equal(ciHoldIsQuiet(run, 'merge_conflict', 'B'), false, 'another state asks');
+  assert.equal(ciHoldIsQuiet(run, 'ci_failed', 'A'), false, 'another gate asks');
   assert.equal(
-    ciHoldIsQuiet(run, 'ci_merge_conflict', 'A', '2026-11-24T13:50:00.000Z'),
+    ciHoldIsQuiet(
+      {
+        ...run,
+        ciWatchState: {
+          ...emptyCiWatchState(),
+          holdClearedAt: { merge_conflict: '2026-11-24T13:50:00.000Z' },
+        },
+      },
+      'merge_conflict',
+      'A',
+    ),
     false,
     'the state was seen to clear after the answer',
   );
@@ -188,7 +198,7 @@ test('only the latest "Keep holding", for this state, in this hold, quiets a gat
           kept('2026-11-24T13:45:00.000Z', 'B'),
         ],
       },
-      'ci_merge_conflict',
+      'merge_conflict',
       'A',
     ),
     false,
@@ -197,14 +207,14 @@ test('only the latest "Keep holding", for this state, in this hold, quiets a gat
   assert.equal(
     ciHoldIsQuiet(
       { decisions: [kept('2026-11-24T13:00:00.000Z', 'A'), hold] },
-      'ci_merge_conflict',
+      'merge_conflict',
       'A',
     ),
     false,
     'an answer from before the hold does not count',
   );
   assert.equal(
-    ciHoldIsQuiet({ decisions: [kept('2026-11-24T13:40:00.000Z', 'A')] }, 'ci_merge_conflict', 'A'),
+    ciHoldIsQuiet({ decisions: [kept('2026-11-24T13:40:00.000Z', 'A')] }, 'merge_conflict', 'A'),
     false,
   );
 });

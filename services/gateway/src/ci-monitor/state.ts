@@ -146,15 +146,13 @@ export function ciHoldSince(
   run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
 ): string | undefined {
   if (!run) return undefined;
-  let hold: string | undefined;
-  for (const decision of run.decisions ?? []) {
-    if (decision.type !== 'ci_inline_fix_blocked') continue;
-    if (decision.resolvedAction !== 'wait' || !decision.resolvedAt) continue;
-    if (!decision.actions?.some((action) => resolveCIWatchChainFlowType(action.id))) continue;
-    if (!hold || decision.resolvedAt > hold) hold = decision.resolvedAt;
-  }
-  if (!hold) return undefined;
-  const heldAt = hold;
+  const heldAt = latestCIWait(
+    run,
+    (decision) =>
+      decision.type === 'ci_inline_fix_blocked' &&
+      !!decision.actions?.some((action) => resolveCIWatchChainFlowType(action.id)),
+  )?.resolvedAt;
+  if (!heldAt) return undefined;
   const retried = (run.decisions ?? []).some(
     (decision) =>
       decision.type.startsWith('ci_') &&
@@ -175,38 +173,43 @@ export function ciHoldSince(
 export function ciHoldBarrier(
   run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
 ): string | undefined {
-  const since = ciHoldSince(run);
-  if (!run || !since) return undefined;
-  let barrier = since;
-  for (const decision of run.decisions ?? []) {
-    if (!decision.type.startsWith('ci_') || decision.resolvedAction !== 'wait') continue;
-    if (decision.resolvedAt && decision.resolvedAt > barrier) barrier = decision.resolvedAt;
-  }
-  return barrier;
+  if (!run || !ciHoldSince(run)) return undefined;
+  return latestCIWait(run, (decision) => decision.type.startsWith('ci_'))?.resolvedAt;
 }
 
 /**
  * Whether a gate of this type may stay quiet: in the current hold, the operator's
- * latest "Keep holding" there was given for exactly this state (`context.holdKey`)
- * and after `notBefore`, the last time the monitor saw that state clear. Read from
- * `run.decisions`, so it survives a gateway restart.
+ * latest "Keep holding" there was given for exactly this state (`context.holdKey`),
+ * after the last time a read showed that state clear (`ciWatchState.holdClearedAt`).
+ * Read from the run, so it survives a gateway restart.
  */
 export function ciHoldIsQuiet(
   run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
-  type: string,
+  gate: string,
   holdKey: string,
-  notBefore?: string,
 ): boolean {
   const since = ciHoldSince(run);
   if (!run || !since) return false;
+  const answer = latestCIWait(
+    run,
+    (decision) => decision.type === `ci_${gate}` && (decision.resolvedAt ?? '') > since,
+  );
+  const clearedAt = run.ciWatchState?.holdClearedAt?.[gate];
+  if (!answer?.resolvedAt || (clearedAt && answer.resolvedAt <= clearedAt)) return false;
+  return answer.context?.holdKey === holdKey;
+}
+
+/** The latest resolved `wait` among the decisions `match` accepts. */
+function latestCIWait(
+  run: Pick<Run, 'decisions'>,
+  match: (decision: RunDecision) => boolean,
+): RunDecision | undefined {
   let latest: RunDecision | undefined;
   for (const decision of run.decisions ?? []) {
-    if (decision.type !== type || decision.resolvedAction !== 'wait') continue;
-    if (!decision.resolvedAt || decision.resolvedAt <= since) continue;
+    if (decision.resolvedAction !== 'wait' || !decision.resolvedAt || !match(decision)) continue;
     if (!latest?.resolvedAt || decision.resolvedAt > latest.resolvedAt) latest = decision;
   }
-  if (!latest?.resolvedAt || (notBefore && latest.resolvedAt <= notBefore)) return false;
-  return latest.context?.holdKey === holdKey;
+  return latest;
 }
 
 /** Operator chose Retry CI — allow inline fix another consecutive-attempt window. */

@@ -3598,6 +3598,14 @@ export interface RunCiWatchState {
    * resolved decisions, so a hold resolved before this time no longer applies.
    */
   holdReleasedAt?: string;
+  /**
+   * Per held gate (`merge_conflict`, `ci_failed`, `review_comments`,
+   * `review_comments_early`), the last time a complete GitHub read showed that
+   * gate's state clear while the PR was held. A "Keep holding" answered at or
+   * before it no longer quiets the gate, so a state that clears and returns asks
+   * again, across a gateway restart too.
+   */
+  holdClearedAt?: Record<string, string>;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };

@@ -383,15 +383,13 @@ export async function monitorCI(
   // The hold protocol, shared by every gate that can auto-dispatch. While the
   // operator holds the PR, a gate offers "Keep holding"; that answer is stored on
   // the decision with the state it was given for, so the gate stays quiet, across a
-  // restart too, until GitHub shows another head or failure, the monitor sees the
-  // state clear, or the hold ends. With no key (GitHub returned no head) it asks.
-  const clearedAt: Partial<Record<CIHoldGate, string>> = {};
+  // restart too, until GitHub shows another head or failure, a read shows the state
+  // clear, or the hold ends.
   const heldGate = (gate: CIHoldGate, holdKey: string | undefined) => {
     const current = getRun(runId);
     if (!ciHoldSince(current)) return null;
     return {
-      quiet:
-        holdKey !== undefined && ciHoldIsQuiet(current, `ci_${gate}`, holdKey, clearedAt[gate]),
+      quiet: holdKey !== undefined && ciHoldIsQuiet(current, gate, holdKey),
       action: KEEP_HOLDING,
       context: holdKey === undefined ? {} : { holdKey },
     };
@@ -692,21 +690,38 @@ export async function monitorCI(
       continue;
     }
 
-    // "Keep holding" keys: a held gate stays quiet only for the PR head and failure the
-    // answer was given for. A state seen to clear ends that answer, so its return asks.
+    // "Keep holding" keys: a held gate stays quiet only for the PR head and the
+    // watched failures or comments the answer was given for.
     const holdKeys = pr.headSha
       ? {
           conflict: pr.headSha,
-          failed: `${pr.headSha}:${[...(pr.allFailedNames ?? allFailedNames)].sort().join(',')}`,
+          failed: `${pr.headSha}:${[...failedNames].sort().join(',')}`,
           comments: `${pr.headSha}:${actionableFingerprint}`,
         }
       : undefined;
-    const seenAt = new Date().toISOString();
-    if (pr.mergeable === 'MERGEABLE') clearedAt.merge_conflict = seenAt;
-    if (!anyFailed) clearedAt.ci_failed = seenAt;
-    if (effectiveActionable.length === 0) {
-      clearedAt.review_comments = seenAt;
-      clearedAt.review_comments_early = seenAt;
+    // While held, a read GitHub could not complete is not a state: it neither asks nor
+    // clears anything, and the poll waits inside the wait caps. A complete read that
+    // shows a gate's state clear ends that gate's answer, recorded on the run.
+    const holdHeld = ciHoldSince(getRun(runId)) !== undefined;
+    const readIncomplete = !pr.headSha || !pr.checkSnapshot || Boolean(pr.readErrors?.length);
+    const holdBlind = holdHeld && readIncomplete;
+    if (holdHeld && !readIncomplete) {
+      const cleared: CIHoldGate[] = [
+        ...(pr.mergeable === 'MERGEABLE' ? (['merge_conflict'] as const) : []),
+        ...(!anyFailed ? (['ci_failed'] as const) : []),
+        ...(effectiveActionable.length === 0
+          ? (['review_comments', 'review_comments_early'] as const)
+          : []),
+      ];
+      if (cleared.length > 0) {
+        const seenAt = new Date().toISOString();
+        mutateDedup(runId, (state) => {
+          state.holdClearedAt = {
+            ...state.holdClearedAt,
+            ...Object.fromEntries(cleared.map((gate) => [gate, seenAt])),
+          };
+        });
+      }
     }
 
     // Merge conflict — prefer update-branch (lighter), fallback to pr-complete.
@@ -716,7 +731,7 @@ export async function monitorCI(
     const conflictGate = heldGate('merge_conflict', holdKeys?.conflict);
     const quietConflict =
       conflictGate?.quiet === true && (mergeConflict || pr.mergeable === 'UNKNOWN');
-    if (mergeConflict && !quietConflict) {
+    if (mergeConflict && !quietConflict && !holdBlind) {
       console.log(`[ci-monitor] run ${runId.slice(0, 8)} — merge conflict detected`);
       const autoAction = pickCIAutoDispatchAction('merge_conflict', [], config, !!conflictGate);
       if (autoAction) {
@@ -757,7 +772,7 @@ export async function monitorCI(
     const now = Date.now();
     const progressWindowExpired = now - timeoutWindowStartedAt > config.maxPollTimeMs;
     const totalWindowExpired = now - totalTimeoutWindowStartedAt > config.maxTotalPollTimeMs;
-    const waitingForCI = quietConflict || !allPassed || effectiveActionable.length > 0;
+    const waitingForCI = quietConflict || holdBlind || !allPassed || effectiveActionable.length > 0;
     if (waitingForCI && (progressWindowExpired || totalWindowExpired)) {
       const elapsedMs = progressWindowExpired
         ? now - timeoutWindowStartedAt
@@ -799,8 +814,9 @@ export async function monitorCI(
       continue;
     }
 
-    // A conflict the operator keeps holding waits here, inside the wait caps above.
-    if (quietConflict) {
+    // A conflict the operator keeps holding, or a held PR GitHub could not read in
+    // full, waits here, inside the wait caps above.
+    if (quietConflict || holdBlind) {
       forceNextRefresh = await waitForNextPoll('polling');
       continue;
     }

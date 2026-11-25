@@ -18,13 +18,21 @@ const comment = {
   source: 'issue',
   workerResponded: false,
 };
+type MockCheck = {
+  name: string;
+  status: string;
+  failureDetails?: Array<{ name: string; status: string; conclusion: string | null }>;
+};
 const snapshots: Array<{
-  checks: (typeof failedCheck)[];
+  checks: MockCheck[];
   allPassed: boolean;
   comments?: (typeof comment)[];
   mergeConflict?: boolean;
-  /** GitHub's `headRefOid`; defaults to one fixed head. */
-  headSha?: string;
+  /** GitHub's `headRefOid`; defaults to one fixed head, null when the read had none. */
+  headSha?: string | null;
+  /** The checks read failed, so no check snapshot. */
+  checksUnreadable?: boolean;
+  readErrors?: string[];
   /** Defaults to CONFLICTING or MERGEABLE from `mergeConflict`. */
   mergeable?: string;
   /** Raw failing check names, finer than the watched groups. */
@@ -36,7 +44,10 @@ mock.module('../methods/pr.js', {
   namedExports: {
     prStatus: async ({ force }: { force?: boolean }) => {
       forcedReads.push(force === true);
-      const snapshot = snapshots.shift() ?? { checks: [failedCheck], allPassed: false };
+      const snapshot: (typeof snapshots)[number] = snapshots.shift() ?? {
+        checks: [failedCheck],
+        allPassed: false,
+      };
       const failed = snapshot.checks.filter((check) => check.status === 'fail').length;
       const pending = snapshot.checks.filter((check) => check.status === 'pending').length;
       const comments = 'comments' in snapshot ? (snapshot.comments ?? []) : [];
@@ -47,22 +58,25 @@ mock.module('../methods/pr.js', {
           merged: false,
           mergeConflict: snapshot.mergeConflict ?? false,
           mergeable: snapshot.mergeable ?? (snapshot.mergeConflict ? 'CONFLICTING' : 'MERGEABLE'),
-          headSha: snapshot.headSha ?? 'pr-head-1',
+          headSha: snapshot.headSha === null ? undefined : (snapshot.headSha ?? 'pr-head-1'),
+          ...(snapshot.readErrors ? { readErrors: snapshot.readErrors } : {}),
           allFailedNames: snapshot.allFailedNames ?? (failed > 0 ? ['Check changelog'] : []),
           checks: snapshot.checks,
-          checkSnapshot: {
-            pr: 10384,
-            repo: 'MetaMask/core',
-            fetchedAt: new Date().toISOString(),
-            checks: snapshot.checks.map((check) => ({
-              name: check.name,
-              status: check.status === 'pending' ? 'IN_PROGRESS' : 'COMPLETED',
-              conclusion:
-                check.status === 'pending' ? null : snapshot.allPassed ? 'SUCCESS' : 'FAILURE',
-              timestamp: null,
-              detailsUrl: null,
-            })),
-          },
+          checkSnapshot: snapshot.checksUnreadable
+            ? undefined
+            : {
+                pr: 10384,
+                repo: 'MetaMask/core',
+                fetchedAt: new Date().toISOString(),
+                checks: snapshot.checks.map((check) => ({
+                  name: check.name,
+                  status: check.status === 'pending' ? 'IN_PROGRESS' : 'COMPLETED',
+                  conclusion:
+                    check.status === 'pending' ? null : snapshot.allPassed ? 'SUCCESS' : 'FAILURE',
+                  timestamp: null,
+                  detailsUrl: null,
+                })),
+              },
           checkSummary: {
             passed: snapshot.allPassed ? 1 : 0,
             failed,
@@ -103,6 +117,7 @@ mock.module('./inline-fix.js', {
 });
 
 const { monitorCI, pokeCIPoll, resolveCIDecision } = await import('./service.js');
+const { buildCIBotCommentFingerprint } = await import('./state.js');
 const { createRun, getRun, loadAllRuns, updateRun } = await import('../runs/store.js');
 
 test('ci-watch rechecks GitHub and completes when the unchanged HEAD turns green', async () => {
@@ -205,6 +220,15 @@ const HOLD_GATE = {
 };
 const conflicted = { checks: [failedCheck], allPassed: false, mergeConflict: true };
 const HELD_AT = '2026-11-24T13:28:57.000Z';
+const KEPT_AT = '2026-11-24T13:40:00.000Z';
+
+/** One watched group whose failing jobs GitHub reports individually. */
+function shards(...names: string[]): MockCheck {
+  return {
+    ...failedCheck,
+    failureDetails: names.map((name) => ({ name, status: 'COMPLETED', conclusion: 'FAILURE' })),
+  };
+}
 
 function holdDecision(resolvedAt: string) {
   return {
@@ -268,10 +292,11 @@ function watch(seed: (runId: string) => void = () => {}) {
         | undefined
     )?.nextPollAt ?? null;
   // Wait until the loop has handled a read: it either armed a new sleep (a fresh
-  // nextPollAt) or stopped to ask (nextPollAt cleared), or the watch ended.
+  // nextPollAt), stopped to ask (an open card), or the watch ended.
   const handled = async (reads: number, before: string | null) => {
     for (let attempts = 0; attempts < 200; attempts++) {
-      if (settled || (forcedReads.length > reads && nextPollAt() !== before)) return;
+      const slept = nextPollAt() !== null && nextPollAt() !== before;
+      if (settled || (forcedReads.length > reads && (slept || openCards().length > 0))) return;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.fail('the poll was not handled');
@@ -408,10 +433,7 @@ test('a "Keep holding" given before a gateway restart stays quiet after it', asy
     snapshots.push(conflicted, conflicted);
     const w = watch((runId) =>
       updateRun(runId, {
-        decisions: [
-          holdDecision(HELD_AT),
-          keptHolding('ci_merge_conflict', '2026-11-24T13:40:00.000Z', 'pr-head-1'),
-        ],
+        decisions: [holdDecision(HELD_AT), keptHolding('ci_merge_conflict', KEPT_AT, 'pr-head-1')],
       }),
     );
     try {
@@ -447,10 +469,7 @@ test('a held conflict that clears and returns at the same head asks again', asyn
     snapshots.push({ checks: [pendingCheck], allPassed: false }, conflicted);
     const w = watch((runId) =>
       updateRun(runId, {
-        decisions: [
-          holdDecision(HELD_AT),
-          keptHolding('ci_merge_conflict', '2026-11-24T13:40:00.000Z', 'pr-head-1'),
-        ],
+        decisions: [holdDecision(HELD_AT), keptHolding('ci_merge_conflict', KEPT_AT, 'pr-head-1')],
       }),
     );
     try {
@@ -496,10 +515,7 @@ test('a held conflict still reaches the CI wait cap', async () => {
     snapshots.push(conflicted, conflicted);
     const w = watch((runId) =>
       updateRun(runId, {
-        decisions: [
-          holdDecision(HELD_AT),
-          keptHolding('ci_merge_conflict', '2026-11-24T13:40:00.000Z', 'pr-head-1'),
-        ],
+        decisions: [holdDecision(HELD_AT), keptHolding('ci_merge_conflict', KEPT_AT, 'pr-head-1')],
         ciWatchState: {
           consecutiveAttempts: 0,
           totalAttempts: 0,
@@ -617,12 +633,8 @@ test('a changed set of failing checks re-raises a held failed-check gate', async
   // Same watched group, same head: shards 3 and 6 were fixed and shard 9 now fails.
   await held(async () => {
     snapshots.push(
-      {
-        checks: [failedCheck],
-        allPassed: false,
-        allFailedNames: ['Unit tests (3)', 'Unit tests (6)'],
-      },
-      { checks: [failedCheck], allPassed: false, allFailedNames: ['Unit tests (9)'] },
+      { checks: [shards('Unit tests (3)', 'Unit tests (6)')], allPassed: false },
+      { checks: [shards('Unit tests (9)')], allPassed: false },
     );
     const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
     try {
@@ -673,6 +685,182 @@ test('a held PR is not asked about early review comments on every poll', async (
       await w.pollOnce();
       assert.equal(w.settled(), false);
       assert.deepEqual(w.openCards(), []);
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('an unwatched check failing at the same head does not re-raise a held failed-check gate', async () => {
+  // The key is the watched failing jobs. The whole rollup also lists unwatched jobs,
+  // and an E2E job outside the watched groups failing would re-ask with the same text.
+  await held(async () => {
+    snapshots.push(
+      { checks: [shards('Unit tests (3)')], allPassed: false, allFailedNames: ['Unit tests (3)'] },
+      {
+        checks: [shards('Unit tests (3)')],
+        allPassed: false,
+        allFailedNames: ['Unit tests (3)', 'E2E smoke'],
+      },
+    );
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      const first = await w.open('ci_ci_failed');
+      assert.ok(first);
+      resolveCIDecision(first.id, 'wait');
+      await w.pollOnce();
+      assert.deepEqual(w.openCards(), []);
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('a held failure that clears and returns asks again', async () => {
+  await held(async () => {
+    snapshots.push(
+      { checks: [pendingCheck], allPassed: false },
+      { checks: [failedCheck], allPassed: false },
+    );
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [
+          holdDecision(HELD_AT),
+          keptHolding('ci_ci_failed', KEPT_AT, 'pr-head-1:Check changelog'),
+        ],
+      }),
+    );
+    try {
+      await w.firstPoll();
+      assert.deepEqual(w.openCards(), [], 'nothing failed on the first read');
+      await w.pollOnce();
+      assert.ok(await w.open('ci_ci_failed'), 'the returning failure is asked about');
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('held review comments that clear and return ask again', async () => {
+  await held(async () => {
+    snapshots.push(
+      { checks: [pendingCheck], allPassed: false, comments: [] },
+      { checks: [pendingCheck], allPassed: false, comments: [comment] },
+    );
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [
+          holdDecision(HELD_AT),
+          keptHolding(
+            'ci_review_comments_early',
+            KEPT_AT,
+            `pr-head-1:${buildCIBotCommentFingerprint([comment] as Parameters<typeof buildCIBotCommentFingerprint>[0])}`,
+          ),
+        ],
+      }),
+    );
+    try {
+      await w.firstPoll();
+      assert.deepEqual(w.openCards(), []);
+      await w.pollOnce();
+      assert.ok(await w.open('ci_review_comments_early'), 'the returning comments are asked about');
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('a clear seen before a gateway restart still makes the returning state ask', async () => {
+  // The clear is recorded on the run, so the next monitorCI does not trust an answer
+  // given before it.
+  await held(async () => {
+    snapshots.push(conflicted, conflicted);
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [holdDecision(HELD_AT), keptHolding('ci_merge_conflict', KEPT_AT, 'pr-head-1')],
+        ciWatchState: {
+          consecutiveAttempts: 0,
+          totalAttempts: 0,
+          skips: 0,
+          holdClearedAt: { merge_conflict: '2026-11-24T13:50:00.000Z' },
+        },
+      }),
+    );
+    try {
+      assert.ok(await w.open('ci_merge_conflict'));
+    } finally {
+      w.controller.abort();
+    }
+  });
+});
+
+test('a held PR read without a head neither asks nor clears', async () => {
+  // A failed state read has no head and reads mergeability as UNKNOWN; beside a
+  // failing check it would otherwise raise ci_failed, whose keyless answer would
+  // then replace the gate's earlier one.
+  await held(async () => {
+    snapshots.push({ ...conflicted, headSha: null, mergeConflict: false, mergeable: 'UNKNOWN' });
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      await w.firstPoll();
+      assert.equal(w.settled(), false);
+      assert.deepEqual(w.openCards(), []);
+      assert.equal(getRun(w.run.id)?.ciWatchState?.holdClearedAt, undefined);
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('a held PR whose checks read failed records no clear', async () => {
+  // With no check snapshot, no watched check reads as failed. That is not GitHub
+  // showing the failure gone, so the next complete read stays quiet.
+  await held(async () => {
+    snapshots.push(
+      { checks: [], allPassed: false, checksUnreadable: true },
+      { checks: [failedCheck], allPassed: false },
+    );
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [
+          holdDecision(HELD_AT),
+          keptHolding('ci_ci_failed', KEPT_AT, 'pr-head-1:Check changelog'),
+        ],
+      }),
+    );
+    try {
+      await w.firstPoll();
+      assert.equal(getRun(w.run.id)?.ciWatchState?.holdClearedAt, undefined);
+      await w.pollOnce();
+      assert.deepEqual(w.openCards(), [], 'the unchanged failure stays quiet');
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
+
+test('a held PR whose comments read failed records no clear', async () => {
+  await held(async () => {
+    const key = `pr-head-1:${buildCIBotCommentFingerprint([comment] as Parameters<typeof buildCIBotCommentFingerprint>[0])}`;
+    snapshots.push(
+      {
+        checks: [pendingCheck],
+        allPassed: false,
+        comments: [],
+        readErrors: ['issues.comments#10384: HTTP 502'],
+      },
+      { checks: [pendingCheck], allPassed: false, comments: [comment] },
+    );
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [holdDecision(HELD_AT), keptHolding('ci_review_comments_early', KEPT_AT, key)],
+      }),
+    );
+    try {
+      await w.firstPoll();
+      assert.equal(getRun(w.run.id)?.ciWatchState?.holdClearedAt, undefined);
+      await w.pollOnce();
+      assert.deepEqual(w.openCards(), [], 'the unchanged comments stay quiet');
     } finally {
       w.controller.abort();
     }
