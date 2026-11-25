@@ -54,7 +54,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 - [ ] **7. Implement the fix** — make the minimal change needed. No refactoring, no cleanup beyond the fix.
 - [ ] **8. Changed-file CI** [DETERMINISTIC: ci.local_check] - call `{{TASK_DIR}}/mark 8`. The engine runs the frozen command and records its receipt. Read the retained failure log and fix failures, then repeat this mark. Do not select or launch tests, builds, lint or validation scripts yourself.
   Run the step 4 recipe separately when one was authored; retain its result.
-- [ ] **9. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) [OPTIONAL: step 3 listed no UI or device surface] — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only: skip with `{{TASK_DIR}}/mark 9 --skip "<why>"`.
+- [ ] **9. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) [OPTIONAL: step 3 listed no UI or device surface, or no project action exercises the bug] — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only: skip with `{{TASK_DIR}}/mark 9 --skip "<why>"`.
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
@@ -63,14 +63,14 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 - [ ] **12. Review** — read the diff (`git diff`) against `{{review_quality_path}}`.
 - [ ] **13. Blast radius** — list every caller, shared-state reader/writer, schema/doc, and test that
       references what you changed; verify each and fix sibling instances in the same pass.
-- [ ] **14. Extend + re-run the recipe for anything changed since the baseline** — each fix needs a node
-      proving its claim, then a full re-run; act on what it shows. Prove each new node can fail. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
-      Update affected AC verdicts and regenerate `recipe-coverage.md` from `ac render` after the final proof run.
+- [ ] **14. Extend + re-run the recipe for anything changed since the baseline** — when step 4 authored a recipe, each fix needs a node
+      proving its claim, then a full re-run; act on what it shows. Prove each new node can fail. Always check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
+      Update affected AC verdicts and, with a recipe, regenerate `recipe-coverage.md` from `ac render` after the final proof run.
 
 - [ ] **15. Commit** — single commit following the repo's Lore commit protocol.
 - [ ] **16. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
 - [ ] **17. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.
-- [ ] **18. Optional external evidence declarations** — recipe evidence is engine-derived. Only non-recipe captures and comparison labels need the task-root declaration below. Recipe references must point into the selected attempt.
+- [ ] **18. Optional external evidence declarations** [OPTIONAL: no external captures or comparison labels] — recipe evidence is engine-derived. Only non-recipe captures and comparison labels need the task-root declaration below. Recipe references must point into the selected attempt.
   ```json
   {
     "version": 1,

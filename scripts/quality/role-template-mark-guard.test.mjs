@@ -58,13 +58,14 @@ for (const { rel, abs } of templates) {
 const checklistOrder = createRequire(import.meta.url)(
   path.join(repoRoot, 'packages/agent-runtime/scripts/checklist-order.cjs'),
 );
-for (const [name, steps] of [
-  ['dev.md', [6, 7, 11, 12, 13, 14, 15, 19]],
-  ['fix-bug.md', [9, 10]],
-  ['review-pr.md', [10, 11, 12, 13, 14, 15, 16, 18, 19]],
+for (const [rel, steps] of [
+  ['projects/farmslot-farm/templates/worker/dev.md', [6, 7, 9, 11, 12, 13, 14, 15, 19]],
+  ['projects/farmslot-farm/templates/worker/fix-bug.md', [9, 10, 18]],
+  ['projects/farmslot-farm/templates/worker/review-pr.md', [10, 11, 12, 13, 14, 15, 16, 18, 19]],
+  ['templates/worker/ci-fix.md', [8]],
 ]) {
-  test(`farmslot-farm/templates/worker/${name}: conditional steps are declared optional`, () => {
-    const markdown = readFileSync(path.join(workerTemplateDir, name), 'utf8');
+  test(`${rel}: conditional steps are declared optional`, () => {
+    const markdown = readFileSync(path.join(repoRoot, rel), 'utf8');
     assert.deepEqual(
       checklistOrder.declarations(markdown, 'CHECKLIST.md').map((step) => step.stepNumber),
       steps,

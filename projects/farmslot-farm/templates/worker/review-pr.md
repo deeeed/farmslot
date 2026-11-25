@@ -57,14 +57,14 @@ proof only. Missing evidence is a finding or marked unverified.
 
 ### Evidence audit (10–12) [standard+full for UI PRs]
 
-**Silent skips = task failure.** Every AC ends PROVEN or UNTESTABLE with rationale.
+**Silent skips = task failure.** Every AC ends PROVEN or UNTESTABLE with rationale. A row marked `[OPTIONAL: …]` may be skipped only with `{{TASK_DIR}}/mark N --skip "<why>"`.
 
 - [ ] **10. Collect evidence artifacts** [OPTIONAL: light tier, or the PR changes no UI] — from PR body URLs, `{{TASK_DIR}}/inputs/inherited/`, or PR author's task artifacts if materialized. List every PNG/MP4 path or URL.
 - [ ] **11. Read every screenshot** [OPTIONAL: light tier, or the PR changes no UI] — Read tool on each PNG. Build per-AC matrix (see `review-quality.md`). Verify hosted URLs return HTTP 200 when used in PR body.
 - [ ] **12. fs-recipe-quality pass** [OPTIONAL: no `recipe.json` in the PR body, inherited inputs or author artifacts] — when `recipe.json` exists in PR body, inherited inputs, or author artifacts:
   - Critique recipe graph + evidence fit
   - Write `{{TASK_DIR}}/artifacts/recipe-coverage.md` (gateway computes recipe-quality)
-  - **light:** skip 12 if no recipe; note in report
+  - skip 12 if no recipe; note in report
 
 ### Live validation (13–16) [standard+full]
 

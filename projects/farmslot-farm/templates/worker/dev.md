@@ -77,7 +77,7 @@ the limitation and replacement validation here, then skip the recipe steps (6, 7
 ### Phase 3: Implement
 
 - [ ] **8. Implement** — types in `packages/protocol`, gateway logic in `services/gateway`, UI in `apps/command-center/ui`.
-- [ ] **9. Unit tests** — add `node:test` coverage for new gateway logic when applicable.
+- [ ] **9. Unit tests** [OPTIONAL: the change adds no gateway logic] — add `node:test` coverage for new gateway logic.
 
 ### Phase 4: Validate
 
