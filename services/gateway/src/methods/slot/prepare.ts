@@ -170,6 +170,7 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
+import { scrubTempForRun, shouldScrubTempForRun } from './temp-scrub.js';
 import { assertPublishedPrepareBranchContained } from './unmerged-work.js';
 
 export { type PrepareHealthCommands, verifyPrepareHealth } from './prepare-health.js';
@@ -783,6 +784,40 @@ async function slotPrepareInner(
   };
 
   await excludeSlotScaffolding(vars, projectJson);
+
+  // 1d. A new run starts on a temp/ holding nothing of another run's: a held-out trial must not
+  // read an earlier task, its scratch or its traces. Farm state and the task dirs of this run,
+  // its parent chain and runs still bound to the slot stay. A nested Git checkout is deleted
+  // and named. A warm handoff, a replay or a resumed task keeps its files. Anything that cannot
+  // be deleted fails prepare, by name.
+  const scrubbingRun = params.runId ? getRun(params.runId) : undefined;
+  if (shouldScrubTempForRun(scrubbingRun)) {
+    checkAborted();
+    const scrub = await scrubTempForRun(vars, projectJson, scrubbingRun);
+    if (scrub) {
+      for (const entry of scrub.checkouts)
+        step('clean', `Deleted nested ${entry.kind} ${entry.path}`);
+      for (const dir of scrub.taskDirs)
+        step(
+          'clean',
+          `Removed earlier task dir ${dir.path} (${dir.runId ? `run ${dir.runId.slice(0, 8)}, ${dir.bundle}` : dir.bundle})`,
+        );
+      for (const entry of scrub.kept) step('clean', `Left ${entry.path}: ${entry.reason}`);
+      const other = scrub.removed.filter(
+        (entry) =>
+          !scrub.taskDirs.some((dir) => dir.path === entry.path) &&
+          !scrub.checkouts.includes(entry),
+      ).length;
+      if (other > 0)
+        step('clean', `Removed ${other} other entr${other === 1 ? 'y' : 'ies'} from temp/`);
+      if (scrub.refused.length)
+        throw new Error(
+          `temp/ still holds another run's files: ${scrub.refused
+            .map((entry) => `${entry.path} (${entry.reason})`)
+            .join('; ')}`,
+        );
+    }
+  }
 
   // 2. Verify clean state / checkout branch
   let current = (
