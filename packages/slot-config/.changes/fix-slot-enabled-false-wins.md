@@ -1,1 +1,1 @@
-- `effectiveSlotMode(slot)`: `enabled: false` always gives `disabled`; otherwise the slot's `mode`, then `dispatch`. `loadSlotVars` uses it for `slotMode` and `slotEnabled`.
+- `effectiveSlotMode(slot)` gives `disabled` for `enabled: false`, otherwise the slot's `mode`, then `dispatch`. `RawPoolSlot.mode` and the pool schema now accept `disabled`, which the slot editors already write.

@@ -1045,9 +1045,7 @@ export async function checkSSHPerMachine(
     seen.add(key);
 
     // Skip probe if all slots disabled
-    const hasEnabled = pool.slots.some((s) => {
-      return effectiveSlotMode(s) !== 'disabled';
-    });
+    const hasEnabled = pool.slots.some((s) => effectiveSlotMode(s) !== 'disabled');
 
     if (isLocal(pool.host, pool.machine)) {
       status.set(key, 'local');
@@ -1189,7 +1187,6 @@ async function checkSingleSlot(
   const sid = rawSlot.id;
   const slotProject = rawSlot.project || pool.project || '';
 
-  // Determine mode
   const mode = effectiveSlotMode(rawSlot);
 
   const platform = rawSlot.platform || pool.platform;

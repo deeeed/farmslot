@@ -405,7 +405,9 @@ export async function configSlotUpdate(
   // Sync into .farm-status.json + cache now — server.ts also calls fleetRefresh()
   // after this returns, but that runs SSH/device health checks and can take 30s+,
   // long enough for a follow-up dispatch to read stale state and fail validation.
-  const fields = statusFieldsForModeChange(update.mode, update.enabled, slotStatus?.lifecycle);
+  // From the slot as written, not the patch: `enabled: false` disables it whatever its mode says.
+  const mode = effectiveSlotMode(raw.slots[slotIdx]);
+  const fields = statusFieldsForModeChange(mode, mode !== 'disabled', slotStatus?.lifecycle);
   if (Object.keys(fields).length > 0) {
     await updateSlotStatus(slotId, fields);
     await loadFleetStatus(true);

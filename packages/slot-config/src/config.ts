@@ -180,20 +180,10 @@ export function normalizeRawReviewWorkspaces(
   return { maxConcurrent: config.max_concurrent };
 }
 
-/**
- * A slot's effective mode. `enabled: false` always disables it, whatever `mode` says: a pool that
- * still carries `mode: "dispatch"` beside `enabled: false` (a hold written by flipping only the
- * flag) must not stay dispatchable. Otherwise an explicit mode wins, then `dispatch`.
- */
-export function effectiveSlotMode(slot: Pick<RawPoolSlot, 'mode' | 'enabled'>): PoolSlotMode {
-  if (slot.enabled === false) return 'disabled';
-  return slot.mode || 'dispatch';
-}
-
 export interface RawPoolSlot {
   id: string;
   enabled?: boolean;
-  mode?: 'dispatch' | 'custom';
+  mode?: PoolSlotMode;
   project?: string;
   platform?: string;
   repo: string;
@@ -206,6 +196,12 @@ export interface RawPoolSlot {
   agent?: string;
   task?: string | null;
   resources?: Record<string, Record<string, string | number | boolean>>;
+}
+
+/** A slot's effective mode: `enabled: false` disables it whatever `mode` says, then mode, then dispatch. */
+export function effectiveSlotMode(slot: Pick<RawPoolSlot, 'mode' | 'enabled'>): PoolSlotMode {
+  if (slot.enabled === false) return 'disabled';
+  return slot.mode || 'dispatch';
 }
 
 // ─── Resolved slot config (mirrors bash load_slot_vars globals) ───

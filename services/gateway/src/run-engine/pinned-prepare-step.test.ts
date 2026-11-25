@@ -93,9 +93,11 @@ mock.module('../runners/launch-command.js', {
 mock.module('./eval-harness-lifecycle.js', {
   namedExports: { executeEvalHarnessLifecycle: async () => ({ skipped: true }) },
 });
+let slotDisabled = false;
 const prepare: typeof slotPrepare = async (_params, _emit, _signal, options) => {
   prepareOptions = options;
   recordWhenPrepared = run.prepareArtifact;
+  if (slotDisabled) return { prepared: false, requestId: 'fixture-prepare' };
   return {
     prepared: true,
     requestId: 'fixture-prepare',
@@ -120,6 +122,7 @@ const stale: RunPrepareArtifact = {
 };
 
 beforeEach(() => {
+  slotDisabled = false;
   persisted.length = 0;
   prepareOptions = undefined;
   recordWhenPrepared = undefined;
@@ -173,6 +176,11 @@ test('a pinned prepare clears the old record, asks for pinning, and records the 
     cleared >= 0 && cleared < persisted.indexOf('pinned build recorded'),
     persisted.join(', '),
   );
+});
+
+test('a slot that prepare skipped as disabled fails the prepare step', async () => {
+  slotDisabled = true;
+  await assert.rejects(prepareRun(), /is disabled; prepare did not prepare it/);
 });
 
 test('a pinned run cannot skip prepare at the prepare step', async () => {

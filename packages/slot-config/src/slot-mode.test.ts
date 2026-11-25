@@ -8,13 +8,17 @@ import test from 'node:test';
 import { effectiveSlotMode, invalidateProjectVarsCache, loadSlotVars } from './config.js';
 
 test('effectiveSlotMode: enabled false wins over every mode', () => {
-  assert.equal(effectiveSlotMode({ mode: 'dispatch', enabled: false }), 'disabled');
-  assert.equal(effectiveSlotMode({ mode: 'custom', enabled: false }), 'disabled');
-  assert.equal(effectiveSlotMode({ enabled: false }), 'disabled');
-  assert.equal(effectiveSlotMode({ mode: 'custom', enabled: true }), 'custom');
-  assert.equal(effectiveSlotMode({ mode: 'custom' }), 'custom');
-  assert.equal(effectiveSlotMode({ enabled: true }), 'dispatch');
-  assert.equal(effectiveSlotMode({}), 'dispatch');
+  for (const mode of ['dispatch', 'custom', 'disabled', undefined] as const)
+    assert.equal(effectiveSlotMode({ mode, enabled: false }), 'disabled', `mode ${mode}`);
+});
+
+test('effectiveSlotMode: otherwise the mode, then dispatch', () => {
+  for (const enabled of [true, undefined]) {
+    assert.equal(effectiveSlotMode({ mode: 'dispatch', enabled }), 'dispatch');
+    assert.equal(effectiveSlotMode({ mode: 'custom', enabled }), 'custom');
+    assert.equal(effectiveSlotMode({ mode: 'disabled', enabled }), 'disabled');
+    assert.equal(effectiveSlotMode({ enabled }), 'dispatch');
+  }
 });
 
 function pool(t: test.TestContext, slot: object): void {
@@ -58,6 +62,16 @@ test('slot vars of a held slot written as mode dispatch, enabled false are disab
   const vars = await loadSlotVars('a');
   assert.equal(vars.slotMode, 'disabled');
   assert.equal(vars.slotEnabled, false);
+});
+
+test('slot vars of a held custom slot and of a disabled-mode slot are disabled', async (t) => {
+  for (const slot of [{ mode: 'custom', enabled: false }, { mode: 'disabled', enabled: true }]) {
+    invalidateProjectVarsCache();
+    pool(t, slot);
+    const vars = await loadSlotVars('a');
+    assert.equal(vars.slotMode, 'disabled', JSON.stringify(slot));
+    assert.equal(vars.slotEnabled, false, JSON.stringify(slot));
+  }
 });
 
 test('slot vars keep an explicit mode on an enabled slot', async (t) => {

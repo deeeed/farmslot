@@ -56,11 +56,14 @@ const COMPANION_PREPARE_PROFILES = new Set([
 type SlotClaimStatus = Readonly<Partial<Pick<SlotStatus, 'lifecycle' | 'phase'>>>;
 
 export function isFreeSlot(
-  slot: Pick<SlotStatus, 'missingFromPool' | 'lifecycle' | 'agent'>,
+  slot: Pick<SlotStatus, 'missingFromPool' | 'lifecycle' | 'agent'> & Partial<Pick<SlotStatus, 'enabled'>>,
 ): boolean {
   // Ghost slots (status-file entries absent from live pools) can never be
   // dispatched — selecting one fails run creation with SLOT_NOT_FOUND.
   if (slot.missingFromPool) return false;
+  // A slot disabled in its pool can still read `ready` until the next refresh, e.g. right after a
+  // release writes its lifecycle; `enabled` already says it is held.
+  if (slot.enabled === false) return false;
   if (slot.lifecycle !== 'ready') return false;
   return slot.agent !== 'working';
 }
@@ -707,6 +710,7 @@ export function validateSlot(
   options?: { allowWorking?: boolean },
 ): string | null {
   if (slot.lifecycle === 'disabled') return slot.repoBlocker ?? 'Slot is disabled';
+  if (slot.enabled === false) return 'Slot is disabled';
   if (slot.lifecycle === 'manual') return 'Slot is in manual mode';
   if (slot.agent === 'working' && !options?.allowWorking) return 'Agent is working';
   if (slot.lifecycle === 'busy') return `Slot is busy (${slot.phase ?? 'unknown'})`;

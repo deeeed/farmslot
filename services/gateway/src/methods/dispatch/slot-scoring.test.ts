@@ -64,6 +64,14 @@ test('isFreeSlot gates on ghost, lifecycle, and working agent', () => {
   assert.equal(isFreeSlot(slot({ slot: 'a', agent: 'working' })), false);
 });
 
+// A held slot still reads `ready` until the next refresh after a release writes its lifecycle.
+test('a pool-disabled slot is neither free nor valid while its row still reads ready', () => {
+  const held = slot({ slot: 'held', enabled: false, lifecycle: 'ready' });
+  assert.equal(isFreeSlot(held), false);
+  assert.equal(validateSlot(held), 'Slot is disabled');
+  assert.equal(validateSlot(slot({ slot: 'open' })), null);
+});
+
 test('replaceable warm slots exclude active-run transitions and manual work', () => {
   const warm = slot({ slot: 'warm', agent: 'working', currentRunId: null });
   assert.equal(isReplaceableWarmSlot(warm, new Set(), new Set()), true);
