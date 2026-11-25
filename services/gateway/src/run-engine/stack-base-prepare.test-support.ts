@@ -48,8 +48,21 @@ mock.module('../methods/slot/prepare-command.js', {
   },
 });
 const realFixtures = await import('../methods/slot/fixtures.js');
+type FixtureSync = typeof realFixtures.runFixtureSync;
+const noFixtureSync: FixtureSync = async () => undefined;
+let fixtureSync: FixtureSync = noFixtureSync;
+/** Run `sync` for prepare's fixture sync in one test, then the no-op default again. */
+export function mockFixtureSync(t: import('node:test').TestContext, sync: FixtureSync) {
+  fixtureSync = sync;
+  t.after(() => {
+    fixtureSync = noFixtureSync;
+  });
+}
 mock.module('../methods/slot/fixtures.js', {
-  namedExports: { ...realFixtures, runFixtureSync: async () => undefined },
+  namedExports: {
+    ...realFixtures,
+    runFixtureSync: (...args: Parameters<FixtureSync>) => fixtureSync(...args),
+  },
 });
 
 export const { slotPrepare } = await import('../methods/slot.js');

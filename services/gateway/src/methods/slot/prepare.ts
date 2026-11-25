@@ -130,6 +130,7 @@ import {
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
+import { assertRunMatchesSlotProject, withRunPrepareContext } from './prepare-run-context.js';
 import { syncPrepareFixtures } from './prepare-runtime-context.js';
 import {
   acquirePrepareSentinel,
@@ -200,7 +201,12 @@ export async function slotPrepare(
   opts?: SlotPrepareInternalOptions,
 ): Promise<SlotPrepareResult> {
   await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
-  return withSlotSources(params.slotId, () => slotPrepareWithSources(params, emit, signal, opts));
+  // A prepare for a run takes that run's context: the first of runId / bindRunId naming a live run.
+  const run = [params.runId, params.bindRunId]
+    .map((id) => (id ? getRun(id) : undefined))
+    .find((found) => found !== undefined);
+  const forRun = withRunPrepareContext(params, run);
+  return withSlotSources(params.slotId, () => slotPrepareWithSources(forRun, emit, signal, opts));
 }
 
 async function slotPrepareWithSources(
@@ -243,7 +249,8 @@ async function slotPrepareWithSources(
     }
     // The engine prepares only a slot its run still holds: a cancel may already have released
     // it, and the picker may have handed it to another run. Other callers (load-run binding)
-    // pass runId as a label and keep their existing checks.
+    // name the run for its context (flow, domain, app; see slotPrepare) and keep their existing
+    // ownership checks.
     if (params.runId && opts?.requireRunOwnership) {
       const row = await readSlotRow(params.slotId);
       // A run evicted from the live store is read from the archive: it has ended too.
@@ -259,6 +266,11 @@ async function slotPrepareWithSources(
     }
     await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
     const vars = await loadSlotVars(params.slotId);
+    // Every live run the prepare names must be of the slot's project, before any phase.
+    for (const id of new Set([params.runId, params.bindRunId])) {
+      const named = id ? getRun(id) : undefined;
+      if (named) assertRunMatchesSlotProject(named, params.slotId, vars.projectName);
+    }
     if (isLocal(vars.host, vars.machine)) assertStorageVolumePresent(vars.remoteRepo);
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.

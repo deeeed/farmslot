@@ -2217,6 +2217,8 @@ export interface SlotRunHistoryEntry {
   familyId: string;
   status: RunStatus;
   flowType: FlowType;
+  /** The run's domain, so a prepare-for-run from history can send it. */
+  domain?: string;
   ticketOrPr: string;
   /** Covered Jira key union for compact history clients. */
   linkedTicketRefs?: string[];

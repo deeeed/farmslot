@@ -1,0 +1,1 @@
+- Preparing a slot for a run from the load-run modal, the prepare popover, run detail or slot history sends the run's flow type and domain, so that prepare follows the run's context.
