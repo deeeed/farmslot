@@ -4,6 +4,7 @@ import test from 'node:test';
 import { PREPARE_PHASES, type PrepareRequirement } from '@farmslot/protocol';
 
 import type { RawProjectJson } from '../../core/index.js';
+import { makeVars } from '../../runners/test-fixtures.js';
 
 import {
   buildDepsFingerprintCommand,
@@ -461,7 +462,7 @@ test('checkPrepareRequirement dev_server_up and artifact_available use the run d
     const result = await checkPrepareRequirement(
       requirement,
       {
-        vars: { remoteRepo: '/repo', domain: 'perps', machine: 'm', machineEnv: {} } as never,
+        vars: makeVars({ remoteRepo: '/repo', domain: 'perps' }),
         projectJson,
         runtimeDir: '.agent',
         domain: 'money-movement',

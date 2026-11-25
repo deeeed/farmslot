@@ -27,43 +27,45 @@ mock.module('../methods/slot/prepare-health.js', {
     },
   },
 });
-const { mockPrepareCommand, needsTmuxSandbox, slotPrepare, stackFixture } = await import(
-  './stack-base-prepare.test-support.js'
-);
+const { mockPrepareCommand, needsTmuxSandbox, slotPrepare, stackFixture } =
+  await import('./stack-base-prepare.test-support.js');
 
-test('prepare hooks see the flow type of the prepare, and none without one', needsTmuxSandbox, async (t) => {
-  const { slotId } = await stackFixture(t, 'flow-env', 48818);
-  const commands: string[] = [];
-  mockPrepareCommand(t, async (_vars, _logPath, command): Promise<ExecResult> => {
-    commands.push(command);
-    return { stdout: 'ok\n', stderr: '', exitCode: 0 };
-  });
-  const prepare = async (flowType?: string) => {
-    commands.length = 0;
-    healthCommands.length = 0;
-    const started = Date.now();
-    const result = await slotPrepare(
-      { slotId, branch: 'main', prepareProfile: 'typecheck', ...(flowType ? { flowType } : {}) },
-      () => {},
-    );
-    assert.equal(result.prepared, true);
-    const hooks = {
-      deps: commands.filter((command) => command.includes('yarn install')),
-      preflight: commands.filter((command) => command.includes('yarn typecheck')),
-      health: [...healthCommands],
+test(
+  'prepare hooks see the flow type of the prepare, and none without one',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId } = await stackFixture(t, 'flow-env', 48818);
+    const commands: string[] = [];
+    mockPrepareCommand(t, async (_vars, _logPath, command): Promise<ExecResult> => {
+      commands.push(command);
+      return { stdout: 'ok\n', stderr: '', exitCode: 0 };
+    });
+    const prepare = async (flowType?: string) => {
+      commands.length = 0;
+      healthCommands.length = 0;
+      const started = Date.now();
+      const result = await slotPrepare(
+        { slotId, branch: 'main', prepareProfile: 'typecheck', ...(flowType ? { flowType } : {}) },
+        () => {},
+      );
+      assert.equal(result.prepared, true);
+      const hooks = {
+        deps: commands.filter((command) => command.includes('yarn install')),
+        preflight: commands.filter((command) => command.includes('yarn typecheck')),
+        health: [...healthCommands],
+      };
+      for (const [phase, ran] of Object.entries(hooks)) assert.ok(ran.length > 0, `${phase} ran`);
+      t.diagnostic(`prepare ${flowType ?? '(no flow)'} took ${Date.now() - started} ms`);
+      return Object.values(hooks).flat();
     };
-    for (const [phase, ran] of Object.entries(hooks)) assert.ok(ran.length > 0, `${phase} ran`);
-    t.diagnostic(`prepare ${flowType ?? '(no flow)'} took ${Date.now() - started} ms`);
-    return Object.values(hooks).flat();
-  };
 
-  for (const flowType of ['dev', 'review-pr']) {
-    for (const command of await prepare(flowType))
-      assert.match(command, new RegExp(`export FARMSLOT_FLOW_TYPE='${flowType}'`));
-  }
-  for (const command of await prepare()) {
-    assert.match(command, /unset FARMSLOT_FLOW_TYPE/);
-    assert.doesNotMatch(command, /export FARMSLOT_FLOW_TYPE/);
-  }
-});
-
+    for (const flowType of ['dev', 'review-pr']) {
+      for (const command of await prepare(flowType))
+        assert.match(command, new RegExp(`export FARMSLOT_FLOW_TYPE='${flowType}'`));
+    }
+    for (const command of await prepare()) {
+      assert.match(command, /unset FARMSLOT_FLOW_TYPE/);
+      assert.doesNotMatch(command, /export FARMSLOT_FLOW_TYPE/);
+    }
+  },
+);
