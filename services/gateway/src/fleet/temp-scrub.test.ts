@@ -313,7 +313,7 @@ test('a cut-off last line of a stopped scrub drops only itself; a clean exit par
   assert.throws(() => parseTempScrubOutput(stdout), SyntaxError);
 });
 
-test('a clone whose worktree is kept, unmounted or recorded relatively is refused', async (t) => {
+test('a clone whose worktree is kept, unmounted, recorded relatively or unreadable is refused', async (t) => {
   const { parent, repo } = await slotWith(['temp/tasks/feat/parked-task/TASK.md']);
   t.after(() => rm(parent, { recursive: true, force: true }));
   const clone = async (name: string) => {
@@ -324,7 +324,15 @@ test('a clone whose worktree is kept, unmounted or recorded relatively is refuse
   };
   // A worktree in a parked run's kept task dir.
   const keeper = await clone('ref-clone');
-  await git(keeper, 'worktree', 'add', '-q', '-b', 'kept', path.join(repo, 'temp/tasks/feat/parked-task/wt'));
+  await git(
+    keeper,
+    'worktree',
+    'add',
+    '-q',
+    '-b',
+    'kept',
+    path.join(repo, 'temp/tasks/feat/parked-task/wt'),
+  );
   // A worktree on a volume that is not mounted now.
   const mounted = await clone('mount-clone');
   await git(mounted, 'worktree', 'add', '-q', '-b', 'away', path.join(parent, 'volume/wt'));
@@ -334,7 +342,17 @@ test('a clone whose worktree is kept, unmounted or recorded relatively is refuse
   const outside = path.join(parent, 'rel-wt');
   await git(relative, 'worktree', 'add', '-q', '-b', 'rel', outside);
   const admin = path.join(relative, '.git/worktrees/rel-wt');
-  await writeFile(path.join(admin, 'gitdir'), `${path.relative(admin, path.join(outside, '.git'))}\n`);
+  await writeFile(
+    path.join(admin, 'gitdir'),
+    `${path.relative(admin, path.join(outside, '.git'))}\n`,
+  );
+
+  // A record that cannot be read is not a missing one: refused, not deleted.
+  const unreadable = await clone('unreadable-clone');
+  await git(unreadable, 'worktree', 'add', '-q', '-b', 'locked-record', path.join(parent, 'u-wt'));
+  const record = path.join(unreadable, '.git/worktrees/u-wt/gitdir');
+  await chmod(record, 0o000);
+  t.after(() => chmod(record, 0o644));
 
   const result = await scrub(repo, ['temp/tasks/feat/parked-task']);
 
@@ -342,7 +360,8 @@ test('a clone whose worktree is kept, unmounted or recorded relatively is refuse
     'temp/tasks/mount-clone',
     'temp/tasks/ref-clone',
     'temp/tasks/relative-clone',
+    'temp/tasks/unreadable-clone',
   ]);
-  for (const kept of ['ref-clone/.git', 'mount-clone/.git', 'relative-clone/.git'])
+  for (const kept of ['ref-clone/.git', 'mount-clone/.git', 'relative-clone/.git', 'unreadable-clone/.git'])
     assert.equal(existsSync(path.join(repo, 'temp/tasks', kept)), true, kept);
 });
