@@ -223,7 +223,10 @@ test('a resume refused past the bound leaves the slot to the backstop hold', asy
 });
 
 test('a resume busy past the bound keeps the fence for the next pass', async () => {
-  for (const busy of ['busy: a transition holds the run', 'busy: another teardown owns this slot']) {
+  for (const busy of [
+    'busy: a transition holds the run',
+    'busy: another teardown owns this slot',
+  ]) {
     const pass = await reconcile({
       fences: [{ intent: 'release', ageMs: STALE_RELEASE_RECLAIM_MS + 1 }],
       resume: async () => busy,
@@ -245,7 +248,10 @@ test('the node wait keeps the cancel’s own reason and goes once the finish suc
     });
     const noted = prior ? `${prior}; ${wait}` : wait;
     assert.equal(away.owners[0]!.slotTeardownSkipped, noted, label);
-    const again = await reconcile({ fences: [{ intent: 'replay', skipped: noted }], absentNode: 'node-a' });
+    const again = await reconcile({
+      fences: [{ intent: 'replay', skipped: noted }],
+      absentNode: 'node-a',
+    });
     assert.deepEqual(again.runUpdates, [], `${label}: one note per wait`);
     const busy = await reconcile({
       fences: [{ intent: 'replay', skipped: noted }],

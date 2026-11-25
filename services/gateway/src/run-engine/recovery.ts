@@ -1500,7 +1500,8 @@ export const STALE_RELEASE_RECLAIM_MS = 30 * 60 * 1000;
 
 /** Named on a cancelled run while its interrupted cleanup waits for the slot's node. */
 const CANCEL_NODE_WAIT_NOTE = 'Cancel cleanup interrupted by a gateway restart waits for node ';
-const CANCEL_NODE_WAIT = /(?:^|; )Cancel cleanup interrupted by a gateway restart waits for node [^;]*$/;
+const CANCEL_NODE_WAIT =
+  /(?:^|; )Cancel cleanup interrupted by a gateway restart waits for node [^;]*$/;
 
 /**
  * How long a releasing fence has been standing, or null when it carries no
@@ -1715,7 +1716,9 @@ async function reconcileOrphanedSlotsOnce(deps: OrphanRecoveryCollaborators): Pr
         const noteWait = (node: string | null) => {
           const current = deps.getRun(owner.id)?.slotTeardownSkipped;
           const kept = current?.replace(CANCEL_NODE_WAIT, '') || undefined;
-          const next = node ? [kept, `${CANCEL_NODE_WAIT_NOTE}${node}`].filter(Boolean).join('; ') : kept;
+          const next = node
+            ? [kept, `${CANCEL_NODE_WAIT_NOTE}${node}`].filter(Boolean).join('; ')
+            : kept;
           if (next === current) return;
           deps.updateRun(owner.id, { slotTeardownSkipped: next });
           deps.broadcast(Events.RUN_UPDATED, { run: deps.getRun(owner.id) ?? owner });
