@@ -80,9 +80,16 @@ type Intent = Observed['intent'];
 
 const SINCE = '2026-11-25T10:26:33.000Z';
 
-async function seed(intent: Intent, run: Partial<Run> = {}, row: Record<string, unknown> = {}) {
+let seeded = 0;
+
+/** The store keeps a run it already loaded, so every seed is a new cancelled run. */
+async function seed(
+  intent: Intent,
+  run: Partial<Run> = {},
+  row: (runId: string) => Record<string, unknown> = () => ({}),
+) {
   const cancelled: Run = {
-    ...makeRun({ id: 'cancelled-run', status: 'cancelled', slotId: SLOT }),
+    ...makeRun({ id: `cancelled-run-${++seeded}`, status: 'cancelled', slotId: SLOT }),
     ...run,
   };
   await writeFile(path.join(root, 'runs', `${cancelled.id}.json`), JSON.stringify(cancelled));
@@ -101,7 +108,7 @@ async function seed(intent: Intent, run: Partial<Run> = {}, row: Record<string, 
           releasing_since: SINCE,
           release_gateway_instance: 'previous-gateway',
           cleanup_release_token: token,
-          ...row,
+          ...row(cancelled.id),
         },
       ],
     }),
@@ -198,25 +205,26 @@ test('a run revived or rebound after the gate is left alone', async () => {
 });
 
 test('a fence that moved after the gate is left alone', async () => {
-  const cases: Array<[Intent, Record<string, unknown>]> = [
-    ['release', { cleanup_release_token: state.runCleanupToken('release', 'other') }],
-    ['release', { release_gateway_instance: 'another-gateway' }],
-    ['release', { releasing_since: '2026-11-25T10:40:00.000Z' }],
-    ['release', { slot_epoch: 6 }],
-    ['release', { handoff_run_id: 'successor-run' }],
-    ['release', { cleanup_stop_unconfirmed: true }],
+  const cases: Array<[Intent, (runId: string) => Record<string, unknown>]> = [
+    ['release', () => ({ cleanup_release_token: state.runCleanupToken('release', 'other') })],
+    ['release', () => ({ release_gateway_instance: 'another-gateway' })],
+    ['release', () => ({ releasing_since: '2026-11-25T10:40:00.000Z' })],
+    ['release', () => ({ slot_epoch: 6 })],
+    ['release', () => ({ handoff_run_id: 'successor-run' })],
+    ['release', () => ({ cleanup_stop_unconfirmed: true })],
     // The replay hold keeps the slot's owner, which a cleanup-only row has lost.
-    ['replay', { current_run_id: null, cleanup_run_id: 'cancelled-run' }],
+    ['replay', (runId) => ({ current_run_id: null, cleanup_run_id: runId })],
   ];
   for (const [intent, row] of cases) {
     const { run, observed } = await seed(intent, {}, row);
     const before = await read();
+    const label = JSON.stringify(row(run.id));
     assert.equal(
       await resumeInterruptedCancelCleanup(run, SLOT, observed),
       'refused: the release fence changed',
-      JSON.stringify(row),
+      label,
     );
-    assert.deepEqual(await read(), before, JSON.stringify(row));
+    assert.deepEqual(await read(), before, label);
   }
 });
 
@@ -262,7 +270,7 @@ test('a blind trial whose Git restore fails is held, and the fleet hears it', as
         experimentManifestPath: path.join(root, 'experiment.json'),
         packagePath: path.join(root, 'candidate.json'),
         candidateStrategyFingerprint: 'fingerprint',
-        trialId: 'cancelled-run',
+        trialId: 'blind-trial',
         blind: {
           version: 1,
           baseSha: 'base',
