@@ -75,14 +75,14 @@ test("a prune holds the slot's prepare guard, so a prepare cannot overlap it", a
   t.after(resetIdleRemotePruneForTest);
   let release = (_value: ExecResult) => {};
   const h = harness(
-    { 'idle-1': idleRow },
+    { 'idle-1': idleRow, 'idle-2': idleRow },
     () => new Promise<ExecResult>((resolve) => (release = resolve)),
   );
   const pass = pruneIdleSlotRemoteRefs([idle('idle-1')], new Set(), h.deps);
   await new Promise((resolve) => setImmediate(resolve));
   // slotPrepare refuses a slot in this set ('already preparing'); find-slot waits for it.
   assert.ok(h.guards.has('idle-1'));
-  await pruneIdleSlotRemoteRefs([idle('idle-1')], new Set(), h.deps);
+  await pruneIdleSlotRemoteRefs([idle('idle-1'), idle('idle-2')], new Set(), h.deps);
   assert.deepEqual(h.ran, ['idle-1'], 'a pass already running makes the next a no-op');
   release(pruned);
   await pass;
