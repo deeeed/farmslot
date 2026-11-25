@@ -52,7 +52,6 @@ import {
   tmuxSessionCandidates,
   tmuxShellSnippet,
 } from '../core/tmux.js';
-import { commandIncludesFarmPath } from '../fleet/farm-paths.js';
 import {
   fleetStaleThresholdMs,
   isFleetCheckedAtStale,
@@ -67,6 +66,7 @@ import {
 } from '../fleet/state.js';
 import { backgroundHost } from '../host-services/background/client.js';
 import { BACKGROUND_OPERATIONS } from '../host-services/background/protocol.js';
+import { commandWaitsForNodeSupport } from '../node-support/remote-command.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
@@ -1359,7 +1359,7 @@ async function runSlotProbes(
   timeoutMs: number,
 ): Promise<SlotProbeOutcome[]> {
   return runSlotProbeBatches(commands, {
-    needsBundle: (command) => commandIncludesFarmPath(command, vars),
+    needsBundle: (command) => commandWaitsForNodeSupport(vars, command),
     timeoutSeconds: timeoutMs / 1000,
     runBatch: async (script) => {
       try {

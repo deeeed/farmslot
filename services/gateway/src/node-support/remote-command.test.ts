@@ -14,6 +14,7 @@ import { makeVars } from '../runners/test-fixtures.js';
 
 import { ensureNodeSupportBundle, type NodeSupportIo } from './ensure.js';
 import {
+  commandWaitsForNodeSupport,
   hasRemoteFarmRef,
   NodeSupportPendingError,
   remapRemoteFarmRefs,
@@ -502,6 +503,73 @@ test('a delivery overtaken by a config change while nobody waited caches nothing
   const before = counted.calls();
   await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
   assert.ok(counted.calls() > before, 'the overtaken delivery left no cache entry');
+});
+
+test('a probe waits for the support bundle only where execOnSlot would deliver one', () => {
+  const machineEnv = { HOME: '/Users/u', FARMSLOT_WORKSPACE: '/Users/u/dev' };
+  const remote = { host: 'remote-box.local', machine: 'remote-box', machineEnv };
+  const local = { host: 'localhost', machine: 'remote-box', machineEnv };
+  const repoProbe = "git -C '/Users/u/dev/metamask/x' rev-parse HEAD";
+  const workspaceHook = "bash '/Users/u/dev/projects/x-farm/setup/health-check.sh' --repo '/r'";
+  const nodeHook = 'bash /Users/u/farmslot-node/projects/x-farm/setup/health-check.sh';
+  // A repo under the workspace is not a farm reference: only projects/ and scripts/ are.
+  assert.equal(commandWaitsForNodeSupport(remote, repoProbe), false);
+  assert.equal(commandWaitsForNodeSupport(remote, workspaceHook), true);
+  assert.equal(commandWaitsForNodeSupport(remote, nodeHook), true);
+  // A plain local shell runs the checkout's own scripts and never waits for a bundle.
+  assert.equal(commandWaitsForNodeSupport(local, workspaceHook), false);
+  assert.equal(commandWaitsForNodeSupport(local, repoProbe), false);
+});
+
+test('a background-finished delivery is not cached after a newer selection for its slot', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const counted = countedIo(node.io);
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50 }),
+    NodeSupportPendingError,
+  );
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  // Bundle 2 is selected while bundle 1's delivery is still uploading.
+  farm.editScript('echo v2\n');
+  now += 2_100;
+  const second = resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
+  node.release();
+  await second;
+  await settleNodeSupportDeliveries();
+
+  farm.editScript('echo v1\n');
+  now += 2_100;
+  const before = counted.calls();
+  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
+  assert.ok(counted.calls() > before, 'bundle 1 is checked on the node again');
+});
+
+test('a background-finished read-only delivery serves read-only commands, not selecting ones', async (t) => {
+  resetRemoteFarmCommandCache();
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const counted = countedIo(node.io);
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+
+  await assert.rejects(
+    resolveRemoteFarmCommand(vars, cmd, { io: counted.io, budgetMs: 50, selectSlot: false }),
+    NodeSupportPendingError,
+  );
+  node.release();
+  await settleNodeSupportDeliveries();
+  let before = counted.calls();
+  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io, selectSlot: false });
+  assert.equal(counted.calls(), before, 'the read-only entry answered the read-only command');
+  before = counted.calls();
+  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
+  assert.ok(counted.calls() > before, 'a selecting command still selects on the node');
 });
 
 test('a delivery that fails after its budget ran out is reported to the next command', async (t) => {

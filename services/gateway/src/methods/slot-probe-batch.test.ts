@@ -152,3 +152,16 @@ test('a batch that could not run leaves only its own probes unavailable', async 
   assert.equal(results[0], undefined);
   assert.equal(results[1]?.stdout, 'sha=abc\nref=main\n');
 });
+
+test('a slot whose probes all call farm scripts runs one batch', async () => {
+  const scripts: string[] = [];
+  await runSlotProbeBatches([`bash ${FARM}`, `bash ${FARM} --dev`], {
+    needsBundle: (command) => command.includes(FARM),
+    timeoutSeconds: 2,
+    runBatch: async (script) => {
+      scripts.push(script);
+      return '';
+    },
+  });
+  assert.equal(scripts.length, 1);
+});
