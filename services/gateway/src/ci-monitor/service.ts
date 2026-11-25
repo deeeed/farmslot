@@ -136,6 +136,7 @@ const ciPokeCooldown = new Map<string, number>();
 const POKE_MIN_GAP_MS = 5_000;
 
 const KEEP_HOLDING = { id: 'wait', label: 'Keep holding', style: 'secondary' } as const;
+
 /** Force the active `pokeablePoll` for this run to resolve early. */
 export function pokeCIPoll(runId: string): { ok: boolean; woken?: boolean; reason?: string } {
   const now = Date.now();

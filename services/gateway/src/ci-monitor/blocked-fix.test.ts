@@ -918,3 +918,30 @@ test('a held green PR whose review threads read failed keeps waiting', async () 
     }
   }, null);
 });
+
+test('a held green PR with unread comments still reaches the CI wait cap', async () => {
+  await held(async () => {
+    snapshots.push({
+      checks: [passedCheck],
+      allPassed: true,
+      comments: [],
+      readErrors: ['pulls.reviewThreads#10384: HTTP 504'],
+    });
+    const w = watch((runId) =>
+      updateRun(runId, {
+        decisions: [holdDecision(HELD_AT)],
+        ciWatchState: {
+          consecutiveAttempts: 0,
+          totalAttempts: 0,
+          skips: 0,
+          timeoutWindowStartedAt: '2025-11-24T13:40:00.000Z',
+        },
+      }),
+    );
+    try {
+      assert.ok(await w.open('ci_ci_timeout'), 'the wait cap asks');
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});
