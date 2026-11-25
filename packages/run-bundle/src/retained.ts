@@ -1174,7 +1174,11 @@ interface StableStoreCharge {
   /**
    * Set when this process adopted a stamp of its own write. On a jiffy-grained volume another
    * process's change in that same tick leaves the stamp equal, so until then a hit also counts
-   * sha256/ (only within that window, which closes 10 ms after the write).
+   * sha256/ (only within that window, which closes 10 ms after the write). Known residual: on
+   * such a volume, a second process sharing the store that rewrites a usage/ or availability/
+   * record inside the same tick is not seen until the next stamp change. Closing that means
+   * walking inside the window, which is the cost this cache removes; APFS, where the farm's
+   * stores live, has nanosecond stamps and is not affected.
    */
   trustAfterNs?: bigint;
 }
@@ -1255,11 +1259,7 @@ async function walkStableStoreCharge(
   return { bytes, retentionCharges, bundleCount };
 }
 
-/**
- * Bundles leave sha256/ outside the store lock only as `.retention-*` entries the retention
- * pass moved aside under it (its archive finish). Checking that each one the cache charged is
- * still there bounds the check by those few entries, not by the store's bundles.
- */
+/** Entries in sha256/, read only inside the window after this process adopted a stamp. */
 async function sha256EntryCount(store: RunBundleStore): Promise<number> {
   try {
     return (await readdir(path.join(store.root, 'sha256'))).length;
@@ -1269,6 +1269,11 @@ async function sha256EntryCount(store: RunBundleStore): Promise<number> {
   }
 }
 
+/**
+ * Bundles leave sha256/ outside the store lock only as `.retention-*` entries the retention
+ * pass moved aside under it (its archive finish). Checking that each one the cache charged is
+ * still there bounds the check by those few entries, not by the store's bundles.
+ */
 async function retentionEntriesPresent(charge: StableStoreCharge): Promise<boolean> {
   for (const [directory] of charge.retentionCharges) {
     try {
