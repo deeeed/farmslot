@@ -1020,13 +1020,21 @@ export class CdpWebPage {
     let lastEnabled: boolean | undefined;
     do {
       options.signal?.throwIfAborted();
-      const observed = await this.evaluate<boolean | { matched: boolean; enabled?: boolean }>(
-        expression,
-        {
-          signal: options.signal,
-          timeoutMs: Math.max(1, deadline - Date.now()),
-        },
-      );
+      let observed: boolean | { matched: boolean; enabled?: boolean };
+      try {
+        observed = await this.evaluate<boolean | { matched: boolean; enabled?: boolean }>(
+          expression,
+          {
+            signal: options.signal,
+            timeoutMs: Math.max(1, deadline - Date.now()),
+          },
+        );
+      } catch (error) {
+        // A poll gets only the budget left, so a busy page outlasts the last one:
+        // that is this wait timing out, not a CDP failure.
+        if (error instanceof CdpCallTimeoutError) break;
+        throw error;
+      }
       options.signal?.throwIfAborted();
       if (typeof observed === 'object' && typeof observed.enabled === 'boolean')
         lastEnabled = observed.enabled;

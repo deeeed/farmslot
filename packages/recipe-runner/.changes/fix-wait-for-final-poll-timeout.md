@@ -1,0 +1,1 @@
+- `ui.wait_for` reports `ui.wait_for timed out` when its last poll outlives the budget on a busy page, instead of a raw `CDP Runtime.evaluate timed out after <N>ms` that read like a CDP failure (the per-poll timeout is the time left in the wait).
