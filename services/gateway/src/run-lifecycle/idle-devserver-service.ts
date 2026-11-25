@@ -675,7 +675,8 @@ export async function reapIdlePrepareScopes(
       const row = await readSlotRow(slotId);
       if (!row) continue;
       const quiet = scopeQuietBlocker(row, slotId, live);
-      const servers = quiet || activePrepareSlots.has(slotId) ? null : await devServersBlocker(slotId);
+      const servers =
+        quiet || activePrepareSlots.has(slotId) ? null : await devServersBlocker(slotId);
       if (quiet || activePrepareSlots.has(slotId) || servers) {
         // A prepare or an unreported status says nothing about the scope: keep its window.
         if ((quiet || servers?.definite) && idleScopeOf(row))

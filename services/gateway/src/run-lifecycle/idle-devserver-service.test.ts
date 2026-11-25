@@ -83,7 +83,12 @@ const resources = (): SlotResource[] => [
         {
           id: 'ios-sim',
           status: 'running' as const,
-          definition: { type: 'device' as const, label: 'iOS Sim', controllable: true, streamable: true },
+          definition: {
+            type: 'device' as const,
+            label: 'iOS Sim',
+            controllable: true,
+            streamable: true,
+          },
         },
       ]
     : []),
