@@ -81,7 +81,8 @@ export interface ChecklistStepGate {
 
 export interface ChecklistCommandOptions {
   // Stage the task's learning package (`closeout <task-dir>`, and after a
-  // successful complete/no-change mark). Absent: closeout is not offered.
+  // successful complete/no-change mark, or a numbered mark on the completion row
+  // that completed the run). Absent: closeout is not offered.
   closeout?(
     taskDir: string,
     args: readonly string[],
@@ -94,7 +95,9 @@ export interface ChecklistCommandOptions {
       };
   // Gates on numbered steps.
   stepGates?: readonly ChecklistStepGate[];
-  // Before a `complete` mark is forwarded (teach the closure artifacts, say).
+  // Before a `complete` mark is forwarded (teach the closure artifacts, say), or
+  // after a numbered mark on the completion row completed the run. It must only
+  // inform: a throw there would fail a finished run.
   beforeComplete?(taskDir: string): void;
 }
 
@@ -133,13 +136,13 @@ function parseChecklistArgv(argv: string[]): {
 function stageLearningPackage(
   taskDir: string,
   step: string | undefined,
-  markArgs: string[],
+  learningsWaived: boolean,
   options: ChecklistCommandOptions,
 ): void {
   if (
     !options.closeout ||
     !['complete', 'no-change'].includes(step ?? '') ||
-    markArgs.includes('--skip-learnings') ||
+    learningsWaived ||
     !fs.existsSync(path.join(taskDir, HANDOFF_INPUT))
   ) {
     return;
@@ -153,6 +156,25 @@ function stageLearningPackage(
   console.error(
     `Warning: learning capture could not be staged; rerun: ${harnessHost().name} checklist closeout ${taskDir}; task verdict is unchanged.`,
   );
+}
+
+// The signal after a mark, when it is complete: whether learnings were waived.
+function completedSignal(
+  taskDir: string,
+  overrides: ChecklistTargetOverrides,
+): { learningsWaived: boolean } | null {
+  try {
+    const target = resolveChecklistTargetWithOverrides(taskDir, overrides);
+    const signal = JSON.parse(fs.readFileSync(path.join(taskDir, target.signal), 'utf8')) as {
+      status?: string;
+      artifactWaivers?: { learnings?: unknown };
+    };
+    if (signal.status !== 'complete') return null;
+    return { learningsWaived: Boolean(signal.artifactWaivers?.learnings) };
+  } catch {
+    // The mark succeeded; an unreadable signal only means no completion staging.
+    return null;
+  }
 }
 
 function terminalSignalStatus(taskDir: string, overrides: ChecklistTargetOverrides): string | null {
@@ -308,7 +330,6 @@ export async function handleChecklist(
   }
   if (!stepGatesReady(resolvedTaskDir, step, gates, targetOverrides.checklist)) return EXIT.runtime;
   if (step === 'complete') options.beforeComplete?.(resolvedTaskDir);
-  const completedBefore = terminalSignalStatus(resolvedTaskDir, targetOverrides) === 'complete';
 
   const result = spawnSync(process.execPath, [MARK_SCRIPT, resolvedTaskDir, ...forwarded], {
     stdio: 'inherit',
@@ -321,12 +342,18 @@ export async function handleChecklist(
   if (status === EXIT.ok) {
     // `mark N` on the completion row runs `mark complete` itself (agent-runtime), so
     // the step typed here doesn't say whether the run completed; the signal does.
-    const completedByRow =
-      numericMarkStep(step) !== null &&
-      !completedBefore &&
-      terminalSignalStatus(resolvedTaskDir, targetOverrides) === 'complete';
-    if (completedByRow) options.beforeComplete?.(resolvedTaskDir);
-    stageLearningPackage(resolvedTaskDir, completedByRow ? 'complete' : step, forwarded, options);
+    // A numbered mark on an already-terminal signal never gets here
+    // (preserveTerminalSignal), so a complete signal now means this mark completed it.
+    const completion =
+      numericMarkStep(step) === null ? null : completedSignal(resolvedTaskDir, targetOverrides);
+    if (completion) options.beforeComplete?.(resolvedTaskDir);
+    stageLearningPackage(
+      resolvedTaskDir,
+      completion ? 'complete' : step,
+      // The row's own flags reached that `mark complete`; its signal records the waiver.
+      completion ? completion.learningsWaived : forwarded.includes('--skip-learnings'),
+      options,
+    );
   }
   return status;
 }
