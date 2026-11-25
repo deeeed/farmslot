@@ -514,8 +514,9 @@ async function slotPrepareInner(
   const profileName = (): string => prepareProfile?.name ?? 'full';
   const phaseEnabled = (phase: PreparePhase): boolean =>
     !prepareProfile || prepareProfile.phases.has(phase);
-  // Every hook a prepare runs sees the selected profile and the flow type, so a single project
-  // script can branch on FARMSLOT_PREPARE_PROFILE / FARMSLOT_FLOW_TYPE instead of per-profile hooks.
+  // The deps, preflight, health and unlock hooks see the selected profile and the flow type, so a
+  // single project script can branch on FARMSLOT_PREPARE_PROFILE / FARMSLOT_FLOW_TYPE instead of
+  // per-profile hooks. Prerequisites, signing and the profile requirement probes don't.
   // Subshell form keeps the wrapper safe inside `a && b` chains.
   const withProfileEnv = (cmd: string): string =>
     `( ${prepareHookEnvExports(profileName(), params.flowType).join('; ')}; ${cmd} )`;
@@ -742,8 +743,9 @@ async function slotPrepareInner(
   let fixturesSynced = false;
   // Fixtures are framework file materialization (template render + copy), not a
   // project hook invocation, so they intentionally do not receive
-  // FARMSLOT_PREPARE_PROFILE — ADR-037's "every hook" covers deps/preflight/
-  // health/unlock, which run project-owned commands.
+  // FARMSLOT_PREPARE_PROFILE or FARMSLOT_FLOW_TYPE (the flow reaches fixture sync as an
+  // argument) — ADR-037's "every hook" covers deps/preflight/health/unlock, which run
+  // project-owned commands.
   const syncFixtures = async () => {
     if (fixturesSynced) return;
     if (!phaseEnabled('fixtures')) {

@@ -440,6 +440,40 @@ test('checkPrepareRequirement required_skills_present asks only for the matching
   );
 });
 
+// The probes run under the prepare's effective domain, not the slot's default one.
+test('checkPrepareRequirement dev_server_up and artifact_available use the run domain env', async () => {
+  const probed: string[] = [];
+  const exec = async (_vars: unknown, command: string) => {
+    probed.push(command);
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+  const projectJson = {
+    hooks: { dev_server_check: 'check-dev-server', artifact_check: 'check-artifact' },
+    command_env: {
+      domains: {
+        perps: { set: { PROBE_DOMAIN: 'perps' } },
+        'money-movement': { set: { PROBE_DOMAIN: 'money-movement' } },
+      },
+    },
+  };
+  for (const requirement of ['dev_server_up', 'artifact_available'] as const) {
+    probed.length = 0;
+    const result = await checkPrepareRequirement(
+      requirement,
+      {
+        vars: { remoteRepo: '/repo', domain: 'perps', machine: 'm', machineEnv: {} } as never,
+        projectJson,
+        runtimeDir: '.agent',
+        domain: 'money-movement',
+      },
+      exec as never,
+    );
+    assert.equal(result.ok, true, `${requirement}: ${result.detail}`);
+    assert.match(probed[0] ?? '', /PROBE_DOMAIN=.?money-movement/, requirement);
+    assert.doesNotMatch(probed[0] ?? '', /PROBE_DOMAIN=.?perps/, requirement);
+  }
+});
+
 test('checkPrepareRequirement artifact_available fails when no artifact_check hook is declared', async () => {
   // Missing-hook path needs no slot exec: expandHook returns '' and the check
   // fails with a teaching detail before any remote command runs.

@@ -451,8 +451,7 @@ for (const scenario of [
   });
 }
 
-// A dispatch that prepares passes the run's flow type and its --domain (it used to drop the domain,
-// so prepare's domain env fell back to the slot's default).
+// Parity with the engine's PREPARE step: a dispatch that prepares passes the run's domain.
 test('a preparing dispatch passes the run domain to prepare', async (t) => {
   const task = path.join(root, 'DOMAIN-TASK.md');
   await writeFile(task, '# Worker: dev\n\n**Branch:** feat/dispatch-baseline\n');

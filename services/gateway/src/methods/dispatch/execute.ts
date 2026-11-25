@@ -1612,8 +1612,7 @@ export async function dispatchExecute(
           mergeMain,
           flowType: flowType || undefined,
           app: selectedApp || undefined,
-          // The run's --domain; without it prepare's domain env falls back to the slot's default.
-          ...(currentRun?.domain ? { domain: currentRun.domain } : {}),
+          domain: currentRun?.domain,
           runId: params.runId,
         },
         emit,
