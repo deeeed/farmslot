@@ -1,0 +1,1 @@
+- Parked work stops 10 s before its slot command's 120 s timeout and fails `GIT_TIMEOUT` naming the Git step it was on, instead of exiting 124 with no clue where the time went.
