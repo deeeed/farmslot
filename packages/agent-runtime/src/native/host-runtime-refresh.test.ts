@@ -594,6 +594,7 @@ test('a launch to an older-runtime host that also lacks a capability is refused 
   try {
     const { session } = await skewedHost(fixture, client);
     const hostFile = join(fixture.root, 'host.json');
+    const recorded = readFileSync(hostFile, 'utf8');
     const older: Record<string, unknown> = { ...readJson<HostIdentity>(hostFile) };
     older.runtimeVersion = '0.0.0';
     delete older.conversationStreaming;
@@ -603,6 +604,8 @@ test('a launch to an older-runtime host that also lacks a capability is refused 
       code: 'NATIVE_HOST_VERSION_SKEW',
       message: /conversation streaming before launching new work\./,
     });
+    // The real host still serves reads its faked record lacks.
+    writeFileSync(hostFile, recorded);
     await fixture.completeTurn();
     await until(async () => (await client.inspect('owner', session.id)).state === 'idle');
     await client.close('owner', session.id);

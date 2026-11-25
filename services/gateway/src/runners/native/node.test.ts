@@ -304,7 +304,7 @@ test('a launch to a node that refreshes its host carries the gateway’s release
     send(raw: string) {
       const frame = JSON.parse(raw);
       frames.push({ method: frame.params.method, hostRelease: frame.params.hostRelease });
-      handleNodeResponse(frame.id, true, session, undefined, undefined, ws);
+      handleNodeResponse(frame.id, true, { session }, undefined, undefined, ws);
     },
   } as WebSocket;
   registerNode(
