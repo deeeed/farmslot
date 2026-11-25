@@ -283,9 +283,10 @@ converter cannot map are skipped and counted in `redaction.json` as `unmapped`.
 Export applies a basic replacing scrubber to every file it writes: transcripts,
 `labels.json`, `task.md`, `output.diff`, interviews, `index.jsonl`, `README.md`
 and file names. It is a small fixed set of obvious secret shapes, not a secret
-scanner: each pattern starts at a fixed prefix or the edge of a run of characters,
-so its time grows with the input, not its square (about 8 MB of adversarial input
-in under a second). It runs line by line, so JSONL stays valid. Rules, in order:
+scanner: each pattern starts at a fixed or bounded prefix or the edge of a run of
+characters, so its time grows with the input, not its square (about 8 MB of
+adversarial input in under a second). It runs line by line, so JSONL stays valid.
+Rules, in order:
 
 1. The exact values of the farm's configured secrets on the gateway host: the
    secret-named values of `<home>/providers.env`, the node token
@@ -297,13 +298,16 @@ in under a second). It runs line by line, so JSONL stays valid. Rules, in order:
    like), OpenAI and Anthropic (`sk-`), Slack (`xox?-`), AWS access keys (`AKIA`,
    `ASIA`), Google API keys (`AIza`), GitLab (`glpat-`), npm (`npm_`), JWTs and
    `Bearer` values.
-3. Private keys: PEM private key blocks (one count per key; a header mentioned
-   in prose loses only the header), and a hex string of 64 or more characters
-   (with or without `0x`) labelled as a key, meaning a key-like name
-   (`privateKey`, `private_key`, `secret`, `seed`, `mnemonic`) on the same line or
-   assigned the value. Bare hex is kept, because it is usually a digest. Digests
-   Farmslot writes itself (`sha256`, `diffSha256`, the SHA and head fields in
-   `labels.git`) are never redacted.
+3. Private keys: a PEM private key from its header to its end line, whatever lies
+   between (escaped newlines, line numbers, diff markers), when the end comes
+   within 16 KB; across the lines of a text file each line it covers becomes a
+   marker. One count per key. A header with no end line in reach loses only the
+   header. Also a hex string of 64 or more characters (with or without `0x`)
+   labelled as a key, meaning a key-like name (`privateKey`, `private_key`,
+   `secret`, `seed`, `mnemonic`) on the same line or assigned the value. Bare hex
+   is kept, because it is usually a digest. Digests Farmslot writes itself
+   (`sha256`, `diffSha256`, the SHA and head fields in `labels.git`) are never
+   redacted.
 4. E-mail addresses and DSNs, such as Sentry DSNs.
 5. Secret variable names, matched case-sensitively in `SCREAMING_SNAKE_CASE` with
    a secret-like suffix (`_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`). Their values

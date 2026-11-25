@@ -1,6 +1,7 @@
 // ADR-039 Amendment 10: the replacing scrubber run trace export applies to every file it writes.
 // A basic, fast backstop over text: a small fixed set of obvious secret shapes, each pattern
-// anchored on a literal or a run boundary, so its cost grows with the input, not its square.
+// anchored on a literal, a run boundary or a bounded prefix, so its cost grows with the input,
+// not its square.
 // Full scanning is the operator's scan hook (FARMSLOT_TRACE_SCAN_HOOK), off by default.
 // Best effort, not a guarantee: an export stays on the local machine.
 
@@ -53,26 +54,21 @@ const TOKEN = new RegExp(
     String.raw`\bAIza[0-9A-Za-z_-]{35}`,
     String.raw`\bglpat-[A-Za-z0-9_-]{20,}`,
     String.raw`\bnpm_[A-Za-z0-9]{36}`,
-    // Not after a token character: `-` makes a word boundary inside a run, and a failed JWT
-    // tried at each one would rescan the rest of the run.
-    String.raw`(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`,
+    // Not inside a run of token characters (`-` makes a word boundary there, and a failed JWT
+    // tried at each one would rescan the rest of the run); a leading `-`, as in a diff, is fine.
+    String.raw`(?<![A-Za-z0-9_]|[A-Za-z0-9_-]-)eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`,
     String.raw`\b[Bb]earer +[A-Za-z0-9._~+/-]{20,}=*`,
   ].join('|'),
   'g',
 );
 /**
- * A PEM private key inside one value: its header, the whole lines after it that form a key body
- * (base64, blank, `Proc-Type`, `DEK-Info`), and its end line. A header mentioned in prose is
- * only the header, so nothing after it is removed. Each body line is taken whole or not at all.
+ * A PEM private key: from its header to its end line, whatever lies between (escaped or real
+ * newlines, line numbers, diff markers), when the end comes within 16 KB and before another
+ * header. A header with no end in reach is only the header. The bound and the stop at the next
+ * header keep a run of unterminated headers linear.
  */
 const PEM_KEY =
-  /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:\r?\n(?:Proc-Type:[^\n]*|DEK-Info:[^\n]*|[A-Za-z0-9+/=]*(?=\r?\n|$)))*(?:\r?\n-----END [A-Z ]{0,30}PRIVATE KEY-----)?/g;
-const PEM_BEGIN = /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----/g;
-const PEM_END = /-----END [A-Z ]{0,30}PRIVATE KEY-----/g;
-/** A line inside a PEM key that spans text lines, with an optional diff prefix. */
-const PEM_BODY_LINE = /^[+ -]?\s*(?:[A-Za-z0-9+/=]*|Proc-Type:.*|DEK-Info:.*)$/;
-const lastIndex = (pattern: RegExp, line: string) =>
-  Math.max(-1, ...[...line.matchAll(pattern)].map((match) => match.index));
+  /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:(?:(?!-----BEGIN )[\s\S]){0,16384}?-----END [A-Z ]{0,30}PRIVATE KEY-----)?/g;
 /** Hex of 64+ characters labelled as a key: a key-like name on the line, or assigned the value. */
 const LABELLED_KEY =
   /((?:private[_-]?key|privateKey|secret|seed|mnemonic)[^\n]{0,40}?[:=>"'\s]{1,4})(0x)?[0-9a-fA-F]{64,}/gi;
@@ -223,44 +219,49 @@ export class TraceScrubber {
 
   /**
    * File contents, line by line. A JSON line is scrubbed value by value and written back, so
-   * JSONL stays valid even when a pattern would span quotes; other lines are scrubbed as text.
-   * A PEM key that spans text lines has its body lines replaced as well, while they look like a
-   * key body; any other line, a JSON record included, ends it.
+   * JSONL stays valid even when a pattern would span quotes. Other lines are scrubbed as text,
+   * after a pass over each stretch of them for PEM keys that span lines: every line a key covers
+   * becomes a marker, so the line count stays the same.
    */
   text(content: string): string {
-    let inKey = false;
-    return content
-      .split('\n')
-      .map((line) => {
-        if (inKey) {
-          const end = lastIndex(PEM_END, line);
-          if (end >= 0) {
-            // A new key may open on the line that closes this one.
-            inKey = lastIndex(PEM_BEGIN, line) > end;
-            return '[REDACTED:private-key]';
-          }
-          if (PEM_BODY_LINE.test(line)) return '[REDACTED:private-key]';
-          inKey = false;
+    const out: string[] = [];
+    let block: string[] = [];
+    const flush = () => {
+      if (!block.length) return;
+      let keys = 0;
+      const keyed = block.join('\n').replace(PEM_KEY, (key) => {
+        keys += 1;
+        return key
+          .split('\n')
+          .map(() => '[REDACTED:private-key]')
+          .join('\n');
+      });
+      this.count('private-key', keys);
+      for (const line of keyed.split('\n'))
+        out.push(this.apply(line, (rule) => `[REDACTED:${rule}]`));
+      block = [];
+    };
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          parsed = undefined;
         }
-        const trimmed = line.trim();
-        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(trimmed);
-          } catch {
-            parsed = undefined;
-          }
-          if (parsed !== undefined) {
-            const scrubbed = JSON.stringify(this.value(parsed));
-            // A line with nothing redacted keeps its bytes (and numbers past 2^53 their digits).
-            return scrubbed === JSON.stringify(parsed) ? line : scrubbed;
-          }
+        if (parsed !== undefined) {
+          flush();
+          const scrubbed = JSON.stringify(this.value(parsed));
+          // A line with nothing redacted keeps its bytes (and numbers past 2^53 their digits).
+          out.push(scrubbed === JSON.stringify(parsed) ? line : scrubbed);
+          continue;
         }
-        // The last marker on the line decides whether a key continues below it.
-        inKey = lastIndex(PEM_BEGIN, line) > lastIndex(PEM_END, line);
-        return this.apply(line, (rule) => `[REDACTED:${rule}]`);
-      })
-      .join('\n');
+      }
+      block.push(line);
+    }
+    flush();
+    return out.join('\n');
   }
 
   /** File names take a token without brackets or a colon. */

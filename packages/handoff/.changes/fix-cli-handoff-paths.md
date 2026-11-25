@@ -1,0 +1,1 @@
+- `@farmslot/handoff/scrub` no longer exports the publication floor patterns and gitleaks rules: run trace export no longer uses them.

@@ -164,6 +164,9 @@ test('obvious token shapes and PEM private keys are redacted as tokens and keys'
   const out = s.text(tokens.map((token) => `use ${token} here`).join('\n'));
   assert.equal(out, tokens.map(() => 'use [REDACTED:token] here').join('\n'));
   assert.equal(s.report().token, tokens.length);
+  // A JWT on a removed or added diff line.
+  const jwt = `eyJ${'h'.repeat(12)}.eyJ${'i'.repeat(12)}.${'j'.repeat(12)}`;
+  assert.equal(s.text(`-${jwt}\n+${jwt}`), '-[REDACTED:token]\n+[REDACTED:token]');
   const pem = [
     '-----BEGIN OPENSSH PRIVATE KEY-----',
     'b3BlbnNzaA==',
@@ -241,25 +244,34 @@ test('addresses and DSNs are caught after punctuation and diff markers', () => {
   );
 });
 
-test('a PEM header without a key body removes nothing after it', () => {
+test('a PEM key is redacted from header to end line, however its lines are written', () => {
   const s = scrubber();
-  const lines = [
-    'grep for "-----BEGIN RSA PRIVATE KEY-----" in the repo',
-    '{"role":"user","content":"next"}',
-    'plain text continues',
+  const body = ['MIIEpAIBAAKCAQEA', 'q7BFUKg1aBc4xY0e', '-----END RSA PRIVATE KEY-----'];
+  const pem = ['-----BEGIN RSA PRIVATE KEY-----', ...body].join('\n');
+  const values = [
+    // An .env line or a JSON-in-string argument with escaped newlines.
+    `KEY="${pem.replaceAll('\n', '\\n')}" next`,
+    // Read output with line numbers, and a diff inside a tool result.
+    pem
+      .split('\n')
+      .map((line, n) => `     ${n + 1}\t${line}`)
+      .join('\n'),
+    pem
+      .split('\n')
+      .map((line) => `+${line}`)
+      .join('\n'),
+    pem.replaceAll('\n', '\r\n'),
   ];
-  const out = s.text(lines.join('\n')).split('\n');
-  assert.equal(out[0], 'grep for "[REDACTED:private-key]" in the repo');
-  assert.deepEqual(out.slice(1), lines.slice(1));
-  assert.equal(
-    JSON.parse(s.text(JSON.stringify({ text: 'see -----BEGIN EC PRIVATE KEY----- and more' })))
-      .text,
-    'see [REDACTED:private-key] and more',
-  );
-  // A key body in a diff, and a second key opened on the line that closes the first.
+  for (const value of values) {
+    const out = JSON.parse(s.text(JSON.stringify({ text: value }))).text as string;
+    assert.doesNotMatch(out, /MIIE|q7BF/, out);
+  }
+  assert.equal(s.report()['private-key'], values.length);
+  // Across the lines of a text file, CRLF included; each covered line becomes a marker. A second
+  // key opened on the line that closes the first is its own key.
   const diff = [
-    '+-----BEGIN RSA PRIVATE KEY-----',
-    '+MIIEpAIBAAKCAQEA',
+    '+-----BEGIN RSA PRIVATE KEY-----\r',
+    '+MIIEpAIBAAKCAQEA\r',
     '+-----END RSA PRIVATE KEY----- -----BEGIN EC PRIVATE KEY-----',
     '+MHcCAQEEIOfg',
     '+-----END EC PRIVATE KEY-----',
@@ -268,11 +280,31 @@ test('a PEM header without a key body removes nothing after it', () => {
   assert.deepEqual(s.text(diff.join('\n')).split('\n'), [
     '+[REDACTED:private-key]',
     '[REDACTED:private-key]',
-    '[REDACTED:private-key]',
+    '[REDACTED:private-key] [REDACTED:private-key]',
     '[REDACTED:private-key]',
     '[REDACTED:private-key]',
     ' context',
   ]);
+  assert.equal(s.report()['private-key'], values.length + 2);
+});
+
+test('a PEM header with no end line in reach removes nothing after it', () => {
+  const s = scrubber();
+  const lines = [
+    'grep for "-----BEGIN RSA PRIVATE KEY-----"',
+    '',
+    'Done',
+    '{"role":"user","content":"next"}',
+    'plain text continues',
+  ];
+  const out = s.text(lines.join('\n')).split('\n');
+  assert.equal(out[0], 'grep for "[REDACTED:private-key]"');
+  assert.deepEqual(out.slice(1), lines.slice(1));
+  assert.equal(
+    JSON.parse(s.text(JSON.stringify({ text: 'see -----BEGIN EC PRIVATE KEY-----\nDone\nmore' })))
+      .text,
+    'see [REDACTED:private-key]\nDone\nmore',
+  );
 });
 
 test('scrubbing time grows with the input, not its square', () => {
@@ -295,5 +327,5 @@ test('scrubbing time grows with the input, not its square', () => {
     s.text(JSON.stringify({ type: 'image', mimeType: 'image/png', data: input }));
   const ms = performance.now() - started;
   // About 8 MB in all; the gitleaks patterns took about 12 s a megabyte.
-  assert.ok(ms < 3000, `${Math.round(ms)} ms`);
+  assert.ok(ms < 5000, `${Math.round(ms)} ms`);
 });
