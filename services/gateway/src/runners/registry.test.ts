@@ -1729,7 +1729,13 @@ describe('buildLaunchCommand', () => {
           provider === routerId || provider === 'router' ? 'ROUTER' : provider.toUpperCase();
         for (const source of ['ROUTER', 'LITELLM', 'OLLAMA'] as const) {
           const selected = source === kind;
-          for (const setting of ['CONTEXT', 'MAX_TOKENS', 'REASONING', 'MODEL_LIMITS'])
+          for (const setting of [
+            'CONTEXT',
+            'MAX_TOKENS',
+            'MAX_IMAGES',
+            'REASONING',
+            'MODEL_LIMITS',
+          ])
             assert.equal(admitted.includes(`FARMSLOT_PI_${source}_${setting}`), selected);
           const endpoint = {
             ROUTER: 'FARMSLOT_PI_ROUTER_URL',

@@ -16,6 +16,7 @@ import {
   assertPiModelThinking,
   deadlinePiFetch,
   PI_REQUEST_TIMEOUT_RETRIES,
+  piModelImageCaps,
   PiProviderConfigurationError,
   piProviderCredentialEnvironment,
   piSdkModels,
@@ -31,7 +32,7 @@ import {
   readTaskMarkdown,
   runFarmslotMark,
 } from './pi-farmslot-task.mjs';
-import { capContextImages, modelImageCaps } from './pi-image-cap.mjs';
+import { capContextImages } from './pi-image-cap.mjs';
 
 function obsDir() {
   return process.env.FARMSLOT_OBS_DIR || path.join(process.cwd(), '.agent', '.observability');
@@ -358,9 +359,20 @@ export default async function (pi: {
 
   // Providers refuse a request over their image cap (Sparks vLLM: --vision-max-images). Pi keeps
   // every image in history, so each request drops its oldest images to the selected model's cap.
-  pi.on('context', (event: { messages: unknown[] }, ctx: { model?: unknown }) => {
-    const capped = capContextImages(event.messages, modelImageCaps(ctx.model));
-    return capped && { messages: capped.messages };
+  // context_with_system runs after every context handler and sends its output as returned: the
+  // trim maps messages one to one, so the prompt and mid-conversation system messages stay put.
+  let reportedDrop = 0;
+  pi.on('context_with_system', (event: { messages: unknown[] }, ctx: { model?: unknown }) => {
+    const capped = capContextImages(event.messages, piModelImageCaps(ctx.model));
+    if (!capped) return undefined;
+    // Logged when the dropped count changes, once per batch rather than per request.
+    if (capped.dropped !== reportedDrop)
+      console.error(
+        '[farmslot-pi] image cap',
+        JSON.stringify({ dropped: capped.dropped, images: capped.images }),
+      );
+    reportedDrop = capped.dropped;
+    return { messages: capped.messages };
   });
 
   pi.on('model_select', (event: { model: PiThinkingModel }, ctx: PiShutdownContext) => {

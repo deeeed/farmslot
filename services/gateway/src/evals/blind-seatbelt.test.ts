@@ -981,6 +981,7 @@ test('blind Pi static models keep only extension providers, with env key referen
     name: id,
     reasoning: true,
     input: ['text'],
+    inputLimits: { images: { maxPerRequest: 50 } },
     contextWindow: 65536,
     maxTokens: 1024,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -1038,7 +1039,7 @@ with patch.dict(os.environ, {'HOME': sys.argv[2], 'FARMSLOT_PI_ROUTER_ID': 'loca
   assert.doesNotMatch(text, /FAKE|Fake|headers|user:/u);
   const providers = JSON.parse(text).providers as Record<
     string,
-    { apiKey: string; models: { id: string }[] }
+    { apiKey: string; models: { id: string; inputLimits?: unknown }[] }
   >;
   assert.deepEqual(Object.keys(providers).sort(), ['litellm', 'localsparks']);
   assert.equal(providers.localsparks!.apiKey, '$FARMSLOT_PI_ROUTER_KEY');
@@ -1051,6 +1052,10 @@ with patch.dict(os.environ, {'HOME': sys.argv[2], 'FARMSLOT_PI_ROUTER_ID': 'loca
     providers.localsparks!.models.map((entry) => entry.id),
     ['GLM-fixture-s1234'],
   );
+  // The trial keeps a static model's image cap; the extension trims requests to it.
+  assert.deepEqual(providers.localsparks!.models[0]!.inputLimits, {
+    images: { maxPerRequest: 50 },
+  });
 });
 
 test('blind boundary refuses a configured Pi home inside a denied store', (t) => {

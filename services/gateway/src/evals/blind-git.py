@@ -503,8 +503,8 @@ def blind_pi_home(spec, capsule):
 # variable each takes its key from at runtime.
 PI_STATIC_PROVIDER_KEYS = {'litellm': 'LITELLM_API_KEY', 'ollama': 'OLLAMA_API_KEY'}
 PI_STATIC_PROVIDER_FIELDS = ['baseUrl', 'api', 'compat', 'models']
-PI_STATIC_MODEL_FIELDS = ['id', 'name', 'api', 'reasoning', 'input', 'cost', 'contextWindow',
-                          'maxTokens', 'thinkingLevelMap', 'compat']
+PI_STATIC_MODEL_FIELDS = ['id', 'name', 'api', 'reasoning', 'input', 'inputLimits', 'cost',
+                          'contextWindow', 'maxTokens', 'thinkingLevelMap', 'compat']
 
 
 def check_pi_agent_dir(spec, capsule):

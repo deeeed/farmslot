@@ -93,6 +93,32 @@ export function piProviderEnvironment(model, env = process.env) {
   return [...PI_CONFIG_ENVIRONMENT, ...(PI_PROVIDER_ENVIRONMENT[piProviderKind(model, env)] ?? [])];
 }
 
+/**
+ * A model's image caps for one request: what it declares in `inputLimits.images` (Pi's catalog,
+ * models.json, or a discovered source's setting), with a missing per-request cap taken from the
+ * pool: the model's `maxImages` in FARMSLOT_PI_<SOURCE>_MODEL_LIMITS, else
+ * FARMSLOT_PI_<SOURCE>_MAX_IMAGES. This reaches static-only models and a source whose discovery
+ * failed, which registered no capped entry.
+ */
+export function piModelImageCaps(model, env = process.env) {
+  const declared = (value) => (Number.isInteger(value) && value > 0 ? value : undefined);
+  const images = model?.inputLimits?.images;
+  const caps = {
+    perRequest: declared(images?.maxPerRequest),
+    perMessage: declared(images?.maxPerMessage),
+  };
+  const kind =
+    typeof model?.provider === 'string' && typeof model?.id === 'string'
+      ? piProviderKind(`${model.provider}/${model.id}`, env)
+      : undefined;
+  if (caps.perRequest !== undefined || !kind) return caps;
+  const prefix = `FARMSLOT_PI_${kind.toUpperCase()}`;
+  caps.perRequest =
+    configuredModelLimits(env[`${prefix}_MODEL_LIMITS`], `${prefix}_MODEL_LIMITS`).get(model.id)
+      ?.maxImages ?? positiveInteger(env[`${prefix}_MAX_IMAGES`], `${prefix}_MAX_IMAGES`);
+  return caps;
+}
+
 /** Bound worker HTTP requests through the final response byte. Pi owns retries. */
 export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted, mode = 'total') {
   let consecutiveTimeouts = 0;
@@ -486,16 +512,11 @@ export async function preservePiStaticModels(catalog, loadStaticRuntime, env = p
               // Static defaults must not erase the pool's declared reasoning support.
               // Keep discovery's endpoint validation and supported effort levels.
               const live = discovered.get(model.id);
-              const kept =
-                live && limits.get(model.id)?.reasoning !== undefined
-                  ? { ...model, reasoning: live.reasoning, thinkingLevelMap: live.thinkingLevelMap }
-                  : model;
-              // An image cap from the pool environment survives a static entry that sets none.
               return [
                 model.id,
-                live?.inputLimits && !kept.inputLimits
-                  ? { ...kept, inputLimits: live.inputLimits }
-                  : kept,
+                live && limits.get(model.id)?.reasoning !== undefined
+                  ? { ...model, reasoning: live.reasoning, thinkingLevelMap: live.thinkingLevelMap }
+                  : model,
               ];
             }),
           ]).values(),
