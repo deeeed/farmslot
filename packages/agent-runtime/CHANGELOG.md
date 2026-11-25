@@ -4,6 +4,11 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.51.2 - 2026-11-25
+
+- Uses adapter-sdk 0.31.4 (recipe-runner 0.52.5), so mm-harness keeps one copy of each package.
+- `withNativeHostRefreshPolicy` and `releasedSessionsPolicy` refresh a host under one launch's own policy, from a fresh census. Clients can limit idle stops to fenced hosts and a runner count. A launch to a host on another runtime is refused as skew before capability errors.
+
 ## 0.51.1 - 2026-11-25
 
 - `requiredSkillPaths(config, selection)` lists every checkout-relative file a required-skill selection needs — each skill's declared files, then its review pack. Task init's freeze and the gateway's prepare-time `required_skills_present` check both resolve a skill's files through the same internal helper, so neither can require a file the other ignores.
