@@ -11,6 +11,7 @@ import {
   enumerateChecklistCheckboxes,
   isTerminalWorkerSignalStatus,
   type SubtaskIndex,
+  type WorkerSignal,
 } from '@farmslot/protocol';
 
 import { harnessHost } from '../host.js';
@@ -81,7 +82,8 @@ export interface ChecklistStepGate {
 
 export interface ChecklistCommandOptions {
   // Stage the task's learning package (`closeout <task-dir>`, and after a
-  // successful complete/no-change mark). Absent: closeout is not offered.
+  // successful complete/no-change mark, or a numbered mark on the completion row
+  // that completed the run). Absent: closeout is not offered.
   closeout?(
     taskDir: string,
     args: readonly string[],
@@ -94,7 +96,9 @@ export interface ChecklistCommandOptions {
       };
   // Gates on numbered steps.
   stepGates?: readonly ChecklistStepGate[];
-  // Before a `complete` mark is forwarded (teach the closure artifacts, say).
+  // Before a `complete` mark is forwarded (teach the closure artifacts, say), or
+  // after a numbered mark on the completion row completed the run. It must only
+  // inform: a throw there would fail a finished run.
   beforeComplete?(taskDir: string): void;
 }
 
@@ -133,13 +137,13 @@ function parseChecklistArgv(argv: string[]): {
 function stageLearningPackage(
   taskDir: string,
   step: string | undefined,
-  markArgs: string[],
+  learningsWaived: boolean,
   options: ChecklistCommandOptions,
 ): void {
   if (
     !options.closeout ||
     !['complete', 'no-change'].includes(step ?? '') ||
-    markArgs.includes('--skip-learnings') ||
+    learningsWaived ||
     !fs.existsSync(path.join(taskDir, HANDOFF_INPUT))
   ) {
     return;
@@ -155,12 +159,46 @@ function stageLearningPackage(
   );
 }
 
-function terminalSignalStatus(taskDir: string, overrides: ChecklistTargetOverrides): string | null {
-  const target = resolveChecklistTargetWithOverrides(taskDir, overrides);
-  const signalPath = path.join(taskDir, target.signal);
-  let signal: { status?: string };
+type SignalView = Partial<Pick<WorkerSignal, 'status' | 'artifactWaivers'>>;
+
+// A signal file; throws when it is missing or unreadable, and each caller
+// decides what that means.
+function readSignal(signalPath: string): SignalView {
+  return JSON.parse(fs.readFileSync(signalPath, 'utf8')) as SignalView;
+}
+
+// The signal after a successful mark, when it is complete: whether learnings were waived.
+function completedSignal(
+  taskDir: string,
+  overrides: ChecklistTargetOverrides,
+  canCloseout: boolean,
+): { learningsWaived: boolean } | null {
+  let signal: SignalView;
   try {
-    signal = JSON.parse(fs.readFileSync(signalPath, 'utf8')) as { status?: string };
+    signal = readSignal(
+      path.join(taskDir, resolveChecklistTargetWithOverrides(taskDir, overrides).signal),
+    );
+  } catch (error) {
+    // The mark wrote or matched the signal, so this is unexpected. Its verdict
+    // stands; only completion staging can't be decided, so say how to finish it.
+    const next = canCloseout
+      ? `; if the run completed, run: ${harnessHost().name} checklist closeout ${taskDir}`
+      : '';
+    console.error(
+      `Warning: the signal could not be read after the mark (${error instanceof Error ? error.message : String(error)})${next}; task verdict is unchanged.`,
+    );
+    return null;
+  }
+  if (signal.status !== 'complete') return null;
+  return { learningsWaived: signal.artifactWaivers?.learnings === true };
+}
+
+function terminalSignalStatus(taskDir: string, overrides: ChecklistTargetOverrides): string | null {
+  // A target error is the caller's to report; only a missing or unreadable signal is normal here.
+  const target = resolveChecklistTargetWithOverrides(taskDir, overrides);
+  let signal: SignalView;
+  try {
+    signal = readSignal(path.join(taskDir, target.signal));
   } catch {
     // No signal yet (or a half-written one): the task has no terminal verdict to
     // preserve, which is the normal state before the first mark.
@@ -318,7 +356,22 @@ export async function handleChecklist(
   }
   const status = result.status ?? EXIT.runtime;
   if (status === EXIT.ok) {
-    stageLearningPackage(resolvedTaskDir, step, forwarded, options);
+    // `mark N` on the completion row runs `mark complete` itself (agent-runtime), so
+    // the step typed here doesn't say whether the run completed; the signal does.
+    // A numbered mark on an already-terminal signal never gets here
+    // (preserveTerminalSignal), so a complete signal now means this mark completed it.
+    const completion =
+      numericMarkStep(step) === null
+        ? null
+        : completedSignal(resolvedTaskDir, targetOverrides, Boolean(options.closeout));
+    if (completion) options.beforeComplete?.(resolvedTaskDir);
+    stageLearningPackage(
+      resolvedTaskDir,
+      completion ? 'complete' : step,
+      // The row's own flags reached that `mark complete`; its signal records the waiver.
+      completion ? completion.learningsWaived : forwarded.includes('--skip-learnings'),
+      options,
+    );
   }
   return status;
 }

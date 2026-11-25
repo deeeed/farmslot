@@ -248,3 +248,83 @@ test('start does not re-open a completed run through the tool path', async (t) =
   assert.equal(await handleChecklist(['mark', dir, 'start']), 0);
   assert.equal(JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8')).status, 'running');
 });
+
+function completionRowTask(t: TestContext, lastRow: string, { report = true } = {}) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'host-completion-row-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
+  mkdirSync(path.join(dir, 'inputs'), { recursive: true });
+  writeFileSync(path.join(dir, 'inputs', 'handoff.json'), '{}');
+  writeFileSync(path.join(dir, 'artifacts', 'learnings.md'), '- None\n');
+  if (report) writeFileSync(path.join(dir, 'artifacts', 'report.md'), 'Done.\n');
+  writeFileSync(
+    path.join(dir, 'TASK.md'),
+    `# Task\n\n## Steps\n- [ ] 1. Do it\n- [ ] 2. ${lastRow}\n`,
+  );
+  const calls: string[] = [];
+  const options = {
+    beforeComplete: () => calls.push('beforeComplete'),
+    closeout: () => {
+      calls.push('closeout');
+      return { status: 0 };
+    },
+  };
+  const signal = () => JSON.parse(readFileSync(path.join(dir, 'SIGNAL.json'), 'utf8'));
+  return { dir, calls, options, signal };
+}
+
+// `mark N` on the row that says to run `mark complete` completes the run
+// (agent-runtime runs it), so completion staging must follow the signal, not
+// the typed step: before, the run completed with no learning package staged.
+test('marking the completion row stages learnings and shows completion guidance', async (t) => {
+  const { dir, calls, options, signal } = completionRowTask(
+    t,
+    'Finish: run `<task>/mark complete --mark-last`',
+  );
+  assert.equal(await handleChecklist(['mark', dir, '1'], options), 0);
+  assert.deepEqual(calls, []);
+  assert.equal(await handleChecklist(['mark', dir, '2'], options), 0);
+  assert.equal(signal().status, 'complete');
+  assert.deepEqual(calls, ['beforeComplete', 'closeout']);
+  // Marking the row again on the finished run stages nothing twice.
+  assert.equal(await handleChecklist(['mark', dir, '2'], options), 0);
+  assert.deepEqual(calls, ['beforeComplete', 'closeout']);
+});
+
+test('a completion row that waives learnings completes without staging them', async (t) => {
+  const { dir, calls, options, signal } = completionRowTask(
+    t,
+    'Finish: run `<task>/mark complete --mark-last --skip-learnings`',
+  );
+  assert.equal(await handleChecklist(['mark', dir, '1'], options), 0);
+  assert.equal(await handleChecklist(['mark', dir, '2'], options), 0);
+  assert.equal(signal().status, 'complete');
+  assert.deepEqual(calls, ['beforeComplete']);
+});
+
+test('a refused completion row and an ordinary last row run no completion hooks', async (t) => {
+  const refused = completionRowTask(t, 'Finish: run `<task>/mark complete --mark-last`', {
+    report: false,
+  });
+  assert.equal(await handleChecklist(['mark', refused.dir, '1'], refused.options), 0);
+  assert.notEqual(await handleChecklist(['mark', refused.dir, '2'], refused.options), 0);
+  assert.equal(refused.signal().status, 'running');
+  assert.deepEqual(refused.calls, []);
+
+  const ordinary = completionRowTask(t, 'Push the branch');
+  assert.equal(await handleChecklist(['mark', ordinary.dir, '1'], ordinary.options), 0);
+  assert.equal(await handleChecklist(['mark', ordinary.dir, '2'], ordinary.options), 0);
+  assert.match(
+    readFileSync(path.join(ordinary.dir, 'TASK.md'), 'utf8'),
+    /\[x\] 2\. Push the branch/,
+  );
+  assert.equal(ordinary.signal().status, 'running');
+  assert.deepEqual(ordinary.calls, []);
+});
+
+test('a non-numbered mark still reaches the mark script with an invalid checklist target', async (t) => {
+  const dir = task(t);
+  writeFileSync(path.join(dir, 'checklist-target.json'), '{ not json');
+  // With a valid reason, only the target error makes the mark script exit 2.
+  assert.equal(await handleChecklist(['mark', dir, 'blocked', '--reason', 'waiting on review']), 2);
+});
