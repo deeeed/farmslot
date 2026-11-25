@@ -8,7 +8,7 @@ import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Run } from '../../../packages/protocol/src/index.js';
-import { alive } from '../../../packages/agent-runtime/src/native/storage.ts';
+import { alive, matchesProcess } from '../../../packages/agent-runtime/src/native/storage.ts';
 import { claudeRunParams, PIPE_PROJECT, projectPacks, SEED, slotCli } from '../canary/fixtures.mjs';
 import { cleanupOnExit, poll, startReaper } from '../lib/isolated-stack.mjs';
 import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
@@ -136,16 +136,17 @@ try {
   await log('crashed', { runId, sessionId: binding.sessionId, crash: (await read()).session });
   // Restart the node; while it is down, stop the worker's host and drop its recorded process tree.
   await stack.restartNode(async () => {
-    // The node-side host that owns the worker (its sessions sit next to host.json).
-    for (const file of find(nodeNative, 'host.json')) {
-      const { pid } = JSON.parse(readFileSync(file, 'utf8'));
-      if (!existsSync(path.join(path.dirname(file), 'sessions', `${binding.sessionId}.journal`)))
-        continue;
-      if (!alive(pid)) continue;
-      process.kill(pid, 'SIGTERM');
-      await poll('worker host stops', async () => (alive(pid) ? undefined : true), 30000);
-      await log('worker host stopped', { pid, hostJson: path.relative(stack.fixture, file) });
-    }
+    // The node-side host that owns the worker: its sessions sit next to its host.json.
+    const owners = find(nodeNative, 'host.json').filter((file) =>
+      existsSync(path.join(path.dirname(file), 'sessions', `${binding.sessionId}.journal`)),
+    );
+    assert.equal(owners.length, 1, 'exactly one node host owns the worker session');
+    const hostDir = path.dirname(owners[0]);
+    const { pid } = JSON.parse(readFileSync(owners[0], 'utf8'));
+    assert.ok(matchesProcess(pid, hostDir), 'the recorded host PID is still the fixture host');
+    process.kill(pid, 'SIGTERM');
+    await poll('worker host stops', async () => (alive(pid) ? undefined : true), 30000);
+    await log('worker host stopped', { pid, hostDir: path.relative(stack.fixture, hostDir) });
     const [journal] = find(nodeNative, `${binding.sessionId}.journal`);
     assert.ok(journal, 'node journal for the worker session');
     const entries = readFileSync(journal, 'utf8')
@@ -165,12 +166,21 @@ try {
     writeFileSync(journal, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
   });
   await log('node restarted');
+  // The restarted node starts its host on demand; until then a read reports it unavailable.
   await poll(
     'worker readable after node restart',
     async () =>
       read().then(
         () => true,
-        () => undefined,
+        (error: unknown) => {
+          if (
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'NATIVE_SOURCE_UNAVAILABLE'
+          )
+            return undefined;
+          throw error;
+        },
       ),
     60000,
   );
@@ -195,11 +205,14 @@ try {
   const generation = (current: Run) =>
     current.agentContexts?.find((item) => item.id === context.id)?.nativeSession?.generation;
   if (!resumeError)
-    await poll(
-      'resumed worker',
+    run = await poll(
+      'resumed worker monitoring on a new generation',
       async () => {
-        run = await get();
-        return generation(run) !== binding.generation ? true : undefined;
+        const current = await get();
+        const next = generation(current);
+        return current.status === 'monitoring' && next && next !== binding.generation
+          ? current
+          : undefined;
       },
       60000,
     );
@@ -219,6 +232,9 @@ try {
   };
   await log(receipt.status === 'pass' ? 'PASS attested stop recorded' : 'FAIL', receipt);
   if (receipt.status !== 'pass') process.exitCode = 1;
+} catch (error) {
+  receipt = { ...receipt, error: error instanceof Error ? error.message : String(error) };
+  throw error;
 } finally {
   await cleanup();
 }
