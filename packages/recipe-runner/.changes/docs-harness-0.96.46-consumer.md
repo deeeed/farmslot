@@ -1,1 +1,0 @@
-- mm-harness 0.96.46 consumes the protocol 0.92.1 cohort: recipe-runner 0.52.4, Recipe CLI 0.35.34, agent-runtime 0.51.1, adapter-web 0.19.34 (one copy of each). The recipe HUD works on LavaMoat-scuttled MetaMask Extension dist builds, so Extension full prepares pass the runner smoke again.

@@ -6,6 +6,11 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.52.5 - 2026-11-25
+
+- mm-harness 0.96.46 consumes the protocol 0.92.1 cohort: recipe-runner 0.52.4, Recipe CLI 0.35.34, agent-runtime 0.51.1, adapter-web 0.19.34 (one copy of each). The recipe HUD works on LavaMoat-scuttled MetaMask Extension dist builds, so Extension full prepares pass the runner smoke again.
+- `ui.wait_for` on a busy page ends with its own timeout instead of a raw `CDP Runtime.evaluate timed out after <N>ms` that read like a CDP failure; the CDP error is kept as `cause`. A page that answered no poll fails with `ui.wait_for timed out: the page answered no poll in <N>ms`, a transport diagnostic rather than a `subject` failure. Click target readiness reports `Click target readiness timed out` when the hover move stalls, too.
+
 ## 0.52.4 - 2026-11-25
 
 - Republished in the 25 Nov cohort release with the other @farmslot packages, so an install resolves one copy of each.
