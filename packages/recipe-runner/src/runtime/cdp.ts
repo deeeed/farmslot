@@ -347,6 +347,12 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
   worldName: string,
   options: CdpCallOptions = {},
 ): Promise<T> {
+  // One timeout for the whole evaluation, however many CDP calls it takes.
+  const deadline = options.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
+  const callOptions = (): CdpCallOptions =>
+    deadline === undefined
+      ? options
+      : { ...options, timeoutMs: Math.max(1, deadline - Date.now()) };
   let contexts = isolatedWorldContexts.get(session);
   if (!contexts) {
     contexts = new Map();
@@ -356,13 +362,13 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
   if (!isolatedWorld) {
     const frameTree = await session.call<{
       frameTree?: { frame?: { id?: string } };
-    }>('Page.getFrameTree', {}, options);
+    }>('Page.getFrameTree', {}, callOptions());
     const frameId = frameTree.frameTree?.frame?.id;
     if (!frameId) throw new Error('CDP evaluation could not resolve the page frame.');
     const created = await session.call<{ executionContextId?: number }>(
       'Page.createIsolatedWorld',
       { frameId, worldName },
-      options,
+      callOptions(),
     );
     if (created.executionContextId === undefined) {
       throw new Error('CDP evaluation could not create an isolated world.');
@@ -382,7 +388,7 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
         awaitPromise: true,
         returnByValue: true,
       },
-      options,
+      callOptions(),
     );
     if (result.exceptionDetails) {
       throw new CdpPageEvaluationError(
@@ -725,16 +731,22 @@ export class CdpWebPage {
     worldName: string,
     options: CdpCallOptions = {},
   ): Promise<T> {
+    // The retry after a navigation shares the caller's timeout, never a fresh one.
+    const deadline = options.timeoutMs === undefined ? undefined : Date.now() + options.timeoutMs;
+    const remaining = (): CdpCallOptions =>
+      deadline === undefined
+        ? options
+        : { ...options, timeoutMs: Math.max(1, deadline - Date.now()) };
     try {
       return await evaluateCdpSessionInIsolatedWorld<T>(
         this.session,
         expression,
         worldName,
-        options,
+        remaining(),
       );
     } catch (error) {
       if (!isTransientCdpContextError(error)) throw error;
-      return evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName, options);
+      return evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName, remaining());
     }
   }
 
