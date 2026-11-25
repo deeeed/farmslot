@@ -1,0 +1,1 @@
+- Prepare's temp/ clear-out for a new run names every entry it removed or kept, up to 50 with a count of the rest, not only nested checkouts and task dirs. The run's prepare step keeps the same list in its outputs, so it can still be read after the prepare, including one that failed later.

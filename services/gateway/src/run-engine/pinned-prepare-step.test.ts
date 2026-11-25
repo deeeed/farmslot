@@ -93,10 +93,13 @@ mock.module('../runners/launch-command.js', {
 mock.module('./eval-harness-lifecycle.js', {
   namedExports: { executeEvalHarnessLifecycle: async () => ({ skipped: true }) },
 });
+let scrubReceipt: Awaited<ReturnType<typeof slotPrepare>>['tempScrub'];
 const prepare: typeof slotPrepare = async (_params, _emit, _signal, options) => {
   prepareOptions = options;
   recordWhenPrepared = run.prepareArtifact;
+  if (scrubReceipt) options?.onTempScrubbed?.(scrubReceipt);
   return {
+    ...(scrubReceipt ? { tempScrub: scrubReceipt } : {}),
     prepared: true,
     requestId: 'fixture-prepare',
     startRef: { requestedRef: BASE, resolvedSha: BASE, resolvedAt: '2026-11-25T10:00:00.000Z' },
@@ -120,6 +123,7 @@ const stale: RunPrepareArtifact = {
 };
 
 beforeEach(() => {
+  scrubReceipt = undefined;
   persisted.length = 0;
   prepareOptions = undefined;
   recordWhenPrepared = undefined;
@@ -173,6 +177,18 @@ test('a pinned prepare clears the old record, asks for pinning, and records the 
     cleared >= 0 && cleared < persisted.indexOf('pinned build recorded'),
     persisted.join(', '),
   );
+});
+
+test("the prepare step's outputs keep the temp/ clear-out", async () => {
+  scrubReceipt = {
+    removed: [{ path: 'temp/probe.json', kind: 'file' }],
+    removedCount: 1,
+    kept: [],
+    keptCount: 0,
+    refused: [],
+    refusedCount: 0,
+  };
+  assert.deepEqual((await prepareRun()).outputs?.tempScrub, scrubReceipt);
 });
 
 test('a pinned run cannot skip prepare at the prepare step', async () => {

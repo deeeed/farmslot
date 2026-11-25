@@ -170,7 +170,13 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
-import { scrubTempForRun, shouldScrubTempForRun } from './temp-scrub.js';
+import {
+  scrubTempForRun,
+  shouldScrubTempForRun,
+  type TempScrubReceipt,
+  tempScrubLines,
+  tempScrubReceipt,
+} from './temp-scrub.js';
 import { assertPublishedPrepareBranchContained } from './unmerged-work.js';
 
 export { type PrepareHealthCommands, verifyPrepareHealth } from './prepare-health.js';
@@ -790,26 +796,17 @@ async function slotPrepareInner(
   // its parent chain and runs still bound to the slot stay. A nested Git checkout is deleted
   // and named. A warm handoff, a replay or a resumed task keeps its files. Anything that cannot
   // be deleted fails prepare, by name.
+  // Every entry it removed or kept is named (capped) in the output and recorded on the run's
+  // prepare step, which outlives this stream.
   const scrubbingRun = params.runId ? getRun(params.runId) : undefined;
+  let tempScrub: TempScrubReceipt | undefined;
   if (shouldScrubTempForRun(scrubbingRun)) {
     checkAborted();
     const scrub = await scrubTempForRun(vars, projectJson, scrubbingRun);
     if (scrub) {
-      for (const entry of scrub.checkouts)
-        step('clean', `Deleted nested ${entry.kind} ${entry.path}`);
-      for (const dir of scrub.taskDirs)
-        step(
-          'clean',
-          `Removed earlier task dir ${dir.path} (${dir.runId ? `run ${dir.runId.slice(0, 8)}, ${dir.bundle}` : dir.bundle})`,
-        );
-      for (const entry of scrub.kept) step('clean', `Left ${entry.path}: ${entry.reason}`);
-      const other = scrub.removed.filter(
-        (entry) =>
-          !scrub.taskDirs.some((dir) => dir.path === entry.path) &&
-          !scrub.checkouts.includes(entry),
-      ).length;
-      if (other > 0)
-        step('clean', `Removed ${other} other entr${other === 1 ? 'y' : 'ies'} from temp/`);
+      tempScrub = tempScrubReceipt(scrub);
+      opts?.onTempScrubbed?.(tempScrub);
+      for (const line of tempScrubLines(tempScrub)) step('clean', line);
       if (scrub.refused.length)
         throw new Error(
           `temp/ still holds another run's files: ${scrub.refused
@@ -2284,6 +2281,7 @@ async function slotPrepareInner(
     ...(lockfilesRewritten.length ? { lockfilesRewritten } : {}),
     ...(keptBranches.length ? { keptBranches } : {}),
     ...(prepareArtifact ? { prepareArtifact } : {}),
+    ...(tempScrub ? { tempScrub } : {}),
   };
 }
 

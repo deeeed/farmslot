@@ -10,6 +10,7 @@ import type { StartRefResolution } from '../../projects/start-ref-resolution.js'
 
 import type { PinnedPrepareArtifact } from './pinned-prepare.js';
 import type { PrepareProfileFallback } from './prepare-profile.js';
+import type { TempScrubReceipt } from './temp-scrub.js';
 
 /** Names the supported exit from a held slot whose workspace recovery failed. */
 export const RECOVER_HINT =
@@ -30,6 +31,8 @@ export type SlotPrepareResult = {
   keptBranches?: string[];
   /** The build a pinned prepare installed, from its preflight's receipt. */
   prepareArtifact?: PinnedPrepareArtifact & { installedAt: string };
+  /** What the new run's temp/ clear-out removed and kept (bounded). */
+  tempScrub?: TempScrubReceipt;
 };
 export interface SlotPrepareInternalOptions {
   /** The keep-warm re-prepare a release runs while it still holds the releasing fence. */
@@ -60,6 +63,8 @@ export interface SlotPrepareInternalOptions {
   onStackBaseResolved?: (resolution: StartRefResolution) => Promise<void>;
   /** Called as soon as prepare keeps a branch's unpushed commits, before any later phase can fail. */
   onBranchKept?: (branch: string) => void;
+  /** Called as soon as the new run's temp/ clear-out ends, before it can refuse or a later phase fail. */
+  onTempScrubbed?: (receipt: TempScrubReceipt) => void;
 }
 
 export interface PrepareCommandError extends Error {

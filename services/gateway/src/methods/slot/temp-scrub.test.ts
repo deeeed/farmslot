@@ -47,8 +47,15 @@ mock.module('../../run-completion/retained-artifacts.js', {
 
 const runs = await import('../../runs/store.js');
 const { makeVars } = await import('../../runners/test-fixtures.js');
-const { scrubTempForRun, shouldScrubTempForRun, taskBundleCheck, tempStatePaths } =
-  await import('./temp-scrub.js');
+const {
+  scrubTempForRun,
+  shouldScrubTempForRun,
+  taskBundleCheck,
+  TEMP_SCRUB_LISTED,
+  tempScrubLines,
+  tempScrubReceipt,
+  tempStatePaths,
+} = await import('./temp-scrub.js');
 
 const SLOT_ID = 'macpro-mme-1';
 const repo = path.join(root, 'slot');
@@ -344,4 +351,41 @@ test('a warm handoff, a replay or a resumed task keeps temp/; a failed handoff d
   );
   assert.equal(shouldScrubTempForRun(undefined), false);
   finish(fresh);
+});
+
+test('the clear-out names every entry it removed or kept, up to the cap, then counts the rest', () => {
+  const checkout = { path: 'temp/tasks/goal3-clone', kind: 'clone' };
+  const taskDir = { path: 'temp/tasks/feat/old-1124-090000', kind: 'dir' };
+  const others = Array.from({ length: 60 }, (_, i) => ({ path: `temp/probe-${i}.json`, kind: 'file' }));
+  const outcome = {
+    removed: [taskDir, checkout, ...others],
+    kept: [{ path: 'temp/link', reason: 'holds temp/farmslot' }],
+    refused: [],
+    checkouts: [checkout],
+    taskDirs: [{ path: taskDir.path, runId: 'abcdef1234567890', bundle: 'in its bundle' }],
+  };
+
+  const receipt = tempScrubReceipt(outcome);
+
+  assert.equal(TEMP_SCRUB_LISTED, 50);
+  assert.equal(receipt.removedCount, 62);
+  assert.equal(receipt.removed.length, 50);
+  assert.deepEqual(receipt.removed.slice(0, 3), [
+    { path: 'temp/tasks/goal3-clone', kind: 'clone' },
+    { path: taskDir.path, kind: 'task dir', note: 'run abcdef12, in its bundle' },
+    { path: 'temp/probe-0.json', kind: 'file' },
+  ]);
+  assert.deepEqual(receipt.kept, [{ path: 'temp/link', reason: 'holds temp/farmslot' }]);
+  assert.equal(receipt.keptCount, 1);
+  assert.equal(receipt.refusedCount, 0);
+
+  const lines = tempScrubLines(receipt);
+  assert.equal(lines[0], 'Deleted nested clone temp/tasks/goal3-clone');
+  assert.equal(lines[1], `Removed earlier task dir ${taskDir.path} (run abcdef12, in its bundle)`);
+  assert.equal(lines[2], 'Removed file temp/probe-0.json');
+  assert.equal(lines[49], 'Removed file temp/probe-47.json');
+  assert.equal(lines[50], '12 more removed temp/ entries not listed');
+  assert.equal(lines[51], 'Left temp/link: holds temp/farmslot');
+  assert.equal(lines.length, 52);
+  assert.deepEqual(tempScrubLines({ ...receipt, removedCount: 51 }).at(50), '1 more removed temp/ entry not listed');
 });

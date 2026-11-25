@@ -206,3 +206,60 @@ export async function scrubTempForRun(
   );
   return { ...result, taskDirs, checkouts };
 }
+
+/** The prepare output and the run's record name at most this many entries of each list. */
+export const TEMP_SCRUB_LISTED = 50;
+
+/** What one prepare's clear-out did, bounded, as the run's prepare step records it. */
+export interface TempScrubReceipt {
+  /** Nested checkouts, then task dirs, then everything else, in that order; at most the cap. */
+  removed: Array<{ path: string; kind: string; note?: string }>;
+  removedCount: number;
+  kept: Array<{ path: string; reason: string }>;
+  keptCount: number;
+  refused: Array<{ path: string; reason: string }>;
+  refusedCount: number;
+}
+
+export function tempScrubReceipt(outcome: TempScrubOutcome): TempScrubReceipt {
+  const taskDirs = new Set(outcome.taskDirs.map((dir) => dir.path));
+  const removed = [
+    ...outcome.checkouts.map(({ path, kind }) => ({ path, kind })),
+    ...outcome.taskDirs.map((dir) => ({
+      path: dir.path,
+      kind: 'task dir',
+      note: dir.runId ? `run ${dir.runId.slice(0, 8)}, ${dir.bundle}` : dir.bundle,
+    })),
+    ...outcome.removed
+      .filter((entry) => !taskDirs.has(entry.path) && !outcome.checkouts.includes(entry))
+      .map(({ path, kind }) => ({ path, kind })),
+  ];
+  return {
+    removed: removed.slice(0, TEMP_SCRUB_LISTED),
+    removedCount: removed.length,
+    kept: outcome.kept.slice(0, TEMP_SCRUB_LISTED),
+    keptCount: outcome.kept.length,
+    refused: outcome.refused.slice(0, TEMP_SCRUB_LISTED),
+    refusedCount: outcome.refused.length,
+  };
+}
+
+/** One prepare output line per listed entry, then a count of any the cap left out. */
+export function tempScrubLines(receipt: TempScrubReceipt): string[] {
+  const unlisted = (count: number, listed: number, what: string) => {
+    const rest = count - listed;
+    return rest > 0 ? [`${rest} more ${what} temp/ entr${rest === 1 ? 'y' : 'ies'} not listed`] : [];
+  };
+  return [
+    ...receipt.removed.map((entry) =>
+      entry.kind === 'task dir'
+        ? `Removed earlier task dir ${entry.path} (${entry.note})`
+        : CHECKOUT_KINDS.some((kind) => entry.kind === kind || entry.kind.startsWith(`${kind} (`))
+          ? `Deleted nested ${entry.kind} ${entry.path}`
+          : `Removed ${entry.kind} ${entry.path}`,
+    ),
+    ...unlisted(receipt.removedCount, receipt.removed.length, 'removed'),
+    ...receipt.kept.map((entry) => `Left ${entry.path}: ${entry.reason}`),
+    ...unlisted(receipt.keptCount, receipt.kept.length, 'kept'),
+  ];
+}

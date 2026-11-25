@@ -67,8 +67,9 @@ test(
     t.after(() => runs.updateRun(run.id, { status: 'failed' }));
     const events: unknown[] = [];
 
-    await slotPrepare({ slotId, runId: run.id, prepareProfile: 'core' }, (_event, payload) =>
-      events.push(payload),
+    const result = await slotPrepare(
+      { slotId, runId: run.id, prepareProfile: 'core' },
+      (_event, payload) => events.push(payload),
     );
 
     assert.equal(existsSync(path.join(slotRepo, 'temp/farmslot/deps-setup.stamp')), true);
@@ -80,5 +81,23 @@ test(
     );
     assert.match(JSON.stringify(events), /Deleted nested clone temp\/tasks\/goal3-clone/);
     assert.equal(existsSync(path.join(slotRepo, 'temp/tasks/goal3-clone')), false);
+    // Every other entry is named too, not only counted, and the run's record keeps the list.
+    assert.match(JSON.stringify(events), /Removed dir temp\/scratch-tat4752/);
+    assert.match(JSON.stringify(events), /Removed file temp\/tat4505-trace.json/);
+    const receipt = result.tempScrub;
+    assert.ok(receipt, 'the prepare result carries the clear-out');
+    const removed = receipt.removed.map(({ path: entry, kind }) => [entry, kind]);
+    for (const expected of [
+      ['temp/tasks/goal3-clone', 'clone'],
+      ['temp/tasks/feat/tat-4752-1123-101010', 'task dir'],
+      ['temp/scratch-tat4752', 'dir'],
+      ['temp/tat4505-trace.json', 'file'],
+    ])
+      assert.ok(
+        removed.some(([entry, kind]) => entry === expected[0] && kind === expected[1]),
+        `${expected.join(' ')} in ${JSON.stringify(removed)}`,
+      );
+    assert.equal(receipt.removedCount, receipt.removed.length);
+    assert.equal(receipt.refusedCount, 0);
   },
 );
