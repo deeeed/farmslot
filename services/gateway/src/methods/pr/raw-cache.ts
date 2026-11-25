@@ -163,6 +163,12 @@ export function isUsablePRRawSnapshot(
   return true;
 }
 
+/**
+ * Error-label prefixes of the two reads that carry a PR's comments. A reader that
+ * needs the comments treats a failed one as "comments unknown".
+ */
+export const PR_COMMENT_READ_LABELS = ['issues.comments#', 'pulls.reviewThreads#'] as const;
+
 function swallowGh(label: string) {
   return (err: unknown): CommandOutput & { observationError: string } => {
     // A paused GraphQL read is not empty PR data. Fail the refresh without replacing the cache.
@@ -339,7 +345,7 @@ export async function getPRRawData(
             force,
           })
           .then((rows) => ({ stdout: formatIssueComments(rows), stderr: '' }))
-          .catch(swallowGh(`issues.comments#${prNum}`)),
+          .catch(swallowGh(`${PR_COMMENT_READ_LABELS[0]}${prNum}`)),
         // Inline review comments via GraphQL — filters out resolved + outdated threads
         // so ci-watch / pr-complete don't waste cycles re-triaging the same findings the
         // worker already addressed. REST `/pulls/N/comments` would return every comment
@@ -360,7 +366,7 @@ export async function getPRRawData(
             return page;
           });
           return { stdout: formatReviewThreadComments(threads), stderr: '' };
-        })().catch(swallowGh(`pulls.reviewThreads#${prNum}`)),
+        })().catch(swallowGh(`${PR_COMMENT_READ_LABELS[1]}${prNum}`)),
         github
           .rest<unknown>('GET', `repos/${ghRepo}/pulls/${prNum}/commits`, { force })
           .then((rows) => ({ stdout: formatLatestCommit(rows), stderr: '' }))

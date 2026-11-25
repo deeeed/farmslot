@@ -893,3 +893,28 @@ test('a held conflict at a new head asks even when no check has reported yet', a
     }
   });
 });
+
+test('a held green PR whose review threads read failed keeps waiting', async () => {
+  // Run 54bd3caf (core #11650): all watched checks green, the operator holding on a
+  // bot comment. A failed threads read shows no comment; finishing as passed would
+  // release the slot with the comment unresolved.
+  await held(async () => {
+    snapshots.push({
+      checks: [passedCheck],
+      allPassed: true,
+      comments: [],
+      readErrors: ['pulls.reviewThreads#10384: HTTP 504'],
+    });
+    const w = watch((runId) => updateRun(runId, { decisions: [holdDecision(HELD_AT)] }));
+    try {
+      await w.firstPoll();
+      assert.equal(w.settled(), false, 'the watch did not finish as passed');
+      assert.deepEqual(w.openCards(), []);
+      const cleared = getRun(w.run.id)?.ciWatchState?.holdClearedAt;
+      assert.equal(cleared?.review_comments, undefined);
+      assert.equal(cleared?.review_comments_early, undefined);
+    } finally {
+      w.controller.abort();
+    }
+  }, null);
+});

@@ -3584,10 +3584,6 @@ export interface RunEngineState {
   };
 }
 
-/**
- * Per-run CI-watch inline-fix state — persisted on {@link Run} so dedup signatures
- * and attempt counters survive gateway restart (ADR-027).
- */
 /** CI-watch gates that can auto-dispatch, and so offer "Keep holding" while a PR is held. */
 export type CIHoldGate =
   | 'merge_conflict'
@@ -3595,6 +3591,10 @@ export type CIHoldGate =
   | 'review_comments'
   | 'review_comments_early';
 
+/**
+ * Per-run CI-watch inline-fix state — persisted on {@link Run} so dedup signatures
+ * and attempt counters survive gateway restart (ADR-027).
+ */
 export interface RunCiWatchState {
   /** Scope refusals stop automatic CI fix retries. */
   fixScopeRefusal?: string;

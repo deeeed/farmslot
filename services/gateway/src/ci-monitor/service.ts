@@ -49,6 +49,7 @@ export {
 } from './state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { computePRRecommendation, prStatus } from '../methods/pr.js';
+import { PR_COMMENT_READ_LABELS } from '../methods/pr/raw-cache.js';
 import { resolveCIWatchChainFlowType } from '../run-engine/ci-watch-chain-flow.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { getRun, prRelinked, updateRun, updateRunStep } from '../runs/store.js';
@@ -135,9 +136,6 @@ const ciPokeCooldown = new Map<string, number>();
 const POKE_MIN_GAP_MS = 5_000;
 
 const KEEP_HOLDING = { id: 'wait', label: 'Keep holding', style: 'secondary' } as const;
-/** The raw-cache reads whose failure leaves a PR's comments unknown. */
-const CI_COMMENT_READS = ['issues.comments#', 'pulls.reviewThreads#'];
-
 /** Force the active `pokeablePoll` for this run to resolve early. */
 export function pokeCIPoll(runId: string): { ok: boolean; woken?: boolean; reason?: string } {
   const now = Date.now();
@@ -387,7 +385,8 @@ export async function monitorCI(
   // restart too, until GitHub shows another head or failure, a read shows the state
   // clear, or the hold ends.
   // No key means the read GitHub returned cannot show this gate's state: while held,
-  // that neither asks nor answers, and the poll waits inside the wait caps.
+  // that gate neither asks nor answers. Where nothing else is left to ask (a quiet
+  // conflict, or green checks with unknown comments) the poll waits inside the caps.
   const heldGate = (gate: CIHoldGate, holdKey: string | undefined) => {
     const current = getRun(runId);
     if (!ciHoldSince(current)) return null;
@@ -699,7 +698,9 @@ export async function monitorCI(
     // check snapshot, comments both comment reads. A failed read leaves its key unset.
     const commentsRead =
       !!pr.headSha &&
-      !pr.readErrors?.some((error) => CI_COMMENT_READS.some((read) => error.startsWith(read)));
+      !pr.readErrors?.some((error) =>
+        PR_COMMENT_READ_LABELS.some((label) => error.startsWith(label)),
+      );
     const holdKeys = {
       conflict: pr.headSha,
       failed:
@@ -777,7 +778,11 @@ export async function monitorCI(
     const now = Date.now();
     const progressWindowExpired = now - timeoutWindowStartedAt > config.maxPollTimeMs;
     const totalWindowExpired = now - totalTimeoutWindowStartedAt > config.maxTotalPollTimeMs;
-    const waitingForCI = quietConflict || !allPassed || effectiveActionable.length > 0;
+    // Green checks do not finish a held watch whose comments GitHub could not read:
+    // the comment it is held on may be the one the failed read carried.
+    const commentsUnread = !!conflictGate && !holdKeys.comments;
+    const waitingForCI =
+      quietConflict || commentsUnread || !allPassed || effectiveActionable.length > 0;
     if (waitingForCI && (progressWindowExpired || totalWindowExpired)) {
       const elapsedMs = progressWindowExpired
         ? now - timeoutWindowStartedAt
@@ -819,9 +824,9 @@ export async function monitorCI(
       continue;
     }
 
-    // A conflict the operator keeps holding, or a held PR whose head GitHub could not
-    // read, waits here, inside the wait caps above.
-    if (quietConflict) {
+    // A conflict the operator keeps holding, a held PR whose head GitHub could not
+    // read, or a held green PR with unknown comments waits here, inside the caps.
+    if (quietConflict || (commentsUnread && allPassed)) {
       forceNextRefresh = await waitForNextPoll('polling');
       continue;
     }
