@@ -71,8 +71,8 @@ const devServer = (id: string, status: SlotResource['status']): SlotResource => 
     label: id,
     controllable: true,
     streamable: false,
+    // No boot hook: the cap never stops it, but it may run in the slot's prepare scope.
     watch: { type: 'port-listen', port: '9100' },
-    hooks: { boot: 'fixture-prepare', health: 'fixture-health' },
   },
 });
 const resources = (): SlotResource[] => [

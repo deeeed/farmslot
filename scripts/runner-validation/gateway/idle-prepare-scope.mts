@@ -52,7 +52,11 @@ const groupAlive = async (pgid: number) => {
   const { stdout } = await execute('ps', ['-A', '-o', 'pgid=,stat=']);
   return stdout
     .split('\n')
-    .some((line) => line.trim().split(/\s+/)[0] === String(pgid) && !/^Z/.test(line.trim().split(/\s+/)[1] ?? ''));
+    .some(
+      (line) =>
+        line.trim().split(/\s+/)[0] === String(pgid) &&
+        !/^Z/.test(line.trim().split(/\s+/)[1] ?? ''),
+    );
 };
 
 async function cleanup(): Promise<void> {
@@ -90,31 +94,39 @@ try {
     }),
   );
   // An unrelated tmux session: its pane is outside the slot and must not block the stop.
-  await execute('tmux', ['new-session', '-d', '-s', 'proof-other', '-c', path.join(scratch, 'other')]);
+  await execute('tmux', [
+    'new-session',
+    '-d',
+    '-s',
+    'proof-other',
+    '-c',
+    path.join(scratch, 'other'),
+  ]);
 
-  const { claimSlotStatusIf, readSlotRow, updateSlotStatusIf } = await import(
-    '../../../services/gateway/src/core/state.js'
-  );
-  const { buildPrepareWrappedCommand } = await import(
-    '../../../services/gateway/src/methods/slot/prepare-command.js'
-  );
-  const { reapIdlePrepareScopes } = await import(
-    '../../../services/gateway/src/run-lifecycle/idle-devserver-service.js'
-  );
-  const { DEVSERVER_IDLE_LIMIT_MS } = await import(
-    '../../../services/gateway/src/run-lifecycle/idle-devserver.js'
-  );
+  const { claimSlotStatusIf, readSlotRow, updateSlotStatusIf } =
+    await import('../../../services/gateway/src/core/state.js');
+  const { buildPrepareWrappedCommand } =
+    await import('../../../services/gateway/src/methods/slot/prepare-command.js');
+  const { reapIdlePrepareScopes } =
+    await import('../../../services/gateway/src/run-lifecycle/idle-devserver-service.js');
+  const { DEVSERVER_IDLE_LIMIT_MS } =
+    await import('../../../services/gateway/src/run-lifecycle/idle-devserver.js');
 
   // The real prepare wrapper in keep-alive mode, with a provider child holding the scope.
   const scope = spawn(
     'bash',
     [
       '-c',
-      buildPrepareWrappedCommand('sleep 600 &', path.join(scratch, 'sentinel'), path.join(scratch, 'prep'), {
-        cwd: repo,
-        keepAliveOnSuccess: true,
-        prepareScope: { token, identityPath },
-      }),
+      buildPrepareWrappedCommand(
+        'sleep 600 &',
+        path.join(scratch, 'sentinel'),
+        path.join(scratch, 'prep'),
+        {
+          cwd: repo,
+          keepAliveOnSuccess: true,
+          prepareScope: { token, identityPath },
+        },
+      ),
     ],
     { detached: true, stdio: 'ignore', env: process.env },
   );

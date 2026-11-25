@@ -477,7 +477,9 @@ function idleScopeOf(row: SlotRow): IdleScope | null {
 /** Slots any non-terminal run names: built once per pass, not per slot. */
 function liveRunSlots(): Set<string> {
   return new Set(
-    getAllRuns().flatMap((run) => (run.slotId && !isTerminalRunStatus(run.status) ? [run.slotId] : [])),
+    getAllRuns().flatMap((run) =>
+      run.slotId && !isTerminalRunStatus(run.status) ? [run.slotId] : [],
+    ),
   );
 }
 
@@ -631,7 +633,9 @@ async function timeScope(entry: ScopeCandidate, scope: string | undefined): Prom
  * identity read per machine. Ghost, misconfigured and offline slots are skipped.
  */
 export async function reapIdlePrepareScopes(
-  slots: ReadonlyArray<Pick<SlotStatus, 'slot' | 'machine' | 'missingFromPool' | 'configError' | 'health'>>,
+  slots: ReadonlyArray<
+    Pick<SlotStatus, 'slot' | 'machine' | 'missingFromPool' | 'configError' | 'health'>
+  >,
 ): Promise<void> {
   const live = liveRunSlots();
   const byMachine = new Map<string, ScopeCandidate[]>();
