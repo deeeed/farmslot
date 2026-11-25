@@ -6,6 +6,16 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.52.3 - 2026-11-25
+
+- mm-harness 0.96.40 keeps recipe-runner 0.52.0 and Recipe CLI 0.35.30 with protocol 0.91.0. The HTML evidence viewer jumps to the active step when live flow data is available.
+- mm-harness 0.96.41 consumes recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0. `logs` exits unless `--follow` is passed.
+- mm-harness 0.96.42 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0. `help` shows a minimal task recipe.
+- mm-harness 0.96.43 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0, and consumes adapter-web 0.19.32: the Terminal login with the injected test wallet starts again.
+- mm-harness 0.96.44 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0, and consumes adapter-web 0.19.33. A locked macOS screen no longer blocks Terminal proofs: with no display chosen, the browser starts headless.
+- mm-harness 0.96.45 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0, and adapter-web 0.19.33. Pinned Mobile Runway provisioning matches builds on native inputs only, can keep a resolved build (`--pin`), and can build and cache the checkout when nothing matches (`--build-fallback`).
+- The CDP HUD renders and clears from its own isolated world. On a MetaMask Extension page under LavaMoat scuttling, main-world globals such as `requestAnimationFrame` throw, so every `app.hud` update failed and an Extension recipe smoke stopped with `APP_LOGIC_FAILURE`. The isolated world shares the page DOM and has real frames and timers, so the HUD still waits for its caption to paint. `CdpWebPage.evaluateInIsolatedWorld` accepts call options (abort signal, and a timeout that covers the whole evaluation: world creation, the evaluation and one retry after a navigation).
+
 ## 0.52.2 - 2026-11-23
 
 - State-only proof follows the capture rule: with a frozen review head, `validateRecordedEvidencePackage` reports `comparison-source-mismatch` when a package without before/after captures records a product checkout that is dirty or on another commit. Gates already refuse that finding, so a transcript can no longer prove an older commit.

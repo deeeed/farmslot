@@ -219,9 +219,14 @@ Run retention is not changed by the opt-out.
 runs in the CLI process, offline from the gateway, on the gateway's host: it reads
 the gateway's stores directly, resolved through `farmslot paths --json` for the
 gateway role (ADR-039 Amendment 6), and refuses on a host where those stores are
-absent. It reads them read-only and writes only `<dir>`. `--has-grade` keeps runs
-with at least one external grade line; a run's `humanGrade` is exported but does
-not count.
+absent. Run it with the gateway's `FARMSLOT_*` environment. In a farm home layout
+that is `FARMSLOT_HOME`. In the legacy layout the stores, projects and pool sit in
+the gateway checkout, which the installed CLI cannot find on its own: set
+`FARMSLOT_ROOT` to it (or both `FARMSLOT_PROJECTS_DIR` and `FARMSLOT_POOL_DIR`),
+or the export refuses rather than read the CLI snapshot's projects and pool. It
+reads the stores read-only and writes only `<dir>`. `--has-grade` keeps runs with
+at least one external grade line; a run's `humanGrade` is exported but does not
+count.
 
 ```text
 <dir>/
@@ -234,6 +239,7 @@ not count.
     interviews/*.md
     redaction.json            counts per rule, never the values
   README.md                   filter, Farmslot version, redaction rules, counts, runs skipped and why
+  REFUSED.md                  only while the scan hook has not passed (see Scan hook)
 ```
 
 - Transcripts are read from `session-archives`, or from the run archive through
@@ -274,11 +280,13 @@ converter cannot map are skipped and counted in `redaction.json` as `unmapped`.
 
 ### Redaction
 
-The publication secret scan only detects (it reports a kind and a fingerprint, with
-no position), so export uses its own replacing scrubber. It runs line by line, so
-JSONL stays valid, and applies to every file export writes: transcripts,
+Export applies a basic replacing scrubber to every file it writes: transcripts,
 `labels.json`, `task.md`, `output.diff`, interviews, `index.jsonl`, `README.md`
-and file names. Rules, in order:
+and file names. It is a small fixed set of obvious secret shapes, not a secret
+scanner: each pattern starts at a fixed or bounded prefix or the edge of a run of
+characters, so its time grows with the input, not its square (about 10 MB of
+adversarial input in under half a second on an idle Mac mini). It runs line by
+line, so JSONL stays valid. Rules, in order:
 
 1. The exact values of the farm's configured secrets on the gateway host: the
    secret-named values of `<home>/providers.env`, the node token
@@ -286,13 +294,21 @@ and file names. Rules, in order:
    tokens in the client profiles of `<home>/gateways.json` (the gateway stores only
    their hashes), the LiteLLM key (`~/.config/litellm/api-key`), and secret-named
    variables of the exporting shell.
-2. The publication scan's patterns, made replacing.
-3. Private keys: a hex string of 64 or more characters (with or without `0x`)
-   that is labelled as a key, meaning a key-like name (`privateKey`, `private_key`,
-   `secret`, `seed`, `mnemonic`) on the same line or assigned the value. Bare hex is
-   kept, because it is usually a digest. Digests Farmslot writes itself (`sha256`,
-   `diffSha256`, the SHA and head fields in `labels.git`, and `sha256:` references)
-   are never redacted.
+2. Tokens whose shape names them: GitHub (`ghp_`, `gho_`, `github_pat_` and the
+   like), OpenAI and Anthropic (`sk-`), Slack (`xox?-`), AWS access keys (`AKIA`,
+   `ASIA`), Google API keys (`AIza`), GitLab (`glpat-`), npm (`npm_`), JWTs and
+   `Bearer` values.
+3. Private keys: a PEM private key from its header to its end line, whatever lies
+   between (escaped newlines, line numbers, diff markers), when the end comes
+   within 16 KB; across the lines of a text file each line it covers becomes a
+   marker. One count per key. A key with no end line in reach (cut output) loses
+   its header and the base64 chunks of 16 or more characters that follow it;
+   prose, blank lines and short words after a header are kept. Also a hex string
+   of 64 or more characters (with or without `0x`) labelled as a key, meaning a
+   key-like name (`privateKey`, `private_key`, `secret`, `seed`, `mnemonic`) on
+   the same line or assigned the value. Bare hex is kept, because it is usually a
+   digest. Digests Farmslot writes itself (`sha256`, `diffSha256`, the SHA and
+   head fields in `labels.git`) are never redacted.
 4. E-mail addresses and DSNs, such as Sentry DSNs.
 5. Secret variable names, matched case-sensitively in `SCREAMING_SNAKE_CASE` with
    a secret-like suffix (`_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`). Their values
@@ -310,12 +326,32 @@ scrubbed value by value with its key in view: a string under a secret-like key
 (`*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `privateKey`, `apiKey`, `clientSecret`,
 `accessToken`, `mnemonic` and the like) is replaced whole, keys are scrubbed too
 (two that redact alike stay apart), values under Farmslot's own digest fields skip
-rules 2 and 3, and a line with nothing redacted keeps its exact bytes. A file the
+rule 3, and a line with nothing redacted keeps its exact bytes. A file the
 scrubber cannot read is left out, never exported raw, and one unreadable store
 file skips only its run, with the reason in `README.md`.
 
+The scrubber reads text only. An image payload is kept as it is when it is shown
+to be an image: base64 that starts with an image format's own bytes (PNG, JPEG,
+GIF, WebP), either under `data` or `base64` beside an `image/*` type (Pi and
+Claude image blocks, Anthropic sources, Claude Code's `file` copy) or as a whole
+`data:image/png|jpeg|gif|webp;base64,` value. A match inside base64 would only
+corrupt the image. A screenshot can still show a secret.
+
 Redaction is a best-effort backstop, not a guarantee. An export is for the local
 machine only; sharing it, even internally, needs a human review first.
+
+### Scan hook
+
+Full secret scanning is the operator's choice, off by default. Set
+`FARMSLOT_TRACE_SCAN_HOOK` to a shell command, for example a gitleaks wrapper. Once
+every file is written, export runs it with the export directory as its argument
+(and in `FARMSLOT_TRACE_EXPORT_DIR`), in that directory, with its output on
+stderr. The hook may redact files in place. While a hook is set, `REFUSED.md`
+(fixed text, never the hook's output) is written when the export starts and
+removed only when the hook exits 0, so an export cut short is never taken as
+scanned. A non-zero exit refuses the export: the command fails and `REFUSED.md`
+stays, with the exit status, until a later export with `--update` passes.
+`README.md` names the hook, or says none is set.
 
 ## Privacy
 
