@@ -49,6 +49,7 @@ export function nativeNodeDeclaration(
     'supportsProfiles',
     'supportsObservations',
     'supportsStructuredResults',
+    'supportsWorkerStopAttestation',
   ] as const) {
     const capability = capabilities[field];
     if (capability === undefined) continue;

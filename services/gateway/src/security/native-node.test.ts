@@ -74,4 +74,23 @@ test('native node declarations require an issued credential for that exact machi
       () => nativeNodeDeclaration({ ...declaration, supportsEnsure }, 'node-a', principal, true),
       /supportsEnsure must be boolean/,
     );
+  assert.deepEqual(
+    nativeNodeDeclaration(
+      { ...declaration, supportsWorkerStopAttestation: true },
+      'node-a',
+      principal,
+      true,
+    ),
+    { ...declaration, supportsWorkerStopAttestation: true },
+  );
+  assert.throws(
+    () =>
+      nativeNodeDeclaration(
+        { ...declaration, supportsWorkerStopAttestation: 'true' },
+        'node-a',
+        principal,
+        true,
+      ),
+    /supportsWorkerStopAttestation must be boolean/,
+  );
 });
