@@ -164,6 +164,14 @@ export const PREPARE_REQUIREMENTS = [
 ] as const;
 export type PrepareRequirement = (typeof PREPARE_REQUIREMENTS)[number];
 
+/**
+ * What a profile listed in `pinnedProfiles` installs for a pinned comparison run:
+ * `runway`, a prebuilt Runway artifact of the run's start commit; `source`, a build
+ * of the checked-out commit.
+ */
+export const PREPARE_PINNED_KINDS = ['runway', 'source'] as const;
+export type PreparePinnedKind = (typeof PREPARE_PINNED_KINDS)[number];
+
 export interface PrepareProfileConfig {
   /** Operator-facing label for wizard/CLI listings. */
   label?: string;
@@ -175,6 +183,8 @@ export interface PrepareProfileConfig {
   requires?: PrepareRequirement[];
   /** Profile to run instead when any `requires` check fails. Required when `requires` is non-empty. */
   fallback?: string;
+  /** Declared by every profile `pinnedProfiles` lists. */
+  pinnedKind?: PreparePinnedKind;
 }
 
 export interface ProjectPrepareConfig {
@@ -185,6 +195,13 @@ export interface ProjectPrepareConfig {
   /** Legacy default used only when `core` is absent. */
   default?: string;
   profiles?: Record<string, PrepareProfileConfig>;
+  /**
+   * Profiles a pinned comparison run (a comparison run with a `startRef`) may
+   * prepare with: one list for every platform, or one per platform. The first
+   * entry is the default, an explicit choice must be listed, and selection never
+   * walks a fallback.
+   */
+  pinnedProfiles?: string[] | Record<string, string[]>;
 }
 
 /** Executable source is trusted by operator configuration, never by discovery. */
