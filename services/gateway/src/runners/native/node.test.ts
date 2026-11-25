@@ -18,7 +18,7 @@ import {
   unregisterByWs,
 } from '../../fleet/machine-registry.js';
 import { handleNodeResponse, withNodeReconnectWait } from '../../fleet/node-rpc.js';
-import { createRun, deleteRun, updateRun } from '../../runs/store.js';
+import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { nativeNodeSessionTimeout, routeNativeExecution } from './node.js';
 
@@ -419,6 +419,15 @@ test('a launch a node refuses as skewed is sent once more with the gateway’s r
     ]);
   } finally {
     unregisterByWs(ws);
+    // A run hands its native binding back only once it is closed.
+    const closedAt = new Date().toISOString();
+    updateRun(run.id, {
+      agentContexts: getRun(run.id)!.agentContexts?.map((context) =>
+        context.nativeSession
+          ? { ...context, nativeSession: { ...context.nativeSession, closedAt } }
+          : context,
+      ),
+    });
     await deleteRun(run.id);
   }
 });
