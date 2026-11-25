@@ -443,92 +443,115 @@ test('gitMaintenanceNotes keeps only the maintenance notes', () => {
   );
 });
 
-/** An origin with main and two branches, and a slot clone of it that has fetched them all. */
+/** An origin with main and two branches whose commits are 30 days old, and a clone of it. */
 const PRUNE_FIXTURE = `ROOT=$(mktemp -d)
-  trap 'command rm -rf "$ROOT"' EXIT
-  g() { git -c user.name=T -c user.email=t@localhost -c commit.gpgsign=false "$@"; }
+  trap 'chmod -R u+w "$ROOT"; command rm -rf "$ROOT"' EXIT
+  g() { GIT_COMMITTER_DATE="$OLD" GIT_AUTHOR_DATE="$OLD" git -c user.name=T -c user.email=t@localhost -c commit.gpgsign=false "$@"; }
+  OLD="$(( $(date +%s) - 30 * 86400 )) +0000"
   git init -q --bare -b main "$ROOT/origin.git"
   g clone -q "$ROOT/origin.git" "$ROOT/seed" 2>/dev/null
   (cd "$ROOT/seed" && g commit -q --allow-empty -m base && g push -q origin main main:refs/heads/feat/gone main:refs/heads/feat/later)
   g clone -q "$ROOT/origin.git" "$ROOT/slot"
   cd "$ROOT/slot"
+  stamp="$(git rev-parse --absolute-git-dir)/farmslot-remote-prune.stamp"
   remote_refs() { git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin | tr '\\n' ' '; }`;
 
-test('remotePruneCommand drops refs whose branch origin deleted, at most once per window', () => {
-  const result = spawnSync(
-    'bash',
-    [
-      '-c',
-      `${PRUNE_FIXTURE}
-      git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
-      eval "$CMD"
-      echo "first=$(remote_refs)"
-      # Within the window a second refresh does not prune again.
+function runPrune(script: string, shell = 'bash') {
+  const result = spawnSync(shell, shell === 'bash' ? ['-c', `${PRUNE_FIXTURE}\n${script}`] : ['-f', '-c', `${PRUNE_FIXTURE}\n${script}`], {
+    encoding: 'utf8',
+    env: { ...process.env, CMD: remotePruneCommand(24) },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return {
+    notes: gitMaintenanceNotes(result.stdout),
+    lines: result.stdout.split('\n').filter((line) => line && !line.startsWith('farmslot-git-maintenance')),
+    stdout: result.stdout,
+  };
+}
+
+for (const shell of ['bash', '/bin/zsh']) {
+  test(`remotePruneCommand drops a gone branch's ref at most once per window (${shell})`, () => {
+    const { notes, lines } = runPrune(
+      `git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
+      eval "$CMD"; echo "first=$(remote_refs)"
+      # Inside the window a second pass does not list origin again.
       git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/later
-      eval "$CMD"
-      echo "second=$(remote_refs)"
-      # Once the stamp is older than the window, it prunes.
-      touch -t 202601010000 "$(git rev-parse --absolute-git-dir)/farmslot-remote-prune.stamp"
-      eval "$CMD"
-      echo "third=$(remote_refs)"`,
-    ],
-    { encoding: 'utf8', env: { ...process.env, CMD: remotePruneCommand(24) } },
-  );
+      eval "$CMD"; echo "second=$(remote_refs)"
+      touch -t 202601010000 "$stamp"
+      eval "$CMD"; echo "third=$(remote_refs)"`,
+      shell,
+    );
+    assert.deepEqual(notes, [
+      'pruned 1 remote ref whose branch is gone',
+      'pruned 1 remote ref whose branch is gone',
+    ]);
+    assert.deepEqual(lines, [
+      'first=HEAD feat/later main ',
+      'second=HEAD feat/later main ',
+      'third=HEAD main ',
+    ]);
+  });
+}
 
-  assert.equal(result.status, 0, result.stderr);
-  const lines = result.stdout.trim().split('\n');
-  assert.deepEqual(gitMaintenanceNotes(result.stdout), [
-    'pruned 1 remote refs whose branch is gone',
-    'pruned 1 remote refs whose branch is gone',
-  ]);
-  assert.deepEqual(
-    lines.filter((line) => !line.startsWith('farmslot-git-maintenance:')),
-    ['first=HEAD feat/later main ', 'second=HEAD feat/later main ', 'third=HEAD main'],
+test('remotePruneCommand keeps a gone branch whose commit is younger than the replay window', () => {
+  const { notes, lines } = runPrune(
+    `(cd "$ROOT/seed" && OLD="$(date +%s) +0000" g commit -q --allow-empty -m fresh && g push -q origin HEAD:refs/heads/feat/fresh)
+    git fetch -q origin
+    git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/fresh
+    eval "$CMD"; echo "refs=$(remote_refs)"`,
   );
+  assert.deepEqual(notes, []);
+  assert.deepEqual(lines, ['refs=HEAD feat/fresh feat/gone feat/later main ']);
 });
 
-test('remotePruneCommand leaves a git dir other worktrees share alone', () => {
-  const result = spawnSync(
-    'bash',
-    [
-      '-c',
-      `${PRUNE_FIXTURE}
-      git worktree add -q "$ROOT/linked" -b linked-work origin/main
-      git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
-      (cd "$ROOT/linked" && eval "$CMD")
-      eval "$CMD"
-      echo "refs=$(remote_refs)"`,
-    ],
-    { encoding: 'utf8', env: { ...process.env, CMD: remotePruneCommand(24) } },
+test('a failed listing reports git\'s error, writes no prune, and backs off', () => {
+  const { notes, lines } = runPrune(
+    `git remote set-url origin "$ROOT/missing.git"
+    eval "$CMD"; echo "state=$(cat "$stamp")"
+    eval "$CMD"
+    touch -t 202601010000 "$stamp"
+    eval "$CMD"`,
   );
-
-  assert.equal(result.status, 0, result.stderr);
-  const notes = gitMaintenanceNotes(result.stdout);
-  assert.equal(notes.length, 2);
-  for (const note of notes) assert.match(note, /remote prune skipped: the git dir .* is shared by 2 worktrees/);
-  assert.match(result.stdout, /refs=HEAD feat\/gone feat\/later main/);
+  assert.equal(notes.length, 2, 'the retry inside the backoff window lists nothing');
+  for (const note of notes) assert.match(note, /^remote prune failed: .*missing\.git/);
+  assert.deepEqual(lines, ['state=failed']);
 });
 
-test('remotePruneCommand prunes nothing while two remote refs differ only in case', () => {
-  const result = spawnSync(
-    'bash',
-    [
-      '-c',
-      `${PRUNE_FIXTURE}
-      # GitHub allows both names; on APFS deleting one loose ref also deletes the other.
-      git update-ref refs/remotes/origin/feat/CASE origin/main
-      git pack-refs --all
-      git update-ref refs/remotes/origin/feat/case origin/main
-      git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
-      eval "$CMD"
-      echo "refs=$(remote_refs)"`,
-    ],
-    { encoding: 'utf8', env: { ...process.env, CMD: remotePruneCommand(24) } },
+test('remotePruneCommand leaves a git dir live worktrees share alone, and ignores prunable ones', () => {
+  const { notes, stdout } = runPrune(
+    `git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
+    git worktree add -q "$ROOT/linked" -b linked-work origin/main
+    (cd "$ROOT/linked" && eval "$CMD")
+    eval "$CMD"; echo "shared=$(remote_refs)"
+    git worktree add -q "$ROOT/gone-tree" -b gone-work origin/main
+    command rm -r "$ROOT/linked" "$ROOT/gone-tree"
+    eval "$CMD"; echo "after=$(remote_refs)"`,
   );
+  assert.deepEqual(notes, ['pruned 1 remote ref whose branch is gone']);
+  assert.equal((stdout.match(/farmslot-git-maintenance-debug: remote prune skipped/g) ?? []).length, 2);
+  assert.match(stdout, /shared=HEAD feat\/gone feat\/later main/);
+  assert.match(stdout, /after=HEAD feat\/later main/);
+});
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(gitMaintenanceNotes(result.stdout), [
-    'remote prune skipped: refs differ only in case (refs/remotes/origin/feat/case)',
+test('a stale ref whose name matches a live branch or a loose ref in case is kept; others go', () => {
+  const { notes, lines } = runPrune(
+    `# GitHub keeps both names apart; on APFS one loose file serves both.
+    git update-ref refs/remotes/origin/WPN-435 origin/main
+    git pack-refs --all
+    git -C "$ROOT/origin.git" update-ref refs/heads/wpn-435 main
+    git update-ref refs/remotes/origin/OLD-1 origin/main
+    git pack-refs --all
+    git update-ref refs/remotes/origin/old-1 origin/main
+    git update-ref refs/remotes/origin/Packed-Twin origin/main
+    git update-ref refs/remotes/origin/packed-twin origin/main
+    git pack-refs --all
+    git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
+    eval "$CMD"; echo "refs=$(remote_refs)"`,
+  );
+  assert.deepEqual(notes, [
+    'pruned 3 remote refs whose branch is gone; kept 2 whose name matches another ref in case',
   ]);
-  assert.match(result.stdout, /feat\/gone/);
+  // WPN-435 collides with live wpn-435; OLD-1 with the loose old-1 file. The packed twins and
+  // feat/gone are stale with no live or loose collision.
+  assert.deepEqual(lines, ['refs=HEAD OLD-1 WPN-435 feat/later main old-1 ']);
 });

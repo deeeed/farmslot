@@ -1921,6 +1921,12 @@ function reconcileWorkspaceReviewerStartup(): Promise<void> {
 
 export function startOrphanReconciler(): void {
   startOrphanReconcilerImpl(buildRecoveryDeps());
+  // Idle slots only drop refs whose branch origin deleted; release and prepare never prune.
+  import('../methods/slot/idle-remote-prune.js')
+    .then(({ startIdleRemotePrune }) => startIdleRemotePrune())
+    .catch((error: unknown) => {
+      console.error(`[run-engine] idle remote prune did not start: ${String(error)}`);
+    });
   if (!workspaceCleanupTimer) {
     workspaceCleanupTimer = setInterval(() => {
       Promise.all([

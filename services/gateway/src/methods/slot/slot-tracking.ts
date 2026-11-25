@@ -38,8 +38,6 @@ import {
   CLEAR_INDEX_FLAGS_COMMAND,
   gitMaintenanceNotes,
   PRE_FETCH_CLEANUP_COMMAND,
-  REMOTE_PRUNE_INTERVAL_HOURS,
-  remotePruneCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
 
@@ -316,14 +314,6 @@ export async function resetSlotRepoToIdle(
   );
   if (reset.exitCode !== 0)
     throw new Error(`Idle reset refused on ${vars.slotId}: ${reset.stderr || reset.stdout}`);
-  // After the guarded reset, the slot is idle: drop refs whose branch origin deleted (throttled).
-  const pruned = await execOnSlot(
-    vars,
-    withFarmGitConfig(`cd ${repo} && { ${remotePruneCommand(REMOTE_PRUNE_INTERVAL_HOURS)}; }`),
-    { timeout: 60_000 },
-  );
-  for (const note of gitMaintenanceNotes(pruned.stdout))
-    console.log(`[slot] ${vars.slotId}: git maintenance: ${note}`);
   return { trackingBranch, previousBranch: currentBranch, linkedWorktree };
 }
 

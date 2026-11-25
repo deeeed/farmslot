@@ -493,6 +493,33 @@ test('slotRelease parks dirty unpublished work and continues through the guarded
   assert.ok(saved && typeof saved === 'object' && 'count' in saved && Number(saved.count) > 0);
 });
 
+test('release drops a published branch whose PR was squash-merged and deleted on origin', async (t) => {
+  const path = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const { loadSlotVars, readSlotField } = await import('../../core/index.js');
+  const slotId = await fixtureSlot(t, 'merged', 'PROJ-2-merged');
+  const vars = await loadSlotVars(slotId);
+  const remote = path.join(path.dirname(vars.remoteRepo), 'origin-merged.git');
+  t.after(async () => {
+    const { rm } = await import('node:fs/promises');
+    await rm(remote, { recursive: true, force: true });
+  });
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', vars.remoteRepo, '-c', 'commit.gpgsign=false', '-c', 'user.email=t@example.com', '-c', 'user.name=T', ...args], { encoding: 'utf8' }).trim();
+  git('commit', '-q', '--allow-empty', '-m', 'the PR');
+  execFileSync('git', ['clone', '-q', '--bare', vars.remoteRepo, remote]);
+  git('remote', 'add', 'origin', remote);
+  git('push', '-q', 'origin', 'HEAD:main', 'PROJ-2-merged');
+  git('fetch', '-q', 'origin');
+  // GitHub deletes the branch on merge; the slot still has origin/PROJ-2-merged.
+  execFileSync('git', ['-C', remote, 'update-ref', '-d', 'refs/heads/PROJ-2-merged']);
+  await seedSlotRow(t, slotId, { lifecycle: 'busy', phase: 'working', agent: 'working' });
+  const result = await slotRelease({ slotId }, noopEmit);
+  assert.equal(result.released, true);
+  assert.equal(await readSlotField(slotId, 'lifecycle'), 'ready');
+  assert.equal(git('branch', '--list', 'PROJ-2-merged*'), '', 'no kept branch and no -kept- copy');
+});
+
 test('only a named force release detaches an active find-slot owner', async (t) => {
   const { readSlotField } = await import('../../core/index.js');
   const slotId = await fixtureSlot(t, 'owner-detach', 'main');

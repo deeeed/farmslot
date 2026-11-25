@@ -1,1 +1,1 @@
-- The idle refresh drops remote-tracking refs whose branch origin deleted (`git remote prune origin`, no objects fetched), at most once a day per slot repo. A shared git dir, or remote refs that differ only in case, are left alone with a note.
+- Idle slots drop remote-tracking refs whose branch origin deleted, at most once a day each, from a 10-minute job that never runs during release, prepare, find-slot or recovery. A ref whose commit is younger than 14 days, or whose name matches a live branch or a loose ref in case, is kept; a shared git dir is skipped.

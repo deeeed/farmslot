@@ -44,21 +44,29 @@ export const FETCH_MAINTENANCE_COMMAND = `${DISABLE_AUTO_MAINTENANCE_COMMAND}; $
 /** Before a fetch: stale remote ref locks, git's own auto-maintenance off, stale temporary packs. */
 export const PRE_FETCH_CLEANUP_COMMAND = `${REFRESH_REMOTE_REF_LOCKS_COMMAND}; ${FETCH_MAINTENANCE_COMMAND}`;
 
-/** Hours between two remote prunes of one slot repo. */
+/** Hours between two remote prunes of one slot repo, and the wait after a failed one. */
 export const REMOTE_PRUNE_INTERVAL_HOURS = 24;
+export const REMOTE_PRUNE_RETRY_HOURS = 1;
+/** A stale remote ref is kept while its commit is younger than this: replays of a squash-merged
+ * PR resolve a start ref given as a SHA through any remote ref that holds it. */
+export const REMOTE_PRUNE_MIN_AGE_DAYS = 14;
 
 /**
- * Drops remote-tracking refs whose branch is gone from origin (`git remote prune origin`: one ref
- * listing, no objects fetched), at most once per `hours` per repo, timed by a stamp file in the git
- * dir. Run it on an idle slot only, after its reset: a ref a running run needs must not go.
- * - A git dir other worktrees share is left alone and the note says why.
- * - On a case-insensitive volume (APFS), deleting `origin/feat/ABC` also deletes a loose
- *   `origin/feat/abc` file and reverts that ref to its packed value. So when two remote refs differ
- *   only in case, nothing is pruned and the note names one.
- * It never fails the command it precedes.
+ * Deletes remote-tracking refs whose branch is gone from origin, for an idle, released slot only:
+ * one `ls-remote --heads` and one `update-ref --stdin`, at most once per `hours`, or once per
+ * `REMOTE_PRUNE_RETRY_HOURS` after a failure, timed by a stamp file in the git dir.
+ * - A git dir other live worktrees share is left alone (a debug note says so).
+ * - A stale ref is kept while its commit is younger than `REMOTE_PRUNE_MIN_AGE_DAYS`.
+ * - On a case-insensitive volume (APFS) deleting `origin/feat/ABC` also deletes a loose
+ *   `origin/feat/abc` file. So a stale ref is kept when its name matches a live branch or another
+ *   loose remote ref case-insensitively.
+ * It always exits 0; failures are notes with git's last error line.
  */
-export function remotePruneCommand(hours: number): string {
-  return `git_dir=$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P) && common_dir=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) && worktrees=$(git worktree list --porcelain 2>/dev/null | grep -c '^worktree ') && if [ "$git_dir" != "$common_dir" ] || [ "$worktrees" -gt 1 ]; then echo "${GIT_MAINTENANCE_NOTE} remote prune skipped: the git dir $common_dir is shared by $worktrees worktrees"; else prune_stamp="$git_dir/farmslot-remote-prune.stamp"; if [ -z "$(find "$prune_stamp" -mmin -${hours * 60} 2>/dev/null)" ]; then case_twin=$(git for-each-ref --format='%(refname)' refs/remotes/origin | awk '{ k = tolower($0); if (k in seen) { print $0; exit } seen[k] = 1 }'); if [ -n "$case_twin" ]; then echo "${GIT_MAINTENANCE_NOTE} remote prune skipped: refs differ only in case ($case_twin)"; elif pruned=$(git remote prune origin 2>/dev/null); then touch "$prune_stamp"; count=$(printf '%s\n' "$pruned" | grep -cF '[pruned]'); [ "$count" -eq 0 ] || echo "${GIT_MAINTENANCE_NOTE} pruned $count remote refs whose branch is gone"; else echo "${GIT_MAINTENANCE_NOTE} remote prune failed"; fi; fi; fi; true`;
+export function remotePruneCommand(hours = REMOTE_PRUNE_INTERVAL_HOURS): string {
+  const minutes = hours * 60;
+  const retryMinutes = REMOTE_PRUNE_RETRY_HOURS * 60;
+  const minAge = REMOTE_PRUNE_MIN_AGE_DAYS * 86400;
+  return `export LC_ALL=C; repo_paths=$(git rev-parse --git-dir --git-common-dir 2>/dev/null) && git_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 1p)" 2>/dev/null && pwd -P) && common_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 2p)" 2>/dev/null && pwd -P) && live_worktrees=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{n++} /^prunable/{p++} END{print n-p}') && if [ "$git_dir" != "$common_dir" ] || [ "$live_worktrees" -gt 1 ]; then echo "${GIT_MAINTENANCE_DEBUG} remote prune skipped: $common_dir is shared by $live_worktrees worktrees"; else prune_stamp="$git_dir/farmslot-remote-prune.stamp"; prune_state=$(cat "$prune_stamp" 2>/dev/null); if { [ "$prune_state" = ok ] && [ -n "$(find "$prune_stamp" -mmin -${minutes} 2>/dev/null)" ]; } || { [ "$prune_state" = failed ] && [ -n "$(find "$prune_stamp" -mmin -${retryMinutes} 2>/dev/null)" ]; }; then :; else prune_err="$git_dir/farmslot-remote-prune.err"; if ! live_heads=$(git ls-remote --heads origin 2>"$prune_err"); then printf failed > "$prune_stamp"; echo "${GIT_MAINTENANCE_NOTE} remote prune failed: $(tail -n 1 "$prune_err")"; else prune_plan=$({ printf '%s\\n' "$live_heads" | awk 'NF == 2 { print "live " $2 }'; (cd "$common_dir" && find refs/remotes/origin -type f 2>/dev/null) | awk '{ print "loose " $0 }'; git for-each-ref --format='ref %(refname) %(committerdate:unix)' refs/remotes/origin; } | awk -v cutoff=$(( $(date +%s) - ${minAge} )) '$1 == "live" { n = substr($2, 12); live[n] = 1; lower[tolower(n)] = 1; next } $1 == "loose" { n = substr($2, 21); loose[tolower(n)] = loose[tolower(n)] " " n; next } $1 == "ref" { n = substr($2, 21); if (n == "HEAD" || (n in live)) next; l = tolower(n); if ((l in lower) || ((l in loose) && loose[l] != " " n)) { twin++; next } if ($3 + 0 > cutoff) { young++; next } print "delete " $2; deleted++ } END { printf "summary %d %d %d\\n", deleted, twin, young }'); if printf '%s\\n' "$prune_plan" | sed -n 's/^delete /delete /p' | git update-ref --stdin 2>"$prune_err"; then printf ok > "$prune_stamp"; set -- $(printf '%s\\n' "$prune_plan" | sed -n 's/^summary //p'); if [ "$1" -gt 0 ] || [ "$2" -gt 0 ]; then echo "${GIT_MAINTENANCE_NOTE} pruned $1 remote ref$([ "$1" = 1 ] || echo s) whose branch is gone$([ "$2" -gt 0 ] && echo "; kept $2 whose name matches another ref in case")$([ "$3" -gt 0 ] && echo "; kept $3 younger than ${REMOTE_PRUNE_MIN_AGE_DAYS} days")"; fi; else printf failed > "$prune_stamp"; echo "${GIT_MAINTENANCE_NOTE} remote prune failed: $(tail -n 1 "$prune_err")"; fi; fi; rm -f "$prune_err"; fi; fi; true`;
 }
 
 /** The notes a fetch maintenance command printed: kept or removed packs, a failed config write. */

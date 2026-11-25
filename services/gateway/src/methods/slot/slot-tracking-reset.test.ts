@@ -262,22 +262,16 @@ test('idle refresh turns off git auto-maintenance and removes temporary packs a 
   assert.equal(git(repo, 'config', '--local', '--get', 'gc.auto'), '0');
 });
 
-test('idle refresh drops refs whose branch origin deleted, once per window', async (t) => {
-  const root = mkdtempSync(path.join(tmpdir(), 'idle-remote-prune-'));
+test('the idle reset that release, prepare, find-slot and recovery share never prunes remote refs', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'idle-reset-no-prune-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const repo = path.join(root, 'slot');
   const origin = path.join(root, 'origin.git');
   initPrimaryRepo(repo, origin);
-  for (const branch of ['feat/merged', 'feat/later'])
-    git(repo, 'push', 'origin', `main:refs/heads/${branch}`);
+  git(repo, 'push', 'origin', 'main:refs/heads/feat/merged');
   git(repo, 'fetch', 'origin');
-  const remoteRefs = () =>
-    git(repo, 'for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin').split('\n');
+  // A squash-merged PR: origin deleted the branch; release still needs origin/feat/merged.
   git(origin, 'update-ref', '-d', 'refs/heads/feat/merged');
-  await reset(slotVars(repo, 'remote-prune'), {}, undefined, 'main');
-  assert.deepEqual(remoteRefs(), ['HEAD', 'feat/later', 'main']);
-  // A second refresh inside the window leaves a newly deleted branch's ref for the next one.
-  git(origin, 'update-ref', '-d', 'refs/heads/feat/later');
-  await reset(slotVars(repo, 'remote-prune'), {}, undefined, 'main');
-  assert.deepEqual(remoteRefs(), ['HEAD', 'feat/later', 'main']);
+  await reset(slotVars(repo, 'no-prune'), {}, undefined, 'main');
+  assert.equal(git(repo, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/feat/merged').length, 40);
 });
