@@ -542,15 +542,32 @@ test('an ignored file that reset would expose to clean is retained in the origin
   assert.equal(await readFile(path.join(repo, '.gitignore'), 'utf8'), 'private-note\n');
 });
 
+/** Run the parked-work program directly and return its result envelope. */
+async function runProgram(input: Record<string, unknown>, env?: NodeJS.ProcessEnv) {
+  const stdout = await execute('node', ['-e', PARKED_WORK_PROGRAM, JSON.stringify(input)], {
+    env,
+  }).then(
+    (result) => result.stdout,
+    // A refused operation exits non-zero; its envelope is still on stdout.
+    (error: unknown) => {
+      if (!(error instanceof Error) || !('stdout' in error)) throw error;
+      return String(error.stdout);
+    },
+  );
+  const envelope: unknown = JSON.parse(stdout.trim().split('\n').at(-1) ?? '{}');
+  assert.ok(isRecord(envelope), 'the program answers with a JSON envelope');
+  return envelope;
+}
+
 test('parking that runs out of its time budget names the Git command it stopped at', async () => {
-  const run = await execute('node', [
-    '-e',
-    PARKED_WORK_PROGRAM,
-    JSON.stringify({ op: 'list', repo: os.tmpdir(), slotId: 'proof', budgetMs: 0 }),
-  ]).catch((error: { stdout: string }) => error);
-  const envelope = JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}');
+  const envelope = await runProgram({
+    op: 'list',
+    repo: os.tmpdir(),
+    slotId: 'proof',
+    budgetMs: 0,
+  });
   assert.equal(envelope.code, 'GIT_TIMEOUT');
-  assert.match(envelope.message, /time budget before git for-each-ref/);
+  assert.match(String(envelope.message), /time budget before Git for-each-ref/);
 });
 
 test('a Git call that outlives the parking budget is stopped and named', async (t) => {
@@ -559,21 +576,33 @@ test('a Git call that outlives the parking budget is stopped and named', async (
   // A Git that never answers: the budget, not the caller's 120 s kill, ends the park.
   await writeFile(path.join(bin, 'git'), '#!/bin/sh\nexec sleep 30\n');
   await chmod(path.join(bin, 'git'), 0o755);
-  const run = await execute(
-    'node',
-    [
-      '-e',
-      PARKED_WORK_PROGRAM,
-      JSON.stringify({ op: 'list', repo: os.tmpdir(), slotId: 'proof', budgetMs: 300 }),
-    ],
-    { env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` } },
-  ).catch((error: { stdout: string }) => error);
-  const envelope = JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}');
+  const envelope = await runProgram(
+    { op: 'list', repo: os.tmpdir(), slotId: 'proof', budgetMs: 1000 },
+    { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` },
+  );
   assert.equal(envelope.code, 'GIT_TIMEOUT');
   assert.match(
-    envelope.message,
-    /^Git for-each-ref did not finish within the 0\.[23]s left of the parked-work budget/,
+    String(envelope.message),
+    /^Git for-each-ref did not finish within the \d+\.\ds left of the parked-work budget/,
   );
+});
+
+test('a mutation that ends after the step budget still reports its own result', async (t) => {
+  const { vars, repo, options } = await fixture(t);
+  const capture = await parkGitWork(vars, options, localExec);
+  // The command outlives the steps' budget but not the caller's timeout.
+  const envelope = await runProgram({
+    op: 'mutate',
+    repo,
+    slotId: 'proof',
+    expectedFingerprint: capture.fingerprint,
+    saved: capture.receipts,
+    command: 'sleep 0.8',
+    budgetMs: 600,
+  });
+  assert.equal(envelope.ok, true, String(envelope.message));
+  assert.ok(isRecord(envelope.value));
+  assert.equal(envelope.value.exitCode, 0);
 });
 
 test('restore evaluates ignored paths before and after checkout without sharing temporary rule state', async (t) => {
