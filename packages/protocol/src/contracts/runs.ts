@@ -3236,7 +3236,17 @@ export interface Run {
    */
   releasedCheckout?: { slotId: string; branch: string; headSha: string; at: string };
   /** The run's latest slot release that freed the slot, timed from its start to its settlement. */
-  slotRelease?: { slotId: string; startedAt: string; durationMs: number };
+  slotRelease?: {
+    slotId: string;
+    startedAt: string;
+    durationMs: number;
+    /** A finished-run release's wall time per phase; phases need not add up to `durationMs`. */
+    phasesMs?: Record<string, number>;
+    /** Run-bundle lock time the release itself took, when it measured its own. */
+    bundleLock?: import('../recipes/step-io.js').CompleteStepTiming['bundleLock'];
+    /** Processes the release started, by kind. */
+    exec?: import('../recipes/step-io.js').CompleteStepTiming['exec'];
+  };
   /** Explicit workspace placement, mutually exclusive with a slot binding. */
   reviewWorkspaceTarget?: import('./review-workspace.js').ReviewWorkspaceTarget;
   /** Trusted runtime-owned checkout and output locations. Requires slotId=null. */
