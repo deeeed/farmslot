@@ -176,6 +176,8 @@ export interface ReviewResult {
   reviewerSessionId?: string | null;
   skipped?: boolean;
   reason?: string;
+  /** The review round budget ran out with findings open (not set by a no-verdict cap stop). */
+  maxRetriesExhausted?: boolean;
   /** Why the fix never reached the worker, when that ended the loop. */
   fixDeliveryFailure?: string;
   verdict?: 'pass' | 'issues' | 'blocked';
