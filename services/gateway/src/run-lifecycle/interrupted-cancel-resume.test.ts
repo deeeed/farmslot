@@ -72,7 +72,7 @@ const state = await import('../core/state.js');
 const store = await import('../runs/store.js');
 const registry = await import('../run-engine/terminal-teardown-registry.js');
 const { withRunTransition } = await import('./transition-coordinator.js');
-const { resumeInterruptedCancelCleanup } = await import(
+const { resumeInterruptedCancelCleanup }: typeof import('./cancel-transition.js') = await import(
   new URL('./cancel-transition.js?interrupted-cancel-resume', import.meta.url).href
 );
 type Observed = Parameters<typeof resumeInterruptedCancelCleanup>[2];
