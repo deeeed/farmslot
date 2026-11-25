@@ -64,6 +64,7 @@ mock.module('../methods/slot/recover-workspace.js', {
       modes.push(params.mode);
       parkRunIds.push(options?.parkRunId);
       parkHeads.push(options?.parkHeadSha);
+      exactFlags.push(options?.exactWorkspace);
       assert.equal(options?.skipRecycle, true, 'automatic recovery explicitly keeps runtime cold');
       assert.ok(params.expectedWorkspace);
       recovered.push(workspace);
@@ -78,6 +79,7 @@ mock.module('../core/state.js', {
 });
 let parkRunIds: (string | undefined)[];
 let parkHeads: (string | undefined)[];
+let exactFlags: (boolean | undefined)[] = [];
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
@@ -122,6 +124,7 @@ beforeEach(() => {
   failure = undefined;
   parkRunIds = [];
   parkHeads = [];
+  exactFlags = [];
   slotRow = null;
   inspectGate = undefined;
   inspectOptions.length = 0;
@@ -327,6 +330,7 @@ test('the automatic retry returns only the exact released head, clean', async ()
   });
   assert.deepEqual(parkRunIds, ['validation']);
   assert.deepEqual(parkHeads, ['a'.repeat(40)]);
+  assert.deepEqual(exactFlags, [true], 'recovery re-checks the same identity after inspecting');
 });
 
 test('unknown remote publication preserves local work before reset', async () => {

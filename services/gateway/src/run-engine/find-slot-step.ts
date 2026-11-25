@@ -573,10 +573,9 @@ async function claimAdmittedSlot(
       try {
         await reclaimFinishedSlot(slotId, run, emit);
       } catch (error) {
-        // A workspace recovery already running there (the released-checkout retry, a refresh)
-        // ends by itself: select again rather than fail the run.
-        const message = error instanceof Error ? error.message : String(error);
-        if (/preparing or refreshing|ownership changed before idle return/i.test(message))
+        // A workspace recovery running there (the released-checkout retry, a refresh) ends by
+        // itself, whatever refusal it caused: select again or wait rather than fail the run.
+        if (workspaceRecoveryInFlight(slotId, await readSlotRow(slotId)))
           throw slotClaimRefusedError(slotId, 'workspace recovery in progress', true);
         throw error;
       }
@@ -594,6 +593,21 @@ async function claimAdmittedSlot(
  * claim undone. Exported with its state writers injectable so the cancel
  * window can be driven with the write still pending.
  */
+/** A workspace recovery (an automatic idle return, a refresh) is running on the slot now. A
+ * failed one stays held for an operator instead, so this ends by itself. */
+export function workspaceRecoveryInFlight(
+  slotId: string,
+  row: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  return (
+    activePrepareSlots.has(slotId) ||
+    (!!row?.workspace_recovery &&
+      row.lifecycle === 'busy' &&
+      row.phase === SLOT_PHASE_RELEASING &&
+      !row.current_run_id)
+  );
+}
+
 export async function commitSlotClaim(
   slotId: string,
   runId: string,
@@ -714,6 +728,7 @@ export async function commitSlotClaim(
       // whose preview waits for it on a pinned slot.
       !blocker ||
         blocker.kind === 'live-owner' ||
+        workspaceRecoveryInFlight(slotId, row) ||
         (blocker.kind === 'occupied' && (await cleanupHoldClearsSoon(slotId, row, cleanupHoldRun))),
     );
   }
@@ -1266,6 +1281,11 @@ async function waitUntilSlotClaimable(slotId: string, runId: string, generation:
   for (;;) {
     if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
     const row = await readSlotRow(slotId);
+    // A pin waits out a recovery on its slot rather than meeting its refusal again at once.
+    if (workspaceRecoveryInFlight(slotId, row)) {
+      await delay(SLOT_CLAIM_CONFLICT_POLL_MS);
+      continue;
+    }
     const blocker = row ? slotClaimBlocker(row, runId, getRun) : null;
     const owner =
       row && typeof row.current_run_id === 'string' ? getRun(row.current_run_id) : undefined;
@@ -2179,6 +2199,9 @@ async function findSlotAttempt(
         reusableSlotId = candidate.slot;
         break;
       }
+      // A recovery that started on it after the guard filter ends by itself: select again.
+      if (workspaceRecoveryInFlight(candidate.slot, await readSlotRow(candidate.slot)))
+        throw slotClaimRefusedError(candidate.slot, 'workspace recovery in progress', true);
       if (outcome.kind === 'local-work') localWorkSlots.add(candidate.slot);
       reuseReasons[candidate.slot] = outcome.reason;
       inputs.reclaimFailures = { ...reuseReasons };

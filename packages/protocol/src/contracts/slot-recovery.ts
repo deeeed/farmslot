@@ -115,10 +115,12 @@ export function slotRecoveryEligibility(
     bulkInspectable = false;
     return blocked(work.protectedReason);
   }
-  if (slot.lifecycle === 'busy' && !work.terminalOwner) {
-    bulkInspectable = false;
-    return blocked('Slot is busy for an unfinished run');
-  }
+  if (slot.lifecycle === 'busy' && !work.terminalOwner)
+    return blocked(
+      slot.phase === 'releasing' && !work.currentRunId
+        ? 'Slot is returning to idle'
+        : 'Slot is busy for an unfinished run',
+    );
   if (work.cleanupRunId || work.handoffRunId) {
     bulkInspectable = false;
     return blocked('Slot has a cleanup or handoff owner');

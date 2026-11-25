@@ -413,6 +413,7 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     });
   }
   const {
+    clearCheckoutRetainedNote,
     recordSlotTeardownBlocker,
     recordSlotTeardownSkipped,
     fenceRunSlotCleanup,
@@ -533,10 +534,8 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
         }),
       );
       // The first attempt's note is stale once the checkout is back at idle.
-      await recordSlotTeardownSkipped(
-        run,
-        result.kind === 'ready' ? null : `Checkout retained: ${result.reason}`,
-      );
+      if (result.kind === 'ready') await clearCheckoutRetainedNote(run);
+      else await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
     }
     const { loadFleetStatus } = await import('../../fleet/state.js');
     broadcastEvent(Events.FLEET_UPDATED, {

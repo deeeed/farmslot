@@ -194,6 +194,8 @@ export async function reuseSafeIdleSlot(
       {
         skipRecycle: true,
         ...(parkRunId ? { parkRunId, parkHeadSha } : {}),
+        // Recovery inspects again: the strict return holds for what it finds, too.
+        ...(expected?.exactHead ? { exactWorkspace: true } : {}),
       },
     );
     if (result.refreshed) emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
@@ -238,7 +240,11 @@ export async function returnReleasedCheckoutToIdle(
     parkHeadSha: released.headSha,
     ...(options?.exactHead ? { exactHead: true } : {}),
   });
-  if (result.kind !== 'ready')
+  if (result.kind === 'ready') {
+    const { clearCheckoutRetainedNote } = await import('./slot-teardown.js');
+    await clearCheckoutRetainedNote(run);
+  } else if (!options?.exactHead)
+    // The automatic retry throttles its own log.
     console.warn(
       `[slot.release] ${run.slotId}: released checkout of run ${run.id.slice(0, 8)} stays: ${result.reason}`,
     );

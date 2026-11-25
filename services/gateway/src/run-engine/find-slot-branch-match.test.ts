@@ -145,6 +145,8 @@ const finishedReclaims: string[] = [];
 let finishedRefusal: string | undefined;
 /** The refusal clears after it is thrown once. */
 let finishedRefusalOnce = false;
+/** Runs just before the refusal is thrown. */
+let onFinishedRefusal: (() => void) | undefined;
 let slotSelection: ProjectSlotSelectionConfig | undefined;
 let affinitySlot: SlotStatus | undefined;
 const archivedRuns = new Map<string, Run>();
@@ -423,6 +425,7 @@ mock.module('../run-lifecycle/finished-slot-reclaim.js', {
       if (finishedRefusal) {
         const message = finishedRefusal;
         if (finishedRefusalOnce) finishedRefusal = undefined;
+        onFinishedRefusal?.();
         throw new Error(message);
       }
     },
@@ -519,6 +522,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   finishedReclaims.length = 0;
   finishedRefusal = undefined;
   finishedRefusalOnce = false;
+  onFinishedRefusal = undefined;
   slotSelection = undefined;
   affinitySlot = undefined;
   run = makeRun({
@@ -775,15 +779,30 @@ test('a refused finished checkout cleanup never claims the incoming run', async 
   assert.equal(run.taskFile, null);
 });
 
-test('a workspace recovery running on the selected slot is a claim conflict, not a failure', async () => {
+test('a recovery running on the pinned slot is waited out, whatever refusal it caused', async (t) => {
+  reset('fix-bug', 'TAT-4137');
+  const slotId = slots[0]!.slot;
+  run.slotId = slotId;
+  t.after(() => activePrepareSlots.delete(slotId));
+  // The automatic idle return holds the slot's guard; reclaim meets its eligibility refusal.
+  finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot is returning to idle`;
+  finishedRefusalOnce = true;
+  onFinishedRefusal = () => activePrepareSlots.add(slotId);
+  afterLoadWait = () => {
+    activePrepareSlots.delete(slotId);
+  };
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(finishedReclaims, [slotId, slotId]);
+  assert.deepEqual(claims, [slotId]);
+  assert.ok(loadWaits.includes(5_000), 'the pin waited for the recovery to end');
+});
+
+test('the same refusal with no recovery running still fails the run', async () => {
   reset('fix-bug', 'TAT-4137');
   run.slotId = slots[0]!.slot;
-  finishedRefusal = `Finished slot ${run.slotId} cleanup refused: Slot is preparing or refreshing`;
-  finishedRefusalOnce = true;
-  afterLoadWait = () => {};
-  await executeFindSlotStep(run.id, run, 0, context);
-  assert.deepEqual(finishedReclaims, [run.slotId, run.slotId]);
-  assert.deepEqual(claims, [run.slotId]);
+  finishedRefusal = `Finished slot ${run.slotId} cleanup refused: Slot is returning to idle`;
+  await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /returning to idle/);
+  assert.deepEqual(claims, []);
 });
 
 test('skip-prepare retains its selected checkout without finished-run release', async () => {
@@ -1257,6 +1276,29 @@ for (const kind of ['local-work', 'unavailable'] as const) {
     assert.equal(run.allowedSlots, undefined);
   });
 }
+
+test('a candidate a recovery takes after the guard filter is selected again, not a failure', async (t) => {
+  reset('dev', 'PROOF-9002');
+  expectedTarget = undefined;
+  const only = candidate('only', 'first', 'fix/merged');
+  slots.splice(0, slots.length, only);
+  t.after(() => activePrepareSlots.delete(only.slot));
+  let first = true;
+  afterReuse = (slotId) => {
+    if (!first) return;
+    first = false;
+    activePrepareSlots.add(slotId);
+    reuseOutcomes.set(slotId, { kind: 'unavailable', reason: 'Slot is preparing or refreshing' });
+  };
+  afterLoadWait = () => {
+    activePrepareSlots.delete(only.slot);
+    reuseOutcomes.delete(only.slot);
+  };
+  expectedSlot = only.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, only.slot);
+  assert.deepEqual(reuseCalls, [only.slot, only.slot]);
+});
 
 test('a clean main checkout is selected regardless of numeric stale score', async () => {
   reset('dev', 'PROOF-9001');

@@ -67,3 +67,12 @@ test('a busy slot without a named protection reads as busy, not as a working age
   assert.equal(result.allowed, false);
   assert.equal(result.detail, 'Slot is busy for an unfinished run');
 });
+
+test('an ownerless slot mid-return reads as returning to idle', () => {
+  const returning = {
+    ...busySlot({ currentRunId: null }),
+    currentRunId: null,
+    phase: 'releasing' as const,
+  };
+  assert.equal(slotRecoveryEligibility(returning, NOW).detail, 'Slot is returning to idle');
+});
