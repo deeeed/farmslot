@@ -596,7 +596,7 @@ test('a Git call that outlives the parking budget is stopped and named', async (
 test('a mutation that ends after the step budget still reports its own result', async (t) => {
   const { vars, repo, options } = await fixture(t);
   const capture = await parkGitWork(vars, options, localExec);
-  // A virtual clock: the mutation's command takes a minute, past the 1 s step budget but
+  // A virtual clock: the mutation's command takes a minute, past the 30 s step budget but
   // inside the caller's 120 s timeout. Git steps take no virtual time.
   let clock = 0;
   class ClockDate extends Date {
@@ -619,8 +619,6 @@ test('a mutation that ends after the step budget still reports its own result', 
     require: requireInProgram,
     Buffer,
     Date: ClockDate,
-    Atomics,
-    SharedArrayBuffer,
     process: {
       argv: [
         'node',
@@ -631,7 +629,7 @@ test('a mutation that ends after the step budget still reports its own result', 
           expectedFingerprint: capture.fingerprint,
           saved: capture.receipts,
           command: 'true',
-          budgetMs: 1000,
+          budgetMs: 30_000,
         }),
       ],
       env: process.env,
