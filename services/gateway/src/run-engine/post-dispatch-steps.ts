@@ -15,6 +15,7 @@ import {
   PipelineSteps,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReadyGatePrPackage,
+  reviewFixRetriesExhausted,
   reviewPolicySatisfied,
   type ReviewSelection,
   type ReviewValidationDepth,
@@ -90,6 +91,7 @@ import {
 } from '../run-completion/ready-gate-package.js';
 import {
   ResultDecisionHoldError,
+  reviewSeverityCounts,
   runDeliveredResult,
   takeSendBackReview,
 } from '../run-completion/result-decision.js';
@@ -1107,6 +1109,16 @@ export async function executeReviewStep(
         ? `${firstIssue.file}${firstIssue.line ? `:${firstIssue.line}` : ''}`
         : 'unknown';
       const message = firstIssue?.description ?? 'Review found issues';
+      // Only a spent fix budget is exhausted: a no-verdict cap stop leaves its rounds
+      // unspent, and labelling it exhausted misled run 961d55d3.
+      const maxRetriesExhausted = reviewFixRetriesExhausted({
+        verdict: 'issues',
+        issues: result.issues,
+        retryCount: result.retryCount,
+        maxRetries: result.maxRetries,
+        // The round budget stop records it; the review result type does not declare it.
+        maxRetriesExhausted: 'maxRetriesExhausted' in result && result.maxRetriesExhausted === true,
+      });
       // Persist review outputs (verdict, retryCount, maxRetries, issues) so
       // the failure step in the UI can render "MAX RETRIES" + the residual issues
       // instead of just "x". Without this stepPartialIO call the catch handler
@@ -1116,7 +1128,7 @@ export async function executeReviewStep(
         outputs: {
           ...result,
           cliCommand,
-          maxRetriesExhausted: true,
+          maxRetriesExhausted,
         },
       });
       const retriesLabel =
@@ -1124,13 +1136,18 @@ export async function executeReviewStep(
           ? ` after ${result.retryCount}/${result.maxRetries} fix attempts`
           : '';
       const reason = `Review found ${issueCount || 'one or more'} issue(s)${retriesLabel} in ${location}: ${message}`;
-      if (requiresPublicationApproval(getRun(runId) ?? current)) {
+      const severity = reviewSeverityCounts(result.issues ?? []);
+      if (
+        requiresPublicationApproval(getRun(runId) ?? current) &&
+        severity.blocker + severity.major === 0
+      ) {
         // The review completed with issues, not a pass. Publication still requires an explicit
         // person choice at the human gate, including when the review budget is spent.
+        // An open blocker or major stops here instead: COMPLETE would package it (961d55d3).
         stepPartialIO.delete(runId);
         return {
           inputs: { ...inputs, enabled: true },
-          outputs: { ...result, cliCommand, maxRetriesExhausted: true },
+          outputs: { ...result, cliCommand, maxRetriesExhausted },
         };
       }
       // A delivered result waits for a person instead of failing (ADR-065 Amendment 7).
@@ -1138,7 +1155,7 @@ export async function executeReviewStep(
         throw new ResultDecisionHoldError(reason, inputs, {
           ...result,
           cliCommand,
-          maxRetriesExhausted: true,
+          maxRetriesExhausted,
         });
       throw new Error(reason);
     }

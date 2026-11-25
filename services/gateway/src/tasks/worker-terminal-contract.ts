@@ -9,6 +9,7 @@ import {
   isArtifactOnlyScriptedCommandRun,
   primaryRoleForFlow,
   type Run,
+  type RunGatePrerequisiteReason,
   taskDirRelPath,
   terminalContractInputForChecklist,
   WORKER_TERMINAL_CONTRACT_INPUT,
@@ -651,6 +652,34 @@ function requiredDeterministicChecks(
   return contract?.deterministicChecks ?? [];
 }
 
+/** The CI gate refused: one reason per declared check this run still owes. */
+export class DeterministicGateBlockedError extends Error {
+  constructor(
+    message: string,
+    readonly reasons: RunGatePrerequisiteReason[],
+  ) {
+    super(message);
+    this.name = 'DeterministicGateBlockedError';
+  }
+}
+
+/** What the worker reruns for a check that has no current passing receipt. */
+function owedCheckReason(
+  check: Pick<
+    DeterministicChecklistCheck,
+    'checklist' | 'stepNumber' | 'reference' | 'command' | 'status' | 'message'
+  >,
+): RunGatePrerequisiteReason {
+  const why = check.message ? `: ${check.message}` : '';
+  return {
+    code: `deterministic-${check.status}`,
+    prerequisite: 'deterministic',
+    reference: check.reference,
+    message: `${check.checklist} step ${check.stepNumber} (${check.reference}) is ${check.status}${why}. Rerun step ${check.stepNumber} (\`${check.command}\`) to record a current receipt.`,
+    actionId: 'hold',
+  };
+}
+
 /** Revalidate task-owned receipts on the selected checkout before publication. */
 export async function validateDeterministicChecksForRun(
   run: Run,
@@ -743,36 +772,51 @@ export async function validateDeterministicChecksForRun(
     ].join(' '),
     { timeout: 60_000, maxBuffer: 256 * 1024 },
   );
-  if (result.exitCode !== 0)
-    throw new Error(`Deterministic CI gate blocked: ${result.stderr || result.stdout}`);
-  const evaluated: Array<{
+  type Evaluated = Array<{
     checks: DeterministicChecklistCheck[];
     issues: string[];
     checklist?: string;
-  }> = JSON.parse(result.stdout);
-  const checks = evaluated.flatMap((item) => item.checks);
-  if (
-    !checks.length ||
-    evaluated.some((item) => item.issues.length > 0) ||
-    checks.some(
+  }>;
+  let evaluated: Evaluated | undefined;
+  try {
+    evaluated = JSON.parse(result.stdout) as Evaluated;
+  } catch (error) {
+    if (result.exitCode === 0) throw error;
+  }
+  const checks = evaluated?.flatMap((item) => item.checks) ?? [];
+  const owed = [
+    ...checks.filter(
       (check) =>
         check.status !== 'passed' &&
         !(noCodeExit && deterministicChecks.isMissingLocalCheck(check)),
-    ) ||
-    declaredChecks.some(
-      (expected) =>
-        !checks.some(
-          (check) =>
-            check.checklist === expected.checklist &&
-            check.stepNumber === expected.stepNumber &&
-            check.reference === expected.reference &&
-            check.command === expected.command,
-        ),
-    )
-  ) {
-    throw new Error(
+    ),
+    ...declaredChecks
+      .filter(
+        (expected) =>
+          !checks.some(
+            (check) =>
+              check.checklist === expected.checklist &&
+              check.stepNumber === expected.stepNumber &&
+              check.reference === expected.reference &&
+              check.command === expected.command,
+          ),
+      )
+      .map((expected) => ({
+        ...expected,
+        status: 'missing' as const,
+        message: 'No receipt was returned',
+      })),
+  ].map(owedCheckReason);
+  if (result.exitCode !== 0)
+    throw new DeterministicGateBlockedError(
+      `Deterministic CI gate blocked: ${result.stderr || result.stdout}`,
+      owed,
+    );
+  if (!checks.length || evaluated!.some((item) => item.issues.length > 0) || owed.length) {
+    throw new DeterministicGateBlockedError(
       `Deterministic CI gate blocked: no verified receipts were returned for ${taskDir}/${input}, ` +
         `which declares ${declaredChecks.length} check(s) this run still owes. Verify the selected task/checklist contract and rerun its CI mark step.`,
+      owed,
     );
   }
   return checks;

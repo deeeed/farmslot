@@ -155,6 +155,12 @@ written reason without publishing it, or close it. Extensions keep their existin
 resume on the same run; it does not start work by itself. Named-slot re-binding
 remains only a fallback for historical failed runs that already lost ownership.
 
+A publishing run whose review ends with an open blocker or major finding (a finding
+without a severity counts as major) waits at the same result decision instead of
+reaching COMPLETE. Minor and nit findings still go to the publication gate. The
+decision names the stop: spent fix rounds, or the no-verdict cap, which stops
+automatic reviews before the fix rounds are spent.
+
 ### Scoped extension
 
 **Status:** Accepted (lead, 2026-10-15) under ADR-063 Amendment 1.

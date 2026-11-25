@@ -22,6 +22,10 @@ import {
   type RunGatePrerequisiteReason,
   supersedePendingResultDecisions,
 } from '@farmslot/protocol';
+import {
+  normalizeReviewSeverity,
+  type ReviewSeverity,
+} from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { findingsDigest } from '../core/findings-digest.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
@@ -148,6 +152,15 @@ function acceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionAct
     : { id: 'accept-result', available: true, requiresReason: true };
 }
 
+/** Findings per severity; one without a severity counts as major (the review policy default). */
+export function reviewSeverityCounts(
+  issues: readonly ReviewIssue[],
+): Record<ReviewSeverity, number> {
+  const counts: Record<ReviewSeverity, number> = { blocker: 0, major: 0, minor: 0, nit: 0 };
+  for (const issue of issues) counts[normalizeReviewSeverity(issue.severity)]++;
+  return counts;
+}
+
 /** One line on why the run stopped; the findings or refused prerequisites follow it. */
 function decisionReason(
   run: Run,
@@ -168,7 +181,20 @@ function decisionReason(
         ? ` The fix was not delivered: ${review.fixDeliveryFailure}`
         : '';
     if (budgetStop) return undelivered ? `${undelivered.trim()} ${budgetStop}` : budgetStop;
-    return `Review found ${plural(findings?.length ?? 0, 'issue')}${attempts}.${undelivered}`;
+    const counts = Object.entries(reviewSeverityCounts(findings ?? []))
+      .filter(([, count]) => count > 0)
+      .map(([severity, count]) => `${count} ${severity}`);
+    const severities = counts.length ? ` (${counts.join(', ')})` : '';
+    // A no-verdict cap stop leaves fix rounds unspent (961d55d3); say which stop this was.
+    const stop =
+      review?.verdict !== 'issues'
+        ? ''
+        : review.maxRetriesExhausted === true
+          ? ' The fix rounds are spent.'
+          : typeof review.reason === 'string'
+            ? ` Automatic reviews stopped before the fix rounds were spent: ${review.reason}`
+            : '';
+    return `Review found ${plural(findings?.length ?? 0, 'issue')}${severities}${attempts}.${stop}${undelivered}`;
   }
   const step = stoppedAt === 'complete' ? 'COMPLETE' : 'FINALIZE';
   const unmet = refused?.reasons.length ?? 0;
@@ -599,6 +625,45 @@ export async function resolveResultDecision(
     await captureEpisodeAfterRelease(params.runId);
   }
   return getRun(params.runId) ?? settled;
+}
+
+/** A COMPLETE refusal whose every owed check is a stale CI receipt. */
+function staleReceiptRefusal(decision: RunDecision): boolean {
+  const payload = decision.payload;
+  return (
+    payload?.kind === 'result-decision' &&
+    payload.stoppedAt === 'complete' &&
+    Boolean(payload.refusal?.reasons.length) &&
+    payload.refusal!.reasons.every((reason) => reason.code === 'deterministic-stale')
+  );
+}
+
+/**
+ * A stale CI receipt is the worker's to rerun: the held run sends it back once with
+ * the step and command, and a second stale refusal waits for a person (961d55d3).
+ */
+export async function sendBackStaleReceiptOnce(run: Run): Promise<void> {
+  const decision = pendingResultDecision(run);
+  if (
+    !decision ||
+    !staleReceiptRefusal(decision) ||
+    run.decisions.some(
+      (entry) => entry.resolvedAction === 'send-back' && staleReceiptRefusal(entry),
+    )
+  )
+    return;
+  try {
+    await resolveResultDecision({
+      runId: run.id,
+      decisionId: decision.id,
+      actionId: 'send-back',
+      reason: 'Sent back automatically: a CI receipt is stale. Rerun its mark step.',
+    });
+  } catch (error) {
+    console.warn(
+      `[result-decision] automatic send-back for ${run.id.slice(0, 8)} failed; the decision waits for a person: ${(error as Error).message}`,
+    );
+  }
 }
 
 /** A recapture replaced the output snapshot the decision was presented on. */

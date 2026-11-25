@@ -70,6 +70,7 @@ import {
   holdRunForResultDecision,
   ResultDecisionHoldError,
   runDeliveredResult,
+  sendBackStaleReceiptOnce,
 } from '../run-completion/result-decision.js';
 import {
   reserveRunArtifactMetadata,
@@ -100,6 +101,7 @@ import { withRunSessionUsageContext } from '../runtime/run-session-usage-context
 import { captureRunSourceOwnerFence } from '../sources/run-fence.js';
 import { SourceAdmissionRefusal, SourcePlanRestart, withRunSources } from '../sources/runtime.js';
 import { isNoCodeTerminalDisposition, releasedNoChangeChecks } from '../tasks/worker-signals.js';
+import { DeterministicGateBlockedError } from '../tasks/worker-terminal-contract.js';
 import { schedulerTick } from '../work-graph/store.js';
 
 import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
@@ -484,7 +486,7 @@ async function retainCompletionPrerequisiteFailure(
   runId: string,
   generation: number,
   stepName: typeof S.COMPLETE | typeof S.FINALIZE,
-  error: GatewayMethodError | PublishPackageRefusedError,
+  error: GatewayMethodError | PublishPackageRefusedError | DeterministicGateBlockedError,
 ): Promise<void> {
   const current = getRun(runId);
   if (runSupersededSince(current, generation)) return;
@@ -492,7 +494,12 @@ async function retainCompletionPrerequisiteFailure(
     status: 'failed',
     detail: error.message,
     outputs: {
-      gatePrerequisiteRefusal: error instanceof GatewayMethodError ? (error.details ?? {}) : {},
+      gatePrerequisiteRefusal:
+        error instanceof GatewayMethodError
+          ? (error.details ?? {})
+          : error instanceof DeterministicGateBlockedError
+            ? { readiness: { reasons: error.reasons } }
+            : {},
     },
   });
   const steps = pipelineStepsForRun(current!);
@@ -503,12 +510,13 @@ async function retainCompletionPrerequisiteFailure(
   // Amendment 7); without one the refusal stays Amendment 6's `failed`.
   if (runDeliveredResult(getRun(runId)!)) {
     try {
-      await holdRunForResultDecision(
+      const held = await holdRunForResultDecision(
         runId,
         stepName === S.COMPLETE ? 'complete' : 'finalize',
         error.message,
         { patch: { metrics: { ...current!.metrics, outcome: 'partial' } } },
       );
+      if (held && stepName === S.COMPLETE) await sendBackStaleReceiptOnce(held);
       return;
     } catch (holdError) {
       // Never left `completing`: an unrecorded hold falls back to Amendment 6.
@@ -1131,10 +1139,12 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       }
 
       // COMPLETE or FINALIZE could not build the publish package from the
-      // run's evidence. Both delivered and failed captures retain the original
-      // worker for recovery under ADR-065 Amendments 6 and 7.
+      // run's evidence, or a declared CI check has no current passing receipt.
+      // Both delivered and failed captures retain the original worker for
+      // recovery under ADR-065 Amendments 6 and 7.
       if (
-        err instanceof PublishPackageRefusedError &&
+        (err instanceof PublishPackageRefusedError ||
+          err instanceof DeterministicGateBlockedError) &&
         (stepName === S.COMPLETE || stepName === S.FINALIZE)
       ) {
         stepPartialIO.delete(runId);

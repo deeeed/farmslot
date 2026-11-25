@@ -8,6 +8,7 @@ import {
   FLOW_STEPS,
   hasUnsettledRunExecution,
   isCompletionPrerequisiteFailure,
+  pendingResultDecision,
   type PipelineStep,
   PipelineSteps as S,
   type ResultDecisionPayload,
@@ -136,6 +137,23 @@ const posture = await import('./resource-posture.js');
 mock.module('./resource-posture.js', {
   namedExports: { ...posture, reconcileRunPosture: async () => ({ result: undefined }) },
 });
+/** Completion feedback a send-back delivered to the retained worker. */
+const sendBacks: Array<{ runId: string; feedback: string; note?: string }> = [];
+const completionSendBack = await import('../run-completion/completion-send-back.js');
+mock.module('../run-completion/completion-send-back.js', {
+  namedExports: {
+    ...completionSendBack,
+    sendBackCompletion: async (
+      sent: Run,
+      _decisionId: string,
+      feedback: string,
+      _emit: unknown,
+      note?: string,
+    ) => {
+      sendBacks.push({ runId: sent.id, feedback, note });
+    },
+  },
+});
 const { startRun } = await import('./orchestrator.js');
 
 function delivered(flowType: Run['flowType'], status: Run['status'], at: PipelineStep): Run {
@@ -197,7 +215,10 @@ test('8cff6e80: review findings on a pushed comparison result need a decision, n
   assert.equal(run.steps.find((step) => step.name === S.COMPLETE)?.status, 'pending');
   const payload = heldPayload();
   assert.equal(payload.stoppedAt, 'review');
-  assert.equal(payload.reason, 'Review found 2 issues after 1/2 fix attempts.');
+  assert.equal(
+    payload.reason,
+    'Review found 2 issues (2 major) after 1/2 fix attempts. The fix rounds are spent.',
+  );
   assert.deepEqual(payload.findings, opusFindings);
   assert.deepEqual(payload.delivered, {
     headSha: '3522954595facf528417ec6dfa65fd83d2aba02e',
@@ -410,3 +431,126 @@ for (const step of [S.COMPLETE, S.FINALIZE]) {
     });
   }
 }
+
+// 961d55d3 (TAT-4769): COMPLETE found REVIEW-FIX.md step 4 ci.local_check stale (later
+// commits changed its inputs) and failed the run. A stale mark is the worker's to rerun:
+// the run sends it back once with the step and command, and holds on a second refusal.
+const staleReason = {
+  code: 'deterministic-stale',
+  prerequisite: 'deterministic' as const,
+  reference: 'ci.local_check',
+  message:
+    'REVIEW-FIX.md step 4 (ci.local_check) is stale: Command or publishable inputs changed; rerun this mark step. Rerun step 4 (`yarn ci:local`) to record a current receipt.',
+  actionId: 'hold',
+};
+const failedReason = {
+  ...staleReason,
+  code: 'deterministic-failed',
+  message:
+    'REVIEW-FIX.md step 4 (ci.local_check) is failed: Command did not pass, exit 1. Rerun step 4 (`yarn ci:local`) to record a current receipt.',
+};
+const gateBlocked = (reasons: (typeof staleReason)[]) => async () => {
+  const { DeterministicGateBlockedError } = await import('../tasks/worker-terminal-contract.js');
+  return new DeterministicGateBlockedError(
+    'Deterministic CI gate blocked: REVIEW-FIX.md step 4 (ci.local_check) did not pass',
+    reasons,
+  );
+};
+
+/** The worker answered the send-back; COMPLETE runs again on the run that keeps its decisions. */
+function backAtComplete() {
+  run.status = 'completing';
+  run.error = undefined;
+  const steps = FLOW_STEPS[run.flowType];
+  for (const step of run.steps) {
+    const index = steps.findIndex((name) => name === step.name);
+    if (index === steps.indexOf(S.COMPLETE))
+      Object.assign(step, { status: 'running', outputs: undefined, detail: undefined });
+    else if (index > steps.indexOf(S.COMPLETE)) step.status = 'pending';
+  }
+}
+
+async function completeRefused(reasons: (typeof staleReason)[]) {
+  completeError = gateBlocked(reasons);
+  try {
+    await startRun(run.id);
+  } finally {
+    completeError = null;
+  }
+}
+
+test('961d55d3: a stale CI receipt at COMPLETE sends the worker back once to rerun its mark', async () => {
+  run = tat4146v2(v2Output);
+  sendBacks.length = 0;
+
+  await completeRefused([staleReason]);
+
+  assert.equal(sendBacks.length, 1, 'one send-back');
+  assert.match(sendBacks[0]!.feedback, /Rerun step 4 \(`yarn ci:local`\)/);
+  const decision = run.decisions.find((entry) => entry.payload?.kind === 'result-decision');
+  assert.ok(decision);
+  assert.equal(decision.resolvedAction, 'send-back');
+  assert.deepEqual((decision.payload as ResultDecisionPayload).refusal?.reasons, [staleReason]);
+  assert.equal(pendingResultDecision(run), undefined, 'nothing waits for a person');
+  assert.notEqual(run.status, 'failed');
+});
+
+test('961d55d3: a second stale receipt holds for a person instead of sending back again', async () => {
+  run = tat4146v2(v2Output);
+  sendBacks.length = 0;
+  await completeRefused([staleReason]);
+  backAtComplete();
+
+  await completeRefused([staleReason]);
+
+  assert.equal(sendBacks.length, 1, 'still one send-back');
+  assert.equal(run.status, 'needs-decision');
+  const held = pendingResultDecision(run);
+  assert.ok(held, 'a decision waits for a person');
+  const payload = held.payload as ResultDecisionPayload;
+  assert.equal(payload.stoppedAt, 'complete');
+  assert.deepEqual(payload.refusal?.reasons, [staleReason]);
+  assert.equal(action(payload, 'send-back').available, true);
+});
+
+test('a failed CI check at COMPLETE holds for a person without a send-back', async () => {
+  run = tat4146v2(v2Output);
+  sendBacks.length = 0;
+
+  await completeRefused([failedReason]);
+
+  assert.equal(sendBacks.length, 0);
+  assert.equal(run.status, 'needs-decision');
+  assert.deepEqual(heldPayload().refusal?.reasons, [failedReason]);
+});
+
+test('a stale and a failed check together hold without a send-back', async () => {
+  run = tat4146v2(v2Output);
+  sendBacks.length = 0;
+
+  await completeRefused([staleReason, { ...failedReason, reference: 'checks.unit' }]);
+
+  assert.equal(sendBacks.length, 0);
+  assert.equal(run.status, 'needs-decision');
+});
+
+test('961d55d3: a readiness refusal of only stale receipts sends the worker back too', async () => {
+  run = qaRun(qaOutput);
+  sendBacks.length = 0;
+  completeError = async () => {
+    const { RunGateNotReadyError } = await import('./gate-prerequisites.js');
+    return new RunGateNotReadyError(
+      { state: 'not-ready', identity: { runId: run.id, generation: 5 }, reasons: [staleReason] },
+      [staleReason],
+    );
+  };
+  try {
+    await startRun(run.id);
+  } finally {
+    completeError = null;
+  }
+
+  assert.equal(sendBacks.length, 1);
+  assert.match(sendBacks[0]!.feedback, /Rerun step 4/);
+  assert.equal(pendingResultDecision(run), undefined);
+});
