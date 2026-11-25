@@ -1,6 +1,12 @@
 import path from 'node:path';
 
-import { Events, isTerminalRunStatus, type Run, type RunPrepareArtifact } from '@farmslot/protocol';
+import {
+  Events,
+  isTerminalRunStatus,
+  type Run,
+  type RunPrepareArtifact,
+  type TempScrubReceipt,
+} from '@farmslot/protocol';
 
 import { loadSlotVars, resolveProjectRuntimeDir, type SlotVars } from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
@@ -325,6 +331,25 @@ export function keptBranchRecorder(
   };
 }
 
+/**
+ * Records the new run's temp/ clear-out in the step's outputs as soon as it ends, so a prepare
+ * that refuses or fails later still shows what was removed and kept.
+ */
+export function tempScrubRecorder(
+  runId: string,
+  inputs: Record<string, unknown>,
+  baseOutputs: Record<string, unknown>,
+  stepPartialIO: Map<string, StepIO>,
+): (receipt: TempScrubReceipt) => void {
+  return (receipt) => {
+    baseOutputs.tempScrub = receipt;
+    stepPartialIO.set(runId, {
+      inputs,
+      outputs: { ...stepPartialIO.get(runId)?.outputs, tempScrub: receipt },
+    });
+  };
+}
+
 export interface PrepareStepContext {
   activeMonitors: Map<string, AbortController>;
   broadcastFn: BroadcastFn;
@@ -569,6 +594,7 @@ export async function executePrepareStep(
           : undefined,
         // Recorded as it happens, so a prepare that fails later still names the kept branch.
         onBranchKept: keptBranchRecorder(runId, inputs, prepareOutputs, stepPartialIO),
+        onTempScrubbed: tempScrubRecorder(runId, inputs, prepareOutputs, stepPartialIO),
         // A replay re-resolves against the commit the run already recorded: a
         // branch or tag name would otherwise move the recorded base under the
         // preserved branch's commits.
@@ -707,6 +733,8 @@ export async function executePrepareStep(
       // Lockfiles prepare rewrote for a drifted PR branch: the worker must commit them.
       ...(lockfilesRewritten?.length ? { lockfilesRewritten } : {}),
       ...(keptBranches?.length ? { keptBranches } : {}),
+      // Recorded once, as the clear-out ended (tempScrubRecorder).
+      ...(prepareOutputs.tempScrub ? { tempScrub: prepareOutputs.tempScrub } : {}),
       ...(preparedRun?.startRef ? { startRef: preparedRun.startRef } : {}),
       ...(lastOutput ? { lastOutput } : {}),
     },
