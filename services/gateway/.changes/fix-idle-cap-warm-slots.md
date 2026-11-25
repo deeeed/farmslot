@@ -1,0 +1,1 @@
+- The idle dev-server cap no longer exempts a keep-warm slot with no run forever: it keeps the server for 2 h instead of 15 min, then stops it. When it stops a dev server on a slot no run owns, it also stops the preflight scope that kept it (holders, log tail, recipe providers). A keep-warm release on mini-mmt-3 had left both running for two days.

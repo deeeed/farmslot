@@ -23,6 +23,7 @@ import {
 import { probeResourceProcess } from '../fleet/resource-process.js';
 import { ensureResourceReady } from '../fleet/runtime-ready.js';
 import { getRuntimeCapabilityRegistry } from '../methods/runtime-capabilities.js';
+import { prepareIdentityPath, reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import { activePrepareAborts } from '../methods/slot/shared.js';
 import { readRunProgress } from '../runners/run-progress.js';
 import { probeRunnerDescendantPid } from '../runners/session-process.js';
@@ -384,6 +385,14 @@ const idleDevServers = new IdleDevServerReaper({
           deleteActiveResource(slotId, resource.id);
           setCachedResourceStatus(slotId, resource.id, 'stopped');
         }
+      }
+      // No run owns the slot, so nothing else ends the preflight scope that kept this server
+      // (its holders, log tail and recipe providers): stop it here, by its recorded identity.
+      if (!currentOwner) {
+        const projectVars = await loadProjectVars(vars.projectName);
+        await reapSlotPrepareScope(vars, {
+          identityPath: prepareIdentityPath(vars.remoteRepo, projectVars.runtimeDir ?? ''),
+        });
       }
       return true;
     } finally {

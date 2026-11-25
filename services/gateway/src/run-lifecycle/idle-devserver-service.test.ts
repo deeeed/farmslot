@@ -297,6 +297,17 @@ function fixtureRuns() {
   ];
 }
 const realRuns = await import('../runs/store.js');
+const scopeReaps: string[] = [];
+const realPrepareCommand = await import('../methods/slot/prepare-command.js');
+mock.module('../methods/slot/prepare-command.js', {
+  namedExports: {
+    ...realPrepareCommand,
+    reapSlotPrepareScope: async (_vars: unknown, options: { identityPath?: string }) => {
+      scopeReaps.push(options.identityPath ?? '');
+      return true;
+    },
+  },
+});
 mock.module('../runs/store.js', {
   namedExports: {
     ...realRuns,
@@ -336,6 +347,7 @@ beforeEach(() => {
   pidFileAge = 60;
   pidFilePort = '{{port}}';
   listenerGroup = '101';
+  scopeReaps.length = 0;
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -348,6 +360,7 @@ test('port watch resolves once, expires through the real identity reaper and res
   await reapIdleDevServers('slot-a');
   assert.equal(stops, 1);
   assert.equal(alive, false);
+  assert.deepEqual(scopeReaps, [], "a run's own preflight scope is its release's to stop");
   await restoreIdleDevServers('slot-a', run.id);
   assert.equal(boots, 1);
   assert.equal(alive, true);
@@ -370,6 +383,8 @@ test('a pid-file dev server on an ownerless ready slot is reaped', async () => {
   await reapIdleDevServers('slot-a');
   clock += DEVSERVER_IDLE_LIMIT_MS;
   await reapIdleDevServers('slot-a');
+  // mini-mmt-3: no run owns the slot, so the preflight scope that kept the server goes too.
+  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
   assert.equal(stops, 1);
 });
 

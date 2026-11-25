@@ -5,6 +5,11 @@ import { sameSlotField } from '../core/same-slot-field.js';
 import type { ProcessCensusRow } from './process-census.js';
 
 export const DEVSERVER_IDLE_LIMIT_MS = 15 * 60_000;
+/**
+ * A keep-warm slot with no run holds its dev server for the next run, but not forever: a
+ * keep-warm release on mini-mmt-3 left its dev server and prepare scope up for two days.
+ */
+export const WARM_DEVSERVER_IDLE_LIMIT_MS = 2 * 60 * 60_000;
 type SlotRow = Readonly<Record<string, unknown>>;
 
 export type IdleDevServerPointer = Pick<ProcessCensusRow, 'identity' | 'group'> & { pid: number };
@@ -84,7 +89,6 @@ export class IdleDevServerReaper {
     if (row.phase === 'releasing') return 'slot releasing';
     if (row.lifecycle === 'manual') return 'manual slot';
     if (row.handoff_run_id) return 'slot handoff in progress';
-    if (row.warm === true && !row.current_run_id) return 'warm slot';
     if (this.deps.preparing(slotId)) return 'slot preparing';
     if (resourceId !== undefined && (await this.deps.retained(slotId, resourceId)))
       return 'retained by a capability lease';
@@ -189,11 +193,15 @@ export class IdleDevServerReaper {
         };
         this.idle.set(key, candidate);
       }
-      if (this.deps.now() - candidate.since < DEVSERVER_IDLE_LIMIT_MS) {
+      const limit =
+        row.warm === true && !row.current_run_id
+          ? WARM_DEVSERVER_IDLE_LIMIT_MS
+          : DEVSERVER_IDLE_LIMIT_MS;
+      if (this.deps.now() - candidate.since < limit) {
         this.decide(
           slotId,
           resource.id,
-          `idle: pid ${candidate.process.pid} stops after ${new Date(candidate.since + DEVSERVER_IDLE_LIMIT_MS).toISOString()}`,
+          `idle: pid ${candidate.process.pid} stops after ${new Date(candidate.since + limit).toISOString()}${limit === WARM_DEVSERVER_IDLE_LIMIT_MS ? ' (keep-warm)' : ''}`,
         );
         continue;
       }
