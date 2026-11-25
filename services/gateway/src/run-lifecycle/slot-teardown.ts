@@ -33,7 +33,11 @@ import {
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import type { ResourceShutdownOutcome } from '../fleet/slot-cleanup.js';
-import { isActiveSlotHolder, slotPinIsRequestOnly } from '../methods/dispatch/slot-scoring.js';
+import {
+  activeRunOnSlotReason,
+  isActiveSlotHolder,
+  slotPinIsRequestOnly,
+} from '../methods/dispatch/slot-scoring.js';
 import { reapSlotPrepareScope } from '../methods/slot/prepare-command.js';
 import { resolveDevServerLogPath } from '../methods/slot/prepare-devserver-log.js';
 import {
@@ -170,7 +174,7 @@ async function inspectSlotOwnership(
   if (!ownsRunSlotCleanup(row, run.id))
     return `Slot belongs to ${owner ?? 'no run'}, not ${run.id}`;
   const other = findOtherActiveRunOnSlot(run, row);
-  if (other) return `Another active run ${other.id} uses this slot`;
+  if (other) return activeRunOnSlotReason(other.id);
   return null;
 }
 

@@ -406,3 +406,31 @@ test('an observation lost during an awaited quiet check writes no marker and sto
   await f.reaper.sweep('slot-a');
   assert.equal(f.stopped(), 0, 'a loss during the final quiet check refuses the stop');
 });
+
+test('a warm child restores the dev server on the hold its parent left for it, and only there', async () => {
+  const f = fixture('done');
+  await f.reaper.sweep('slot-a');
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  // The parent's teardown held the slot for its active child: no owner, the parent's cleanup.
+  f.setRow({ current_run_id: null, cleanup_run_id: 'run-a' });
+  const parentHold = (row: Readonly<Record<string, unknown>>) => row.cleanup_run_id === 'run-a';
+  await assert.rejects(f.reaper.restore('slot-a', 'child-run'), /owner changed/);
+  await assert.rejects(
+    f.reaper.restore('slot-a', 'child-run', () => false),
+    /owner changed/,
+  );
+  // The row stops admitting the child during the boot: the restore stops and keeps its marker.
+  const ready = f.deps.ready;
+  f.deps.ready = async (slot, resource, owner, assertOwner) => {
+    f.setRow({ cleanup_run_id: 'someone-else' });
+    await assertOwner();
+  };
+  await assert.rejects(f.reaper.restore('slot-a', 'child-run', parentHold), /owner changed/);
+  assert.deepEqual(f.row().idle_devservers, ['server']);
+  f.setRow({ cleanup_run_id: 'run-a' });
+  f.deps.ready = ready;
+  await f.reaper.restore('slot-a', 'child-run', parentHold);
+  assert.equal(f.booted(), 1);
+  assert.equal(f.row().idle_devservers, null);
+});

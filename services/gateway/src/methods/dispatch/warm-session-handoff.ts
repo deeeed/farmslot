@@ -54,7 +54,13 @@ import {
 } from './execute.js';
 import { captureSupersededRunEpisode, terminalizePriorRunOnSlot } from './nudge.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
-import { SLOT_CLAIM_REFUSED_CODE, slotClaimBlockedByRelease } from './slot-scoring.js';
+import {
+  PARENT_HOLD_CLAIM_FIELDS,
+  parentHoldForWarmChild,
+  SLOT_CLAIM_REFUSED_CODE,
+  slotClaimBlockedByRelease,
+  type WarmChildClaimant,
+} from './slot-scoring.js';
 import { recordRetainedPrBaseline } from './worktree-baseline.js';
 
 type EventEmitter = (event: string, payload: unknown) => void;
@@ -151,6 +157,31 @@ export function resolveWarmWorkerBinding(
       : null;
   return { role, context, target };
 }
+
+export type WarmHandoffClaimBlocker = 'occupied' | 'releasing' | 'reserved' | 'recovering';
+
+/**
+ * What stops a warm handoff from claiming its slot: a release, a hold (except the parent's hold
+ * for this run), workspace recovery, or another run's handoff reservation. Read before delivery
+ * and in the claim.
+ */
+export function warmHandoffClaimBlocker(
+  slot: Readonly<Record<string, unknown>>,
+  claimant: WarmChildClaimant,
+): WarmHandoffClaimBlocker | null {
+  if (slot.workspace_recovery) return 'recovering';
+  return (
+    slotClaimBlockedByRelease(slot, claimant) ??
+    (slot.handoff_run_id != null && slot.handoff_run_id !== claimant.id ? 'reserved' : null)
+  );
+}
+
+const WARM_HANDOFF_REFUSALS: Record<WarmHandoffClaimBlocker, string> = {
+  occupied: 'remains occupied',
+  releasing: 'is mid-release',
+  reserved: 'is reserved for another run',
+  recovering: 'is under workspace recovery',
+};
 
 /**
  * Hand a CI-watch chained follow-up into a still-alive worker session left warm
@@ -394,6 +425,21 @@ export async function warmSessionHandoffDispatch(
     runTier: requestingRun.safetyTier ?? parentRun?.safetyTier,
     projectDefaultRaw: projectJson.default_safety_tier,
   });
+  // The claim after delivery reads the same rule: a slot this run cannot claim is refused
+  // before the worker receives the prompt, not after.
+  const claimant = () => getRun(params.runId) ?? requestingRun;
+  const claimBlocker = (slot: Readonly<Record<string, unknown>>) =>
+    warmHandoffClaimBlocker(slot, claimant());
+  const refuseClaim = (blocker: WarmHandoffClaimBlocker | null) =>
+    Object.assign(
+      new Error(
+        `Slot ${params.slotId} ${WARM_HANDOFF_REFUSALS[blocker ?? 'releasing']}; warm handoff cannot claim it`,
+      ),
+      { code: SLOT_CLAIM_REFUSED_CODE },
+    );
+  const rowBeforeDelivery = await readSlotRow(params.slotId);
+  const blockedBeforeDelivery = rowBeforeDelivery && claimBlocker(rowBeforeDelivery);
+  if (blockedBeforeDelivery) throw refuseClaim(blockedBeforeDelivery);
   // Delivery-boundary pressure gate (MANUAL-000109): warm-session handoff is
   // a new task delivery even though it reuses an existing runner. Keep this
   // check immediately before the send, after target/session resolution, and
@@ -441,6 +487,30 @@ export async function warmSessionHandoffDispatch(
     acceptExistingLaunchAck: false,
     recovery: { runId: params.runId, emit },
   };
+  // The send restores an idle-capped dev server for the slot's owner. The parent's hold for this
+  // run has no owner, and it stays the parent's until this run claims it after the send, so a
+  // cancel or failure of this run still leaves the worker to the parent's cleanup. This run
+  // restores the dev server under its own id while the row is still that hold.
+  const rowAtSend = await readSlotRow(params.slotId);
+  if (rowAtSend && parentHoldForWarmChild(rowAtSend, claimant())) {
+    const { restoreIdleDevServers } = await import('../../run-lifecycle/idle-devserver-service.js');
+    try {
+      await restoreIdleDevServers(params.slotId, params.runId, (row) =>
+        parentHoldForWarmChild(row, claimant()),
+      );
+    } catch (error) {
+      // As a send that could not restore it: the retained worker is kept for the operator.
+      return {
+        handedOff: false,
+        disposition: 'hold',
+        reason: `Idle dev server restore before the warm handoff failed: ${(error as Error).message}`,
+      };
+    }
+    // A boot can take minutes: the slot must still be one this run can claim before the send.
+    const rowAfterRestore = await readSlotRow(params.slotId);
+    const blockedAfterRestore = rowAfterRestore && claimBlocker(rowAfterRestore);
+    if (blockedAfterRestore) throw refuseClaim(blockedAfterRestore);
+  }
   const delivery = await deliverPromptWithRetainedFallback(deliveryOptions);
   if (!delivery.delivered) {
     return warmHandoffFailureFromRetainedDelivery(delivery);
@@ -451,38 +521,40 @@ export async function warmSessionHandoffDispatch(
   const priorNudgeCount = priorOwnerContext?.nudgeCount ?? 0;
 
   const prior = await terminalizePriorRunOnSlot(params.slotId, params.runId, 'warm-handoff');
+  const handoffFields: Record<string, unknown> = {
+    lifecycle: 'busy',
+    phase: 'working',
+    agent: 'working',
+    handoff_run_id: null,
+    current_run_id: params.runId,
+    current_ticket_or_pr: params.ticketOrPr,
+    current_flow_type: flowType,
+    current_family_id: requestingRun.familyId ?? null,
+    current_lane: requestingRun.lane ?? null,
+    current_variant: requestingRun.variant ?? null,
+    task_id: taskFolderId,
+    task_file: `${workerTaskDir}/TASK.md`,
+    dispatched_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    runner,
+    ...(handoffModel ? { model: handoffModel } : {}),
+  };
+  let refusedBy: WarmHandoffClaimBlocker | null = null;
   const handoffClaim = await claimSlotStatusIf(
     params.slotId,
     // Prefer the FIND_SLOT handoff reservation when present; allow claim when
     // the slot is free of a foreign handoff so recovery paths without a prior
     // reservation can still adopt a warm worker.
-    (slot) =>
-      slotClaimBlockedByRelease(slot) === null &&
-      (slot.handoff_run_id == null || slot.handoff_run_id === params.runId),
-    {
-      lifecycle: 'busy',
-      phase: 'working',
-      agent: 'working',
-      handoff_run_id: null,
-      current_run_id: params.runId,
-      current_ticket_or_pr: params.ticketOrPr,
-      current_flow_type: flowType,
-      current_family_id: requestingRun.familyId ?? null,
-      current_lane: requestingRun.lane ?? null,
-      current_variant: requestingRun.variant ?? null,
-      task_id: taskFolderId,
-      task_file: `${workerTaskDir}/TASK.md`,
-      dispatched_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
-      runner,
-      ...(handoffModel ? { model: handoffModel } : {}),
+    (slot) => {
+      refusedBy = claimBlocker(slot);
+      if (refusedBy) return false;
+      // The parent's hold for this run ends with this claim.
+      if (parentHoldForWarmChild(slot, claimant()))
+        Object.assign(handoffFields, PARENT_HOLD_CLAIM_FIELDS);
+      return true;
     },
+    handoffFields,
   );
-  if (!handoffClaim.claimed) {
-    throw Object.assign(
-      new Error(`Slot ${params.slotId} is mid-release; warm handoff cannot claim it`),
-      { code: SLOT_CLAIM_REFUSED_CODE },
-    );
-  }
+  if (!handoffClaim.claimed) throw refuseClaim(refusedBy);
   // The superseded run's episode, now that the new run owns the slot.
   await captureSupersededRunEpisode(prior);
 

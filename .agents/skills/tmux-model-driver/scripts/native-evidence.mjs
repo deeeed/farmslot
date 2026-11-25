@@ -36,7 +36,7 @@ import {
 } from '../../../../services/gateway/src/runners/process-open-files.ts';
 import { getRunnerObservability } from '../../../../services/gateway/src/runners/registry.ts';
 import {
-  runnerPaneHasBufferedInstruction,
+  liveComposerHoldsInstruction,
   runnerPaneHasQueuedInstruction,
 } from '../../../../services/gateway/src/runners/runner-pane-input.ts';
 
@@ -513,7 +513,7 @@ export function bufferedPrompt(meta, runner, receipt) {
     receipt?.typed &&
     supportsMidTurnPrompt(runner) &&
     receipt.pane_identity === paneIdentity(meta) &&
-    runnerPaneHasBufferedInstruction(meta.tail || '', receipt.payload),
+    liveComposerHoldsInstruction(meta.tail || '', receipt.payload),
   );
 }
 
