@@ -50,15 +50,20 @@ async function fixture(t) {
   return options;
 }
 
-// The CLI reads its paths from FARMSLOT_* first; a worker pane exports the real ones.
-const cliEnv = (options) => ({
-  ...process.env,
-  FARMSLOT_ROOT: options.root,
-  FARMSLOT_BACKLOG_FILE: options.backlog,
-  FARMSLOT_DISPATCH_QUEUE_FILE: options.queue,
-  FARMSLOT_RUNS_DIR: options.runs,
-  FARMSLOT_PROJECTS_DIR: options.projects,
-});
+// The CLI reads FARMSLOT_* before deriving paths from --root, and a worker pane exports
+// the real ones. Drop them so the CLI tests exercise --root.
+const cliEnv = () => {
+  const env = { ...process.env };
+  for (const name of [
+    'FARMSLOT_ROOT',
+    'FARMSLOT_BACKLOG_FILE',
+    'FARMSLOT_DISPATCH_QUEUE_FILE',
+    'FARMSLOT_RUNS_DIR',
+    'FARMSLOT_PROJECTS_DIR',
+  ])
+    delete env[name];
+  return env;
+};
 
 const write = (file, value) => writeFile(file, JSON.stringify(value) + '\n', { mode: 0o600 });
 const read = async (file) => JSON.parse(await readFile(file, 'utf8'));
@@ -558,7 +563,7 @@ test('dry-run is byte-preserving; apply is backed up, scoped and idempotent on o
   const dry = JSON.parse(
     execFileSync(process.execPath, [script, '--root', options.root], {
       encoding: 'utf8',
-      env: cliEnv(options),
+      env: cliEnv(),
     }),
   );
   assert.equal(dry.applied, 0);
@@ -591,7 +596,7 @@ test('same-runner rows and incompatible configs refuse the entire batch before a
   const before = await readFile(options.backlog, 'utf8');
   const refused = spawnSync(process.execPath, [script, '--root', options.root, '--apply'], {
     encoding: 'utf8',
-    env: cliEnv(options),
+    env: cliEnv(),
   });
   assert.equal(refused.status, 2);
   const report = JSON.parse(refused.stdout);
