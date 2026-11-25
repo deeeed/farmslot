@@ -20,7 +20,7 @@ export type Proof = (typeof PROOFS)[number];
 
 const PROOF_TIMEOUT_MS = 15 * 60_000;
 
-interface ProofSpec {
+export interface ProofSpec {
   argv: string[];
   env?: Record<string, string>;
   model: string;
@@ -142,17 +142,40 @@ export async function killProofTree(pid: number | undefined, tmp: string): Promi
       kill(target);
     }
   }
-  for (const target of processesUsing(tmp)) kill(target);
-  await delay(200);
-  const survivors = processesUsing(tmp);
+  // A gateway still shutting down can start a child between scans: kill until none is left.
+  let survivors = processesUsing(tmp);
+  for (let pass = 0; survivors.length && pass < 25; pass++) {
+    for (const target of survivors) kill(target);
+    await delay(200);
+    survivors = processesUsing(tmp);
+  }
   return survivors.length
     ? [`proof processes survived SIGKILL under ${tmp}: ${survivors.join(', ')}`]
     : [];
 }
 
+/** killProofTree that reports its own failure (a broken ps, pgrep or lsof) instead of throwing. */
+async function stopProofTree(pid: number | undefined, tmp: string): Promise<string[]> {
+  try {
+    return await killProofTree(pid, tmp);
+  } catch (error) {
+    return [`could not stop the proof's processes under ${tmp}: ${String(error)}`];
+  }
+}
+
+/** The reaper's commands run with an empty environment: lsof lives in /usr/sbin. */
+const REAPER_ENV = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' };
+
+/** Registers what the reaper stops and removes if the canary dies without cleaning up. */
+export function reapProof(reaper: Reaper, tmp: string): void {
+  reaper.command(['pkill', '-KILL', '-f', tmp], REAPER_ENV);
+  reaper.command(['sh', '-c', `lsof -t +D '${tmp}' | xargs kill -9`], REAPER_ENV);
+  reaper.path(tmp);
+}
+
 /** How a proof process ended, as check differences (none for a clean exit). */
 export function exitDifferences(exit: ProofExit, timeoutMs = PROOF_TIMEOUT_MS): string[] {
-  if (exit.timedOut) return [`did not finish within ${timeoutMs / 60_000} min`];
+  if (exit.timedOut) return [`did not finish within ${Math.round(timeoutMs / 1000)} s`];
   if (exit.signal) return [`killed by ${exit.signal}`];
   if (exit.code !== 0) return [`exited ${exit.code}`];
   return [];
@@ -176,15 +199,25 @@ export async function runProofs(options: {
   onCleanup: (stop: () => Promise<string[]>) => void;
   log: (event: string, detail?: Record<string, unknown>) => Promise<void>;
   onCheck: (check: CheckResult) => void;
+  /** Tests only: what each proof runs, its deadline, and how its TMPDIR is removed. */
+  seams?: {
+    spec?: (proof: Proof, dir: string, tmp: string) => ProofSpec;
+    timeoutMs?: number;
+    removeTemp?: (tmp: string) => Promise<void>;
+  };
 }): Promise<void> {
+  const timeoutMs = options.seams?.timeoutMs ?? PROOF_TIMEOUT_MS;
+  const removeTemp =
+    options.seams?.removeTemp ??
+    ((tmp: string) => rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
   let current: { pid: number | undefined; tmp: string } | undefined;
   options.onCleanup(async () => {
     if (!current) return [];
     const { pid, tmp } = current;
-    const errors = await killProofTree(pid, tmp);
+    const errors = await stopProofTree(pid, tmp);
     // The reaper is dismissed after a clean stop, so the TMPDIR goes here.
-    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(
-      (error: unknown) => errors.push(`could not remove ${tmp}: ${String(error)}`),
+    await removeTemp(tmp).catch((error: unknown) =>
+      errors.push(`could not remove ${tmp}: ${String(error)}`),
     );
     return errors;
   });
@@ -195,18 +228,18 @@ export async function runProofs(options: {
     // Short: the proofs' tmux and native host sockets live under it.
     const tmp = mkdtempSync('/tmp/fsp-');
     // A canary killed outright (SIGKILL, a dropped ssh session) leaves the proof to the reaper.
-    options.reaper.command(['pkill', '-KILL', '-f', tmp], {});
-    options.reaper.command(['sh', '-c', `lsof -t +D '${tmp}' | xargs kill -9`], {});
-    options.reaper.path(tmp);
-    const { argv, env, model } = spec(proof, options.root, dir, tmp, options.reviewModel);
+    reapProof(options.reaper, tmp);
+    const { argv, env, model } =
+      options.seams?.spec?.(proof, dir, tmp) ??
+      spec(proof, options.root, dir, tmp, options.reviewModel);
     const log = path.join(dir, 'proof.log');
     const started = Date.now();
     // Cleanup may have begun while this one was being set up.
     if (options.cleaning()) {
-      await rm(tmp, { recursive: true, force: true });
+      await removeTemp(tmp);
       return;
     }
-    const timeoutErrors: string[] = [];
+    let timeoutKill: Promise<string[]> | undefined;
     const exit = await new Promise<ProofExit>((resolve, reject) => {
       const output = openSync(log, 'w');
       const child = spawn(process.execPath, argv, {
@@ -221,11 +254,12 @@ export async function runProofs(options: {
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
-        killProofTree(child.pid, tmp).then(
-          (survived) => timeoutErrors.push(...survived),
-          (error: unknown) => timeoutErrors.push(`timeout kill failed: ${String(error)}`),
-        );
-      }, PROOF_TIMEOUT_MS);
+        timeoutKill = killProofTree(child.pid, tmp).catch((error: unknown) => {
+          // The tree could not be read: at least the proof itself must go, or exit never comes.
+          child.kill('SIGKILL');
+          return [`timeout kill failed: ${String(error)}`];
+        });
+      }, timeoutMs);
       child.once('error', reject);
       child.once('exit', (code, signal) => {
         clearTimeout(timer);
@@ -234,15 +268,15 @@ export async function runProofs(options: {
     });
     // What the proof left running, e.g. a gateway it sent SIGTERM and did not wait for.
     const differences = [
-      ...exitDifferences(exit),
-      ...timeoutErrors,
-      ...(await killProofTree(undefined, tmp)),
+      ...exitDifferences(exit, timeoutMs),
+      ...((await timeoutKill) ?? []),
+      ...(await stopProofTree(undefined, tmp)),
     ];
     current = undefined;
     const observations = [`log: ${log}`];
     // A process that exited during the removal can still write into it: retry, then report.
-    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(
-      (error: unknown) => observations.push(`could not remove ${tmp}: ${String(error)}`),
+    await removeTemp(tmp).catch((error: unknown) =>
+      observations.push(`could not remove ${tmp}: ${String(error)}`),
     );
     let reviewerRounds = 0;
     if (proof === 'warm-review') {

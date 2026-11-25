@@ -4,7 +4,17 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
-import { exitDifferences, killProofTree, processesUsing, proofEnv } from './proofs.mjs';
+import type { Reaper } from '../lib/isolated-stack.mjs';
+
+import type { CheckResult } from './outcome.mjs';
+import {
+  exitDifferences,
+  killProofTree,
+  processesUsing,
+  proofEnv,
+  reapProof,
+  runProofs,
+} from './proofs.mjs';
 
 const alive = (pid: number) => {
   try {
@@ -40,12 +50,19 @@ test('a stopped proof takes the detached processes it started with it', async (t
     ],
     { detached: true, stdio: ['ignore', 'pipe', 'ignore'] },
   );
-  const grandchild = await new Promise<number>((resolve) =>
-    proof.stdout.once('data', (chunk: Buffer) => resolve(Number(String(chunk).trim()))),
-  );
+  let grandchild: number | undefined;
   t.after(() => {
-    for (const pid of [proof.pid!, grandchild]) if (alive(pid)) process.kill(pid, 'SIGKILL');
+    for (const pid of [proof.pid, grandchild])
+      if (pid !== undefined && alive(pid)) process.kill(pid, 'SIGKILL');
   });
+  grandchild = await Promise.race([
+    new Promise<number>((resolve) =>
+      proof.stdout.once('data', (chunk: Buffer) => resolve(Number(String(chunk).trim()))),
+    ),
+    delay(5_000).then(() => {
+      throw new Error('the proof did not report its grandchild');
+    }),
+  ]);
   assert.equal(alive(grandchild), true);
   assert.deepEqual(await killProofTree(proof.pid, tmp), []);
   assert.equal(await gone(grandchild), true, 'the detached grandchild died with the proof');
@@ -112,6 +129,97 @@ test('a proof killed by a signal is not reported as a timeout', () => {
     'killed by SIGSEGV',
   ]);
   assert.deepEqual(exitDifferences({ code: null, signal: 'SIGKILL', timedOut: true }, 60_000), [
-    'did not finish within 1 min',
+    'did not finish within 60 s',
   ]);
+});
+
+function fakeReaper() {
+  const entries: Array<{ kind: string; value: unknown }> = [];
+  const reaper: Reaper = {
+    group: (pid) => entries.push({ kind: 'group', value: pid }),
+    command: (argv, env) => entries.push({ kind: 'command', value: { argv, env } }),
+    path: (value) => entries.push({ kind: 'path', value }),
+    done: () => entries.push({ kind: 'done', value: undefined }),
+  };
+  return { reaper, entries };
+}
+
+async function proofsRun(
+  t: test.TestContext,
+  options: {
+    argv: string[];
+    timeoutMs?: number;
+    cleaning?: () => boolean;
+    removeTemp?: (tmp: string) => Promise<void>;
+  },
+) {
+  const evidence = mkdtempSync('/tmp/fsp-test-evidence-');
+  t.after(() => rmSync(evidence, { recursive: true, force: true }));
+  const checks: CheckResult[] = [];
+  const { reaper, entries } = fakeReaper();
+  await runProofs({
+    root: process.cwd(),
+    evidence,
+    reviewModel: 'unused',
+    reaper,
+    proofs: ['node-handshake'],
+    cleaning: options.cleaning ?? (() => false),
+    onCleanup: () => {},
+    log: async () => {},
+    onCheck: (check) => checks.push(check),
+    seams: {
+      spec: () => ({ argv: options.argv, model: 'none' }),
+      ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.removeTemp ? { removeTemp: options.removeTemp } : {}),
+    },
+  });
+  return { checks, entries };
+}
+
+test('a proof past its deadline is killed and reported as a timeout', async (t) => {
+  const { checks } = await proofsRun(t, {
+    argv: ['-e', 'setInterval(() => {}, 1000)'],
+    timeoutMs: 1_000,
+  });
+  assert.equal(checks.length, 1);
+  assert.equal(checks[0].status, 'fail');
+  assert.deepEqual(checks[0].differences, ['did not finish within 1 s']);
+});
+
+test('a TMPDIR that cannot be removed is noted on the check, not lost with it', async (t) => {
+  const { checks } = await proofsRun(t, {
+    argv: ['-e', ''],
+    removeTemp: async () => {
+      throw new Error('ENOTEMPTY');
+    },
+  });
+  assert.equal(checks.length, 1);
+  assert.equal(checks[0].status, 'pass');
+  assert.ok(checks[0].observations.some((line) => /could not remove .*ENOTEMPTY/.test(line)));
+});
+
+test('no proof starts once cleanup has begun', async (t) => {
+  // Cleanup begins after the first check of the loop, while the proof is being set up.
+  let calls = 0;
+  const { checks } = await proofsRun(t, {
+    argv: ['-e', 'setInterval(() => {}, 1000)'],
+    cleaning: () => calls++ > 0,
+  });
+  assert.deepEqual(checks, []);
+});
+
+test('the reaper can stop and remove a proof the canary did not clean up', () => {
+  const { reaper, entries } = fakeReaper();
+  reapProof(reaper, '/tmp/fsp-reap');
+  const commands = entries.filter((entry) => entry.kind === 'command');
+  assert.equal(commands.length, 2);
+  for (const { value } of commands) {
+    const { env } = value as { env: NodeJS.ProcessEnv };
+    // The reaper runs them with only this environment; lsof is in /usr/sbin.
+    assert.match(env.PATH ?? '', /(^|:)\/usr\/sbin(:|$)/);
+  }
+  assert.deepEqual(
+    entries.filter((entry) => entry.kind === 'path'),
+    [{ kind: 'path', value: '/tmp/fsp-reap' }],
+  );
 });
