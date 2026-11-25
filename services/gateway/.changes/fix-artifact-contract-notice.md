@@ -1,0 +1,1 @@
+- Stop the artifact-contract card from saying the worker was notified when the notice never reached it. When the tmux or native send was not delivered, the card says so and tells the operator which `./mark` command the worker must run again.

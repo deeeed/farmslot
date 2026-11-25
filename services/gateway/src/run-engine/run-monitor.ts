@@ -1589,6 +1589,8 @@ export async function monitorRun(
 
   let warnedNoSignalPath = false;
   let lastArtifactContractMessage: string | null = null;
+  // Whether the worker saw the notice for lastArtifactContractMessage; the card says so.
+  let artifactContractNoticeDelivered = false;
   async function resolveSignalJsonPath(): Promise<string | undefined> {
     return resolveSignalJsonPathForRun(initialRun, slotId, currentMonitorContext());
   }
@@ -1622,17 +1624,16 @@ export async function monitorRun(
         updateRunStep(runId, 'monitor', {
           detail: `Completion artifact contract rejected: ${probe.message.slice(0, 1000)}`,
         });
+        const terminalCommand = probe.signal
+          ? (artifactTerminalCommandForSignal(probe.signal) ?? 'complete')
+          : 'complete';
         if (lastArtifactContractMessage !== probe.message) {
           lastArtifactContractMessage = probe.message;
+          artifactContractNoticeDelivered = false;
           try {
             const context = currentMonitorContext();
             const currentRun = getRun(runId) ?? initialRun;
-            const instruction = artifactContractWorkerInstruction(
-              probe.message,
-              probe.signal
-                ? (artifactTerminalCommandForSignal(probe.signal) ?? 'complete')
-                : 'complete',
-            );
+            const instruction = artifactContractWorkerInstruction(probe.message, terminalCommand);
             if (currentRun.transport === 'native') {
               const outcome = await sendNativeWorkerInstruction({
                 runId,
@@ -1654,7 +1655,7 @@ export async function monitorRun(
                   contextId: context?.id,
                 })
               ).target;
-              await sendRunnerInstructionSafely(
+              const delivered = await sendRunnerInstructionSafely(
                 vars,
                 target,
                 context?.runner ?? initialRun.metrics.runner ?? 'claude',
@@ -1663,7 +1664,9 @@ export async function monitorRun(
                 undefined,
                 retainedSessionSendOption(retainedSession),
               );
+              if (!delivered) throw new Error('Artifact notification was not delivered');
             }
+            artifactContractNoticeDelivered = true;
           } catch (err) {
             // The durable blocked decision below is the recovery path when the
             // best-effort worker notification cannot be delivered.
@@ -1672,10 +1675,13 @@ export async function monitorRun(
             );
           }
         }
+        const notice = artifactContractNoticeDelivered
+          ? 'The worker was notified.'
+          : `The worker was not notified: tell it to fix the listed artifacts and run ./mark ${terminalCommand} again.`;
         const actionId = await createMonitorDecision(
           runId,
           'interactive_handoff',
-          `Completion is blocked by the worker artifact contract. The worker was notified and the run will resume automatically after a valid fresh signal.\n\n${probe.message}`,
+          `Completion is blocked by the worker artifact contract. ${notice} The run will resume automatically after a valid fresh signal.\n\n${probe.message}`,
         );
         if (actionId === 'abort') return undefined;
         const retry = await probeWorkerSignalForRun(runId, slotId, currentMonitorContext());
