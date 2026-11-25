@@ -14,6 +14,7 @@ import {
   proofEnv,
   reapProof,
   runProofs,
+  dismissReaper,
   stopProofTree,
 } from './proofs.mjs';
 
@@ -159,6 +160,17 @@ async function proofsRun(
   t.after(() => rmSync(evidence, { recursive: true, force: true }));
   const checks: CheckResult[] = [];
   const { reaper, entries } = fakeReaper();
+  // Should the code under test fail to stop a proof, the test still leaves nothing running.
+  t.after(() => {
+    for (const { kind, value } of entries)
+      if (kind === 'group' && typeof value === 'number')
+        for (const target of [-value, value])
+          try {
+            process.kill(target, 'SIGKILL');
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+          }
+  });
   await runProofs({
     root: process.cwd(),
     evidence,
@@ -179,15 +191,23 @@ async function proofsRun(
   return { checks, entries };
 }
 
-test('a proof past its deadline is killed and reported as a timeout', async (t) => {
-  const { checks } = await proofsRun(t, {
-    argv: ['-e', 'setInterval(() => {}, 1000)'],
-    timeoutMs: 1_000,
-  });
-  assert.equal(checks.length, 1);
-  assert.equal(checks[0].status, 'fail');
-  assert.deepEqual(checks[0].differences, ['did not finish within 1 s']);
-});
+// A short deadline; exitDifferences reports it in whole seconds.
+const DEADLINE_MS = 500;
+const deadlineDifference = `did not finish within ${Math.round(DEADLINE_MS / 1000)} s`;
+
+test(
+  'a proof past its deadline is killed and reported as a timeout',
+  { timeout: 10_000 },
+  async (t) => {
+    const { checks } = await proofsRun(t, {
+      argv: ['-e', 'setInterval(() => {}, 1000)'],
+      timeoutMs: DEADLINE_MS,
+    });
+    assert.equal(checks.length, 1);
+    assert.equal(checks[0].status, 'fail');
+    assert.deepEqual(checks[0].differences, [deadlineDifference]);
+  },
+);
 
 test('a TMPDIR that cannot be removed is noted on the check, not lost with it', async (t) => {
   const kept: string[] = [];
@@ -206,31 +226,35 @@ test('a TMPDIR that cannot be removed is noted on the check, not lost with it', 
   assert.ok(checks[0].observations.some((line) => /could not remove .*ENOTEMPTY/.test(line)));
 });
 
-test('no proof starts once cleanup has begun', async (t) => {
+test('no proof starts once cleanup has begun', { timeout: 10_000 }, async (t) => {
   // Cleanup begins after the first check of the loop, while the proof is being set up.
   let calls = 0;
   const { checks } = await proofsRun(t, {
     argv: ['-e', 'setInterval(() => {}, 1000)'],
     cleaning: () => calls++ > 0,
-    // Were it to start, it fails in a second rather than running to the default deadline.
-    timeoutMs: 1_000,
+    // Were it to start, it fails quickly rather than running to the default deadline.
+    timeoutMs: DEADLINE_MS,
   });
   assert.deepEqual(checks, []);
 });
 
-test('a proof whose tree cannot be read is still killed at its deadline', async (t) => {
-  const { checks } = await proofsRun(t, {
-    argv: ['-e', 'setInterval(() => {}, 1000)'],
-    timeoutMs: 1_000,
-    killTree: async () => {
-      throw new Error('ps: EAGAIN');
-    },
-  });
-  assert.equal(checks.length, 1);
-  assert.ok(checks[0].differences.includes('did not finish within 1 s'));
-  assert.ok(checks[0].differences.some((line) => /timeout kill failed: .*EAGAIN/.test(line)));
-  assert.ok(checks[0].differences.some((line) => /could not stop .*EAGAIN/.test(line)));
-});
+test(
+  'a proof whose tree cannot be read is still killed at its deadline',
+  { timeout: 10_000 },
+  async (t) => {
+    const { checks } = await proofsRun(t, {
+      argv: ['-e', 'setInterval(() => {}, 1000)'],
+      timeoutMs: DEADLINE_MS,
+      killTree: async () => {
+        throw new Error('ps: EAGAIN');
+      },
+    });
+    assert.equal(checks.length, 1);
+    assert.ok(checks[0].differences.includes(deadlineDifference));
+    assert.ok(checks[0].differences.some((line) => /timeout kill failed: .*EAGAIN/.test(line)));
+    assert.ok(checks[0].differences.some((line) => /could not stop .*EAGAIN/.test(line)));
+  },
+);
 
 test('a failed stop is a cleanup error, not a lost result', async () => {
   const errors = await stopProofTree(undefined, '/tmp/fsp-x', async () => {
@@ -264,4 +288,20 @@ test('the reaper can stop and remove a proof the canary did not clean up', () =>
     entries.filter((entry) => entry.kind === 'path'),
     [{ kind: 'path', value: '/tmp/fsp-reap' }],
   );
+});
+
+test('the reaper stays armed unless every stop was clean', () => {
+  for (const [errors, dismissed] of [
+    [[[], []], true],
+    [[[], ['proof processes survived SIGKILL under /tmp/fsp-x: 4242']], false],
+    [[["could not stop the proof's processes under /tmp/fsp-x: ps: EAGAIN"], []], false],
+  ] as const) {
+    const { reaper, entries } = fakeReaper();
+    assert.equal(dismissReaper(reaper, ...errors), dismissed);
+    assert.equal(
+      entries.some((entry) => entry.kind === 'done'),
+      dismissed,
+      JSON.stringify(errors),
+    );
+  }
 });

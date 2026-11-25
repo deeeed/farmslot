@@ -3,7 +3,7 @@ import { RECOVERY_CASES, runRecoveryMatrix } from './recovery.mjs';
 import { runPerformanceCanary } from './performance.mjs';
 import { FULLFLOW_CASES, runFullflow } from './fullflow.mjs';
 import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
-import { runProofs } from './proofs.mjs';
+import { dismissReaper, runProofs } from './proofs.mjs';
 // Farmslot canary profiles.
 //
 //   canary   after every dev gateway update; zero inference, a few minutes. Against the deployed
@@ -295,7 +295,7 @@ const cleanup = cleanupOnExit(async () => {
   const stackErrors = (await stopStack?.()) ?? [];
   cleanupErrors.push(...stackErrors);
   // What could not be stopped stays with the reaper, which tries again when this process exits.
-  if (!stackErrors.length && !proofErrors.length) reaper.done();
+  dismissReaper(reaper, stackErrors, proofErrors);
   // A signal exits right after this, so the report is written here on both paths.
   await finish();
 });

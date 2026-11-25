@@ -171,6 +171,17 @@ export async function stopProofTree(
   }
 }
 
+/**
+ * Dismisses the reaper only when every cleanup step (the canary's stack, the proof in flight)
+ * stopped cleanly: whatever could not be stopped stays with it, which tries again when the canary
+ * exits. True when dismissed.
+ */
+export function dismissReaper(reaper: Reaper, ...cleanupErrors: readonly string[][]): boolean {
+  if (cleanupErrors.some((errors) => errors.length)) return false;
+  reaper.done();
+  return true;
+}
+
 /** The reaper's commands run with an empty environment: lsof lives in /usr/sbin. */
 const REAPER_ENV = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' };
 
