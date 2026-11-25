@@ -76,16 +76,14 @@ interface Pass {
 }
 
 async function reconcile(pass: Pass) {
-  const owners = pass.fences.map((fence, index) =>
-    ({
-      ...makeRun({
-        id: `cancelled-${index}`,
-        status: fence.ownerStatus ?? 'cancelled',
-        slotId: fence.ownerSlot ?? fence.slot ?? 'cancel-slot',
-      }),
-      ...(fence.native ? { transport: 'native' as const } : {}),
+  const owners = pass.fences.map((fence, index) => ({
+    ...makeRun({
+      id: `cancelled-${index}`,
+      status: fence.ownerStatus ?? 'cancelled',
+      slotId: fence.ownerSlot ?? fence.slot ?? 'cancel-slot',
     }),
-  );
+    ...(fence.native ? { transport: 'native' as const } : {}),
+  }));
   const rows = pass.fences.map((fence, index) => fenceRow(fence, owners[index]!));
   await writeFile(state.statusFile, JSON.stringify({ slots: rows }));
   const runs = [...owners, ...(pass.extraRuns ?? [])];
@@ -148,7 +146,18 @@ async function reconcile(pass: Pass) {
   };
   await reconcileOrphanedSlots(deps);
   const read = async (slot = 'cancel-slot') => state.readSlotRow(slot);
-  return { owners, rows, recoveries, resumed, observed, runUpdates, census, replayChecks, retried, read };
+  return {
+    owners,
+    rows,
+    recoveries,
+    resumed,
+    observed,
+    runUpdates,
+    census,
+    replayChecks,
+    retried,
+    read,
+  };
 }
 
 test('a release intent is finished after a clean census', async () => {

@@ -192,7 +192,10 @@ test('a transition holding the run, such as a replay, wins', async () => {
 });
 
 test('a run revived or rebound after the gate is left alone', async () => {
-  for (const change of [{ status: 'monitoring' }, { slotId: 'other-slot' }] satisfies Partial<Run>[]) {
+  for (const change of [
+    { status: 'monitoring' },
+    { slotId: 'other-slot' },
+  ] satisfies Partial<Run>[]) {
     const { run, observed } = await seed('release', change);
     const before = await read();
     assert.equal(

@@ -243,7 +243,11 @@ export interface RunRecoveryCollaborators {
    * exactly the fence observed here. Returns null once finished, else what happened instead: a
    * refusal leaves the fence for a later pass, a failed finish settles a hold for an operator.
    */
-  resumeInterruptedCancel?: (run: Run, slotId: string, fence: InterruptedCancelFence) => Promise<string | null>;
+  resumeInterruptedCancel?: (
+    run: Run,
+    slotId: string,
+    fence: InterruptedCancelFence,
+  ) => Promise<string | null>;
   /** Settles when the node connects, or rejects when its reconnect wait runs out. */
   waitForExecutionNode?: (machine: string) => Promise<void>;
   /** Clear a run error that only settled native workers carry, from recorded state. */

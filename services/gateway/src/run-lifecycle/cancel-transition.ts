@@ -482,7 +482,12 @@ export async function resumeInterruptedCancelCleanup(
         )
           return 'refused: the release fence changed';
         fence = { before: row, token: observed.token };
-        const stopped = await finishCancelledSlot(latest, fence, null, observed.intent === 'replay');
+        const stopped = await finishCancelledSlot(
+          latest,
+          fence,
+          null,
+          observed.intent === 'replay',
+        );
         if (!stopped) return null;
         // The finish settled a cleanup hold instead, or lost the fence: publish what it left.
         const { loadFleetStatus } = await import('../fleet/state.js');
