@@ -22,7 +22,7 @@ function git(args, options = {}) {
   if (remaining <= 0) fail('GIT_TIMEOUT', 'Parked-work ran out of its time budget before git ' + step);
   const limit = Math.min(options.timeout || Infinity, remaining);
   const result = cp.spawnSync('git', config.concat(args), { timeout: limit, env: options.index ? { ...gitEnv, GIT_INDEX_FILE: options.index } : gitEnv, input: options.input, encoding: null, maxBuffer: 64 * 1024 * 1024 });
-  if (result.error && result.error.code === 'ETIMEDOUT' && limit === remaining) fail('GIT_TIMEOUT', 'Git ' + step + ' did not finish within the ' + Math.round(remaining / 1000) + 's left of the parked-work budget');
+  if (result.error && result.error.code === 'ETIMEDOUT' && limit === remaining) fail('GIT_TIMEOUT', 'Git ' + step + ' did not finish within the ' + (remaining / 1000).toFixed(1) + 's left of the parked-work budget');
   if (result.status !== 0 && !(options.allow || []).includes(result.status)) fail('GIT_FAILED', 'Git ' + args[0] + ' failed with exit ' + result.status + ': ' + (result.stderr || '').toString().slice(-500));
   return { status: result.status, stdout: result.stdout || Buffer.alloc(0) };
 }
@@ -75,46 +75,20 @@ function exposedIgnoredPaths(targets) {
   const ignored=nul(git(['ls-files','--others','--ignored','--exclude-standard','--directory','-z']).stdout);
   if(!ignored.length)return [];
   const gitdir=text(['rev-parse','--absolute-git-dir']), exposed=new Set();
-  // Clean reads each directory's rule file from disk as it walks, so an untracked .gitignore
-  // applies even when clean then deletes it, unless the target's checkout replaces it.
-  // Git reads only regular rule files.
-  const localRule=file => path.posix.basename(file)==='.gitignore' && !!exists(path.join(repo,file))?.isFile();
   for(const target of new Set(targets)) {
+    const directory=fs.mkdtempSync(path.join(temporary,'ignore-rules-'));
     const entries=nul(git(['ls-tree','-r','-z',target]).stdout).flatMap(line => {
       const tab=line.indexOf('\t'), file=line.slice(tab+1), fields=line.slice(0,tab).split(' ');
       return path.posix.basename(file)==='.gitignore' && ['100644','100755'].includes(fields[0]) ? [{file,sha:fields[2]}] : [];
     });
     const blobs=readObjects(entries.map(e=>e.sha));
-    const tracked=new Set(entries.map(e=>e.file));
-    const rules=new Set(ignored.filter(file => localRule(file) && !tracked.has(file)));
-    for(;;) {
-      const directory=fs.mkdtempSync(path.join(temporary,'ignore-rules-'));
-      // Local rules first: with core.ignorecase, a target file of another case replaces one, as checkout would.
-      for(const rule of rules) { const file=path.join(directory,rule); fs.mkdirSync(path.dirname(file),{recursive:true}); fs.copyFileSync(path.join(repo,rule),file); }
-      for(const [i,entry] of entries.entries()) {
-        if(!blobs[i]||blobs[i].type!=='blob')fail('INVALID_METADATA','Target ignore rules are unreadable');
-        const file=path.join(directory,entry.file); fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,blobs[i].body);
-      }
-      // Git evaluates its own rules, including the existing global and info exclusions.
-      const kept=paths => paths.length ? new Set(nul(git(['--git-dir='+gitdir,'--work-tree='+directory,'-C',directory,'check-ignore','--no-index','-z','--stdin'],{input:Buffer.from(paths.join('\0')+'\0'),allow:[1]}).stdout)) : new Set();
-      const first=kept(ignored);
-      let candidates=ignored.filter(file => !first.has(file));
-      // A listed directory is ignored as a whole here, while the target may ignore only paths
-      // inside it ('.agents/skills/' collapses to '.agents/'): judge the files it holds.
-      const directories=candidates.filter(file => file.endsWith('/'));
-      const found=[];
-      if(directories.length) {
-        const files=[];
-        for(let i=0;i<directories.length;i+=200) files.push(...nul(git(['--literal-pathspecs','ls-files','--others','--ignored','--exclude-standard','-z','--',...directories.slice(i,i+200)]).stdout));
-        for(const file of files) if(localRule(file) && !tracked.has(file) && !rules.has(file)) found.push(file);
-        const second=kept(files);
-        candidates=candidates.filter(file => !file.endsWith('/')).concat(files.filter(file => !second.has(file)));
-      }
-      // Every pass's answer is saved: a pass without a rule file found later only saves more.
-      for(const file of candidates)exposed.add(file);
-      if(!found.length)break;
-      for(const file of found)rules.add(file);
+    for(const [i,entry] of entries.entries()) {
+      if(!blobs[i]||blobs[i].type!=='blob')fail('INVALID_METADATA','Target ignore rules are unreadable');
+      const file=path.join(directory,entry.file); fs.mkdirSync(path.dirname(file),{recursive:true}); fs.writeFileSync(file,blobs[i].body);
     }
+    // Git evaluates its own rules, including the existing global and info exclusions.
+    const kept=new Set(nul(git(['--git-dir='+gitdir,'--work-tree='+directory,'-C',directory,'check-ignore','--no-index','-z','--stdin'],{input:Buffer.from(ignored.join('\0')+'\0'),allow:[1]}).stdout));
+    for(const file of ignored)if(!kept.has(file))exposed.add(file);
   }
   return [...exposed];
 }

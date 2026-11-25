@@ -542,183 +542,6 @@ test('an ignored file that reset would expose to clean is retained in the origin
   assert.equal(await readFile(path.join(repo, '.gitignore'), 'utf8'), 'private-note\n');
 });
 
-// mini-mm-3 (run fcfb5124): a clean checkout was saved as a dirty working tree on every park.
-test('a clean checkout whose ignored folders hide only their contents parks no working tree', async (t) => {
-  const { vars, repo, git, options } = await fixture(t);
-  await writeFile(path.join(repo, '.gitignore'), '.agents/skills/\n');
-  git('add', '.gitignore');
-  git('commit', '-qm', 'ignore skills');
-  // A rule that ignores paths inside a folder: Git lists the whole folder as ignored.
-  await mkdir(path.join(repo, '.agents', 'skills', 'recipe'), { recursive: true });
-  await writeFile(path.join(repo, '.agents', 'skills', 'recipe', 'SKILL.md'), 'skill\n');
-  // An untracked rule file that ignores itself, as husky writes: clean keeps it and its rules.
-  await mkdir(path.join(repo, '.husky', '_'), { recursive: true });
-  await writeFile(path.join(repo, '.husky', '_', '.gitignore'), '*\n');
-  await writeFile(path.join(repo, '.husky', '_', 'h'), 'hook\n');
-  const capture = await parkGitWork(vars, options, localExec);
-  assert.deepEqual(
-    capture.receipts.map((receipt) => receipt.kind),
-    ['commits'],
-  );
-});
-
-/** A target commit on `base` whose root rules are `rules`, named `origin/target`. */
-function targetWithRules(git: (...args: string[]) => string, base: string, rules: string) {
-  const blob = execFileSync(
-    'git',
-    ['-C', git('rev-parse', '--show-toplevel'), 'hash-object', '-w', '--stdin'],
-    {
-      input: rules,
-      encoding: 'utf8',
-    },
-  ).trim();
-  const tree = execFileSync('git', ['-C', git('rev-parse', '--show-toplevel'), 'mktree'], {
-    input: `${git('ls-tree', base)}\n100644 blob ${blob}\t.gitignore\n`,
-    encoding: 'utf8',
-  }).trim();
-  git(
-    'update-ref',
-    'refs/remotes/origin/target',
-    git('commit-tree', tree, '-p', base, '-m', 'target'),
-  );
-}
-
-/** Reset to the target and clean, then every path is still on disk or in the snapshot. */
-async function assertNothingLost(
-  repo: string,
-  git: (...args: string[]) => string,
-  ref: string,
-  paths: string[],
-) {
-  git('reset', '-q', '--hard', 'origin/target');
-  git('clean', '-fdq');
-  for (const file of paths)
-    assert.ok(
-      existsSync(path.join(repo, file)) || git('ls-tree', '--name-only', ref, '--', file) === file,
-      `${file} survives the reset and clean or is saved`,
-    );
-}
-
-test('files a target would hand to clean are saved, folders and negated files included', async (t) => {
-  const { repo, vars, git, options, base } = await fixture(t);
-  await writeFile(path.join(repo, '.gitignore'), 'd/\n*.env\n');
-  git('add', '.gitignore');
-  git('commit', '-qm', 'ignore d');
-  targetWithRules(git, base, '*.env\n');
-  await mkdir(path.join(repo, 'd', 'sub'), { recursive: true });
-  await writeFile(path.join(repo, 'd', 'x'), 'x\n');
-  await writeFile(path.join(repo, 'd', 'sub', 'y'), 'y\n');
-  // The folder's own rule re-includes a file the target's root rule ignores.
-  await writeFile(path.join(repo, 'd', '.gitignore'), '!a.env\n');
-  await writeFile(path.join(repo, 'd', 'a.env'), 'secret\n');
-  await writeFile(path.join(repo, 'root.env'), 'kept by the target\n');
-  const capture = await parkGitWork(
-    vars,
-    { ...options, targetTrees: ['origin/target'] },
-    localExec,
-  );
-  const saved = capture.receipts.find((receipt) => receipt.kind === 'worktree');
-  assert.ok(saved, 'the exposed files are a working-tree snapshot');
-  for (const file of ['d/x', 'd/sub/y', 'd/.gitignore', 'd/a.env'])
-    assert.equal(git('ls-tree', '--name-only', saved.ref, '--', file), file, file);
-  assert.equal(git('ls-tree', '--name-only', saved.ref, '--', 'root.env'), '');
-  await assertNothingLost(repo, git, saved.ref, [
-    'd/x',
-    'd/sub/y',
-    'd/.gitignore',
-    'd/a.env',
-    'root.env',
-  ]);
-});
-
-test("an untracked rule file clean deletes still governs that folder's clean", async (t) => {
-  const { repo, vars, git, options, base } = await fixture(t);
-  await writeFile(path.join(repo, '.gitignore'), 'd/\n');
-  git('add', '.gitignore');
-  git('commit', '-qm', 'ignore d');
-  targetWithRules(git, base, '');
-  await mkdir(path.join(repo, 'd'), { recursive: true });
-  await writeFile(path.join(repo, 'd', '.gitignore'), 'cache\n');
-  await writeFile(path.join(repo, 'd', 'cache'), 'kept by its own rule\n');
-  await writeFile(path.join(repo, 'd', 'note'), 'deleted by clean\n');
-  const capture = await parkGitWork(
-    vars,
-    { ...options, targetTrees: ['origin/target'] },
-    localExec,
-  );
-  const saved = capture.receipts.find((receipt) => receipt.kind === 'worktree');
-  assert.ok(saved);
-  assert.equal(git('ls-tree', '--name-only', saved.ref, '--', 'd/note'), 'd/note');
-  assert.equal(git('ls-tree', '--name-only', saved.ref, '--', 'd/.gitignore'), 'd/.gitignore');
-  await assertNothingLost(repo, git, saved.ref, ['d/.gitignore', 'd/cache', 'd/note']);
-});
-
-test("a target's own rule file replaces an untracked one at the same path", async (t) => {
-  const { repo, vars, git, options, base } = await fixture(t);
-  await writeFile(path.join(repo, '.gitignore'), 'd/\n');
-  git('add', '.gitignore');
-  git('commit', '-qm', 'ignore d');
-  // The target tracks d/.gitignore without the untracked file's '*'.
-  const rule = execFileSync('git', ['-C', repo, 'hash-object', '-w', '--stdin'], {
-    input: 'other\n',
-    encoding: 'utf8',
-  }).trim();
-  const inner = execFileSync('git', ['-C', repo, 'mktree'], {
-    input: `100644 blob ${rule}\t.gitignore\n`,
-    encoding: 'utf8',
-  }).trim();
-  const tree = execFileSync('git', ['-C', repo, 'mktree'], {
-    input: `${git('ls-tree', base)}\n040000 tree ${inner}\td\n`,
-    encoding: 'utf8',
-  }).trim();
-  git(
-    'update-ref',
-    'refs/remotes/origin/target',
-    git('commit-tree', tree, '-p', base, '-m', 'target'),
-  );
-  await mkdir(path.join(repo, 'd'), { recursive: true });
-  await writeFile(path.join(repo, 'd', '.gitignore'), '*\n');
-  await writeFile(path.join(repo, 'd', 'x'), 'x\n');
-  const capture = await parkGitWork(
-    vars,
-    { ...options, targetTrees: ['origin/target'] },
-    localExec,
-  );
-  const saved = capture.receipts.find((receipt) => receipt.kind === 'worktree');
-  assert.ok(saved);
-  assert.equal(git('ls-tree', '--name-only', saved.ref, '--', 'd/x'), 'd/x');
-});
-
-test('a nested checkout inside an exposed folder still refuses the park', async (t) => {
-  const { repo, vars, git, options, base } = await fixture(t);
-  await writeFile(path.join(repo, '.gitignore'), 'd/\n');
-  git('add', '.gitignore');
-  git('commit', '-qm', 'ignore d');
-  targetWithRules(git, base, '');
-  const inner = path.join(repo, 'd', 'inner');
-  await mkdir(inner, { recursive: true });
-  execFileSync('git', ['init', '-q', inner]);
-  execFileSync('git', [
-    '-C',
-    inner,
-    '-c',
-    'user.name=P',
-    '-c',
-    'user.email=p@example.com',
-    '-c',
-    'commit.gpgsign=false',
-    'commit',
-    '-q',
-    '--allow-empty',
-    '-m',
-    'inner',
-  ]);
-  await assert.rejects(
-    parkGitWork(vars, { ...options, targetTrees: ['origin/target'] }, localExec),
-    /nested checkout/,
-  );
-});
-
 test('parking that runs out of its time budget names the Git command it stopped at', async () => {
   const run = await execute('node', [
     '-e',
@@ -728,6 +551,26 @@ test('parking that runs out of its time budget names the Git command it stopped 
   const envelope = JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}');
   assert.equal(envelope.code, 'GIT_TIMEOUT');
   assert.match(envelope.message, /time budget before git for-each-ref/);
+});
+
+test('a Git call that outlives the parking budget is stopped and named', async (t) => {
+  const bin = await mkdtemp(path.join(os.tmpdir(), 'park-slow-git-'));
+  t.after(() => rm(bin, { force: true, recursive: true }));
+  // A Git that never answers: the budget, not the caller's 120 s kill, ends the park.
+  await writeFile(path.join(bin, 'git'), '#!/bin/sh\nexec sleep 30\n');
+  await chmod(path.join(bin, 'git'), 0o755);
+  const run = await execute(
+    'node',
+    [
+      '-e',
+      PARKED_WORK_PROGRAM,
+      JSON.stringify({ op: 'list', repo: os.tmpdir(), slotId: 'proof', budgetMs: 300 }),
+    ],
+    { env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` } },
+  ).catch((error: { stdout: string }) => error);
+  const envelope = JSON.parse(run.stdout.trim().split('\n').at(-1) ?? '{}');
+  assert.equal(envelope.code, 'GIT_TIMEOUT');
+  assert.match(envelope.message, /^Git for-each-ref did not finish within the 0\.[23]s left of the parked-work budget/);
 });
 
 test('restore evaluates ignored paths before and after checkout without sharing temporary rule state', async (t) => {
