@@ -12,10 +12,6 @@ import {
   NATIVE_WORKER_STATE,
   NATIVE_WORKER_TRANSFER,
 } from '@farmslot/agent-runtime/native';
-import {
-  NATIVE_WORKER_SEND,
-  NATIVE_WORKER_STEER,
-} from '@farmslot/agent-runtime/native/worker-launch';
 import { NATIVE_NODE_ADMISSION_TIMEOUT_MS } from '@farmslot/agent-runtime/native/host-runtime';
 import { NATIVE_HOST_VERSION_SKEW } from '@farmslot/agent-runtime/native/host-unavailable';
 import {
@@ -23,6 +19,10 @@ import {
   validateNativeProfileParams,
 } from '@farmslot/agent-runtime/native/profile-service';
 import { routeNativeSession } from '@farmslot/agent-runtime/native/service';
+import {
+  NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
+} from '@farmslot/agent-runtime/native/worker-launch';
 import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-service';
 import {
   type ExecResult,

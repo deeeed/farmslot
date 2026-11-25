@@ -369,7 +369,10 @@ test('a launch a node refuses as skewed is sent once more with the gateway’s r
     await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create);
     // An older node gets no list, so its refusal stands.
     state.refuse = 1;
-    await assert.rejects(routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create), skewed);
+    await assert.rejects(
+      routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create),
+      skewed,
+    );
     getNode(machine)!.nativeSessions!.supportsHostRefresh = true;
     // A node that reads one gets it on the second send; a refusal then stands.
     state.refuse = 1;
@@ -449,7 +452,11 @@ test('a launch whose run stopped while the first send waited is not sent again',
 });
 
 test('launches and messages to a node that refreshes its host wait long enough for the refresh', () => {
-  for (const method of [Methods.NATIVE_SESSION_CREATE, NATIVE_WORKER_TRANSFER, Methods.NATIVE_SESSION_SEND])
+  for (const method of [
+    Methods.NATIVE_SESSION_CREATE,
+    NATIVE_WORKER_TRANSFER,
+    Methods.NATIVE_SESSION_SEND,
+  ])
     assert.equal(nativeNodeSessionTimeout(method, true), NATIVE_NODE_ADMISSION_TIMEOUT_MS);
   assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_CREATE, false), 60_000);
   assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_READ, true), 60_000);
