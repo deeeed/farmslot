@@ -23,20 +23,36 @@ function sources(dir: string): string[] {
  * are not type-only, `import()`, `require()`, `require.resolve()`, `createRequire(...)(...)` and
  * `import.meta.resolve()`. Type queries (`import('x').T`) and comments are not run-time loads.
  */
-function runtimeImports(file: string): string[] {
-  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest);
+function runtimeImports(file: string, text = readFileSync(file, 'utf8')): string[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest);
   const found: string[] = [];
   const add = (node: ts.Node | undefined) => {
     if (node && ts.isStringLiteralLike(node) && node.text.startsWith('@farmslot/'))
       found.push(node.text);
   };
   const visit = (node: ts.Node) => {
-    if (
-      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-      !ts.isTypeOnlyImportOrExportDeclaration(node)
-    )
-      add(node.moduleSpecifier);
-    else if (ts.isCallExpression(node)) {
+    if (ts.isImportDeclaration(node)) {
+      // `import type`, or only `type` specifiers: erased, so nothing loads.
+      const clause = node.importClause;
+      const typeOnly =
+        clause !== undefined &&
+        (ts.isTypeOnlyImportOrExportDeclaration(clause) ||
+          (!clause.name &&
+            clause.namedBindings !== undefined &&
+            ts.isNamedImports(clause.namedBindings) &&
+            clause.namedBindings.elements.length > 0 &&
+            clause.namedBindings.elements.every((element) => element.isTypeOnly)));
+      if (!typeOnly) add(node.moduleSpecifier);
+    } else if (ts.isExportDeclaration(node)) {
+      const clause = node.exportClause;
+      const typeOnly =
+        node.isTypeOnly ||
+        (clause !== undefined &&
+          ts.isNamedExports(clause) &&
+          clause.elements.length > 0 &&
+          clause.elements.every((element) => element.isTypeOnly));
+      if (!typeOnly) add(node.moduleSpecifier);
+    } else if (ts.isCallExpression(node)) {
       const callee = node.expression;
       const loads =
         callee.kind === ts.SyntaxKind.ImportKeyword ||
@@ -50,6 +66,33 @@ function runtimeImports(file: string): string[] {
   visit(source);
   return found;
 }
+
+test('run-time imports are told apart from type-only ones', () => {
+  const source = [
+    "import type { A } from '@farmslot/type-only';",
+    "import { type B, type C } from '@farmslot/type-specifiers';",
+    "export type { D } from '@farmslot/type-export';",
+    "export { type E } from '@farmslot/type-export-specifier';",
+    "type F = import('@farmslot/type-query').F;",
+    "// import { G } from '@farmslot/comment';",
+    "import { H, type I } from '@farmslot/mixed';",
+    "import '@farmslot/side-effect';",
+    "export * from '@farmslot/star';",
+    "const j = await import(\n  '@farmslot/dynamic', // comment\n);",
+    'const k = require("@farmslot/required");',
+    "const l = createRequire(import.meta.url)('@farmslot/created');",
+    "const m = import.meta.resolve('@farmslot/resolved');",
+  ].join('\n');
+  assert.deepEqual(runtimeImports('probe.ts', source), [
+    '@farmslot/mixed',
+    '@farmslot/side-effect',
+    '@farmslot/star',
+    '@farmslot/dynamic',
+    '@farmslot/required',
+    '@farmslot/created',
+    '@farmslot/resolved',
+  ]);
+});
 
 // The node CLI install (scripts/lib/node-cli-refresh.sh) builds dist/ only for the packages
 // recipe-cli depends on, and the CLI loads workspace packages through its tsconfig `paths`,
@@ -92,6 +135,7 @@ test('every workspace import the CLI loads resolves to a source file, not a dist
       try {
         file = fileURLToPath(import.meta.resolve(specifier));
       } catch {
+        // Not exported either: the caller lists the specifier as unresolved.
         return undefined;
       }
     }

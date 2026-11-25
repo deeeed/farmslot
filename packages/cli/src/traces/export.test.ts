@@ -397,14 +397,23 @@ test('the scan hook is off by default; when set it runs on the written export', 
 test('a failing scan hook refuses the export until a later run passes', async (t) => {
   const { root, s } = await stores(t);
   const out = path.join(root, 'out');
+  // The hook runs with the uncleared marker already in place, and may print what it found.
   const refuse = path.join(root, 'refuse.sh');
-  await put(refuse, 'echo "found a key in runs/run-1" >&2\nexit 3\n');
+  await put(
+    refuse,
+    'test -f "$1/REFUSED.md" || exit 9\necho "found AKIAIOSFODNN7EXAMPLE" >&2\nexit 3\n',
+  );
   await assert.rejects(
     exportRunTraces({ out, scanHook: `sh ${refuse}` }, s),
     /scan hook refused the export \(exit 3\)/,
   );
-  assert.match(await readFile(path.join(out, 'REFUSED.md'), 'utf8'), /found a key in runs\/run-1/);
-  await exportRunTraces({ out, update: true, scanHook: 'true' }, s);
+  const refused = await readFile(path.join(out, 'REFUSED.md'), 'utf8');
+  assert.match(refused, /refused it \(exit 3\)/);
+  // What the hook printed reaches the operator's stderr, never the export.
+  assert.doesNotMatch(refused, /AKIA/);
+  const pass = path.join(root, 'pass.sh');
+  await put(pass, 'grep -q AKIA "$1/REFUSED.md" && exit 8\nexit 0\n');
+  await exportRunTraces({ out, update: true, scanHook: `sh ${pass}` }, s);
   assert.equal(existsSync(path.join(out, 'REFUSED.md')), false);
 });
 

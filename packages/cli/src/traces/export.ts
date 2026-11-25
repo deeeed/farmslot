@@ -325,6 +325,8 @@ export async function exportRunTraces(
   if (existsSync(out) && (await readdir(out)).length && !options.update)
     throw new Error(`${out} is not empty; pass --update to refresh an existing export`);
   await mkdir(path.join(out, 'runs'), { recursive: true });
+  // Marked uncleared until the scan hook passes, so an export cut short is never taken as scanned.
+  if (hook) await writeFile(path.join(out, REFUSED), REFUSED_TEXT);
   const scrubInputs = await traceScrubInputs(stores);
   const skipped: TraceExportResult['skipped'] = [];
   const selected = await selectEpisodes(stores, options, skipped);
@@ -574,31 +576,31 @@ export async function exportRunTraces(
   return { exported, skipped, transcripts: totals, scanHook: hook ? 'passed' : 'none' };
 }
 
-export const SCAN_HOOK_ENV = 'FARMSLOT_TRACE_SCAN_HOOK';
+const SCAN_HOOK_ENV = 'FARMSLOT_TRACE_SCAN_HOOK';
 const REFUSED = 'REFUSED.md';
+const REFUSED_TEXT = `# Not cleared by the scan hook
+
+This export has not passed ${SCAN_HOOK_ENV}: the hook refused it, or the export or the hook did not finish. Do not use it until an export with --update passes.
+`;
 
 /**
  * The operator's full scan: a shell command run with the export directory as its argument (and
  * in FARMSLOT_TRACE_EXPORT_DIR) once every file is written. It may redact files in place; a
- * non-zero exit refuses the export, which leaves REFUSED.md with the hook's message.
+ * non-zero exit refuses the export. REFUSED.md, written when the export starts and removed only
+ * when the hook passes, holds fixed text: the hook's output, which may quote what it found, goes
+ * to the operator's stderr and never into the export.
  */
 async function runScanHook(hook: string, out: string): Promise<void> {
-  const result = await new Promise<{ code: number | null; signal: string | null; stderr: string }>(
+  const result = await new Promise<{ code: number | null; signal: string | null }>(
     (resolve, reject) => {
+      // The CLI's own stdout carries its JSON result, so the hook writes to stderr.
       const child = spawn('/bin/sh', ['-c', `${hook} "$1"`, 'farmslot-trace-scan', out], {
         cwd: out,
         env: { ...process.env, FARMSLOT_TRACE_EXPORT_DIR: out },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stderr = '';
-      // The CLI's own stdout carries its JSON result, so the hook's output goes to stderr.
-      child.stdout.on('data', (chunk: Buffer) => process.stderr.write(chunk));
-      child.stderr.on('data', (chunk: Buffer) => {
-        process.stderr.write(chunk);
-        stderr = (stderr + chunk.toString('utf8')).slice(-4000);
+        stdio: ['ignore', 2, 2],
       });
       child.on('error', reject);
-      child.on('close', (code, signal) => resolve({ code, signal, stderr }));
+      child.on('close', (code, signal) => resolve({ code, signal }));
     },
   );
   if (result.code === 0) {
@@ -606,9 +608,6 @@ async function runScanHook(hook: string, out: string): Promise<void> {
     return;
   }
   const how = result.signal ? `signal ${result.signal}` : `exit ${result.code}`;
-  await writeFile(
-    path.join(out, REFUSED),
-    `# Refused by the scan hook\n\n${SCAN_HOOK_ENV} (${how}) refused this export. Do not use it until the hook passes.\n\n${result.stderr.trim()}\n`,
-  );
+  await writeFile(path.join(out, REFUSED), `${REFUSED_TEXT}\nThe hook refused it (${how}).\n`);
   throw new Error(`The scan hook refused the export (${how}); see ${path.join(out, REFUSED)}`);
 }

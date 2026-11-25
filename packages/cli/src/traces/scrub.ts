@@ -53,22 +53,34 @@ const TOKEN = new RegExp(
     String.raw`\bAIza[0-9A-Za-z_-]{35}`,
     String.raw`\bglpat-[A-Za-z0-9_-]{20,}`,
     String.raw`\bnpm_[A-Za-z0-9]{36}`,
-    String.raw`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`,
+    // Not after a token character: `-` makes a word boundary inside a run, and a failed JWT
+    // tried at each one would rescan the rest of the run.
+    String.raw`(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`,
     String.raw`\b[Bb]earer +[A-Za-z0-9._~+/-]{20,}=*`,
   ].join('|'),
   'g',
 );
-/** A PEM private key block, to its end line or the end of the value. */
+/**
+ * A PEM private key inside one value: its header, the whole lines after it that form a key body
+ * (base64, blank, `Proc-Type`, `DEK-Info`), and its end line. A header mentioned in prose is
+ * only the header, so nothing after it is removed. Each body line is taken whole or not at all.
+ */
 const PEM_KEY =
-  /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,30}PRIVATE KEY-----|$)/g;
-const PEM_BEGIN = /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----/;
-const PEM_END = /-----END [A-Z ]{0,30}PRIVATE KEY-----/;
+  /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:\r?\n(?:Proc-Type:[^\n]*|DEK-Info:[^\n]*|[A-Za-z0-9+/=]*(?=\r?\n|$)))*(?:\r?\n-----END [A-Z ]{0,30}PRIVATE KEY-----)?/g;
+const PEM_BEGIN = /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----/g;
+const PEM_END = /-----END [A-Z ]{0,30}PRIVATE KEY-----/g;
+/** A line inside a PEM key that spans text lines, with an optional diff prefix. */
+const PEM_BODY_LINE = /^[+ -]?\s*(?:[A-Za-z0-9+/=]*|Proc-Type:.*|DEK-Info:.*)$/;
+const lastIndex = (pattern: RegExp, line: string) =>
+  Math.max(-1, ...[...line.matchAll(pattern)].map((match) => match.index));
 /** Hex of 64+ characters labelled as a key: a key-like name on the line, or assigned the value. */
 const LABELLED_KEY =
   /((?:private[_-]?key|privateKey|secret|seed|mnemonic)[^\n]{0,40}?[:=>"'\s]{1,4})(0x)?[0-9a-fA-F]{64,}/gi;
-// The domain is taken whole (a lookahead capture does not backtrack), then must end in a TLD.
-const EMAIL = /(?<![\w.%+-])[\w.%+-]+@(?=([A-Za-z0-9.-]+))\1(?<=\.[A-Za-z]{2,})/g;
-const DSN = /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s:@/"']+(?::[^\s@/"']*)?@[^\s/"']+/gi;
+// Starts only where a run of address characters starts. The domain is labels and a TLD, taken
+// in a lookahead and then consumed whole, so a failed address is not retried inside the run.
+const EMAIL = /(?<![\w.%+-])[\w.%+-]+@(?=((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}))\1/g;
+// The scheme is bounded, so a long run of scheme characters is not rescanned from each start.
+const DSN = /\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:@/"']+(?::[^\s@/"']*)?@[^\s/"']+/gi;
 const SECRET_VARIABLE =
   /\b([A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET|PASSWORD))(\s*[=:]\s*["']?)([^\s"']+)/g;
 const HOME = /(\/Users\/|\/home\/)([^/\s"'\\]+)/g;
@@ -211,8 +223,9 @@ export class TraceScrubber {
 
   /**
    * File contents, line by line. A JSON line is scrubbed value by value and written back, so
-   * JSONL stays valid even when a pattern would span quotes; other lines are scrubbed as text,
-   * and the body lines of a PEM private key that spans lines are replaced too.
+   * JSONL stays valid even when a pattern would span quotes; other lines are scrubbed as text.
+   * A PEM key that spans text lines has its body lines replaced as well, while they look like a
+   * key body; any other line, a JSON record included, ends it.
    */
   text(content: string): string {
     let inKey = false;
@@ -220,8 +233,14 @@ export class TraceScrubber {
       .split('\n')
       .map((line) => {
         if (inKey) {
-          if (PEM_END.test(line)) inKey = false;
-          return '[REDACTED:private-key]';
+          const end = lastIndex(PEM_END, line);
+          if (end >= 0) {
+            // A new key may open on the line that closes this one.
+            inKey = lastIndex(PEM_BEGIN, line) > end;
+            return '[REDACTED:private-key]';
+          }
+          if (PEM_BODY_LINE.test(line)) return '[REDACTED:private-key]';
+          inKey = false;
         }
         const trimmed = line.trim();
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
@@ -237,7 +256,8 @@ export class TraceScrubber {
             return scrubbed === JSON.stringify(parsed) ? line : scrubbed;
           }
         }
-        if (PEM_BEGIN.test(line) && !PEM_END.test(line)) inKey = true;
+        // The last marker on the line decides whether a key continues below it.
+        inKey = lastIndex(PEM_BEGIN, line) > lastIndex(PEM_END, line);
         return this.apply(line, (rule) => `[REDACTED:${rule}]`);
       })
       .join('\n');

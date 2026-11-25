@@ -24,7 +24,7 @@ test('each rule replaces its matches and is counted, never the value', () => {
     ].join('\n'),
   );
   assert.doesNotMatch(out, /sk-live-configured-value-1234/);
-  // The publication patterns or the labelled-key rule, whichever matches first, removes the key.
+  // The labelled-key rule removes the key.
   assert.doesNotMatch(out, /(ab){32}/);
   assert.doesNotMatch(out, /someone@example\.org/);
   assert.doesNotMatch(out, /abc123@o1/);
@@ -223,6 +223,58 @@ test('base64 that is not shown to be an image is scanned like any text', () => {
   assert.match(scrubbed({ url: `data:image/svg+xml;base64,${PNG}` }).url, /REDACTED/);
 });
 
+test('addresses and DSNs are caught after punctuation and diff markers', () => {
+  const s = scrubber();
+  assert.equal(
+    s.text('mail someone@example.org. or a@b.com... or x@y.io-'),
+    'mail [REDACTED:email]. or [REDACTED:email]... or [REDACTED:email]-',
+  );
+  assert.equal(
+    s.text(
+      [
+        '+postgres://user:pass@db.internal/app',
+        '-redis://default:pw@cache:6379',
+        '...https://key@o1.sentry.io/2',
+      ].join('\n'),
+    ),
+    ['+[REDACTED:dsn]/app', '-[REDACTED:dsn]', '...[REDACTED:dsn]/2'].join('\n'),
+  );
+});
+
+test('a PEM header without a key body removes nothing after it', () => {
+  const s = scrubber();
+  const lines = [
+    'grep for "-----BEGIN RSA PRIVATE KEY-----" in the repo',
+    '{"role":"user","content":"next"}',
+    'plain text continues',
+  ];
+  const out = s.text(lines.join('\n')).split('\n');
+  assert.equal(out[0], 'grep for "[REDACTED:private-key]" in the repo');
+  assert.deepEqual(out.slice(1), lines.slice(1));
+  assert.equal(
+    JSON.parse(s.text(JSON.stringify({ text: 'see -----BEGIN EC PRIVATE KEY----- and more' })))
+      .text,
+    'see [REDACTED:private-key] and more',
+  );
+  // A key body in a diff, and a second key opened on the line that closes the first.
+  const diff = [
+    '+-----BEGIN RSA PRIVATE KEY-----',
+    '+MIIEpAIBAAKCAQEA',
+    '+-----END RSA PRIVATE KEY----- -----BEGIN EC PRIVATE KEY-----',
+    '+MHcCAQEEIOfg',
+    '+-----END EC PRIVATE KEY-----',
+    ' context',
+  ];
+  assert.deepEqual(s.text(diff.join('\n')).split('\n'), [
+    '+[REDACTED:private-key]',
+    '[REDACTED:private-key]',
+    '[REDACTED:private-key]',
+    '[REDACTED:private-key]',
+    '[REDACTED:private-key]',
+    ' context',
+  ]);
+});
+
 test('scrubbing time grows with the input, not its square', () => {
   const s = scrubber();
   // Shapes that make backtracking patterns quadratic: long runs without the character a
@@ -234,11 +286,14 @@ test('scrubbing time grows with the input, not its square', () => {
     `x@${'a.'.repeat(500_000)}`,
     `-----BEGIN RSA PRIVATE KEY----- ${'a'.repeat(1_000_000)}`,
     randomBytes(750_000).toString('base64'),
+    // Failed JWTs, with a word boundary at every `-`.
+    'eyJaaaaaaaaaa-'.repeat(70_000),
+    'sk-'.repeat(330_000),
   ];
   const started = performance.now();
   for (const input of inputs)
     s.text(JSON.stringify({ type: 'image', mimeType: 'image/png', data: input }));
   const ms = performance.now() - started;
-  // About 6 MB in all; the gitleaks patterns took about 12 s a megabyte.
+  // About 8 MB in all; the gitleaks patterns took about 12 s a megabyte.
   assert.ok(ms < 3000, `${Math.round(ms)} ms`);
 });

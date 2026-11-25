@@ -239,6 +239,7 @@ count.
     interviews/*.md
     redaction.json            counts per rule, never the values
   README.md                   filter, Farmslot version, redaction rules, counts, runs skipped and why
+  REFUSED.md                  only while the scan hook has not passed (see Scan hook)
 ```
 
 - Transcripts are read from `session-archives`, or from the run archive through
@@ -283,8 +284,8 @@ Export applies a basic replacing scrubber to every file it writes: transcripts,
 `labels.json`, `task.md`, `output.diff`, interviews, `index.jsonl`, `README.md`
 and file names. It is a small fixed set of obvious secret shapes, not a secret
 scanner: each pattern starts at a fixed prefix or the edge of a run of characters,
-so its time grows with the input, not its square (about 6 MB in 0.3 s). It runs
-line by line, so JSONL stays valid. Rules, in order:
+so its time grows with the input, not its square (about 8 MB of adversarial input
+in under a second). It runs line by line, so JSONL stays valid. Rules, in order:
 
 1. The exact values of the farm's configured secrets on the gateway host: the
    secret-named values of `<home>/providers.env`, the node token
@@ -296,7 +297,8 @@ line by line, so JSONL stays valid. Rules, in order:
    like), OpenAI and Anthropic (`sk-`), Slack (`xox?-`), AWS access keys (`AKIA`,
    `ASIA`), Google API keys (`AIza`), GitLab (`glpat-`), npm (`npm_`), JWTs and
    `Bearer` values.
-3. Private keys: PEM private key blocks, and a hex string of 64 or more characters
+3. Private keys: PEM private key blocks (one count per key; a header mentioned
+   in prose loses only the header), and a hex string of 64 or more characters
    (with or without `0x`) labelled as a key, meaning a key-like name
    (`privateKey`, `private_key`, `secret`, `seed`, `mnemonic`) on the same line or
    assigned the value. Bare hex is kept, because it is usually a digest. Digests
@@ -330,18 +332,21 @@ Claude image blocks, Anthropic sources, Claude Code's `file` copy) or as a whole
 `data:image/png|jpeg|gif|webp;base64,` value. A match inside base64 would only
 corrupt the image. A screenshot can still show a secret.
 
+Redaction is a best-effort backstop, not a guarantee. An export is for the local
+machine only; sharing it, even internally, needs a human review first.
+
 ### Scan hook
 
 Full secret scanning is the operator's choice, off by default. Set
 `FARMSLOT_TRACE_SCAN_HOOK` to a shell command, for example a gitleaks wrapper. Once
 every file is written, export runs it with the export directory as its argument
 (and in `FARMSLOT_TRACE_EXPORT_DIR`), in that directory, with its output on
-stderr. The hook may redact files in place. A non-zero exit refuses the export:
-the command fails and `REFUSED.md` holds the hook's message until a later export
-with `--update` passes. `README.md` names the hook, or says none ran.
-
-Redaction is a best-effort backstop, not a guarantee. An export is for the local
-machine only; sharing it, even internally, needs a human review first.
+stderr. The hook may redact files in place. While a hook is set, `REFUSED.md`
+(fixed text, never the hook's output) is written when the export starts and
+removed only when the hook exits 0, so an export cut short is never taken as
+scanned. A non-zero exit refuses the export: the command fails and `REFUSED.md`
+stays, with the exit status, until a later export with `--update` passes.
+`README.md` names the hook, or says none is set.
 
 ## Privacy
 

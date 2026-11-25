@@ -782,9 +782,10 @@ keys and hex keys labelled as keys (bare digests are kept), e-mail addresses and
 DSNs, secret variable names matched case-sensitively (so code identifiers survive),
 usernames, home paths and machine names. It reads text only; image payloads are
 kept. Farmslot does not own a full secret scan: an operator who wants one sets a
-scan hook, a command run on the written export that can redact or refuse it. Redaction is a best-effort backstop, not a guarantee:
-an export is for the local machine only, and sharing it, even internally, needs a
-human review. Farmslot has no upload path.
+scan hook, a command run on the written export that can redact or refuse it.
+Redaction is a best-effort backstop, not a guarantee: an export is for the local
+machine only, and sharing it, even internally, needs a human review. Farmslot has
+no upload path.
 
 **Cost.** Today's dev gateway holds a median of 7.7 MB of transcripts per run (p90
 42 MB, max 154 MB). Earlier capture adds the missing reviewer and earlier-round
