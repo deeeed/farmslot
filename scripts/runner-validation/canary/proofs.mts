@@ -124,7 +124,11 @@ export function processesUsing(tmp: string): number[] {
  * proof's group alone would leave them; while the proof lives they are still its descendants.
  * Resolves what survived, as cleanup errors.
  */
-export async function killProofTree(pid: number | undefined, tmp: string): Promise<string[]> {
+export async function killProofTree(
+  pid: number | undefined,
+  tmp: string,
+  scan: (tmp: string) => number[] = processesUsing,
+): Promise<string[]> {
   if (pid !== undefined) {
     const children = new Map<number, number[]>();
     for (const line of execFileSync('ps', ['-Ao', 'pid=,ppid='], { encoding: 'utf8' }).split(
@@ -143,11 +147,11 @@ export async function killProofTree(pid: number | undefined, tmp: string): Promi
     }
   }
   // A gateway still shutting down can start a child between scans: kill until none is left.
-  let survivors = processesUsing(tmp);
+  let survivors = scan(tmp);
   for (let pass = 0; survivors.length && pass < 25; pass++) {
     for (const target of survivors) kill(target);
     await delay(200);
-    survivors = processesUsing(tmp);
+    survivors = scan(tmp);
   }
   return survivors.length
     ? [`proof processes survived SIGKILL under ${tmp}: ${survivors.join(', ')}`]
@@ -155,9 +159,13 @@ export async function killProofTree(pid: number | undefined, tmp: string): Promi
 }
 
 /** killProofTree that reports its own failure (a broken ps, pgrep or lsof) instead of throwing. */
-async function stopProofTree(pid: number | undefined, tmp: string): Promise<string[]> {
+export async function stopProofTree(
+  pid: number | undefined,
+  tmp: string,
+  killTree: typeof killProofTree = killProofTree,
+): Promise<string[]> {
   try {
-    return await killProofTree(pid, tmp);
+    return await killTree(pid, tmp);
   } catch (error) {
     return [`could not stop the proof's processes under ${tmp}: ${String(error)}`];
   }
@@ -204,9 +212,11 @@ export async function runProofs(options: {
     spec?: (proof: Proof, dir: string, tmp: string) => ProofSpec;
     timeoutMs?: number;
     removeTemp?: (tmp: string) => Promise<void>;
+    killTree?: typeof killProofTree;
   };
 }): Promise<void> {
   const timeoutMs = options.seams?.timeoutMs ?? PROOF_TIMEOUT_MS;
+  const killTree = options.seams?.killTree ?? killProofTree;
   const removeTemp =
     options.seams?.removeTemp ??
     ((tmp: string) => rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
@@ -214,7 +224,7 @@ export async function runProofs(options: {
   options.onCleanup(async () => {
     if (!current) return [];
     const { pid, tmp } = current;
-    const errors = await stopProofTree(pid, tmp);
+    const errors = await stopProofTree(pid, tmp, killTree);
     // The reaper is dismissed after a clean stop, so the TMPDIR goes here.
     await removeTemp(tmp).catch((error: unknown) =>
       errors.push(`could not remove ${tmp}: ${String(error)}`),
@@ -254,7 +264,7 @@ export async function runProofs(options: {
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
-        timeoutKill = killProofTree(child.pid, tmp).catch((error: unknown) => {
+        timeoutKill = killTree(child.pid, tmp).catch((error: unknown) => {
           // The tree could not be read: at least the proof itself must go, or exit never comes.
           child.kill('SIGKILL');
           return [`timeout kill failed: ${String(error)}`];
@@ -270,7 +280,7 @@ export async function runProofs(options: {
     const differences = [
       ...exitDifferences(exit, timeoutMs),
       ...((await timeoutKill) ?? []),
-      ...(await stopProofTree(undefined, tmp)),
+      ...(await stopProofTree(undefined, tmp, killTree)),
     ];
     current = undefined;
     const observations = [`log: ${log}`];

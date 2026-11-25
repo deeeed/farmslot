@@ -290,11 +290,12 @@ const cleanup = cleanupOnExit(async () => {
     cleanupErrors.push(`marker-contract: ${String(error)}`);
   }
   cleanupErrors.push(...((await stopLive?.()) ?? []));
-  cleanupErrors.push(...((await stopProofs?.()) ?? []));
+  const proofErrors = (await stopProofs?.()) ?? [];
+  cleanupErrors.push(...proofErrors);
   const stackErrors = (await stopStack?.()) ?? [];
   cleanupErrors.push(...stackErrors);
   // What could not be stopped stays with the reaper, which tries again when this process exits.
-  if (!stackErrors.length) reaper.done();
+  if (!stackErrors.length && !proofErrors.length) reaper.done();
   // A signal exits right after this, so the report is written here on both paths.
   await finish();
 });

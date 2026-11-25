@@ -14,6 +14,7 @@ import {
   proofEnv,
   reapProof,
   runProofs,
+  stopProofTree,
 } from './proofs.mjs';
 
 const alive = (pid: number) => {
@@ -59,7 +60,7 @@ test('a stopped proof takes the detached processes it started with it', async (t
     new Promise<number>((resolve) =>
       proof.stdout.once('data', (chunk: Buffer) => resolve(Number(String(chunk).trim()))),
     ),
-    delay(5_000).then(() => {
+    delay(5_000, undefined, { ref: false }).then(() => {
       throw new Error('the proof did not report its grandchild');
     }),
   ]);
@@ -151,6 +152,7 @@ async function proofsRun(
     timeoutMs?: number;
     cleaning?: () => boolean;
     removeTemp?: (tmp: string) => Promise<void>;
+    killTree?: typeof killProofTree;
   },
 ) {
   const evidence = mkdtempSync('/tmp/fsp-test-evidence-');
@@ -171,6 +173,7 @@ async function proofsRun(
       spec: () => ({ argv: options.argv, model: 'none' }),
       ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.removeTemp ? { removeTemp: options.removeTemp } : {}),
+      ...(options.killTree ? { killTree: options.killTree } : {}),
     },
   });
   return { checks, entries };
@@ -187,9 +190,14 @@ test('a proof past its deadline is killed and reported as a timeout', async (t) 
 });
 
 test('a TMPDIR that cannot be removed is noted on the check, not lost with it', async (t) => {
+  const kept: string[] = [];
+  t.after(() => {
+    for (const tmp of kept) rmSync(tmp, { recursive: true, force: true });
+  });
   const { checks } = await proofsRun(t, {
     argv: ['-e', ''],
-    removeTemp: async () => {
+    removeTemp: async (tmp) => {
+      kept.push(tmp);
       throw new Error('ENOTEMPTY');
     },
   });
@@ -204,8 +212,42 @@ test('no proof starts once cleanup has begun', async (t) => {
   const { checks } = await proofsRun(t, {
     argv: ['-e', 'setInterval(() => {}, 1000)'],
     cleaning: () => calls++ > 0,
+    // Were it to start, it fails in a second rather than running to the default deadline.
+    timeoutMs: 1_000,
   });
   assert.deepEqual(checks, []);
+});
+
+test('a proof whose tree cannot be read is still killed at its deadline', async (t) => {
+  const { checks } = await proofsRun(t, {
+    argv: ['-e', 'setInterval(() => {}, 1000)'],
+    timeoutMs: 1_000,
+    killTree: async () => {
+      throw new Error('ps: EAGAIN');
+    },
+  });
+  assert.equal(checks.length, 1);
+  assert.ok(checks[0].differences.includes('did not finish within 1 s'));
+  assert.ok(checks[0].differences.some((line) => /timeout kill failed: .*EAGAIN/.test(line)));
+  assert.ok(checks[0].differences.some((line) => /could not stop .*EAGAIN/.test(line)));
+});
+
+test('a failed stop is a cleanup error, not a lost result', async () => {
+  const errors = await stopProofTree(undefined, '/tmp/fsp-x', async () => {
+    throw new Error('lsof: not found');
+  });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /could not stop the proof's processes under \/tmp\/fsp-x: .*lsof/);
+});
+
+test('the sweep keeps killing until nothing uses the TMPDIR', async (t) => {
+  const tmp = privateTmp(t);
+  // A gateway shutting down starts a child after the first scan; the third scan finds none.
+  const scans = [[2 ** 22 + 1], [2 ** 22 + 2], []];
+  let calls = 0;
+  const survived = await killProofTree(undefined, tmp, () => scans[Math.min(calls++, 2)]);
+  assert.deepEqual(survived, []);
+  assert.equal(calls, 3, 'scanned again after each kill until empty');
 });
 
 test('the reaper can stop and remove a proof the canary did not clean up', () => {
