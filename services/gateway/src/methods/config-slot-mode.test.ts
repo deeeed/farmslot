@@ -147,3 +147,15 @@ test(
     assert.equal(await rawLifecycle('unmounted'), 'held', 'the held row is not turned ready');
   },
 );
+
+test(
+  'a pool edit keeps the raw lifecycle of a slot whose storage is unavailable',
+  { skip: process.platform !== 'darwin' },
+  async () => {
+    const localPool = path.join(root, 'pool/local.json');
+    const edited = JSON.parse(await readFile(localPool, 'utf8'));
+    edited.slots[0].codex_note = 'unrelated edit';
+    await configPoolUpdate({ machine: edited.machine, content: JSON.stringify(edited, null, 2) });
+    assert.equal(await rawLifecycle('unmounted'), 'held', 'the held row is not turned ready');
+  },
+);

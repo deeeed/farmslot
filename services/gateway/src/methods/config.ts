@@ -472,17 +472,18 @@ export async function configPoolUpdate(
     if (!prev) continue;
     const newMode = effectiveSlotMode(slot);
     const newEnabled = newMode !== 'disabled';
+    // From the raw row, not the storage overlay, which reports `disabled` for a missing volume
+    // (see configSlotUpdate).
+    const rawRow = await readSlotRow(slot.id);
+    const prevEnabled = typeof rawRow?.enabled === 'boolean' ? rawRow.enabled : prev.enabled;
+    const prevLifecycle = typeof rawRow?.lifecycle === 'string' ? rawRow.lifecycle : prev.lifecycle;
     // Infer previous mode from fleet status lifecycle/enabled
-    const prevMode = !prev.enabled
-      ? 'disabled'
-      : prev.lifecycle === 'manual'
-        ? 'custom'
-        : 'dispatch';
-    if (prevMode === newMode && prev.enabled === newEnabled) continue;
+    const prevMode = !prevEnabled ? 'disabled' : prevLifecycle === 'manual' ? 'custom' : 'dispatch';
+    if (prevMode === newMode && prevEnabled === newEnabled) continue;
     const fields = statusFieldsForModeChange(
       prevMode === newMode ? undefined : newMode,
-      prev.enabled === newEnabled ? undefined : newEnabled,
-      prev.lifecycle,
+      prevEnabled === newEnabled ? undefined : newEnabled,
+      prevLifecycle,
     );
     await updateSlotStatus(slot.id, fields);
   }
