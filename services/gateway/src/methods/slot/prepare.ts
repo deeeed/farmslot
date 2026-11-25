@@ -31,6 +31,7 @@ import {
   readSlotField,
   readSlotRow,
   SLOT_PHASE_RELEASING,
+  slotDeletePath,
   slotFileExists,
   slotReadFile,
   type SlotVars,
@@ -87,6 +88,13 @@ import {
   loadGitIdentity,
   syncGitIdentity,
 } from './git-identity.js';
+import {
+  checkPrepareArtifactReceipt,
+  PREPARE_ARTIFACT_RECEIPT,
+  projectPinsPrepare,
+  receiptRefusal,
+  resolvePinnedProfile,
+} from './pinned-prepare.js';
 import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
@@ -247,8 +255,15 @@ async function slotPrepareWithSources(
     let projectVars: ProjectVars | undefined;
     try {
       projectVars = await loadProjectVars(vars.projectName);
-    } catch {
-      /* no project config: retain default prepare behavior */
+    } catch (error) {
+      // No project config: retain default prepare behavior, except for a pinned
+      // run, which would otherwise read as a project that takes no part and run
+      // on whatever build the slot has.
+      if (opts?.pinned) {
+        throw new Error(
+          `A pinned comparison run cannot prepare: the config of project ${vars.projectName} failed to load (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
     }
     assertNativeSlotReplacementOwner(params.slotId, params.runId);
     const preparingRun = params.runId ? getRun(params.runId) : null;
@@ -644,6 +659,20 @@ async function slotPrepareInner(
   step(signing.name, signing.detail);
   if (signing.status === 'fail') throw new Error(`Commit signing is not ready: ${signing.detail}`);
 
+  // A pinned comparison run prepares only with a profile its project lists for this
+  // platform, and its preflight, not the selection probe, proves the build.
+  const pinned =
+    opts?.pinned && projectPinsPrepare(projectJson)
+      ? resolvePinnedProfile(projectJson, vars.platform, params.prepareProfile)
+      : undefined;
+  if (pinned) {
+    if (!opts?.startRef) throw new Error('A pinned comparison run prepares only from a start ref');
+    step(
+      'profile',
+      `Pinned comparison run: profile '${pinned.name}' installs a ${pinned.kind} build of start ${opts.startRef.requestedRef}`,
+    );
+  }
+
   // 1b. Resolve prepare profile (ADR-037): explicit request → prepare.default →
   // implicit full. Precondition failures walk the project's declared fallback
   // chain; every check and transition is logged as a prepare sub-step.
@@ -665,14 +694,16 @@ async function slotPrepareInner(
       ...(params.flowType ? { flow: params.flowType } : {}),
       ...(effectiveDomain ? { domain: effectiveDomain } : {}),
     },
-    params.prepareProfile,
+    pinned?.name ?? params.prepareProfile,
     (candidate, result) =>
       step(
         'profile',
         `[${candidate}] ${result.requirement} ${result.ok ? 'ok' : 'fail'} — ${result.detail}`,
       ),
     checkPrepareRequirement,
-    { strict: params.strictProfile === true },
+    pinned
+      ? { strict: true, skip: ['artifact_available'] }
+      : { strict: params.strictProfile === true },
   );
   for (const fb of profileSelection.fallbacks) {
     step(
@@ -1936,6 +1967,17 @@ async function slotPrepareInner(
     preflightHook = preflightHook.replace(/\s*--clean\b/g, '');
     step('preflight', 'Recovery mode — skipping --clean rebuild');
   }
+  // A pinned preflight installs the build of this commit and reports it in a receipt.
+  // An older receipt must not stand in for one this preflight did not write.
+  const receiptPath = path.posix.join(vars.remoteRepo, runtimeDir, PREPARE_ARTIFACT_RECEIPT);
+  const pinnedBaseSha = (): string => {
+    if (!resolvedStartRef)
+      throw new Error('A pinned prepare reached preflight with no resolved start');
+    return resolvedStartRef.resolvedSha;
+  };
+  const readReceipt = async (): Promise<string | null> =>
+    (await slotFileExists(vars, receiptPath)) ? slotReadFile(vars, receiptPath) : null;
+  if (pinned) await slotDeletePath(vars, receiptPath);
   if (preflightHook) {
     const preflightPidPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.pid');
     const preflightIdentityPath = prepareIdentityPath(vars.remoteRepo, runtimeDir);
@@ -1952,7 +1994,10 @@ async function slotPrepareInner(
     let currentPreflightPhase = '';
     let phaseBuffer = '';
     const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-    const varExports: string[] = [`export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}`];
+    const varExports: string[] = [
+      `export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}`,
+      ...(pinned ? [`export FARMSLOT_PREPARE_BASE_SHA=${shellQuote(pinnedBaseSha())}`] : []),
+    ];
     for (const [rawKey, rawValue] of Object.entries(params.vars ?? {})) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(rawKey)) {
         throw new Error(`Invalid --var key '${rawKey}' (must match [A-Za-z_][A-Za-z0-9_]*)`);
@@ -2075,6 +2120,10 @@ async function slotPrepareInner(
           : [path.join(vars.remoteRepo, runtimeDir, 'android-build.log')]),
       ];
       err.relatedLogsOnGateway = slotIsLocal;
+      // A pinned preflight that refused the build says why in its receipt; that
+      // reason, not the bare exit code, is what the operator needs.
+      const refusal = pinned ? receiptRefusal(await readReceipt()) : undefined;
+      if (refusal) err.message = `Pinned build refused: ${refusal} — log: ${preflightLogPath}`;
       throw err;
     }
     const phaseSuffix = currentPreflightPhase ? ` after ${currentPreflightPhase}` : '';
@@ -2090,6 +2139,36 @@ async function slotPrepareInner(
       const tail = await openDevServerLogTailWindow(vars, session, devServerLogPath);
       step('preflight', tail.detail);
     }
+  }
+
+  // Read outside the preflight block: a pinned profile with no preflight wrote no
+  // receipt, and that fails the prepare like any other missing receipt.
+  let prepareArtifact: SlotPrepareResult['prepareArtifact'];
+  if (pinned) {
+    const baseSha = pinnedBaseSha();
+    const artifact = checkPrepareArtifactReceipt(await readReceipt(), {
+      kind: pinned.kind,
+      baseSha,
+      platform: vars.platform,
+    });
+    // A prepare replay keeps the worker's commits, so a source build may sit on a
+    // descendant of the start; anything else is a build of some other commit.
+    if (artifact.kind === 'source' && artifact.revision !== baseSha) {
+      const ancestry = await execOnSlot(
+        vars,
+        `git -C ${shellQuote(vars.remoteRepo)} merge-base --is-ancestor ${shellQuote(baseSha)} ${shellQuote(artifact.revision)}`,
+      );
+      if (ancestry.exitCode !== 0) {
+        throw new Error(
+          `${PREPARE_ARTIFACT_RECEIPT} reports a source build of ${artifact.revision}, which does not descend from the run's start ${baseSha}`,
+        );
+      }
+    }
+    prepareArtifact = { ...artifact, installedAt: new Date().toISOString() };
+    step(
+      'preflight',
+      `Pinned build installed: ${artifact.kind}${artifact.runId ? ` run ${artifact.runId}` : ''} at ${artifact.revision} for start ${baseSha}`,
+    );
   }
 
   trackedBaseline = await checkTrackedFiles(
@@ -2152,6 +2231,7 @@ async function slotPrepareInner(
     ...(resolvedStackBase ? { stackBase: resolvedStackBase } : {}),
     ...(lockfilesRewritten.length ? { lockfilesRewritten } : {}),
     ...(keptBranches.length ? { keptBranches } : {}),
+    ...(prepareArtifact ? { prepareArtifact } : {}),
   };
 }
 
