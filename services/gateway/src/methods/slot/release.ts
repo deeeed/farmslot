@@ -1178,7 +1178,7 @@ async function slotReleaseImpl(
       await assertReleaseClaim();
       try {
         const scratch =
-          taskDirName === TEMP_TASK_ROOT
+          taskDirName.replace(/\/+$/, '') === TEMP_TASK_ROOT
             ? await deleteTempScratch(vars)
             : await parkTaskScratch(vars, projectJson);
         scratchKeep = scratch.refused.map((entry) => entry.path);

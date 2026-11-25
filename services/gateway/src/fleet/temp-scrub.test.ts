@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import {
   buildTempScratchDeleteCommand,
   buildTempScrubCommand,
+  buildTempTaskDirListCommand,
   parseTempScratchDeleteOutput,
   parseTempScrubOutput,
 } from './temp-scrub.js';
@@ -140,7 +141,7 @@ test('a linked worktree goes through worktree remove; its sibling outside temp/ 
   assert.deepEqual(result.refused, []);
   assert.deepEqual(
     result.removed.find(({ path: p }) => p === 'temp/tasks/feat/wt-task/wt'),
-    { path: 'temp/tasks/feat/wt-task/wt', kind: 'linked worktree' },
+    { path: 'temp/tasks/feat/wt-task/wt', kind: 'linked worktree (branch inside kept)' },
   );
   const listed = await git(origin, 'worktree', 'list', '--porcelain');
   assert.doesNotMatch(listed, /wt-task/, "the removed worktree's admin data is gone");
@@ -218,4 +219,86 @@ test('a symlinked ancestor of a kept path is left, and a symlinked temp/ is refu
   assert.equal(refused.refused.length, 1);
   assert.match(refused.refused[0]!.reason, /not a plain directory/);
   assert.equal(existsSync(path.join(repo, 'elsewhere/runtime/terminal/browser.pid')), true);
+});
+
+// macOS nodes run slot commands with `zsh -f -c`, where an unmatched shell glob aborts.
+test('the task-dir listing runs under zsh -f with no task root, an empty one or empty flows', async (t) => {
+  const { parent, repo } = await slotWith(['outside/feat/x/TASK.md']);
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const list = async () =>
+    (
+      await execFileAsync('/bin/zsh', ['-f', '-c', buildTempTaskDirListCommand({ repo, taskRoot: 'temp/tasks' })])
+    ).stdout;
+  assert.equal(await list(), '', 'no temp/tasks');
+  await mkdir(path.join(repo, 'temp/tasks/feat'), { recursive: true });
+  assert.equal(await list(), '', 'only an empty flow folder');
+  await mkdir(path.join(repo, 'temp/tasks/fix/tat-1'), { recursive: true });
+  await writeFile(path.join(repo, 'temp/tasks/fix/tat-1/TASK.md'), 'x');
+  await mkdir(path.join(repo, 'temp/tasks/goal3-x'), { recursive: true });
+  await writeFile(path.join(repo, 'temp/tasks/goal3-x/TASK.md'), 'x');
+  // A symlinked flow folder is not entered: its task dirs are not this slot's.
+  await symlink(path.join(repo, 'outside/feat'), path.join(repo, 'temp/tasks/linked'));
+  assert.deepEqual((await list()).split('\n').filter(Boolean), [
+    'temp/tasks/fix/tat-1',
+    'temp/tasks/goal3-x',
+  ]);
+  const scrubbed = parseTempScrubOutput(
+    (
+      await execFileAsync(
+        '/bin/zsh',
+        ['-f', '-c', buildTempScrubCommand({ repo, keep: [], taskRoot: 'temp/tasks' })],
+        { env: gitEnv },
+      )
+    ).stdout,
+  );
+  assert.deepEqual(scrubbed.refused, [], 'the scrub runs under zsh -f too');
+});
+
+test('a locked or unregistered worktree is deleted; a clone owning one outside temp/ is refused', async (t) => {
+  const { parent, repo } = await slotWith([]);
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const origin = path.join(parent, 'origin-clone');
+  await git(parent, 'init', '-q', '-b', 'main', origin);
+  await git(origin, 'commit', '-q', '--allow-empty', '-m', 'base');
+  const locked = path.join(repo, 'temp/tasks/locked-wt');
+  await git(origin, 'worktree', 'add', '-q', '-b', 'locked', locked);
+  await git(origin, 'worktree', 'lock', locked);
+  // A `.git` file Git does not list at this path: a copied worktree.
+  const copied = path.join(repo, 'temp/scratch-copy');
+  await mkdir(copied, { recursive: true });
+  await writeFile(path.join(copied, '.git'), `gitdir: ${path.join(origin, '.git/worktrees/locked-wt')}\n`);
+  // A clone inside temp/ whose own worktree lives outside it.
+  const clone = path.join(repo, 'temp/tasks/owner-clone');
+  await git(parent, 'init', '-q', '-b', 'main', clone);
+  await git(clone, 'commit', '-q', '--allow-empty', '-m', 'base');
+  await git(clone, 'worktree', 'add', '-q', '-b', 'away', path.join(parent, 'away-wt'));
+
+  const result = await scrub(repo, []);
+
+  assert.deepEqual(
+    result.removed.filter(({ kind }) => kind.startsWith('linked worktree')).map(({ path: p }) => p).sort(),
+    ['temp/scratch-copy', 'temp/tasks/locked-wt'],
+  );
+  assert.doesNotMatch(await git(origin, 'worktree', 'list'), /locked-wt/);
+  assert.deepEqual(result.refused, [
+    {
+      path: 'temp/tasks/owner-clone',
+      reason: `a repository whose worktree ${path.relative(repo, path.join(parent, 'away-wt'))} is outside temp/`,
+    },
+  ]);
+  assert.equal(existsSync(path.join(parent, 'away-wt/.git')), true);
+});
+
+test('a cut-off last line drops only itself; earlier removals stay named', () => {
+  const result = parseTempScrubOutput(
+    [
+      JSON.stringify({ kind: 'removed', path: 'temp/a', detail: 'dir' }),
+      JSON.stringify({ kind: 'removed', path: 'temp/b', detail: 'clone' }),
+      '{"kind": "removed", "path": "temp/c", "de',
+    ].join('\n'),
+  );
+  assert.deepEqual(result.removed, [
+    { path: 'temp/a', kind: 'dir' },
+    { path: 'temp/b', kind: 'clone' },
+  ]);
 });

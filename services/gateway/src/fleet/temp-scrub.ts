@@ -8,7 +8,7 @@ import { FLOW_TYPES } from './slot-storage-cleanup.js';
 const SCRUB_TIMEOUT_MS = 120_000;
 /** The layout these commands own: only there is everything in temp/ a run's or the farm's. */
 export const TEMP_TASK_ROOT = 'temp/tasks';
-/** Kinds a removed nested Git checkout is reported with. */
+/** Kinds a removed nested Git checkout is reported with; a worktree may add `(branch … kept)`. */
 export const CHECKOUT_KINDS = ['clone', 'linked worktree', 'bare'] as const;
 
 /** Paths are relative to the slot checkout. */
@@ -75,23 +75,48 @@ export function buildTempScrubCommand(input: {
       'def keeps_below(path):',
       '    return any(k.startswith(path + os.sep) for k in keep)',
       ...PY_CHECKOUT,
+      'def git(*args):',
+      '    return subprocess.run(["git"] + list(args), env=env, capture_output=True, text=True)',
+      'def outside_worktree(store):',
+      '    # A worktree this repository owns outside temp/ would lose its Git data with it.',
+      '    admin = os.path.join(store, "worktrees")',
+      '    for name in sorted(os.listdir(admin)) if os.path.isdir(admin) else []:',
+      '        try:',
+      '            with open(os.path.join(admin, name, "gitdir")) as f:',
+      '                where = os.path.realpath(os.path.dirname(f.read().strip()))',
+      '        except OSError:',
+      '            continue  # No gitdir record: Git treats it as prunable, so nothing outside depends on it.',
+      '        if os.path.lexists(where) and not where.startswith(temp + os.sep):',
+      '            return where',
+      '    return None',
+      'def registered(owner, path):',
+      '    listed = git("-C", owner, "worktree", "list", "--porcelain")',
+      '    return listed.returncode == 0 and ("worktree " + path) in listed.stdout.splitlines()',
       'def remove_checkout(path):',
       '    if keeps_below(path):',
       '        emit("refused", path, "a Git checkout holding a kept path")',
       '        return False',
       '    dot = os.path.join(path, ".git")',
+      '    store = dot if os.path.isdir(dot) else path',
+      '    elsewhere = None if os.path.isfile(dot) else outside_worktree(store)',
+      '    if elsewhere:',
+      '        emit("refused", path, "a repository whose worktree " + os.path.relpath(elsewhere, repo) + " is outside temp/")',
+      '        return False',
       '    if os.path.isfile(dot):',
-      '        common = subprocess.run(["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"], env=env, capture_output=True, text=True)',
+      '        common = git("-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir")',
       '        owner = os.path.realpath(common.stdout.strip()) if common.returncode == 0 else ""',
-      '        # A worktree whose repository is gone has no admin data left to clean.',
-      '        if owner and os.path.isdir(owner) and not owner.startswith(path + os.sep):',
-      '            done = subprocess.run(["git", "-C", owner, "worktree", "remove", "--force", path], env=env, capture_output=True, text=True)',
+      '        head = git("-C", path, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()',
+      '        # Only a worktree its repository lists at this path is removed through Git (a locked',
+      '        # one needs --force twice); a moved, copied or separate-git-dir checkout is a dir.',
+      '        if owner and os.path.isdir(owner) and not owner.startswith(path + os.sep) and registered(owner, path):',
+      '            done = git("-C", owner, "worktree", "remove", "--force", "--force", path)',
       '            if done.returncode != 0:',
       '                emit("refused", path, "git worktree remove failed: " + done.stderr.strip()[-300:])',
       '                return False',
       '        if os.path.lexists(path):',
       '            shutil.rmtree(path)',
-      '        emit("removed", path, "linked worktree")',
+      '        # The branch stays: no worktree branch here is one Farmslot created.',
+      '        emit("removed", path, "linked worktree" + (" (branch " + head + " kept)" if head else ""))',
       '    else:',
       '        kind = "clone" if os.path.lexists(dot) else "bare"',
       '        shutil.rmtree(path)',
@@ -204,14 +229,20 @@ export function buildTempScratchDeleteCommand(input: { repo: string }): string {
 
 type ScrubRecord = { kind?: unknown; path?: unknown; detail?: unknown };
 
+/** One record per line; a line cut off by a timeout or crash is dropped, not the rest. */
 function records(stdout: string): ScrubRecord[] {
-  return stdout
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line): ScrubRecord => {
+  return stdout.split('\n').flatMap((line): ScrubRecord[] => {
+    if (!line.trim()) return [];
+    try {
       const parsed: unknown = JSON.parse(line);
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    });
+      return parsed && typeof parsed === 'object' ? [parsed] : [];
+    } catch (error) {
+      // Only the last line of a stopped command can be partial; the failure is reported by
+      // the caller from the exit status.
+      if (error instanceof SyntaxError) return [];
+      throw error;
+    }
+  });
 }
 
 const text = (value: unknown) => (typeof value === 'string' ? value : null);
@@ -241,7 +272,7 @@ export function parseTempScratchDeleteOutput(stdout: string): TempScratchDeleteR
   return result;
 }
 
-/** Names what a failed or timed-out scrub had already removed. */
+/** A failed or timed-out scrub still names what it had already removed. */
 export async function scrubSlotTemp(
   vars: SlotVars,
   keep: string[],
@@ -253,15 +284,9 @@ export async function scrubSlotTemp(
     { cwd: vars.remoteRepo, timeout: SCRUB_TIMEOUT_MS },
   );
   if (result.exitCode !== 0) {
-    let removed = '';
-    try {
-      removed = parseTempScrubOutput(result.stdout)
-        .removed.map((entry) => `${entry.path} (${entry.kind})`)
-        .join(', ');
-    } catch (error) {
-      // A cut-off last line: the failure below is what matters; say the list is partial.
-      removed = `output unreadable: ${(error as Error).message}`;
-    }
+    const removed = parseTempScrubOutput(result.stdout)
+      .removed.map((entry) => `${entry.path} (${entry.kind})`)
+      .join(', ');
     throw new Error(
       `temp/ scrub failed for ${vars.slotId}: ${result.stderr.trim() || `exit ${result.exitCode}`}${removed ? `; removed before it stopped: ${removed}` : ''}`,
     );
@@ -281,14 +306,44 @@ export async function deleteTempScratch(vars: SlotVars): Promise<TempScratchDele
   return parseTempScratchDeleteOutput(result.stdout);
 }
 
-/** Task dirs (a dir holding TASK.md) one or two levels under the task root; links skipped. */
+/**
+ * Task dirs (a dir holding TASK.md) one or two levels under the task root, relative to the
+ * checkout. No shell glob (macOS nodes run `zsh -f`, where an unmatched glob aborts) and no
+ * symlink is entered at either level.
+ */
+export function buildTempTaskDirListCommand(input: { repo: string; taskRoot: string }): string {
+  const config = { repo: input.repo.replace(/\/+$/, ''), taskRoot: input.taskRoot };
+  return [
+    `__fs_config=${shellQuote(JSON.stringify(config))}`,
+    'python3 - "$__fs_config" <<\'PY\'',
+    'import json, os, sys',
+    'cfg = json.loads(sys.argv[1])',
+    'repo = os.path.realpath(cfg["repo"])',
+    'def dirs(parent):',
+    '    try:',
+    '        return [os.path.join(parent, n) for n in sorted(os.listdir(parent)) if not os.path.islink(os.path.join(parent, n)) and os.path.isdir(os.path.join(parent, n))]',
+    '    except FileNotFoundError:',
+    '        return []',
+    'root = os.path.join(repo, cfg["taskRoot"])',
+    'if os.path.islink(root):',
+    '    sys.exit(0)',
+    'for first in dirs(root):',
+    '    for path in [first] + dirs(first):',
+    '        if os.path.lexists(os.path.join(path, "TASK.md")):',
+    '            print(os.path.relpath(path, repo))',
+    'PY',
+  ].join('\n');
+}
+
 export async function listTempTaskDirs(vars: SlotVars, taskRoot: string): Promise<string[]> {
   const result = await execOnSlot(
     vars,
-    `cd ${shellQuote(vars.remoteRepo)} && for d in ${shellQuote(taskRoot)}/*/ ${shellQuote(taskRoot)}/*/*/; do d=\${d%/}; [ ! -L "$d" ] && [ -e "$d/TASK.md" ] && printf '%s\\n' "$d"; done; true`,
-    { timeout: 30_000 },
+    buildTempTaskDirListCommand({ repo: vars.remoteRepo, taskRoot }),
+    { cwd: vars.remoteRepo, timeout: 30_000 },
   );
   if (result.exitCode !== 0)
-    throw new Error(`task dir listing failed for ${vars.slotId}: exit ${result.exitCode}`);
+    throw new Error(
+      `task dir listing failed for ${vars.slotId}: ${result.stderr.trim() || `exit ${result.exitCode}`}`,
+    );
   return result.stdout.split('\n').filter(Boolean);
 }

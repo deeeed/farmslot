@@ -17,8 +17,6 @@ import { workerTaskDirectory } from '../../run-engine/worker-task-dir.js';
 import { getRunWithArchived, listRunsForSlotHistory } from '../../runs/store.js';
 import { slotPinIsRequestOnly } from '../dispatch/slot-scoring.js';
 
-export { TEMP_TASK_ROOT };
-
 /**
  * What a slot keeps in temp/ between runs: `temp/farmslot` (deps stamps and locks, CI parity),
  * the runtime dir, the recipe harness, the dirs of the project's watched resource files (dev
@@ -150,7 +148,7 @@ export async function scrubTempForRun(
   projectJson: RawProjectJson,
   run: Run,
 ): Promise<TempScrubOutcome | null> {
-  const taskDirName = resolveProjectTaskDirName(projectJson);
+  const taskDirName = resolveProjectTaskDirName(projectJson).replace(/\/+$/, '');
   if (taskDirName !== TEMP_TASK_ROOT) return null;
   const chain = await parentChain(run);
   const chainIds = new Set([run.id, ...chain.map((owner) => owner.id)]);
@@ -203,7 +201,8 @@ export async function scrubTempForRun(
         (entry) => entry.path === dir.path || entry.path.startsWith(`${dir.path}/`),
       ),
   );
-  const kinds: readonly string[] = CHECKOUT_KINDS;
-  const checkouts = result.removed.filter((entry) => kinds.includes(entry.kind));
+  const checkouts = result.removed.filter((entry) =>
+    CHECKOUT_KINDS.some((kind) => entry.kind === kind || entry.kind.startsWith(`${kind} (`)),
+  );
   return { ...result, taskDirs, checkouts };
 }
