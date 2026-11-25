@@ -1,0 +1,1 @@
+- The prepare lifecycle reference documents `FARMSLOT_FLOW_TYPE`: which hooks receive it, its values, and that a flowless prepare unsets it.

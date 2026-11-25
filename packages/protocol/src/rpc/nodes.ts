@@ -23,6 +23,8 @@ export interface NodeInfo extends PeerVersionDeclaration {
   terminalInputSequence?: boolean;
   /** The observations and reads this node declared when it connected, such as `batchReads`. */
   observationCapabilities?: NodeObservationCapabilities;
+  /** The last connection refused because this node already held the machine. */
+  lastRefusedDuplicate?: { pid: number; at: string };
 }
 
 export interface NodesListResult {
