@@ -509,6 +509,23 @@ for (const shell of ['bash', '/bin/zsh']) {
   );
 }
 
+test('a stamp a few minutes short of its window still lets the hourly pass prune', () => {
+  const { notes, lines } = runPrune(
+    `aged() { perl -e '$t = time - $ARGV[0] * 60; utime $t, $t, $ARGV[1]' "$1" "$stamp"; }
+    git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
+    printf ok > "$stamp"; aged 1437
+    prune; echo "ok=$(remote_refs)"
+    git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/later
+    printf failed > "$stamp"; aged 57
+    prune; echo "failed=$(remote_refs)"`,
+  );
+  assert.deepEqual(notes, [
+    'pruned 1 remote ref whose branch is gone',
+    'pruned 1 remote ref whose branch is gone',
+  ]);
+  assert.deepEqual(lines, ['exit=0', 'ok=HEAD feat/later main ', 'exit=0', 'failed=HEAD main ']);
+});
+
 test('a gone branch is deleted only after it has been seen stale for the whole wait', () => {
   const { notes, lines } = runPrune(
     `git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
@@ -572,13 +589,23 @@ test('remotePruneCommand leaves a git dir live worktrees share alone, and ignore
 test('remotePruneCommand fails closed when it cannot list the worktrees', () => {
   const { notes, lines } = runPrune(
     `git -C "$ROOT/origin.git" update-ref -d refs/heads/feat/gone
-    git() { if [ "$1" = worktree ]; then return 1; fi; command git "$@"; }
-    prune; echo "refs=$(remote_refs)"`,
+    git() { if [ "$1" = worktree ]; then echo "fatal: worktree list broke" >&2; return 1; fi; command git "$@"; }
+    prune; echo "state=$(cat "$stamp") refs=$(remote_refs)"
+    # A listing that succeeds with no worktree entry is no evidence either.
+    git() { if [ "$1" = worktree ]; then return 0; fi; command git "$@"; }
+    touch -t 202601010000 "$stamp"
+    prune; echo "state=$(cat "$stamp") refs=$(remote_refs)"`,
   );
   assert.deepEqual(notes, [
-    'remote prune failed: could not resolve the git dir or list its worktrees',
+    'remote prune failed: fatal: worktree list broke',
+    'remote prune failed: git worktree list showed no worktree',
   ]);
-  assert.deepEqual(lines, ['exit=3', 'refs=HEAD feat/gone feat/later main ']);
+  assert.deepEqual(lines, [
+    'exit=3',
+    'state=failed refs=HEAD feat/gone feat/later main ',
+    'exit=3',
+    'state=failed refs=HEAD feat/gone feat/later main ',
+  ]);
 });
 
 test('case twins: a loose twin keeps its group, a packed twin pair loses one per pass, a live twin is no block', () => {

@@ -53,17 +53,20 @@ export const REMOTE_PRUNE_RETRY_HOURS = 1;
  * squash-merged PR resolves a start ref given as a SHA through any remote ref that holds it.
  */
 export const REMOTE_PRUNE_MIN_STALE_DAYS = 14;
+/** Minutes taken off each prune window, so the hourly pass reaching a slot early still runs it. */
+export const REMOTE_PRUNE_MARGIN_MINUTES = 5;
 /** Exit status of a prune that could not list origin or delete refs; the caller backs off. */
 export const REMOTE_PRUNE_FAILED_EXIT = 3;
 
 // The prune's shell, in named parts. `$git_dir`/`$common_dir` are absolute, `$stamp` holds `ok` or
 // `failed`, `$seen` holds `<ref> <first-seen epoch>` per stale ref.
-const PRUNE_LOCATE = `export LC_ALL=C; repo_paths=$(git rev-parse --git-dir --git-common-dir 2>&1) || { echo "${GIT_MAINTENANCE_NOTE} remote prune failed: $(printf '%s\\n' "$repo_paths" | tail -n 1)"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }; git_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 1p)" && pwd -P) && common_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 2p)" && pwd -P) && live_worktrees=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{n++} /^prunable/{p++} END{if (n < 1) exit 1; print n-p}') || { echo "${GIT_MAINTENANCE_NOTE} remote prune failed: could not resolve the git dir or list its worktrees"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }`;
-const PRUNE_SHARED_SKIP = `if [ "$git_dir" != "$common_dir" ] || [ "$live_worktrees" -gt 1 ]; then echo "${GIT_MAINTENANCE_DEBUG} remote prune skipped: $common_dir is shared by $live_worktrees worktrees"; exit 0; fi`;
+const PRUNE_LOCATE = `export LC_ALL=C; repo_paths=$(git rev-parse --git-dir --git-common-dir 2>&1) || { echo "${GIT_MAINTENANCE_NOTE} remote prune failed: $(printf '%s\\n' "$repo_paths" | tail -n 1)"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }; git_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 1p)" && pwd -P) && common_dir=$(cd "$(printf '%s\\n' "$repo_paths" | sed -n 2p)" && pwd -P) || { echo "${GIT_MAINTENANCE_NOTE} remote prune failed: could not resolve the git dir"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }; stamp="$git_dir/farmslot-remote-prune.stamp"; seen="$git_dir/farmslot-remote-prune.seen"; prune_err="$git_dir/farmslot-remote-prune.err"; rm -f "$prune_err"`;
 const pruneWindowSkip = (minutes: number, retryMinutes: number) =>
-  `stamp="$git_dir/farmslot-remote-prune.stamp"; seen="$git_dir/farmslot-remote-prune.seen"; prune_err="$git_dir/farmslot-remote-prune.err"; rm -f "$prune_err"; state=$(cat "$stamp" 2>/dev/null); if { [ "$state" = ok ] && [ -n "$(find "$stamp" -mmin -${minutes} 2>/dev/null)" ]; } || { [ "$state" = failed ] && [ -n "$(find "$stamp" -mmin -${retryMinutes} 2>/dev/null)" ]; }; then exit 0; fi`;
+  `state=$(cat "$stamp" 2>/dev/null); if { [ "$state" = ok ] && [ -n "$(find "$stamp" -mmin -${minutes} 2>/dev/null)" ]; } || { [ "$state" = failed ] && [ -n "$(find "$stamp" -mmin -${retryMinutes} 2>/dev/null)" ]; }; then exit 0; fi`;
 const PRUNE_FAIL = (why: string) =>
   `{ printf failed > "$stamp"; echo "${GIT_MAINTENANCE_NOTE} remote prune failed: ${why}"; rm -f "$prune_err"; exit ${REMOTE_PRUNE_FAILED_EXIT}; }`;
+// A listing with no worktree entry fails closed: the shared-dir check can't be trusted without one.
+const PRUNE_SHARED_SKIP = `worktrees=$(git worktree list --porcelain 2>"$prune_err") || ${PRUNE_FAIL('$(tail -n 1 "$prune_err")')}; live_worktrees=$(printf '%s\\n' "$worktrees" | awk '/^worktree /{n++} /^prunable/{p++} END{if (n < 1) exit 1; print n-p}') || ${PRUNE_FAIL('git worktree list showed no worktree')}; if [ "$git_dir" != "$common_dir" ] || [ "$live_worktrees" -gt 1 ]; then echo "${GIT_MAINTENANCE_DEBUG} remote prune skipped: $common_dir is shared by $live_worktrees worktrees"; exit 0; fi`;
 // Local refs are read before origin is listed: a ref a concurrent fetch writes later is absent
 // from the plan, and each delete names the value it was read with.
 const PRUNE_LIST = `local_refs=$(git for-each-ref --format='ref %(refname) %(objectname)' refs/remotes/origin; cd "$common_dir" && find refs/remotes/origin -type f 2>/dev/null | sed 's/^/loose /'); live_heads=$(git ls-remote --heads origin 2>"$prune_err") || ${PRUNE_FAIL('$(tail -n 1 "$prune_err")')}; [ -n "$live_heads" ] || ${PRUNE_FAIL('origin listed no branches')}`;
@@ -78,19 +81,20 @@ const pruneApply = (minStaleDays: number) =>
 /**
  * Deletes remote-tracking refs whose branch is gone from origin: one `ls-remote --heads` and one
  * `update-ref --stdin` (each delete names the value it read), at most once per `hours`, or once per
- * `REMOTE_PRUNE_RETRY_HOURS` after a failure, timed by a stamp in the git dir. For a released idle
+ * `REMOTE_PRUNE_RETRY_HOURS` after a failure (each less `REMOTE_PRUNE_MARGIN_MINUTES`), timed by a stamp in the git dir. For a released idle
  * slot only, inside the parked-work retention fence (see `idle-remote-prune.ts`).
  * - A git dir other live worktrees share is left alone (a debug note).
  * - A ref is deleted only after `REMOTE_PRUNE_MIN_STALE_DAYS` of being seen stale (a seen file in
  *   the git dir records when).
- * - An empty listing, or a failed listing or delete, deletes nothing and exits
+ * - An empty listing, or a failed worktree listing, origin listing or delete, deletes nothing and exits
  *   `REMOTE_PRUNE_FAILED_EXIT` with git's last error line in the note.
  */
 export function remotePruneCommand(
   hours = REMOTE_PRUNE_INTERVAL_HOURS,
   minStaleDays = REMOTE_PRUNE_MIN_STALE_DAYS,
 ): string {
-  return `( ${PRUNE_LOCATE}; ${PRUNE_SHARED_SKIP}; ${pruneWindowSkip(hours * 60, REMOTE_PRUNE_RETRY_HOURS * 60)}; ${PRUNE_LIST}; ${pruneApply(minStaleDays)} )`;
+  const window = (h: number) => h * 60 - REMOTE_PRUNE_MARGIN_MINUTES;
+  return `( ${PRUNE_LOCATE}; ${pruneWindowSkip(window(hours), window(REMOTE_PRUNE_RETRY_HOURS))}; ${PRUNE_SHARED_SKIP}; ${PRUNE_LIST}; ${pruneApply(minStaleDays)} )`;
 }
 
 /** The notes a fetch maintenance command printed: kept or removed packs, a failed config write. */
