@@ -13,7 +13,11 @@ const {
   resolveWorkerTerminalArtifactPath,
   deterministicChecks,
 } = require('./worker-terminal-contract.cjs');
-const { SUBTASK_INDEX_REL, openSubtaskUnits } = require('./subtask-unit.cjs');
+const {
+  SUBTASK_INDEX_REL,
+  completingParentSignal,
+  openSubtaskUnits,
+} = require('./subtask-unit.cjs');
 const proofArtifacts = require('./proof-artifacts.cjs');
 const checklistOrder = require('./checklist-order.cjs');
 const { resolveChecklistTarget } = require('./checklist-target.cjs');
@@ -599,14 +603,19 @@ if (!isReviewTerminal && !proofMeasurement) {
   }
 }
 
-// A registered child unit is part of the parent's proof: the parent cannot
-// report success while a child checklist is still running or blocked.
+// A registered child unit is part of its parent's proof: the signal being completed
+// cannot report success while one of its own children is still running or blocked.
+// Another checklist's child (a parallel reviewer's) is that checklist's proof. Keyed on
+// the signal the caller completes: the manifest may point at a reviewer meanwhile.
 if (
   fileExists(SUBTASK_INDEX_REL) &&
   !proofMeasurement &&
   !(isReviewTerminal && isProofMeasurementTask(taskDir))
 ) {
-  for (const { unit, status } of openSubtaskUnits(taskDir)) {
+  for (const { unit, status } of openSubtaskUnits(
+    taskDir,
+    completingParentSignal(proofChecklist, proofSignal),
+  )) {
     issues.push(
       `${unit.checklist}: subtask ${unit.id} is not settled (status ${status ?? 'no signal'}) — ` +
         `finish it with ./mark sub ${unit.id} complete`,

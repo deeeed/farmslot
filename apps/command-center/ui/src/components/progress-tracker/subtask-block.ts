@@ -45,23 +45,31 @@ export interface SubtaskPresentation {
   counts: string;
   currentStep: string | null;
   settled: boolean;
+  /** Unsettled, but its owner (a stopped or replaced reviewer) has ended: not live work. */
+  ownerEnded: boolean;
 }
 
 export function subtaskPresentation(subtask: TaskStepSubtaskProgress): SubtaskPresentation {
   const ref = subtask.source.ref?.trim();
   const progress = subtask.progress;
-  const statusLabel = SUBTASK_STATUS_LABELS[subtask.status] ?? subtask.status;
+  const ownerEnded = subtask.ownerEnded === true;
+  const statusLabel = ownerEnded
+    ? 'owner ended'
+    : (SUBTASK_STATUS_LABELS[subtask.status] ?? subtask.status);
   return {
     title: ref ? ref.split('/').pop() || ref : 'inline',
     titleTooltip: ref ? `${subtask.source.kind} · ${ref}` : `${subtask.source.kind} text`,
     statusLabel,
-    statusTooltip:
-      subtask.status === 'stale'
+    statusTooltip: ownerEnded
+      ? `Child unit ${subtask.id} was left ${subtask.status}: the context that owned it has ended`
+      : subtask.status === 'stale'
         ? `No child mark since ${subtask.lastEventAt ?? 'the unit started'}`
         : `Child unit ${subtask.id}: ${statusLabel}`,
     counts: `${progress.completedSteps}/${progress.totalSteps}`,
-    currentStep: progress.currentStep,
+    // An ended owner's unit has no current step: nothing is working it.
+    currentStep: ownerEnded ? null : progress.currentStep,
     settled: isSettledSubtaskStatus(subtask.status),
+    ownerEnded,
   };
 }
 
@@ -112,7 +120,11 @@ export class SubtaskOpenState {
       openFor: (subtask) => {
         const key = `${run}:${subtask.id}`;
         const remembered = this.open.get(key);
-        const initial = remembered ?? !isSettledSubtaskStatus(subtask.status);
+        // Open while the unit is live work; a settled unit, or one whose owner ended, is closed.
+        // The default applies on first render only: a unit the viewer saw open while it was live
+        // stays open when its owner ends, until the viewer closes it or the run changes.
+        const initial =
+          remembered ?? (!isSettledSubtaskStatus(subtask.status) && subtask.ownerEnded !== true);
         this.open.set(key, initial);
         return browserViewState.get(viewToggleOverrideField('subtasks', key, initial));
       },
@@ -165,6 +177,12 @@ export const subtaskBlockStyles = css`
   .st-unit.st-stale {
     border-left-style: dashed;
     border-left-color: ${unsafeCSS(colors.statusWarn)};
+    background: ${unsafeCSS(colors.bgSurface)};
+  }
+  /* Left open by a context that has ended: muted, not live work and not an error. */
+  .st-unit.st-owner-ended {
+    border-left-style: dotted;
+    border-left-color: ${unsafeCSS(colors.textSecondary)};
     background: ${unsafeCSS(colors.bgSurface)};
   }
 
@@ -240,6 +258,11 @@ export const subtaskBlockStyles = css`
     border-color: ${unsafeCSS(colors.statusWarn)};
     color: ${unsafeCSS(colors.statusWarn)};
   }
+  .st-owner-ended > .st-summary .st-pill {
+    border-style: dotted;
+    border-color: ${unsafeCSS(colors.textSecondary)};
+    color: ${unsafeCSS(colors.textSecondary)};
+  }
 
   .st-count {
     flex-shrink: 0;
@@ -291,10 +314,11 @@ export function renderSubtaskBlock(
   const view = subtaskPresentation(subtask);
   return html`${viewStateUpdates()}
     <details
-      class="st-unit st-${subtask.status}"
+      class="st-unit st-${subtask.status}${view.ownerEnded ? ' st-owner-ended' : ''}"
       data-testid="subtask-unit"
       data-subtask-id=${subtask.id}
       data-subtask-status=${subtask.status}
+      ?data-owner-ended=${view.ownerEnded}
       ?open=${openScope.openFor(subtask)}
       @toggle=${(event: Event) => {
         const open = Reflect.get(event.target ?? {}, 'open');

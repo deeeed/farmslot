@@ -1,0 +1,1 @@
+- The agent-runtime reference documents marking several child rows in one call (`mark sub <id> 2,4-6`, `complete --rows`) and that a parent's terminal mark is refused only by its own open children.
