@@ -513,7 +513,8 @@ test('a launch to a node that refreshes its host waits past 60 s for its answer'
     await assert.rejects(
       launch,
       (error: unknown) =>
-        error instanceof NodeRpcTimeoutError && error.timeoutMs === NATIVE_NODE_ADMISSION_TIMEOUT_MS,
+        error instanceof NodeRpcTimeoutError &&
+        error.timeoutMs === NATIVE_NODE_ADMISSION_TIMEOUT_MS,
     );
   } finally {
     mock.timers.reset();
