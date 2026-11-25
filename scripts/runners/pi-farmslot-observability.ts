@@ -13,9 +13,11 @@ import {
   writePiReasoningReceipt,
 } from './pi-farmslot-hook-writer.mjs';
 import {
+  assertPiLimitSettings,
   assertPiModelThinking,
   deadlinePiFetch,
   PI_REQUEST_TIMEOUT_RETRIES,
+  piModelImageCaps,
   PiProviderConfigurationError,
   piProviderCredentialEnvironment,
   piSdkModels,
@@ -31,6 +33,7 @@ import {
   readTaskMarkdown,
   runFarmslotMark,
 } from './pi-farmslot-task.mjs';
+import { capContextImages } from './pi-image-cap.mjs';
 
 function obsDir() {
   return process.env.FARMSLOT_OBS_DIR || path.join(process.cwd(), '.agent', '.observability');
@@ -133,6 +136,7 @@ export default async function (pi: {
   const timeoutMode = process.env.FARMSLOT_PI_REQUEST_TIMEOUT_MODE ?? 'total';
   if (timeoutMode !== 'total' && timeoutMode !== 'idle')
     throw new Error('FARMSLOT_PI_REQUEST_TIMEOUT_MODE must be total or idle');
+  assertPiLimitSettings();
   // Allow retry backoff, terminal-hook persistence and gateway observation after exhaustion.
   const retrySettlementMarginMs = 30_000;
   const startupGraceMs =
@@ -257,6 +261,7 @@ export default async function (pi: {
             maxTokens: model.maxTokens,
             reasoning: model.reasoning,
             cost: model.cost,
+            inputLimits: model.inputLimits,
           }),
         );
     }
@@ -353,6 +358,31 @@ export default async function (pi: {
     if (event.toolName === 'bash' && event.input && event.input.timeout === undefined)
       event.input.timeout = 600;
   });
+
+  // Providers refuse a request over their image cap (Sparks vLLM: --vision-max-images). Pi keeps
+  // every image in history, so each request drops its oldest images to the selected model's cap.
+  // context_with_system runs after every context handler and sends its output as returned: the
+  // trim maps messages one to one, so the prompt and mid-conversation system messages stay put.
+  let reportedDrop = 0;
+  pi.on(
+    'context_with_system',
+    (event: { messages: unknown[] }, ctx: { model?: unknown; hasUI?: boolean }) => {
+      const capped = capContextImages(event.messages, piModelImageCaps(ctx.model));
+      if (!capped) {
+        reportedDrop = 0;
+        return undefined;
+      }
+      // Recorded when the dropped count changes, once per batch rather than per request. The
+      // session gets the entry; stderr only without a TUI, which would draw over the line.
+      if (capped.dropped !== reportedDrop) {
+        const record = { dropped: capped.dropped, images: capped.images };
+        pi.appendEntry?.('farmslot-image-cap', record);
+        if (ctx.hasUI === false) console.error('[farmslot-pi] image cap', JSON.stringify(record));
+      }
+      reportedDrop = capped.dropped;
+      return { messages: capped.messages };
+    },
+  );
 
   pi.on('model_select', (event: { model: PiThinkingModel }, ctx: PiShutdownContext) => {
     checkThinking(event.model, ctx);

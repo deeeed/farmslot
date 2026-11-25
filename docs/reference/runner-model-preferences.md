@@ -115,6 +115,30 @@ the model's `thinkingLevelMap`, or the same level when no mapping is declared.
 Every worker model declares text and image input. There is no image admission
 check; a provider that cannot accept images reports its own error.
 
+A provider can also cap how many images one request carries (Sparks vLLM refuses
+more than its `--vision-max-images`, 50). Before each request the extension replaces
+the oldest images over the selected model's cap with a short note; the session
+history keeps them all. The cap is, in order:
+
+1. `inputLimits.images.maxPerRequest` declared by the model: in Pi's own catalog
+   (for example Anthropic's per-request limits), in a static `models.json` entry,
+   or set from the settings below for a discovered model.
+2. `maxImages` for the model in its source's `_MODEL_LIMITS`.
+3. `FARMSLOT_PI_<SOURCE>_MAX_IMAGES` for every model of the source, e.g.
+   `FARMSLOT_PI_ROUTER_MAX_IMAGES=50` for Sparks. It also covers static-only models
+   and a source whose discovery failed.
+
+A declared `maxPerMessage` (Pi's Bedrock catalog: 20) is applied per provider
+message; consecutive tool results count as one message, as Pi sends them. Over the
+request cap, images go in batches of a fifth of the cap, so the trimmed prefix (and
+the provider's prompt cache) stays the same until that many more images arrive.
+`maxImages` is a cap of its own, not a budget against reported limits.
+Each new batch adds a `farmslot-image-cap` entry (dropped and total images) to the
+session; without a TUI (print or JSON mode) it is also logged to stderr as
+`[farmslot-pi] image cap`. A bad `_MAX_IMAGES` or any bad `_MODEL_LIMITS` value
+refuses configuration when the extension loads, even for a source that is not
+configured.
+
 For a comparison budget on a shared provider, use `FARMSLOT_PI_LITELLM_MODEL_LIMITS`,
 a JSON object keyed by exact model ID, for example:
 

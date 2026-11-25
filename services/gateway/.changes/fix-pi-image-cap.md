@@ -1,0 +1,1 @@
+- Blind trials keep a static pi model's `inputLimits`, so its image cap still applies in the trial.
