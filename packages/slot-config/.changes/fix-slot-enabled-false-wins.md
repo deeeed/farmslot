@@ -1,0 +1,1 @@
+- `effectiveSlotMode(slot)`: `enabled: false` always gives `disabled`; otherwise the slot's `mode`, then `dispatch`. `loadSlotVars` uses it for `slotMode` and `slotEnabled`.
