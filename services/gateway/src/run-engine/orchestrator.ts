@@ -83,6 +83,7 @@ import {
   type TerminalTransitionRequest,
 } from '../run-lifecycle/terminal-transition.js';
 import type { RunTransitionResult } from '../run-lifecycle/transition-router.js';
+import { captureSessionAtEnd } from '../run-traces/session-capture.js';
 import { clearSettledWorkerError } from '../runners/native/worker-control.js';
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { PromptDeliveryUncertainError } from '../runners/registry.js';
@@ -991,6 +992,8 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       });
       broadcastFn(Events.RUN_STEP_COMPLETED, { runId, step: stepName });
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+      // ADR-039 Amendment 10: the worker session ends with its terminal signal.
+      if (stepName === S.MONITOR) captureSessionAtEnd({ runId });
 
       if (after.status === 'failed' || after.status === 'blocked') {
         // Step `i` is now correctly marked done; finalize only needs to skip steps i+1..end.
@@ -1298,6 +1301,8 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
             ),
           ),
         });
+        // ADR-039 Amendment 10: a blocked or failed worker's session, after the transition.
+        captureSessionAtEnd({ runId });
         return;
       }
 

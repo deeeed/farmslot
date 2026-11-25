@@ -123,6 +123,20 @@ test('fleet refresh preserves an unconfirmed cleanup stop with its owner and hol
   assert.equal(refreshed.phase, 'occupied');
 });
 
+// The idle sweep times a run-less prepare scope on the slot row (15 min, or 2 h keep-warm);
+// a refresh every few minutes would otherwise restart that window forever.
+test('refresh keeps the idle prepare-scope window', () => {
+  const window = { scope: '0123456789abcdef0123456789abcdef', epoch: 12, since: 1_000 };
+  const idle = makeRefreshRow({
+    lifecycle: 'ready',
+    current_run_id: null,
+    slot_epoch: 12,
+    idle_prepare_scope: window,
+  });
+  const refreshed = buildFleetRefreshSnapshot([idle], [makeRefreshRow()], [], 'now').slots[0]!;
+  assert.deepEqual(refreshed.idle_prepare_scope, window);
+});
+
 test('lost running leases quarantine only their slots and preserve healthy refresh rows', (t) => {
   t.mock.method(console, 'error', () => {});
   for (const name of ['prepare', 'dispatch', 'monitor', 'review', 'complete'] as const) {

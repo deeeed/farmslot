@@ -2032,6 +2032,8 @@ export interface RunMetrics {
    * live under `.runs/session-archives/`. Not eval evidence and not a farmrun payload.
    */
   runnerSessionArchive?: RunnerSessionArchiveRef;
+  /** One ref per worker session, in capture order (ADR-039 Amendment 10). */
+  runnerSessionArchives?: RunnerSessionArchiveRef[];
   /**
    * Operator-local provider subscription label that actually funded this run
    * (after any in-place failover). Label only — never an email, token, or home path.
@@ -2155,6 +2157,29 @@ export type RunStartRefSource =
   | { kind: 'package'; packagePath: string }
   | { kind: 'merged-pr'; repo?: string; prNumber?: number }
   | { kind: 'git-ref'; repository?: string; ref?: string };
+
+/**
+ * The build on the slot when the run's worker started: installed by a pinned
+ * prepare (`enforced`), or observed on an excluded eval trial. Analysis filters
+ * comparison cells whose build does not match their start commit.
+ */
+export interface RunPrepareArtifact {
+  kind: 'runway' | 'source';
+  slotId: string;
+  /** The start commit the build was installed for. */
+  baseSha: string;
+  /** Runway workflow run id; absent for a source build. */
+  runId?: string;
+  /**
+   * Commit the installed build was made from: always set when `enforced`; an
+   * observed record keeps it only when the slot reported a full commit.
+   */
+  revision?: string;
+  platform: string;
+  installedAt: string;
+  /** True when prepare installed and verified it; false when it was only observed. */
+  enforced: boolean;
+}
 
 export interface RunStartRefProvenance {
   requestedRef: string;
@@ -2454,6 +2479,29 @@ export interface RunRecoveryRuntimeProposal {
   status: RunAutoRecoveryProposalStatus;
   proposalId?: string;
   generation: number;
+}
+
+/** ADR-039 Amendment 10: the output a run was graded on, and its retained diff. */
+export interface RunGradedOutput {
+  /** sha256 of the graded diff against the dispatch head. */
+  diffSha256: string;
+  /** The published commit, or the working tree release graded before it reset the slot. */
+  source: 'committed' | 'working-tree';
+  /** The commit graded; for a working tree, the ref release parked its commits under, if any. */
+  ref: string | null;
+  /** The diff bytes, relative to the episode store; absent when the diff exceeded 32 MiB. */
+  path?: string;
+  sizeBytes: number;
+  recordedAt: string;
+}
+
+/** ADR-039 Amendment 10: an append-only attempt the step history and recovery records miss. */
+export interface RunAttemptLogEntry {
+  kind: 'dispatch' | 'replay' | 'recovery' | 'infra-failure' | 'operator';
+  step?: string;
+  at: string;
+  error?: string;
+  recovery?: string;
 }
 
 export interface RunReplayStep {
@@ -3211,7 +3259,17 @@ export interface Run {
    */
   releasedCheckout?: { slotId: string; branch: string; headSha: string; at: string };
   /** The run's latest slot release that freed the slot, timed from its start to its settlement. */
-  slotRelease?: { slotId: string; startedAt: string; durationMs: number };
+  slotRelease?: {
+    slotId: string;
+    startedAt: string;
+    durationMs: number;
+    /** A finished-run release's wall time per phase; phases need not add up to `durationMs`. */
+    phasesMs?: Record<string, number>;
+    /** Run-bundle lock time the release itself took, when it measured its own. */
+    bundleLock?: import('../recipes/step-io.js').CompleteStepTiming['bundleLock'];
+    /** Processes the release started, by kind. */
+    exec?: import('../recipes/step-io.js').CompleteStepTiming['exec'];
+  };
   /** Explicit workspace placement, mutually exclusive with a slot binding. */
   reviewWorkspaceTarget?: import('./review-workspace.js').ReviewWorkspaceTarget;
   /** Trusted runtime-owned checkout and output locations. Requires slotId=null. */
@@ -3250,6 +3308,12 @@ export interface Run {
   pressureAdmissionRef?: import('./pressure-admission.js').PressureAdmissionReference;
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
+  /**
+   * The build on the slot for `startRef`: installed and verified by a pinned prepare
+   * (`enforced: true`), or observed on an excluded eval trial (`enforced: false`).
+   * Cleared when a prepare starts.
+   */
+  prepareArtifact?: RunPrepareArtifact | null;
   /** Stack position when this run builds on another run's published PR. */
   stack?: RunStack;
   /** Gateway-captured template provenance for the rendered worker task. */
@@ -3337,6 +3401,15 @@ export interface Run {
   /** Monotonic per-candidate launch attempt, inherited from the queue item; lets run
    * observations tell a legitimate takeover from a stale echo of a superseded run. */
   launchAttempt?: number;
+  /** ADR-039 Amendment 10 trace fields, written when the run records them. */
+  gradedOutput?: RunGradedOutput;
+  /** Worktree head when the run finished; the PR head when it was published; the merge commit. */
+  finalHead?: string;
+  prHead?: string;
+  mergeSha?: string;
+  /** The acceptance ledger at completion, when no ready gate recorded one. */
+  completionAcceptance?: AcceptanceStatusLedger;
+  attemptLog?: RunAttemptLogEntry[];
   completedAt?: string;
   error?: string;
   /**

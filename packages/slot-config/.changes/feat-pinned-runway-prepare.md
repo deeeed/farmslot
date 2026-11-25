@@ -1,0 +1,1 @@
+- Project validation accepts `prepare.pinned_profiles` (a list, or one list per declared platform) and a profile's `pinned_kind` (`runway` or `source`); every listed profile must declare a kind, and core prepare may not.

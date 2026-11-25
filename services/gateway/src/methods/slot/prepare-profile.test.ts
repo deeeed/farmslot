@@ -221,6 +221,44 @@ test('selectPrepareProfile strict mode fails fast without walking fallback chain
   );
 });
 
+test('a pinned selection skips only the artifact probe and keeps the rest strict', async () => {
+  // A pinned run's preflight proves its build, so artifact_available is not probed.
+  // Every other requirement still runs, strictly: a failure refuses, never falls back.
+  const projectJson: RawProjectJson = {
+    prepare: {
+      profiles: {
+        runtime: { phases: ['git', 'deps', 'preflight'] },
+        runway: {
+          phases: ['git', 'deps', 'preflight'],
+          requires: ['artifact_available', 'health_ok'],
+          fallback: 'runtime',
+          pinned_kind: 'runway',
+        },
+      },
+    },
+  };
+  const ctx = { vars: {} as never, projectJson, runtimeDir: '.agent' };
+  const checked: PrepareRequirement[] = [];
+  const check = (healthy: boolean) => async (requirement: PrepareRequirement) => {
+    checked.push(requirement);
+    return { requirement, ok: requirement === 'health_ok' ? healthy : false, detail: 'probe' };
+  };
+  const pinned = { strict: true, skip: ['artifact_available'] as const };
+  const selected = await selectPrepareProfile(ctx, 'runway', undefined, check(true), pinned);
+  assert.equal(selected.profile.name, 'runway');
+  assert.deepEqual(checked, ['health_ok'], 'the artifact probe did not run');
+  await assert.rejects(
+    () => selectPrepareProfile(ctx, 'runway', undefined, check(false), pinned),
+    /Prepare profile 'runway' preconditions failed \(health_ok: probe\)/,
+  );
+
+  // An unpinned prepare still probes the artifact and walks the fallback.
+  checked.length = 0;
+  const unpinned = await selectPrepareProfile(ctx, 'runway', undefined, check(true));
+  assert.equal(unpinned.profile.name, 'runtime');
+  assert.ok(checked.includes('artifact_available'));
+});
+
 test('selectPrepareProfile walks an artifact_available profile to its declared fallback', async () => {
   // Mirrors the mobile farm's runway → ensure-js-runtime wiring: the default
   // profile gates on artifact_available and falls back when no artifact resolves.

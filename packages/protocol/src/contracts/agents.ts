@@ -101,12 +101,32 @@ export interface RunnerSessionArchiveRef {
   kind?: RunnerSessionArchiveKind;
   runner?: string;
   originalPath?: string;
-  /** Path under the gateway `.runs/` directory, e.g. `session-archives/<runId>/<contextId>`. */
+  /**
+   * Path under the gateway `.runs/` directory: `session-archives/<runId>/<contextId>/<sessionKey>`,
+   * or `session-archives/<runId>/<contextId>` for an archive captured before per-session keys.
+   */
   relativeDir?: string;
+  /**
+   * Runner session id, or the attempt index when the runner has none (ADR-039 Amendment 10).
+   * Absent on a legacy archive, which lives directly under the context directory.
+   */
+  sessionKey?: string;
+  /** Source file size and mtime at capture: an unchanged source is not copied again. */
+  sourceSize?: number;
+  sourceMtimeMs?: number;
+  /** For a review-fix session, the review round it answers. */
+  answersRound?: number;
+  /**
+   * The review round this capture belongs to. A warm reviewer or a native fix keeps one runner
+   * session across rounds, so the round keeps each round's snapshot apart.
+   */
+  round?: number;
   sha256?: string;
   sizeBytes?: number;
   capturedAt?: string;
   reason?: string;
+  /** When a `missing` capture was last retried; `reason` keeps the first failure. */
+  lastAttemptAt?: string;
 }
 
 export interface AgentExecutionLocation {
@@ -174,8 +194,13 @@ export interface AgentContext {
   runnerSessionCapturedAt?: string;
   /** Verified external recovery; the gateway did not create this tmux session. */
   adoptedAt?: string;
-  /** Opaque recycle snapshot of this context's runner transcript, when the runner supports it. */
+  /**
+   * This context's latest captured runner transcript (see `runnerSessionArchives` for every
+   * session). History and usage read this single ref.
+   */
   runnerSessionArchive?: RunnerSessionArchiveRef;
+  /** One ref per runner session of this context, in capture order (ADR-039 Amendment 10). */
+  runnerSessionArchives?: RunnerSessionArchiveRef[];
   nudgeCount?: number;
   /** Runner context-window usage percentage (0-100). See {@link AgentContextSummary.ctxPct}. */
   ctxPct?: number | null;

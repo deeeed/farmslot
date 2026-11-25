@@ -308,3 +308,24 @@ test('the retry pass visits runs updated since its watermark and keeps it at a f
   const advanced = JSON.parse(await readFile(path.join(runEpisodeDir(), 'watermark.json'), 'utf8'));
   assert.equal(advanced.since, now + 1);
 });
+
+test('an episode carries the installed build beside its start', () => {
+  const prepareArtifact = {
+    kind: 'runway' as const,
+    slotId: 'host-demo-1',
+    baseSha: 'a'.repeat(40),
+    runId: '41900351233',
+    platform: 'ios',
+    installedAt: NOW,
+    enforced: false,
+  };
+  const episode = buildRunEpisode(
+    run({ startRef: { requestedRef: 'main', resolvedSha: 'a'.repeat(40) }, prepareArtifact }),
+    [],
+    [],
+    NOW,
+  );
+  assert.equal(episode.input.startRef, 'a'.repeat(40));
+  assert.deepEqual(episode.input.prepareArtifact, prepareArtifact);
+  assert.equal(buildRunEpisode(run(), [], [], NOW).input.prepareArtifact, undefined);
+});

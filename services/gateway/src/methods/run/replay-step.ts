@@ -55,6 +55,7 @@ import { readSlotRow, SLOT_PHASE_RELEASING } from '../../core/index.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
+import { PINNED_SKIP_PREPARE_REFUSAL } from '../../projects/pinned-prepare-policy.js';
 import {
   canRecoverReviewFixPass,
   pipelineReviewSelection,
@@ -83,6 +84,11 @@ import {
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
+import {
+  replayResumesNativeWorker,
+  runPrepareIsPinned,
+  shouldReroutePinnedReplayToPrepare,
+} from '../../run-engine/pinned-prepare.js';
 import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
 import {
   probeWorkerSignalForRun,
@@ -98,6 +104,8 @@ import {
   acquireRunTransition,
   withRunTransition,
 } from '../../run-lifecycle/transition-coordinator.js';
+import { recordReplayedFailures } from '../../run-traces/output.js';
+import { captureSessionBeforeReplay } from '../../run-traces/session-capture.js';
 import {
   assertNativeRunner,
   assertSupportedRunnerSpelling,
@@ -1615,6 +1623,32 @@ async function replayRunStep(
       `[run] replay from ${params.stepName} — starting at prepare so eval harness is reinstalled`,
     );
   }
+  // A pinned run restarts from prepare when the replay would re-dispatch, so the
+  // slot gets its build again; an eval experiment already took the branch above.
+  const pinnedRun = !existing.engineState?.evalExperiment && (await runPrepareIsPinned(existing));
+  if (
+    replayStepName !== PS.FIND_SLOT &&
+    shouldReroutePinnedReplayToPrepare({
+      pinned: pinnedRun,
+      liveNativeWorker:
+        pinnedRun &&
+        replayResumesNativeWorker(existing, {
+          freshDispatch: params.freshDispatch,
+          workerRunnerOverride: hasWorkerRunnerOverride,
+        }),
+      targetIdx,
+      prepareIdx,
+      dispatchIdx,
+    })
+  ) {
+    replayStepName = PS.PREPARE;
+    targetIdx = prepareIdx;
+    console.log(
+      `[run] replay from ${params.stepName} — starting at prepare so the pinned build is installed again`,
+    );
+  }
+  if (params.skipPrepare && pinnedRun && targetIdx >= 0 && targetIdx <= dispatchIdx)
+    throw new Error(PINNED_SKIP_PREPARE_REFUSAL);
   if (replayStepName === PS.MONITOR && probeBlockedMonitor && !blockedAttempt) {
     if (
       probe?.signal?.attemptId &&
@@ -2580,6 +2614,18 @@ async function replayRunStep(
       (existing.transport === 'native' ? nativeFreshRestart : true)
         ? { slotId: effectiveSlotId, taskFile: existing.taskFile }
         : null;
+    // ADR-039 Amendment 10: archive the worker session this replay replaces, synchronously and
+    // bounded, before the relaunch clears its binding.
+    if (relaunchesWorker && effectiveSlotId !== null) {
+      const { loadSlotVars } = await import('../../core/config.js');
+      const vars = await loadSlotVars(effectiveSlotId).catch((error: unknown) => {
+        console.warn(
+          `[session-archive] pre-replay capture: slot ${effectiveSlotId} unavailable: ${(error as Error).message}`,
+        );
+        return undefined;
+      });
+      if (vars) await captureSessionBeforeReplay({ runId: params.runId, vars });
+    }
     if (clearing) {
       try {
         const {
@@ -2881,6 +2927,8 @@ async function replayRunStep(
     }
     assertReplayOwnsRun(params.runId, ownedGeneration, startedFromDone);
     assertNativeReplayCurrent();
+    // ADR-039 Amendment 10: the infra failures this replay resets survive in the attempt log.
+    recordReplayedFailures(params.runId, replayStepName, flowSteps?.slice(targetIdx) ?? []);
     const gateReceipts = replayGateReceipts(params.runId, retiringGates);
     const retainedUsage = replayLifetimeSessions
       ? retainReplayLifetimeUsage(currentBeforeReplayUpdate, replayLifetimeSessions)

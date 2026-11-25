@@ -1,5 +1,6 @@
 import {
   closeStepWait,
+  type CompleteStepTiming,
   Events,
   isHeldForResultDecision,
   isSlotFreedByPark,
@@ -21,6 +22,7 @@ import { selectAgentContext } from '../../agents/contexts.js';
 import { execOnSlot } from '../../core/exec.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { usesEvalTrialCapsule } from '../../evals/trial-policy.js';
+import { measurePhases, timePhase } from '../../run-completion/phase-timing.js';
 import { hasValidPrNumber } from '../../run-engine/gate-policy.js';
 import {
   bumpRunGeneration,
@@ -362,8 +364,23 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
   if (!slotId) return releaseCompletedRunSlotOnce(run);
   // COMPLETE, the deferred terminal release, ci-watch and finalize free a finished run's slot
   // here, not through slot.release: time it on the run the same way.
-  return timeRunSlotRelease(run.id, slotId, () =>
-    withTerminalTeardown(slotId, () => releaseCompletedRunSlotOnce(run)),
+  let timing: CompleteStepTiming | undefined;
+  return timeRunSlotRelease(
+    run.id,
+    slotId,
+    async () => {
+      const measured = await measurePhases(() =>
+        withTerminalTeardown(slotId, () => releaseCompletedRunSlotOnce(run)),
+      );
+      timing = measured.timing;
+      return measured.value;
+    },
+    () =>
+      timing && {
+        phasesMs: timing.phasesMs,
+        exec: timing.exec,
+        ...(timing.bundleLock.acquisitions ? { bundleLock: timing.bundleLock } : {}),
+      },
   );
 }
 
@@ -386,11 +403,13 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     // An uncertain handoff can still have the parent on the slot row. Retire
     // this run's task leases before the release CAS; otherwise that CAS skips
     // the child and leaves its reserved process/handoff alive.
-    const { cancelNativeRunWorkers } = await import('../../runners/native/worker.js');
-    await cancelNativeRunWorkers(run.id);
-    const { updateSlotStatusIf } = await import('../../core/index.js');
-    await updateSlotStatusIf(slotId, (slot) => slot.handoff_run_id === run.id, {
-      handoff_run_id: null,
+    await timePhase('nativeWorkers', async () => {
+      const { cancelNativeRunWorkers } = await import('../../runners/native/worker.js');
+      await cancelNativeRunWorkers(run.id);
+      const { updateSlotStatusIf } = await import('../../core/index.js');
+      await updateSlotStatusIf(slotId, (slot) => slot.handoff_run_id === run.id, {
+        handoff_run_id: null,
+      });
     });
   }
   const {
@@ -404,7 +423,7 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     shutdownRunSlotResources,
     stopRunOwnedTmuxAndWatches,
   } = await import('../../run-lifecycle/slot-teardown.js');
-  const workerBlocker = await stopRunOwnedTmuxAndWatches(run);
+  const workerBlocker = await timePhase('stopWorker', () => stopRunOwnedTmuxAndWatches(run));
   let blocker: string | null = workerBlocker;
   const { readSlotRow } = await import('../../core/index.js');
   // A finished artifact-only run's checkout returns to idle with its own commits parked. A
@@ -418,13 +437,15 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
   let checkoutHasLocalWork = false;
   const unconfirmedStops: string[] = [];
   try {
-    await releaseRunOwnedCapabilities(run);
+    await timePhase('capabilities', () => releaseRunOwnedCapabilities(run));
     // COMPLETE already released the slot but kept the checkout: return that exact head to idle.
     if (parksOnRelease && fence.before && !fence.before.current_run_id) {
       const { returnReleasedCheckoutToIdle } =
         await import('../../run-lifecycle/safe-idle-slot.js');
       const { broadcastEvent } = await import('../../server.js');
-      const result = await returnReleasedCheckoutToIdle(getRun(run.id) ?? run, broadcastEvent);
+      const result = await timePhase('returnToIdle', () =>
+        returnReleasedCheckoutToIdle(getRun(run.id) ?? run, broadcastEvent),
+      );
       if (result) {
         if (result.kind !== 'ready')
           await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
@@ -433,13 +454,15 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
           : { released: false, skipped: result.reason };
       }
     }
-    const runtimeBlocker = await shutdownRunSlotResources(run, unconfirmedStops);
+    const runtimeBlocker = await timePhase('resources', () =>
+      shutdownRunSlotResources(run, unconfirmedStops),
+    );
     blocker = await recordSlotTeardownBlocker(run, workerBlocker ?? runtimeBlocker);
     // A blind trial's original Git comes back while the run still owns the slot;
     // a failure holds the slot for retry rather than leaving it on the isolated Git.
     if (!blocker && usesEvalTrialCapsule(run.engineState?.evalExperiment?.blind)) {
       const { restoreFinishedBlindTrialGit } = await import('../../evals/blind-trial.js');
-      blocker = await restoreFinishedBlindTrialGit(run);
+      blocker = await timePhase('blindRestore', () => restoreFinishedBlindTrialGit(run));
       if (blocker) await recordSlotTeardownSkipped(run, blocker);
     }
     const retainedCandidate = Boolean(run.engineState?.evalExperiment?.blind?.firstOutput);
@@ -474,15 +497,14 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
         },
       );
       if (idle) {
-        const result = await reuseSafeIdleSlot(
-          slotId,
-          (await import('../../server.js')).broadcastEvent,
-          {
+        const { broadcastEvent } = await import('../../server.js');
+        const result = await timePhase('idleReset', () =>
+          reuseSafeIdleSlot(slotId, broadcastEvent, {
             epoch: Number(before?.slot_epoch) || 0,
             runId: run.id,
             recordRunId: run.id,
             retainedCandidate,
-          },
+          }),
         );
         if (result.kind === 'ready') return { released: true };
         checkoutHasLocalWork = result.kind === 'local-work';
@@ -494,23 +516,29 @@ async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult>
     }
     fence = await fenceRunSlotCleanup(run, blocker);
     const { broadcastEvent } = await import('../../server.js');
-    const released = await releaseRunSlotOwnership(run, fence, blocker, {
-      collectRecipes: returnsToIdle && !checkoutHasLocalWork,
-      stopUnconfirmed: !workerBlocker && unconfirmedStops.length > 0,
-    });
+    const released = await timePhase('ownership', () =>
+      releaseRunSlotOwnership(run, fence, blocker, {
+        collectRecipes: returnsToIdle && !checkoutHasLocalWork,
+        stopUnconfirmed: !workerBlocker && unconfirmedStops.length > 0,
+      }),
+    );
     if (released && returnsToIdle && !checkoutHasLocalWork) {
       const { reuseSafeIdleSlot } = await import('../../run-lifecycle/safe-idle-slot.js');
-      const result = await reuseSafeIdleSlot(slotId, broadcastEvent, {
-        epoch: Number(fence.before?.slot_epoch) || 0,
-        runId: null,
-        recordRunId: run.id,
-        retainedCandidate,
-      });
+      const result = await timePhase('idleReset', () =>
+        reuseSafeIdleSlot(slotId, broadcastEvent, {
+          epoch: Number(fence.before?.slot_epoch) || 0,
+          runId: null,
+          recordRunId: run.id,
+          retainedCandidate,
+        }),
+      );
       if (result.kind !== 'ready')
         await recordSlotTeardownSkipped(run, `Checkout retained: ${result.reason}`);
     }
     const { loadFleetStatus } = await import('../../fleet/state.js');
-    broadcastEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    broadcastEvent(Events.FLEET_UPDATED, {
+      fleet: await timePhase('fleetBroadcast', () => loadFleetStatus()),
+    });
     return { released, ...(blocker ? { skipped: `Workspace cleanup deferred: ${blocker}` } : {}) };
   } catch (error) {
     // A failed effect must not strand our releasing fence or publish readiness.

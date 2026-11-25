@@ -40,9 +40,24 @@ interface RequestCost {
 export type ExecTally = Partial<Record<ExecutionKind, { calls: number; seconds: number }>>;
 const executionTally = new AsyncLocalStorage<ExecTally>();
 
-/** A background request collects the same measurements the shared exec wrapper records. */
+/**
+ * A background request collects the same measurements the shared exec wrapper records. A tally
+ * started inside another one keeps its own counts and also adds them to the outer tally when it
+ * settles, so the outer measurement still covers everything its operation ran.
+ */
 export function withExecutionTally<T>(tally: ExecTally, operation: () => Promise<T>): Promise<T> {
-  return executionTally.run(tally, operation);
+  const outer = executionTally.getStore();
+  const measured = executionTally.run(tally, operation);
+  if (!outer) return measured;
+  const addToOuter = () => {
+    for (const [kind, { calls, seconds }] of Object.entries(tally) as Array<
+      [ExecutionKind, { calls: number; seconds: number }]
+    >) {
+      const prior = outer[kind] ?? { calls: 0, seconds: 0 };
+      outer[kind] = { calls: prior.calls + calls, seconds: prior.seconds + seconds };
+    }
+  };
+  return measured.finally(addToOuter);
 }
 
 const current = new AsyncLocalStorage<RequestCost>();

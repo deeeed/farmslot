@@ -124,6 +124,7 @@ export function synthesizePrimaryContext(run: Run): AgentContext | null {
     runnerSessionId: run.metrics.runnerSessionId,
     runnerSessionPath: run.metrics.runnerSessionPath,
     runnerSessionArchive: run.metrics.runnerSessionArchive,
+    runnerSessionArchives: run.metrics.runnerSessionArchives,
     nudgeCount: run.metrics.nudgeCount,
     updatedAt: run.updatedAt,
   };

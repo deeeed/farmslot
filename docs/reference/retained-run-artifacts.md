@@ -207,9 +207,13 @@ An artifact already unavailable before this policy remains explicit missing data
 archival does not fabricate it or waive publication/proof requirements.
 
 The package owner selects inactive metadata reservations and abandoned intents or
-staging older than 24 hours. The gateway archives these paths before admission
-and capture, and during the hourly pass, so abandoned reservations do not exhaust
-capacity. Active captures remain protected. Selection and synchronous staging use
+staging older than 24 hours. The gateway archives these paths during the hourly
+pass, before an admission that capacity refuses, and before a capture that is at
+the archive threshold or would cross the cap, so abandoned reservations do not
+exhaust capacity. Admission reads the store's charge from a per-process cache
+that is reused only while the store root, `sha256/`, `usage/` and
+`availability/` keep their stamps; `reservations/` and `staging/` are walked on
+every read. Active captures remain protected. Selection and synchronous staging use
 the bundle lock; cross-volume copying, verification and source cleanup happen
 after admission locks are released. A missing/unwritable archive refuses the
 operation without deletion. Budget admission continues to enforce capacity and

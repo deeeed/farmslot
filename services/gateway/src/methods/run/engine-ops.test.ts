@@ -28,7 +28,21 @@ writeFileSync(path.join(root, 'scripts/dev.sh'), '');
 writeFileSync(path.join(root, 'services/gateway/package.json'), '{}');
 writeFileSync(
   path.join(root, 'projects/demo/project.json'),
-  JSON.stringify({ name: 'demo', task_dir: 'work-items', hooks: {} }),
+  // demo pins prepare for comparison runs with a start ref; the other runs here are
+  // production runs, which pinning leaves alone.
+  JSON.stringify({
+    name: 'demo',
+    task_dir: 'work-items',
+    hooks: {},
+    prepare: {
+      profiles: {
+        attach: { phases: ['health'] },
+        full: { phases: ['git', 'deps', 'preflight'], pinned_kind: 'source' },
+        runway: { phases: ['git', 'deps', 'preflight'], pinned_kind: 'runway' },
+      },
+      pinned_profiles: { cli: ['runway', 'full'] },
+    },
+  }),
 );
 writeFileSync(
   path.join(root, 'pool/local.json'),
@@ -143,6 +157,40 @@ for (const fails of [false, true]) {
     assert.equal(getRun(run.id)?.slotId, fails ? 'move-a' : 'move-b');
     assert.equal(getRun(run.id)?.requestedSlotId, fails ? 'move-a' : 'move-b');
     assert.deepEqual(rollbacks, fails ? [{ current_run_id: null }] : []);
+  });
+}
+
+for (const [stored, expected] of [
+  ['attach', 'runway'],
+  ['full', 'full'],
+] as const) {
+  test(`activating a pinned run stored with ${stored} prepares with ${expected}`, async (t) => {
+    // A listed profile stays (a run sent to full because no Runway build matches);
+    // anything else takes the platform's pinned default.
+    const previousPressure = process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+    process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = 'off';
+    t.after(() => {
+      if (previousPressure === undefined) delete process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION;
+      else process.env.FARMSLOT_DISPATCH_PRESSURE_ADMISSION = previousPressure;
+    });
+    const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: `PROJ-384-${stored}` });
+    t.after(() => cleanupRun(run.id));
+    updateRun(run.id, {
+      status: 'failed',
+      lane: 'comparison',
+      completionPolicy: 'artifact-only',
+      startRef: { requestedRef: '260bd3a5' },
+      slotId: 'move-b',
+      requestedSlotId: 'move-b',
+      prepareProfile: stored,
+    });
+    let requested: string | undefined;
+    replay = async (params) => {
+      requested = params.prepareProfile;
+      return { run: getRun(run.id)! };
+    };
+    await runActivateOnSlot({ runId: run.id }, () => {});
+    assert.equal(requested, expected);
   });
 }
 

@@ -68,12 +68,30 @@ export function runBundleList(params: RunBundleListParams): RunBundleListResult 
     throw new Error('Invalid run.bundle.list params: missing bundlePath');
   return { manifest: listBundle(params.bundlePath) };
 }
+/** ADR-039 Amendment 10: retain retries every session not yet captured while its node holds it. */
+async function retainRunnerSessions(runId: string): Promise<void> {
+  const run = getRun(runId);
+  if (!run?.slotId) return;
+  const { tracesEnabled } = await import('../run-traces/session-capture.js');
+  if (!(await tracesEnabled(run.project))) return;
+  try {
+    const { loadSlotVars } = await import('../core/config.js');
+    const { captureAllRunnerSessions } = await import('../runners/session-archive.js');
+    await captureAllRunnerSessions({ vars: await loadSlotVars(run.slotId), runId });
+  } catch (error) {
+    console.warn(`[session-archive] ${runId}: retain capture failed: ${(error as Error).message}`);
+  }
+}
+
 export async function runBundleRetain(
   params: import('@farmslot/protocol').RunBundleRetainParams,
 ): Promise<import('@farmslot/protocol').RunBundleRetainResult> {
   if (!params.runId?.trim()) throw new Error('Invalid run.bundle.retain params: missing runId');
   const { retainRunArtifacts } = await import('../run-completion/retained-artifacts.js');
+  await retainRunnerSessions(params.runId);
   const result = await retainRunArtifacts(params.runId);
+  const { recordCompletionAcceptance } = await import('../run-traces/output.js');
+  await recordCompletionAcceptance(params.runId);
   // ADR-039 Amendment 4 backfill: an ended run's episode picks up the digests just retained.
   // Advisory like every episode write: the retain itself succeeded and stays reported as such.
   const run = getRun(params.runId);

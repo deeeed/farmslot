@@ -8,6 +8,7 @@ import {
   type IdleDevServerDeps,
   type IdleDevServerPointer,
   IdleDevServerReaper,
+  WARM_DEVSERVER_IDLE_LIMIT_MS,
 } from './idle-devserver.js';
 
 const frame = {
@@ -128,10 +129,10 @@ test('the sweep reports why it skips, how long until it stops, and the stop', as
   const decisions: string[] = [];
   f.deps.decide = (slotId, resourceId, decision) =>
     decisions.push(`${slotId}/${resourceId ?? '-'} ${decision}`);
-  f.setRow({ warm: true, current_run_id: null });
+  f.setRow({ lifecycle: 'manual' });
   await f.reaper.sweep('slot-a');
-  assert.deepEqual(decisions.splice(0), ['slot-a/- skip: warm slot']);
-  f.setRow({ warm: false, current_run_id: 'run-a' });
+  assert.deepEqual(decisions.splice(0), ['slot-a/- skip: manual slot']);
+  f.setRow({ lifecycle: undefined });
   const pointer = f.deps.pointer;
   f.deps.pointer = () => undefined;
   f.deps.explain = () => 'PID file missing, invalid or older than its process';
@@ -192,10 +193,32 @@ for (const kind of ['making-progress', 'unproven']) {
   });
 }
 
-test('explicit keep-warm, prepare, manual use and retained capability owners stay intact', async () => {
-  for (const mode of ['warm', 'prepare', 'manual', 'lease']) {
+// mini-mmt-3: a keep-warm release's dev server and prepare scope ran two days with no run.
+test('a keep-warm slot with no run keeps its dev server for the warm window, then stops it', async () => {
+  const f = fixture();
+  const decisions: string[] = [];
+  f.deps.decide = (slotId, resourceId, decision) =>
+    decisions.push(`${slotId}/${resourceId ?? '-'} ${decision}`);
+  f.setRow({ warm: true, current_run_id: null });
+  f.deps.runs = () => [];
+  await f.reaper.sweep('slot-a');
+  assert.match(decisions.at(-1) ?? '', /idle: pid 101 stops after .* \(keep-warm\)$/);
+  f.advance();
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 0, 'kept past the plain idle limit');
+  for (
+    let spent = DEVSERVER_IDLE_LIMIT_MS;
+    spent < WARM_DEVSERVER_IDLE_LIMIT_MS;
+    spent += DEVSERVER_IDLE_LIMIT_MS
+  )
+    f.advance();
+  await f.reaper.sweep('slot-a');
+  assert.equal(f.stopped(), 1, 'stopped at the warm limit');
+});
+
+test('prepare, manual use and retained capability owners stay intact', async () => {
+  for (const mode of ['prepare', 'manual', 'lease']) {
     const f = fixture();
-    if (mode === 'warm') f.setRow({ warm: true, current_run_id: null });
     if (mode === 'manual') f.setRow({ lifecycle: 'manual' });
     if (mode === 'prepare') f.deps.preparing = () => true;
     if (mode === 'lease') f.deps.retained = async () => true;

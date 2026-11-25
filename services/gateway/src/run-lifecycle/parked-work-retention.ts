@@ -9,6 +9,7 @@ import {
   updateSlotStatusIf,
 } from '../core/index.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { pruneSlotRemoteRefs } from '../methods/slot/idle-remote-prune.js';
 import { activePrepareSlots } from '../methods/slot/shared.js';
 import { workspaceProtectedReason } from '../methods/slot/workspace.js';
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
@@ -79,6 +80,8 @@ export async function parkedWorkRetentionPass(now = new Date()): Promise<void> {
           days,
           execOnSlot,
         );
+        // The same fence: remote refs whose branch origin deleted go here, at most once a day.
+        await pruneSlotRemoteRefs(slotId);
       } catch (error) {
         // Per-slot retention failure retains all remaining refs and does not skip other slots.
         console.error(

@@ -11,6 +11,7 @@ import {
   isIgnoredPoolFile,
   isMockModeProject,
   loadProjectVars,
+  normalizeRawProjectPrepare,
   normalizeRawRuntimeCapabilities,
   normalizeRawSlotSelection,
   normalizeSlotTaskRel,
@@ -643,6 +644,92 @@ test('validatePrepareConfig accepts a full profile set with fallback chain', () 
       PREPARE_CONFIG_PATH,
     ),
   );
+});
+
+// Pinned comparison runs (a comparison run with a startRef) select only from
+// prepare.pinned_profiles, strictly. Each listed profile declares what it installs.
+const PINNED_PROFILES = {
+  runtime: { phases: ['git', 'deps', 'preflight'] },
+  full: { phases: ['git', 'deps', 'preflight', 'health'], pinned_kind: 'source' },
+  runway: {
+    phases: ['git', 'deps', 'preflight'],
+    requires: ['artifact_available'],
+    fallback: 'runtime',
+    pinned_kind: 'runway',
+  },
+};
+const PLATFORMS = { ios: {}, android: {} };
+
+function pinnedJson(pinned: unknown, extra: Record<string, unknown> = {}) {
+  return {
+    name: 'test',
+    platforms: PLATFORMS,
+    prepare: { default: 'runtime', profiles: PINNED_PROFILES, pinned_profiles: pinned, ...extra },
+  } as Parameters<typeof validatePrepareConfig>[0];
+}
+
+test('prepare.pinned_profiles accepts a list or a per-platform object of pinned profiles', () => {
+  assert.doesNotThrow(() =>
+    validatePrepareConfig(pinnedJson(['runway', 'full']), PREPARE_CONFIG_PATH),
+  );
+  assert.doesNotThrow(() =>
+    validatePrepareConfig(
+      pinnedJson({ ios: ['runway', 'full'], android: ['full'] }),
+      PREPARE_CONFIG_PATH,
+    ),
+  );
+});
+
+test('prepare.pinned_profiles rejects lists a pinned run could not use', () => {
+  const rejects = (pinned: unknown, pattern: RegExp, message: string) =>
+    assert.throws(
+      () => validatePrepareConfig(pinnedJson(pinned), PREPARE_CONFIG_PATH),
+      pattern,
+      message,
+    );
+  rejects([], /pinned_profiles must be a non-empty array/, 'empty');
+  rejects('runway', /pinned_profiles must be an array or an object keyed by platform/, 'a string');
+  rejects(['runway', 'runway'], /pinned_profiles contains duplicates/, 'duplicates');
+  rejects(['missing'], /pinned_profiles names unknown profile "missing"/, 'unknown profile');
+  // runtime declares no pinned_kind: strict selection would pass vacuously on it.
+  rejects(['runtime'], /pinned_profiles lists "runtime", which declares no pinned_kind/, 'no kind');
+  rejects({ ios: ['runway'], web: ['full'] }, /pinned_profiles\.web is not a platform/, 'platform');
+  rejects({ ios: [] }, /pinned_profiles\.ios must be a non-empty array/, 'empty platform list');
+  rejects({}, /pinned_profiles must name at least one platform/, 'empty object');
+});
+
+test('pinned_kind is runway or source, and only on named profiles', () => {
+  assert.throws(
+    () =>
+      validatePrepareConfig(
+        prepareJson({ profiles: { full: { phases: ['git'], pinned_kind: 'cached' } } }),
+        PREPARE_CONFIG_PATH,
+      ),
+    /prepare\.profiles\.full\.pinned_kind must be one of: runway, source/,
+  );
+  assert.throws(
+    () =>
+      validatePrepareConfig(
+        prepareJson({
+          core: { phases: ['git'], pinned_kind: 'source' },
+          profiles: { full: { phases: ['git'] } },
+        }),
+        PREPARE_CONFIG_PATH,
+      ),
+    /prepare\.core\.pinned_kind is not valid for core prepare/,
+  );
+});
+
+test('normalizeRawProjectPrepare carries pinned_profiles and pinned_kind', () => {
+  const listed = normalizeRawProjectPrepare(pinnedJson(['runway', 'full']).prepare);
+  assert.deepEqual(listed?.pinnedProfiles, ['runway', 'full']);
+  assert.equal(listed?.profiles?.runway?.pinnedKind, 'runway');
+  assert.equal(listed?.profiles?.full?.pinnedKind, 'source');
+  assert.equal(listed?.profiles?.runtime?.pinnedKind, undefined);
+  const perPlatform = normalizeRawProjectPrepare(
+    pinnedJson({ ios: ['runway', 'full'], android: ['full'] }).prepare,
+  );
+  assert.deepEqual(perPlatform?.pinnedProfiles, { ios: ['runway', 'full'], android: ['full'] });
 });
 
 test('validatePrepareConfig is a no-op without a prepare block', () => {
