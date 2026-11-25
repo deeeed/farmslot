@@ -1,6 +1,7 @@
 import {
   type FlowType,
-  type RunLane,
+  productRunsFirst,
+  type RunListLaneFilter,
   type RunListQuery,
   type RunListRow,
   selectRunList,
@@ -8,11 +9,14 @@ import {
 
 export interface CompanionRunListQuery extends Omit<RunListQuery, 'flow' | 'lane'> {
   flow: FlowType | '';
-  lane: RunLane | '';
+  lane: RunListLaneFilter | '';
   sort: 'newest' | 'oldest' | 'duration';
 }
 
-/** The Runs tab list: the shared run-list selection in this screen's sort order. */
+/**
+ * The Runs tab list: the shared run-list selection in this screen's sort order, with product runs
+ * ahead of eval runs as in Command Center.
+ */
 export function selectCompanionRunList(
   runs: readonly RunListRow[],
   query: CompanionRunListQuery,
@@ -23,10 +27,9 @@ export function selectCompanionRunList(
     lane: query.lane || undefined,
   });
   if (query.sort === 'oldest') {
-    return result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  } else if (query.sort === 'duration') {
+    result.sort((a, b) => (b.metrics?.durationMs ?? 0) - (a.metrics?.durationMs ?? 0));
   }
-  if (query.sort === 'duration') {
-    return result.sort((a, b) => (b.metrics?.durationMs ?? 0) - (a.metrics?.durationMs ?? 0));
-  }
-  return result;
+  return productRunsFirst(result);
 }

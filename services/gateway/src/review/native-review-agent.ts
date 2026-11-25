@@ -60,12 +60,16 @@ import {
   targetForChecklistBasename,
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
+import { shouldApplyArtifactOnlyTaskPolicy } from '../tasks/run-contract.js';
 import { unwatchContext } from '../tasks/watcher.js';
 
 import { finishReviewCleanup } from './cleanup.js';
 import { logRecommendationCorrection, readReviewFeedback } from './feedback.js';
 import { interdiffFallback, interdiffReviewScope } from './interdiff.js';
-import { continueNativeReviewCompletion } from './native-review-completion.js';
+import {
+  continueNativeReviewCompletion,
+  NativeReviewPassWithoutSignalError,
+} from './native-review-completion.js';
 import {
   assertNativeReviewOperationCurrent,
   captureNativeReviewOperationCheck,
@@ -101,6 +105,7 @@ import {
   reviewerResultRelPath,
   reviewerScratchRule,
   scopeReviewFeedbackPath,
+  workingTreeReviewScope,
 } from './review-agent.js';
 import {
   admitReviewRound,
@@ -111,6 +116,7 @@ import {
   settleReviewRoundNoVerdict,
 } from './review-round-budget.js';
 import { noteReviewInputsAtLaunch } from './reviewed-inputs.js';
+import { ReviewerProgressClock } from './reviewer-progress.js';
 import {
   claimWarmReviewerSession,
   invalidateWarmReviewerSessions,
@@ -372,7 +378,11 @@ async function runNativeReviewAttempt(
       ),
     );
   const lastReviewedHeadSha = input.rereview?.lastReviewedHeadSha ?? retained?.lastReviewedHeadSha;
-  if (!recovering && lastReviewedHeadSha) {
+  // A comparison replay's output is its uncommitted working tree (its task says not to commit),
+  // so its re-review reads that tree instead of waiting for a commit that never comes. Other
+  // artifact-only runs commit their work locally and keep this gate.
+  const uncommittedWork = shouldApplyArtifactOnlyTaskPolicy(original);
+  if (!recovering && lastReviewedHeadSha && !uncommittedWork) {
     const tree = await execOnSlot(
       vars,
       'git rev-parse HEAD && git status --porcelain=v1 -z --untracked-files=all',
@@ -591,6 +601,10 @@ async function runNativeReviewAttempt(
         );
         // What this document gives the reviewer; a pass records it (F42).
         await noteReviewInputsAtLaunch(runId);
+        // The re-review scopes name commit ranges; a comparison replay's work is not in commits.
+        const workingTreeNote = uncommittedWork
+          ? workingTreeReviewScope(snapshot.snapshot.headSha ?? null)
+          : '';
         template = retained
           ? (snapshot.snapshot.interdiff
               ? interdiffReviewScope(
@@ -604,7 +618,9 @@ async function runNativeReviewAttempt(
                   priorHeadSha: retained.lastReviewedHeadSha,
                   currentHeadSha: snapshot.snapshot.headSha,
                   priorArtifactDir: `${retained.taskDir}/${reviewArtifactDir(retained.lastLoopNumber, retained.artifactScope)}`,
-                })) + template
+                })) +
+            workingTreeNote +
+            template
           : fallback
             ? (snapshot.snapshot.interdiff
                 ? interdiffReviewScope(
@@ -621,7 +637,9 @@ async function runNativeReviewAttempt(
                     rangeDiffPath: delta?.rangeDiffPath && `${taskDir}/${delta.rangeDiffPath}`,
                     deltaUnavailable: delta?.deltaUnavailable,
                     priorIssues: input.rereview!.priorIssues,
-                  })) + template
+                  })) +
+              workingTreeNote +
+              template
             : (original.engineState?.evalExperiment?.blind?.proof
                 ? `Judge the frozen proof output below against every ordered AC. The implementation is supplied input, not the worker's contribution. Read its exact QA base..head context and the recorded evidence files under ${taskDir}. Judge recipe quality, evidence fit, failures, missing coverage and each AC. Read recorded CI/receipts only. Never run tests, builds, recipes, installs or probes, and never request a product fix or worker retry.\n\nFrozen proof package:\n${await readProofOutput(original)}\n\n`
                 : original.engineState?.evalExperiment
@@ -851,10 +869,10 @@ async function runNativeReviewAttempt(
     const acceptedAt = Date.parse(reviewBinding.acceptedAt ?? startedAt);
     let monitoringStartedAt = Math.min(Date.now(), acceptedAt);
     let deadline = monitoringStartedAt + input.reviewTimeoutMs;
-    let lastProgressAt = monitoringStartedAt;
-    let observedProgress = false;
+    const progressClock = new ReviewerProgressClock(monitoringStartedAt, inactivityTimeoutMs);
     const pollMs = 500;
     let turnStarted = false;
+    let resultWithoutSignal = false;
     let eventCursor: number | undefined;
     // A slow or briefly unreachable node is not a reviewer failure: the reviewer runs on and its
     // progress waits on the node. Only a node silent for a whole inactivity window fails it.
@@ -868,12 +886,6 @@ async function runNativeReviewAttempt(
         console.warn(`[review] ${runId.slice(0, 8)}: reviewer reads deferred: ${error.message}`);
       }
       await completionWake!.wait(500);
-    };
-    const recordProgress = (at: string) => {
-      const timestamp = Date.parse(at);
-      if (!Number.isFinite(timestamp) || timestamp < monitoringStartedAt) return;
-      observedProgress = true;
-      lastProgressAt = Math.max(lastProgressAt, Math.min(Date.now(), timestamp));
     };
     while (true) {
       completionWake.beforeRead();
@@ -925,14 +937,9 @@ async function runNativeReviewAttempt(
           if (commandAcceptedAt > monitoringStartedAt) {
             monitoringStartedAt = commandAcceptedAt;
             deadline = commandAcceptedAt + input.reviewTimeoutMs;
-            if (lastProgressAt < commandAcceptedAt) {
-              lastProgressAt = commandAcceptedAt;
-              observedProgress = false;
-            }
+            progressClock.restart(commandAcceptedAt);
           }
-        } else if (event.type === 'tool.started' || event.type === 'tool.completed') {
-          recordProgress(event.at);
-        }
+        } else progressClock.observe(event);
       }
       let refused: number;
       try {
@@ -950,7 +957,7 @@ async function runNativeReviewAttempt(
       const probe = await probeWorkerSignalForRun(runId, vars.slotId, context);
       if (probe.ok || probe.code === 'non_terminal') {
         for (const event of probe.signal?.checklistTiming?.events ?? [])
-          recordProgress(event.checkedAt);
+          progressClock.record(event.checkedAt);
       }
       if (!probe.ok && probe.code === 'artifact_contract')
         throw new TerminalReviewArtifactError(probe.message);
@@ -962,6 +969,10 @@ async function runNativeReviewAttempt(
         probe,
         assertCurrent: admit,
       });
+      if (completion === 'result') {
+        resultWithoutSignal = true;
+        break;
+      }
       if (completion === 'continued') {
         context = admit().agentContexts!.find((candidate) => candidate.id === contextId)!;
         reviewBinding = context.nativeSession!;
@@ -992,7 +1003,7 @@ async function runNativeReviewAttempt(
       // activity that happened while the gateway was offline.
       if (snapshot.hasMore) continue;
       const now = Date.now();
-      if (now - lastProgressAt >= inactivityTimeoutMs || (now >= deadline && !observedProgress)) {
+      if (progressClock.expired(now) || (now >= deadline && !progressClock.observedProgress)) {
         if (!turnStarted && (!command || !['completed', 'failed'].includes(command.state)))
           throw new Error(
             `Native reviewer never started a turn within ${now - monitoringStartedAt}ms ` +
@@ -1008,15 +1019,23 @@ async function runNativeReviewAttempt(
           throw new Error(
             `Native reviewer completed its turn but its terminal signal remains unavailable: ${probe.message}`,
           );
-        throw new Error(
-          `Native reviewer made no checklist or tool progress for ${now - lastProgressAt}ms ` +
-            `(inactivity limit ${inactivityTimeoutMs}ms; review budget ${input.reviewTimeoutMs}ms)`,
-        );
+        if (
+          command?.state === 'completed' &&
+          !probe.ok &&
+          probe.code === 'terminal_contract_infrastructure'
+        )
+          throw new Error(
+            `Native reviewer completed its turn but its terminal signal could not be checked: ${probe.message}`,
+          );
+        throw new Error(progressClock.failureMessage(now, input.reviewTimeoutMs));
       }
       await completionWake.wait(pollMs);
     }
     admit();
-    const terminal = await readTerminalReviewSignal(vars, taskDir, target.signal);
+    // A valid ISSUES result accepted without its terminal mark has no signal to apply.
+    const terminal = resultWithoutSignal
+      ? undefined
+      : await readTerminalReviewSignal(vars, taskDir, target.signal);
     const feedback = applyTerminalReviewSignal(
       await readReviewFeedback(
         vars,
@@ -1027,6 +1046,11 @@ async function runNativeReviewAttempt(
       ),
       terminal,
     );
+    // The completion check accepted ISSUES only; a re-read that no longer says so is refused.
+    if (resultWithoutSignal && feedback.verdict !== 'issues')
+      throw new NativeReviewPassWithoutSignalError(
+        'Native reviewer result changed after it was accepted without a terminal signal; only an ISSUES result is taken without one',
+      );
     logRecommendationCorrection(contextId, feedback);
     const error = terminalReviewArtifactErrorForCompletion(
       contextId,
@@ -1261,6 +1285,7 @@ async function runNativeReviewAttempt(
       }
     }
     let stopped = true;
+    let stopConfirmed = false;
     if (
       !isUncertainReviewerOperation(failure) &&
       context?.nativeSession &&
@@ -1274,6 +1299,7 @@ async function runNativeReviewAttempt(
           admit();
           await cancelNativeWorkerContext(runId, context!);
         });
+        stopConfirmed = true;
       } catch (stopError) {
         stopped = false;
         primaryFailure = new AggregateError(
@@ -1283,6 +1309,22 @@ async function runNativeReviewAttempt(
         );
       }
     }
+    // A warm continuation stopped cleanly (inactivity, a missing signal, a failed command) keeps
+    // its lineage: the next warm round resumes this conversation from the last verdict instead
+    // of a cold review of the whole change (961d55d3). The verdict's head, loop and artifacts
+    // stay those of `retained`; only the session holder is this context.
+    if (
+      stopConfirmed &&
+      retained &&
+      context?.runnerSessionId === retained.runnerSessionId &&
+      !(failure instanceof NativeReviewResumeFailure) &&
+      !isTerminalReviewArtifactError(failure) &&
+      nativeReviewOperationIsCurrent() &&
+      run &&
+      !isTerminalRunStatus(run.status) &&
+      (run.engineState?.generation ?? 0) === generation
+    )
+      registerWarmReviewerSession({ ...retained, runId, contextId, windowName: contextId });
     // Failed/no-verdict conversations still consumed tokens. Capture only a settled,
     // current binding; an uncertain or superseded attempt remains an offline repair.
     if (

@@ -1,0 +1,1 @@
+- A runner launch no longer fails at its readiness deadline only because the pane classifier is down (for example a refused credential): the stable-pane check keeps polling for one more readiness window, and a launch that still is not ready fails with a message naming both waits and the classifier outage.

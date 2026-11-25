@@ -121,7 +121,9 @@ test(
 
     process.env.FARMSLOT_ROOT = root;
     process.env.NODE_TEST_CONTEXT = '1';
-    process.env.FARMSLOT_TEST_STATUS_FILE = path.join(root, '.farm-status.json');
+    // Not <root>/.farm-status.json: with FARMSLOT_ROOT=root that is this farm's shared status store,
+    // and next to the farm markers the test-status guard refuses it.
+    process.env.FARMSLOT_TEST_STATUS_FILE = path.join(root, 'test-fleet-status.json');
     process.env.FARMSLOT_PROJECTS_DIR = path.join(root, 'projects');
     process.env.FARMSLOT_POOL_DIR = path.join(root, 'pool');
     process.env.FARMSLOT_RUNS_DIR = path.join(root, 'runs');
@@ -203,6 +205,9 @@ test(
       slots: [
         {
           slot: slotId,
+          // A refreshed fleet row names its machine; slot I/O routes by it (an empty one is refused).
+          machine: vars.machine,
+          project,
           current_run_id: run.id,
           slot_epoch: 1,
           task_file: path.join(repo, taskDir, 'TASK.md'),

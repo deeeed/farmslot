@@ -1,0 +1,1 @@
+- The Runs list matches Command Center: product runs list before eval runs (comparison lane) and eval-only families after product families, eval runs carry an EVAL · <variant> marker and an accent edge, and the lane filter adds Hide evals.

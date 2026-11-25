@@ -43,7 +43,23 @@ export async function measureCompleteStep<T>(
     timing: {
       totalMs: Math.round(performance.now() - start),
       phasesMs: record,
-      bundleLock: { ...lock, waitMs: Math.round(lock.waitMs), heldMs: Math.round(lock.heldMs) },
+      // A copy: an abandoned operation (a timed-out admission scan) can still write to `lock`.
+      // Store operation times are summed unrounded and rounded once here.
+      bundleLock: {
+        ...structuredClone(lock),
+        waitMs: Math.round(lock.waitMs),
+        heldMs: Math.round(lock.heldMs),
+        ...(lock.opsMs
+          ? {
+              opsMs: Object.fromEntries(
+                Object.entries(lock.opsMs).map(([name, { count, ms }]) => [
+                  name,
+                  { count, ms: Math.round(ms) },
+                ]),
+              ),
+            }
+          : {}),
+      },
       exec: Object.fromEntries(
         Object.entries(exec).map(([kind, { calls, seconds }]) => [
           kind,

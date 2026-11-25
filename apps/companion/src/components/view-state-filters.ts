@@ -6,27 +6,20 @@ import {
 } from '@farmslot/protocol';
 
 import { useFilterStore } from '../store/filters';
-import { type RunFilters, useRunFilterStore } from '../store/run-filters';
+import {
+  FLOW_FILTERS,
+  LANE_FILTERS,
+  type RunFilters,
+  SORT_OPTIONS,
+  useRunFilterStore,
+} from '../store/run-filters';
 
 const fields = {
   projects: viewListField('projects', [], 'csv'),
   machines: viewListField('machines', [], 'csv'),
-  flow: viewChoiceField<RunFilters['flow']>('flow', '', [
-    '',
-    'fix-bug',
-    'review-pr',
-    'qa',
-    'dev',
-    'pr-complete',
-    'update-branch',
-  ]),
-  lane: viewChoiceField<RunFilters['lane']>('lane', '', [
-    '',
-    'production',
-    'validation',
-    'comparison',
-  ]),
-  sort: viewChoiceField<RunFilters['sort']>('sort', 'newest', ['newest', 'oldest', 'duration']),
+  flow: viewChoiceField<RunFilters['flow']>('flow', '', [...FLOW_FILTERS]),
+  lane: viewChoiceField<RunFilters['lane']>('lane', '', [...LANE_FILTERS]),
+  sort: viewChoiceField<RunFilters['sort']>('sort', 'newest', [...SORT_OPTIONS]),
   search: viewTextField('q'),
   tag: viewTextField('tag'),
 };

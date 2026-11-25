@@ -183,6 +183,19 @@ test('selectRecentRunFamilyGroups returns latest family workspaces for mobile em
     ['newest-family', 'middle-family'],
   );
   assert.deepEqual(selectRecentRunFamilyGroups([olderFamily], 0), []);
+  const evalFamily = run({
+    id: 'eval-root',
+    familyId: 'eval-family',
+    lane: 'comparison',
+    createdAt: '2026-01-04T00:00:00Z',
+  });
+  assert.deepEqual(
+    selectRecentRunFamilyGroups([olderFamily, evalFamily, newestFamily], 2).map(
+      (group) => group.familyId,
+    ),
+    ['newest-family', 'older-family'],
+    'Eval-only families list after product families',
+  );
 });
 
 test('groupRunsByFamily orders families by newest activity and counts variants', () => {
