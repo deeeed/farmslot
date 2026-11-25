@@ -258,6 +258,6 @@ test('idle refresh turns off git auto-maintenance and removes temporary packs a 
   await reset(slotVars(repo, 'stale-tmp-pack'), {}, undefined, 'main');
   assert.equal(existsSync(stale), false, 'an hour-old temporary pack is removed');
   assert.equal(existsSync(fresh), true, 'a pack still being written is kept');
-  assert.equal(git(repo, 'config', '--get', 'maintenance.auto'), 'false');
-  assert.equal(git(repo, 'config', '--get', 'gc.auto'), '0');
+  assert.equal(git(repo, 'config', '--local', '--get', 'maintenance.auto'), 'false');
+  assert.equal(git(repo, 'config', '--local', '--get', 'gc.auto'), '0');
 });

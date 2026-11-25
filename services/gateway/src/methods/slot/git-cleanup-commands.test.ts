@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -284,7 +284,7 @@ function inRepo(
   const root = mkdtempSync(path.join(tmpdir(), 'git-cleanup-'));
   try {
     const bin = path.join(root, 'bin');
-    spawnSync('mkdir', ['-p', bin]);
+    mkdirSync(bin);
     if (options.fakeLsof !== undefined) {
       writeFileSync(path.join(bin, 'lsof'), `#!/bin/sh\n${options.fakeLsof}\n`, { mode: 0o755 });
     }
@@ -321,9 +321,9 @@ test('REMOVE_STALE_TMP_PACKS_COMMAND removes temporary packs a killed fetch left
     # A process still writing an old-looking temporary pack keeps it. exec: no forked child to leak.
     bash -c 'exec 3<"$1"; exec sleep 30' _ "$PACK/tmp_pack_held" </dev/null >/dev/null 2>&1 &
     holder=$!
+    trap 'kill "$holder" 2>/dev/null' EXIT
     for _ in $(seq 100); do lsof -p "$holder" 2>/dev/null | grep -q tmp_pack_held && break; sleep 0.05; done
     eval "$CMD"
-    kill "$holder"
     echo "left: $(ls "$PACK" | sort | tr '\\n' ' ')"`);
 
   assert.equal(result.status, 0, result.stderr);
@@ -332,7 +332,8 @@ test('REMOVE_STALE_TMP_PACKS_COMMAND removes temporary packs a killed fetch left
 });
 
 test('REMOVE_STALE_TMP_PACKS_COMMAND deletes nothing when lsof fails or is killed', () => {
-  for (const fakeLsof of ['exit 1', 'kill -9 $$']) {
+  // Silent failures, and one that lists the pack directory and then dies mid-listing.
+  for (const fakeLsof of ['exit 1', 'kill -9 $$', 'printf "n%s\\n" "$3"; kill -9 $$']) {
     const result = inRepo(
       `old "$PACK/tmp_pack_stale"
       eval "$CMD"
@@ -392,7 +393,7 @@ test('DISABLE_AUTO_MAINTENANCE_COMMAND turns off auto-maintenance once and unreg
   assert.match(result.stdout, /^second=\[\]$/m);
 });
 
-test('DISABLE_AUTO_MAINTENANCE_COMMAND leaves a linked worktree, which shares its config, alone', () => {
+test('DISABLE_AUTO_MAINTENANCE_COMMAND leaves the config of a linked worktree, which shares it, alone', () => {
   const result = inRepo(
     `git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m base
     git worktree add -q "$ROOT/linked" -b linked
@@ -402,10 +403,11 @@ test('DISABLE_AUTO_MAINTENANCE_COMMAND leaves a linked worktree, which shares it
   );
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^auto=\[\] gc=\[\]$/m);
-  const [note] = gitMaintenanceNotes(result.stdout);
+  // An expected state, so no note a caller would surface: only a debug line.
+  assert.deepEqual(gitMaintenanceNotes(result.stdout), []);
   assert.match(
-    note ?? '',
-    /^auto-maintenance left on: this linked worktree shares its git config with \/.+\/repo\/\.git$/,
+    result.stdout,
+    /^farmslot-git-maintenance-debug: config left on: this linked worktree shares it with \/.+\/repo\/\.git$/m,
   );
 });
 
