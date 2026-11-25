@@ -21,14 +21,14 @@ const RECEIPT = 'artifacts/harness-provenance.json';
  * Task init would then treat the dir as retained and fail verification on the slot. Refusing
  * here, before any slot work, names the owner and the way out instead.
  *
- * Read-only. Not refused: a task this run just wrote, this run's own attempt (replay, resume),
- * an authored task adopted under its own author-owned attempt (no run has that id), and any task
- * whose slot copy still holds its receipt (retained verification handles it).
+ * Read-only. Not refused: a task with no gateway receipt yet (one this run just wrote), this
+ * run's own attempt (replay, resume), an authored task adopted under its own author-owned attempt
+ * (no run has that id), and any task whose slot copy still holds its receipt (retained
+ * verification handles it). The pending task-init marker is no signal: write-task sets it for a
+ * provided task file too, which is exactly the re-dispatch this refuses.
  */
 export async function foreignTaskDirRefusal(run: Run): Promise<string | null> {
   if (!run.taskFile || !run.slotId) return null;
-  const pending = run.engineState?.taskInit;
-  if (pending?.taskFile === run.taskFile && pending.status === 'pending') return null;
   const taskDir = path.dirname(run.taskFile);
   if (!existsSync(path.join(taskDir, RECEIPT))) return null;
   let attemptId: unknown;

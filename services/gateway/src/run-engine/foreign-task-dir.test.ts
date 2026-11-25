@@ -103,17 +103,19 @@ test("a run's own attempt (replay, resume) is not refused", async (t) => {
   assert.equal(await foreignTaskDirRefusal(run(dir)), null);
 });
 
-test('a task dir without a receipt, or one this run is writing, is not refused', async (t) => {
-  const bare = taskDir(t, null);
-  assert.equal(await foreignTaskDirRefusal(run(bare)), null);
+test('a task dir without a receipt is not refused', async (t) => {
+  assert.equal(await foreignTaskDirRefusal(run(taskDir(t, null))), null);
+});
+
+test('a re-dispatched task file marked pending by write-task is still refused', async (t) => {
   const dir = taskDir(t, 'archived-run');
   knownRuns.set('archived-run', { id: 'archived-run', status: 'cancelled' });
   const taskFile = path.join(dir, 'TASK.md');
-  assert.equal(
-    await foreignTaskDirRefusal(
+  assert.match(
+    (await foreignTaskDirRefusal(
       run(dir, { engineState: { taskInit: { taskFile, status: 'pending' } } } as Partial<Run>),
-    ),
-    null,
+    )) ?? '',
+    /was initialized by run archived-run/,
   );
 });
 
