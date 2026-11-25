@@ -89,7 +89,7 @@ mock.module('./inline-fix.js', {
 });
 
 const { monitorCI, pokeCIPoll, resolveCIDecision } = await import('./service.js');
-const { createRun, getRun, loadAllRuns } = await import('../runs/store.js');
+const { createRun, getRun, loadAllRuns, updateRun } = await import('../runs/store.js');
 
 test('ci-watch rechecks GitHub and completes when the unchanged HEAD turns green', async () => {
   await loadAllRuns();
@@ -176,28 +176,43 @@ test('ci-watch rechecks pending CI and finishes when checks turn green', async (
   assert.equal(getRun(run.id)?.decisions.length, 0);
 });
 
-test('choosing wait at an inline-fix gate stops a later merge conflict from auto-dispatching', async () => {
-  // Run fcfb5124 (Mobile #39654): the operator chose wait at inline_fix_blocked
-  // to wait for another PR to merge. The next poll found the expected merge
-  // conflict and, because nothing recorded the wait, merge_conflict
-  // auto-dispatch - on by default - spawned an update-branch child and completed
-  // the parent. With the wait recorded, the conflict must reach its decision gate.
-  const conflicted = { checks: [failedCheck], allPassed: false, mergeConflict: true };
-  snapshots.push(
-    { checks: [failedCheck], allPassed: false },
-    { checks: [failedCheck], allPassed: false },
-    conflicted,
-    conflicted,
-    conflicted,
-  );
+// ─── Operator hold (fcfb5124) ───
+// Each case drives the real monitorCI loop. A conflicted PR auto-dispatches an
+// update-branch child by default, which is what spawned ee363d15; a hold must stop
+// that and put the conflict to the operator instead.
+
+const HOLD_GATE = {
+  type: 'ci_inline_fix_blocked' as const,
+  actions: [
+    { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'primary' as const },
+    { id: 'wait', label: 'Keep watching CI', style: 'secondary' as const },
+    { id: 'abort', label: 'Abort', style: 'danger' as const },
+  ],
+};
+const conflicted = { checks: [failedCheck], allPassed: false, mergeConflict: true };
+
+function holdDecision(resolvedAt: string) {
+  return {
+    id: `hold-${resolvedAt}`,
+    ...HOLD_GATE,
+    title: 'inline fix blocked',
+    description: 'inline fix blocked',
+    createdAt: resolvedAt,
+    resolvedAt,
+    resolvedAction: 'wait',
+  };
+}
+
+function watch(seed: (runId: string) => void = () => {}) {
   const run = createRun({
     flowType: 'pr-complete',
     project: 'farmslot-farm',
     ticketOrPr: 'CI-TEST',
   });
+  seed(run.id);
   let settled = false;
-  // Abort in finally, so a failed assertion cannot leave the watch sleeping out
-  // its 600 s poll interval and run the file into its time budget.
+  // Aborted in each test's finally, so a failed assertion cannot leave the watch
+  // sleeping out its 600 s poll interval and run the file into its time budget.
   const controller = new AbortController();
   const monitoring = monitorCI(run.id, 10384, 'MetaMask/core', controller.signal).then(
     (outcome) => {
@@ -205,36 +220,150 @@ test('choosing wait at an inline-fix gate stops a later merge conflict from auto
       return outcome;
     },
   );
-
-  const openDecision = async (type: string) => {
+  const decisions = (type: string) =>
+    getRun(run.id)?.decisions.filter((item) => item.type === type) ?? [];
+  const open = async (type: string) => {
     for (let attempts = 0; attempts < 200; attempts++) {
-      const found = getRun(run.id)?.decisions.find(
-        (item) => item.type === type && !item.resolvedAt,
-      );
+      const found = decisions(type).find((item) => !item.resolvedAt);
       if (found || settled) return found;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     return undefined;
   };
-
-  try {
-    const blocked = await openDecision('ci_inline_fix_blocked');
-    assert.ok(blocked, 'the inline-fix gate is raised first');
-    resolveCIDecision(blocked.id, 'wait');
-
-    // wait sleeps a full poll interval before the next read; wake it the way a
-    // push would, once the sleep is armed.
+  // A wait sleeps a full poll interval; wake it the way a push would, once armed.
+  const poke = async () => {
     for (let attempts = 0; attempts < 200 && !pokeCIPoll(run.id).woken; attempts++)
       await new Promise((resolve) => setTimeout(resolve, 10));
+  };
+  return { run, controller, monitoring, decisions, open, poke, settled: () => settled };
+}
 
-    const conflict = await openDecision('ci_merge_conflict');
-    assert.equal(settled, false, 'the watch must not finish by auto-dispatching after a wait');
-    assert.ok(conflict, 'the merge conflict is put to the operator instead');
-    assert.ok(getRun(run.id)?.ciWatchState?.operatorWaitAt, 'the wait is recorded on the run');
-
-    resolveCIDecision(conflict.id, 'skip');
-    assert.equal((await monitoring).result, 'passed');
+test('control: with no hold, a conflicted PR auto-dispatches', async () => {
+  // This is the behaviour the hold must stop, and it proves the project config
+  // really enables merge_conflict auto-dispatch: without it, the hold cases below
+  // would pass vacuously.
+  snapshots.length = 0;
+  snapshots.push(conflicted, conflicted);
+  const w = watch();
+  try {
+    await w.open('ci_merge_conflict');
+    assert.equal(w.settled(), true, 'the watch ended by dispatching');
+    assert.equal(w.decisions('ci_merge_conflict').length, 0, 'nobody was asked');
   } finally {
-    controller.abort();
+    w.controller.abort();
+    snapshots.length = 0;
+  }
+});
+
+test('choosing wait at an inline-fix gate holds the PR through a later merge conflict', async () => {
+  // Run fcfb5124: wait at inline_fix_blocked, then the expected conflict.
+  snapshots.length = 0;
+  snapshots.push(
+    { checks: [failedCheck], allPassed: false },
+    { checks: [failedCheck], allPassed: false },
+    conflicted,
+  );
+  const w = watch();
+  try {
+    const blocked = await w.open('ci_inline_fix_blocked');
+    assert.ok(blocked, 'the inline-fix gate is raised first');
+    assert.ok(
+      blocked.actions.some((action) => action.id === 'dispatch-pr-complete'),
+      'the gate offered a dispatch, so wait here is a hold',
+    );
+    resolveCIDecision(blocked.id, 'wait');
+    await w.poke();
+
+    const conflict = await w.open('ci_merge_conflict');
+    assert.equal(w.settled(), false, 'the watch must not finish by auto-dispatching');
+    assert.ok(conflict, 'the conflict is put to the operator');
+    assert.ok(
+      conflict.actions.some((action) => action.id === 'wait' && action.label === 'Keep holding'),
+      'and they can keep holding',
+    );
+    resolveCIDecision(conflict.id, 'skip');
+    assert.equal((await w.monitoring).result, 'passed');
+  } finally {
+    w.controller.abort();
+    snapshots.length = 0;
+  }
+});
+
+test('a hold chosen before a gateway restart still holds', async () => {
+  // Restart recovery re-presents the card with no monitor running, and the
+  // operator's wait is persisted on run.decisions with no live resolver. The next
+  // monitorCI must read the hold from there; a flag set only by a live gate would
+  // be missing and the conflict would auto-dispatch.
+  snapshots.length = 0;
+  snapshots.push(conflicted, conflicted);
+  const w = watch((runId) =>
+    updateRun(runId, { decisions: [holdDecision('2026-11-24T13:28:57.000Z')] }),
+  );
+  try {
+    const conflict = await w.open('ci_merge_conflict');
+    assert.equal(w.settled(), false, 'no auto-dispatch after the restart');
+    assert.ok(conflict, 'the conflict is put to the operator');
+  } finally {
+    w.controller.abort();
+    snapshots.length = 0;
+  }
+});
+
+test('keep holding does not re-ask while the head and the conflict are unchanged', async () => {
+  snapshots.length = 0;
+  snapshots.push(conflicted, conflicted, conflicted);
+  const w = watch((runId) =>
+    updateRun(runId, { decisions: [holdDecision('2026-11-24T13:28:57.000Z')] }),
+  );
+  try {
+    const first = await w.open('ci_merge_conflict');
+    assert.ok(first);
+    resolveCIDecision(first.id, 'wait');
+    await w.poke();
+    // Give the loop the poll it was woken for; an unchanged state must stay quiet.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(w.settled(), false);
+    assert.equal(
+      w.decisions('ci_merge_conflict').filter((item) => !item.resolvedAt).length,
+      0,
+      'no new card for the same head and conflict',
+    );
+  } finally {
+    w.controller.abort();
+    snapshots.length = 0;
+  }
+});
+
+test('a dispatch answered before the hold is not reused after it', async () => {
+  // A dispatch-update-branch answered earlier at this gate, then the hold. Reusing
+  // the earlier answer would dispatch straight past the operator's hold.
+  snapshots.length = 0;
+  snapshots.push(conflicted, conflicted);
+  const w = watch((runId) =>
+    updateRun(runId, {
+      decisions: [
+        {
+          id: 'earlier-dispatch',
+          type: 'ci_merge_conflict',
+          title: 'merge conflict',
+          description: 'merge conflict',
+          actions: [
+            { id: 'dispatch-update-branch', label: 'Dispatch update-branch', style: 'primary' },
+          ],
+          createdAt: '2026-11-24T12:00:00.000Z',
+          resolvedAt: '2026-11-24T12:00:00.000Z',
+          resolvedAction: 'dispatch-update-branch',
+        },
+        holdDecision('2026-11-24T13:28:57.000Z'),
+      ],
+    }),
+  );
+  try {
+    const conflict = await w.open('ci_merge_conflict');
+    assert.equal(w.settled(), false, 'the earlier dispatch was not replayed');
+    assert.ok(conflict, 'a fresh question is asked instead');
+  } finally {
+    w.controller.abort();
+    snapshots.length = 0;
   }
 });

@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { RunDecision } from '@farmslot/protocol';
+
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
-  autoDispatchSuppressed,
+  ciHoldSince,
   emptyCiWatchState,
   readDedup,
-  recordCIDecisionAction,
   resetInlineFixConsecutiveAttempts,
 } from './state.js';
 
@@ -33,44 +34,125 @@ test('resetInlineFixConsecutiveAttempts clears consecutive inline-fix window onl
   assert.equal(state.totalAttempts, 5);
 });
 
-test('an operator choosing wait suppresses later automatic dispatch; other actions do not', async (t) => {
-  // Run fcfb5124 (Mobile #39654): the operator chose "wait" at the
-  // inline_fix_blocked gate, meaning wait for #40372 to merge. Nothing recorded
-  // that choice, so the next poll found a merge conflict and auto-dispatched an
-  // update-branch child, which also completed the parent. "wait" must leave a
-  // mark that the automatic paths honour.
-  const run = createRun({
-    flowType: 'pr-complete',
-    project: 'demo',
-    ticketOrPr: `org/repo#${Date.now()}`,
-  });
-  t.after(async () => {
-    if (getRun(run.id)) await deleteRun(run.id);
-  });
-  // deleteRun refuses an active run, so settle it the way the sibling test does.
-  updateRun(run.id, { status: 'done', completedAt: new Date().toISOString() });
+const DISPATCH = {
+  id: 'dispatch-pr-complete',
+  label: 'Dispatch pr-complete',
+  style: 'primary' as const,
+};
+const WAIT = { id: 'wait', label: 'Keep watching CI', style: 'secondary' as const };
+const ABORT = { id: 'abort', label: 'Abort', style: 'danger' as const };
 
-  recordCIDecisionAction(run.id, 'wait');
-  assert.ok(readDedup(run.id).operatorWaitAt, 'wait is recorded on the run');
-  assert.equal(autoDispatchSuppressed(readDedup(run.id)), true);
+function decision(
+  type: string,
+  actions: RunDecision['actions'],
+  resolvedAction: string | undefined,
+  resolvedAt: string | undefined,
+): RunDecision {
+  return {
+    id: `${type}-${resolvedAt ?? 'open'}`,
+    type: type as RunDecision['type'],
+    title: type,
+    description: type,
+    actions,
+    createdAt: '2026-11-24T13:00:00.000Z',
+    ...(resolvedAt ? { resolvedAt, resolvedAction } : {}),
+  };
+}
 
-  // The suppression is specific to wait: the dispatching and other control
-  // actions must not set it, or a normal run would never auto-dispatch again.
-  for (const actionId of ['retry', 'continue', 'dispatch-pr-complete', 'dispatch-update-branch']) {
-    const other = createRun({
-      flowType: 'pr-complete',
-      project: 'demo',
-      ticketOrPr: `org/repo#${Date.now()}-${actionId}`,
-    });
-    t.after(async () => {
-      if (getRun(other.id)) await deleteRun(other.id);
-    });
-    updateRun(other.id, { status: 'done', completedAt: new Date().toISOString() });
-    recordCIDecisionAction(other.id, actionId);
-    assert.equal(
-      autoDispatchSuppressed(readDedup(other.id)),
-      false,
-      `${actionId} must not suppress automatic dispatch`,
-    );
-  }
+test('wait at inline_fix_blocked, offered beside a dispatch, holds the PR', () => {
+  // Run fcfb5124: the gate offered dispatch-pr-complete, wait and abort, and the
+  // operator chose wait. That is the hold; nothing recorded it before.
+  const held = ciHoldSince({
+    decisions: [
+      decision(
+        'ci_inline_fix_blocked',
+        [DISPATCH, WAIT, ABORT],
+        'wait',
+        '2026-11-24T13:28:57.000Z',
+      ),
+    ],
+  });
+  assert.equal(held, '2026-11-24T13:28:57.000Z');
+});
+
+test('only that gate and that choice hold the PR', () => {
+  // The same gate without a dispatch on offer is a cancelled or timed-out check:
+  // "keep watching" a flaky runner is not taking manual control.
+  assert.equal(
+    ciHoldSince({
+      decisions: [
+        decision('ci_inline_fix_blocked', [WAIT, ABORT], 'wait', '2026-11-24T13:28:57.000Z'),
+      ],
+    }),
+    undefined,
+  );
+  // review_comments_early's "Wait for CI first" keeps its one-shot meaning.
+  assert.equal(
+    ciHoldSince({
+      decisions: [
+        decision('ci_review_comments_early', [DISPATCH, WAIT], 'wait', '2026-11-24T13:28:57.000Z'),
+      ],
+    }),
+    undefined,
+  );
+  // An unanswered gate holds nothing, and neither does another action at the hold gate.
+  assert.equal(
+    ciHoldSince({
+      decisions: [decision('ci_inline_fix_blocked', [DISPATCH, WAIT], undefined, undefined)],
+    }),
+    undefined,
+  );
+  assert.equal(
+    ciHoldSince({
+      decisions: [
+        decision(
+          'ci_inline_fix_blocked',
+          [DISPATCH, WAIT, ABORT],
+          'abort',
+          '2026-11-24T13:28:57.000Z',
+        ),
+      ],
+    }),
+    undefined,
+  );
+});
+
+test('a later retry or a ci-watch replay hands the PR back', () => {
+  const hold = decision(
+    'ci_inline_fix_blocked',
+    [DISPATCH, WAIT],
+    'wait',
+    '2026-11-24T13:28:57.000Z',
+  );
+  assert.equal(
+    ciHoldSince({
+      decisions: [
+        hold,
+        decision(
+          'ci_ci_failed',
+          [DISPATCH, { id: 'retry', label: 'Retry CI', style: 'secondary' }],
+          'retry',
+          '2026-11-24T14:00:00.000Z',
+        ),
+      ],
+    }),
+    undefined,
+    'a retry after the hold releases it',
+  );
+  assert.equal(
+    ciHoldSince({
+      decisions: [hold],
+      ciWatchState: { ...emptyCiWatchState(), holdReleasedAt: '2026-11-24T14:00:00.000Z' },
+    }),
+    undefined,
+    'a replay that re-ran ci-watch releases it',
+  );
+  // A release before the hold does not cancel a later hold.
+  assert.equal(
+    ciHoldSince({
+      decisions: [hold],
+      ciWatchState: { ...emptyCiWatchState(), holdReleasedAt: '2026-11-24T13:00:00.000Z' },
+    }),
+    '2026-11-24T13:28:57.000Z',
+  );
 });

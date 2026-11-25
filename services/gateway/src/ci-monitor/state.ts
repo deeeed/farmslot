@@ -4,6 +4,7 @@ import {
   type CIWatchFixTrigger,
   type CIWatchPhase,
   Events,
+  type Run,
   type RunCiWatchState,
 } from '@farmslot/protocol';
 
@@ -124,25 +125,44 @@ export function readDedup(runId: string): RunCiWatchState {
 }
 
 /**
- * True once an operator resolved a CI decision with `wait`. Automatic dispatch
- * stays off for the rest of the run: the operator is waiting on something the
- * gateway cannot see, such as another PR merging. Like `fixScopeRefusal`, it is
- * never cleared, because nothing the gateway observes proves the wait is over.
+ * When the operator holds this PR, the time they took the hold; otherwise undefined.
+ *
+ * A hold is a `wait` chosen at `inline_fix_blocked` while that gate offered a
+ * dispatch: the inline fix had already failed and the operator declined to hand
+ * the PR to a worker, because they are waiting on something the gateway cannot
+ * see, such as another PR merging. Run fcfb5124 was the case. While held, nothing
+ * dispatches automatically and no new inline fix starts.
+ *
+ * It is derived from `run.decisions`, which the live gate and the restart-recovery
+ * path both persist, so a wait chosen after a gateway restart still holds. Waits
+ * on other gates keep their one-shot meaning, and a wait at an
+ * `inline_fix_blocked` gate that offered no dispatch (a cancelled or timed-out
+ * check) means "keep watching", not a hold. The hold ends at a later `retry` on
+ * any CI gate, or at a replay that re-ran ci-watch (`holdReleasedAt`).
  */
-export function autoDispatchSuppressed(state: Pick<RunCiWatchState, 'operatorWaitAt'>): boolean {
-  return Boolean(state.operatorWaitAt);
-}
-
-/**
- * Record a resolved CI decision action that changes later automatic behaviour.
- * Only `wait` does: `retry` and `continue` are one-shot control actions, and the
- * dispatch actions have already dispatched.
- */
-export function recordCIDecisionAction(runId: string, actionId: string | null | undefined): void {
-  if (actionId !== 'wait') return;
-  mutateDedup(runId, (s) => {
-    s.operatorWaitAt = new Date().toISOString();
-  });
+export function ciHoldSince(
+  run: Pick<Run, 'decisions' | 'ciWatchState'> | undefined,
+): string | undefined {
+  if (!run) return undefined;
+  let hold: string | undefined;
+  for (const decision of run.decisions ?? []) {
+    if (decision.type !== 'ci_inline_fix_blocked') continue;
+    if (decision.resolvedAction !== 'wait' || !decision.resolvedAt) continue;
+    if (!decision.actions?.some((action) => action.id.startsWith('dispatch-'))) continue;
+    if (!hold || decision.resolvedAt > hold) hold = decision.resolvedAt;
+  }
+  if (!hold) return undefined;
+  const heldAt = hold;
+  const retried = (run.decisions ?? []).some(
+    (decision) =>
+      decision.type.startsWith('ci_') &&
+      decision.resolvedAction === 'retry' &&
+      !!decision.resolvedAt &&
+      decision.resolvedAt > heldAt,
+  );
+  const releasedAt = run.ciWatchState?.holdReleasedAt;
+  if (retried || (releasedAt && releasedAt > heldAt)) return undefined;
+  return heldAt;
 }
 
 /** Operator chose Retry CI — allow inline fix another consecutive-attempt window. */

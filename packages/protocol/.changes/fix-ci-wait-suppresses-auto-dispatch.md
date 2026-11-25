@@ -1,1 +1,1 @@
-- `RunCiWatchState.operatorWaitAt` records that an operator resolved a CI decision with `wait`. Automatic dispatch reads it and stays off for the rest of that watch, so a `wait` cannot be followed by a dispatch the operator did not ask for.
+- `RunCiWatchState.holdReleasedAt` records when a replay that re-ran ci-watch handed a held PR back to automation. An operator hold is derived from `Run.decisions` — a `wait` at `inline_fix_blocked` while that gate offered a dispatch — and a replay keeps those resolved decisions, so a hold resolved before this time no longer applies.

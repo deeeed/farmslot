@@ -3592,11 +3592,12 @@ export interface RunCiWatchState {
   /** Scope refusals stop automatic CI fix retries. */
   fixScopeRefusal?: string;
   /**
-   * When an operator resolved a CI decision with `wait`. The operator has taken
-   * manual control of the PR, so every automatic dispatch category stays off for
-   * the rest of the run; the decision gates still offer a dispatch explicitly.
+   * When a replay that re-ran ci-watch handed the PR back to automation. An
+   * operator hold is derived from `Run.decisions` (a `wait` at
+   * `inline_fix_blocked` while that gate offered a dispatch); replay keeps those
+   * resolved decisions, so a hold resolved before this time no longer applies.
    */
-  operatorWaitAt?: string;
+  holdReleasedAt?: string;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };
