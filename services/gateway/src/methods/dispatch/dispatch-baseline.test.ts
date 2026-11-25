@@ -34,6 +34,8 @@ const fixedHead = 'f3f36fc1' + '1'.repeat(32);
 const captured: string[] = [];
 let prepares = 0;
 let prepareParams: SlotPrepareParams | undefined;
+// The mock assigns it; a getter keeps the read from narrowing to the reset value.
+const lastPrepareParams = (): SlotPrepareParams | undefined => prepareParams;
 let runtimeBoots = 0;
 let projectJson: RawProjectJson = {};
 let projectConfigBroken = false;
@@ -465,7 +467,14 @@ test('a preparing dispatch passes the run domain to prepare', async (t) => {
   });
   await core.rewriteStatusFile(() => ({
     slots: [
-      { slot: vars.slotId, current_run_id: run.id, slot_epoch: 1, lifecycle: 'ready', phase: null, agent: 'idle' },
+      {
+        slot: vars.slotId,
+        current_run_id: run.id,
+        slot_epoch: 1,
+        lifecycle: 'ready',
+        phase: null,
+        agent: 'idle',
+      },
     ],
   }));
   t.after(async () => {
@@ -491,8 +500,8 @@ test('a preparing dispatch passes the run domain to prepare', async (t) => {
     (error: unknown) => error === stop,
   );
   assert.equal(prepares, 1);
-  assert.equal(prepareParams?.flowType, 'dev');
-  assert.equal(prepareParams?.domain, 'money-movement');
+  assert.equal(lastPrepareParams()?.flowType, 'dev');
+  assert.equal(lastPrepareParams()?.domain, 'money-movement');
 });
 
 const PINNED_BASE = '260bd3a5b20c3f9126510b7b71d0e5527f395b5d';

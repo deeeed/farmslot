@@ -113,6 +113,7 @@ import { checkPrepareDevice } from './prepare-device.js';
 import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-devserver-log.js';
 import { createPrepareGitTimer } from './prepare-git-timing.js';
 import { verifyPrepareHealth } from './prepare-health.js';
+import { prepareHookEnvExports } from './prepare-hook-env.js';
 import {
   isLockfile,
   LOCKFILE_DRIFT_FALLBACK_MARKER,
@@ -170,7 +171,6 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
-import { prepareHookEnvExports } from './prepare-hook-env.js';
 import { scrubTempForRun, shouldScrubTempForRun } from './temp-scrub.js';
 import { assertPublishedPrepareBranchContained } from './unmerged-work.js';
 

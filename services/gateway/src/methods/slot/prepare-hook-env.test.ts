@@ -12,7 +12,7 @@ test('prepare hooks see the profile, and the flow type when the prepare has one'
     "export FARMSLOT_PREPARE_PROFILE='ensure-js-runtime'",
   ]);
   assert.deepEqual(prepareHookEnvExports('full', ''), ["export FARMSLOT_PREPARE_PROFILE='full'"]);
-  assert.deepEqual(prepareHookEnvExports("o'dd", "fix-bug"), [
+  assert.deepEqual(prepareHookEnvExports("o'dd", 'fix-bug'), [
     "export FARMSLOT_PREPARE_PROFILE='o'\\''dd'",
     "export FARMSLOT_FLOW_TYPE='fix-bug'",
   ]);
