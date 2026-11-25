@@ -1142,7 +1142,8 @@ async function recordedBundleBytes(store: RunBundleStore, digest: string): Promi
 /**
  * Retention moves a bundle aside (`.retention-<uuid>`) while it archives it, and those bytes
  * stay charged until the archive removes them. Its manifest still names the bundle, so the
- * record applies; only a directory without one is measured.
+ * record applies; only a directory without one is measured. Archival stages a bundle's usage
+ * record with it, so that measurement is not written back: it would be an orphan record.
  */
 async function movedBundleBytes(store: RunBundleStore, directory: string): Promise<number> {
   const manifest = await readOptional(path.join(directory, 'manifest.json'));
@@ -1150,10 +1151,8 @@ async function movedBundleBytes(store: RunBundleStore, directory: string): Promi
   const digest = sha256Text(manifest);
   const recorded = await readBundleRecord(store, digest);
   if (recorded !== undefined) return recorded;
-  // Moved aside before it had a record (published before records existed): measured once.
-  const measured = await physicalBytes(directory);
-  await recordBundleBytes(store, digest, measured);
-  return measured;
+  // Moved aside with its record, or before records existed.
+  return physicalBytes(directory);
 }
 
 /** A transfer stage charges its reserved ceiling, including partially written bytes, once. */
@@ -2251,7 +2250,20 @@ export async function readRetainedRunBundle(
 export interface RunBundleHousekeepingPath {
   path: string;
   runId: string;
-  store: 'bundle-reservations' | 'bundle-intents' | 'bundle-staging' | 'run-bundles';
+  store:
+    | 'bundle-reservations'
+    | 'bundle-intents'
+    | 'bundle-staging'
+    | 'run-bundles'
+    | 'bundle-records';
+}
+
+/** Records left behind by a bundle that already left `sha256/`, archived per housekeeping pass. */
+const ORPHAN_RECORDS_PER_PASS = 200;
+
+/** A bundle's usage and availability records, which leave the store with its directory. */
+export function runBundleRecordPaths(storeRoot: string, digest: string): string[] {
+  return ['usage', 'availability'].map((dir) => path.join(storeRoot, dir, `${digest}.json`));
 }
 
 /** What the housekeeping inventory takes from one run record and its decision journal. */
@@ -2473,11 +2485,18 @@ async function runBundleHousekeepingInventoryUntimed(store: RunBundleStore, now:
     cleanup.push({ path: directory, runId: 'bundle-housekeeping', store: 'bundle-staging' });
   }
   // A bundle no run references and no live capture pins is superseded storage: archive it,
-  // with its retry intents, so a later capture with the same key starts over.
+  // with its retry intents and records, so a later capture with the same key starts over.
   const archivable: RunBundleHousekeepingPath[] = [];
   const digestRoot = path.join(store.root, 'sha256');
   await mkdir(digestRoot, { recursive: true });
-  for (const digest of await readdir(digestRoot)) {
+  const digests = await readdir(digestRoot);
+  const records = new Set<string>();
+  for (const dir of ['usage', 'availability']) {
+    await mkdir(path.join(store.root, dir), { recursive: true });
+    for (const name of await readdir(path.join(store.root, dir)))
+      records.add(path.join(store.root, dir, name));
+  }
+  for (const digest of digests) {
     // Archive staging (`.retention-*`) and other non-bundle names are not this selection's.
     if (!/^[a-f0-9]{64}$/u.test(digest)) continue;
     if (referenced.has(digest) || pinned.has(digest)) continue;
@@ -2491,7 +2510,25 @@ async function runBundleHousekeepingInventoryUntimed(store: RunBundleStore, now:
     // Intents first: a host interrupted between entries leaves the bundle to select again.
     for (const intent of committedIntents.get(digest) ?? [])
       archivable.push({ path: intent, runId, store: 'bundle-intents' });
+    // The directory before its records: a crash between them leaves records with no bundle, which
+    // the orphan rule below archives, never a live bundle without its availability record.
     archivable.push({ path: directory, runId, store: 'run-bundles' });
+    for (const record of runBundleRecordPaths(store.root, digest))
+      if (records.has(record)) archivable.push({ path: record, runId, store: 'bundle-records' });
+  }
+  // Records whose bundle already left the store (archived before its records moved with it, an
+  // interrupted pass, or garbage collection).
+  // Availability may journal archived media locations, so these are archived, never deleted.
+  const present = new Set(digests);
+  const runId = `bundle-records-${new Date(now).toISOString().slice(0, 13).replace(/\D/gu, '')}`;
+  let orphans = 0;
+  for (const record of records) {
+    const digest = path.basename(record, '.json');
+    if (!record.endsWith('.json') || !BUNDLE_DIGEST.test(digest)) continue;
+    if (present.has(digest) || referenced.has(digest) || pinned.has(digest)) continue;
+    // Bounded so a large backlog moves over several passes and each archive manifest stays small.
+    if (orphans++ === ORPHAN_RECORDS_PER_PASS) break;
+    archivable.push({ path: record, runId, store: 'bundle-records' });
   }
   return { cleanup, archivable, referenced, pinned, committedIntents };
 }
@@ -2757,7 +2794,8 @@ export async function collectRunBundleGarbage(
         reclaimedBytes +=
           (await readBundleRecord(store, digest)) ?? (await physicalBytes(directory));
         await rm(directory, { recursive: true });
-        await rm(bundleUsagePath(store, digest), { force: true });
+        for (const record of runBundleRecordPaths(store.root, digest))
+          await rm(record, { force: true });
         stableStoreCharges.delete(stableChargeKey(store));
         // A reclaimed payload cannot satisfy its old retry intent. Future explicit
         // acquisition of these bytes starts a new capture instead of a lost stage.

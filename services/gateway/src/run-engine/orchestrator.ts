@@ -67,9 +67,12 @@ import {
 } from '../review-workspaces/pipeline.js';
 import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
 import {
+  announcePendingResultDecision,
   holdRunForResultDecision,
   ResultDecisionHoldError,
   runDeliveredResult,
+  sendBackStaleReceiptOnce,
+  staleReceiptSendBackDue,
 } from '../run-completion/result-decision.js';
 import {
   reserveRunArtifactMetadata,
@@ -100,6 +103,7 @@ import { withRunSessionUsageContext } from '../runtime/run-session-usage-context
 import { captureRunSourceOwnerFence } from '../sources/run-fence.js';
 import { SourceAdmissionRefusal, SourcePlanRestart, withRunSources } from '../sources/runtime.js';
 import { isNoCodeTerminalDisposition, releasedNoChangeChecks } from '../tasks/worker-signals.js';
+import { DeterministicGateBlockedError } from '../tasks/worker-terminal-contract.js';
 import { schedulerTick } from '../work-graph/store.js';
 
 import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
@@ -484,7 +488,7 @@ async function retainCompletionPrerequisiteFailure(
   runId: string,
   generation: number,
   stepName: typeof S.COMPLETE | typeof S.FINALIZE,
-  error: GatewayMethodError | PublishPackageRefusedError,
+  error: GatewayMethodError | PublishPackageRefusedError | DeterministicGateBlockedError,
 ): Promise<void> {
   const current = getRun(runId);
   if (runSupersededSince(current, generation)) return;
@@ -492,7 +496,12 @@ async function retainCompletionPrerequisiteFailure(
     status: 'failed',
     detail: error.message,
     outputs: {
-      gatePrerequisiteRefusal: error instanceof GatewayMethodError ? (error.details ?? {}) : {},
+      gatePrerequisiteRefusal:
+        error instanceof GatewayMethodError
+          ? (error.details ?? {})
+          : error instanceof DeterministicGateBlockedError
+            ? { readiness: { reasons: error.reasons } }
+            : {},
     },
   });
   const steps = pipelineStepsForRun(current!);
@@ -502,19 +511,34 @@ async function retainCompletionPrerequisiteFailure(
   // A delivered result waits for a person instead of failing (ADR-065
   // Amendment 7); without one the refusal stays Amendment 6's `failed`.
   if (runDeliveredResult(getRun(runId)!)) {
+    // Only a refusal the engine sends back at once holds without a card first.
+    const sendBackDue = stepName === S.COMPLETE && staleReceiptSendBackDue(getRun(runId)!);
+    let held: Run | null | undefined;
     try {
-      await holdRunForResultDecision(
+      held = await holdRunForResultDecision(
         runId,
         stepName === S.COMPLETE ? 'complete' : 'finalize',
         error.message,
-        { patch: { metrics: { ...current!.metrics, outcome: 'partial' } } },
+        {
+          patch: { metrics: { ...current!.metrics, outcome: 'partial' } },
+          announce: !sendBackDue,
+        },
       );
-      return;
     } catch (holdError) {
       // Never left `completing`: an unrecorded hold falls back to Amendment 6.
       console.error(
         `[run-engine] run ${runId.slice(0, 8)} could not be held for a decision; failing it: ${(holdError as Error).message}`,
       );
+    }
+    if (held !== undefined) {
+      // The run is held: a failed announcement never fails it.
+      if (held && sendBackDue && !(await sendBackStaleReceiptOnce(held)))
+        await announcePendingResultDecision(runId).catch((announceError: unknown) =>
+          console.warn(
+            `[run-engine] run ${runId.slice(0, 8)} held, but its decision was not announced: ${(announceError as Error).message}`,
+          ),
+        );
+      return;
     }
   }
   const collaborators = terminalCollaborators(Events.RUN_UPDATED, null);
@@ -1131,10 +1155,12 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       }
 
       // COMPLETE or FINALIZE could not build the publish package from the
-      // run's evidence. Both delivered and failed captures retain the original
-      // worker for recovery under ADR-065 Amendments 6 and 7.
+      // run's evidence, or a declared CI check has no current passing receipt.
+      // Both delivered and failed captures retain the original worker for
+      // recovery under ADR-065 Amendments 6 and 7.
       if (
-        err instanceof PublishPackageRefusedError &&
+        (err instanceof PublishPackageRefusedError ||
+          err instanceof DeterministicGateBlockedError) &&
         (stepName === S.COMPLETE || stepName === S.FINALIZE)
       ) {
         stepPartialIO.delete(runId);

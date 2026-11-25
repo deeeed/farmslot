@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, mock, test } from 'node:test';
 import { promisify } from 'node:util';
+
+import type { TempScrubReceipt } from '@farmslot/protocol';
 
 import '../core/hermetic-git.test-support.js';
 import '../core/private-pool.test-support.js';
@@ -67,8 +69,12 @@ test(
     t.after(() => runs.updateRun(run.id, { status: 'failed' }));
     const events: unknown[] = [];
 
-    await slotPrepare({ slotId, runId: run.id, prepareProfile: 'core' }, (_event, payload) =>
-      events.push(payload),
+    const recorded: TempScrubReceipt[] = [];
+    const result = await slotPrepare(
+      { slotId, runId: run.id, prepareProfile: 'core' },
+      (_event, payload) => events.push(payload),
+      undefined,
+      { onTempScrubbed: (receipt) => recorded.push(receipt) },
     );
 
     assert.equal(existsSync(path.join(slotRepo, 'temp/farmslot/deps-setup.stamp')), true);
@@ -80,5 +86,62 @@ test(
     );
     assert.match(JSON.stringify(events), /Deleted nested clone temp\/tasks\/goal3-clone/);
     assert.equal(existsSync(path.join(slotRepo, 'temp/tasks/goal3-clone')), false);
+    // Every other entry is named too, not only counted, and the run's step is handed the list.
+    assert.match(JSON.stringify(events), /Removed dir temp\/scratch-tat4752/);
+    assert.match(JSON.stringify(events), /Removed file temp\/tat4505-trace.json/);
+    assert.equal(recorded.length, 1, 'the run step is handed the clear-out once');
+    // One step event for the whole clear-out; its lines ride one output chunk.
+    const cleanSteps = events.filter(
+      (payload) => (payload as { name?: unknown } | null)?.name === 'clean',
+    );
+    assert.equal(cleanSteps.length, 1, JSON.stringify(cleanSteps));
+    const [receipt] = recorded;
+    assert.ok(receipt);
+    assert.deepEqual(result.tempScrub, receipt);
+    const removed = receipt.removed.map((entry) => `${entry.type} ${entry.path}`);
+    for (const expected of [
+      'checkout temp/tasks/goal3-clone',
+      'task-dir temp/tasks/feat/tat-4752-1123-101010',
+      'entry temp/scratch-tat4752',
+      'entry temp/tat4505-trace.json',
+    ])
+      assert.ok(removed.includes(expected), `${expected} in ${JSON.stringify(removed)}`);
+    assert.equal(receipt.removedCount, receipt.removed.length);
+    assert.equal(receipt.refusedCount, 0);
+  },
+);
+
+test(
+  'a refused clear-out hands the run step its record before prepare fails',
+  needsTmuxSandbox,
+  async (t) => {
+    const { slotId, slotRepo } = await stackFixture(t, 'temp-scrub-refused', 48870);
+    await writeFile(path.join(slotRepo, '.git/info/exclude'), 'temp/\n');
+    // temp/ must be a plain directory: a symlink is refused and nothing under it is touched.
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'prepare-temp-scrub-outside-'));
+    t.after(() => rm(outside, { recursive: true, force: true }));
+    await writeFile(path.join(outside, 'scratch.json'), '{}');
+    await symlink(outside, path.join(slotRepo, 'temp'));
+    const created = runs.createRun(
+      { flowType: 'dev', project: 'farmslot-farm', ticketOrPr: 'TAT-4901', slotId },
+      { deferBackgroundPersist: true },
+    );
+    const run = runs.updateRun(created.id, {
+      taskFile: '/farm/projects/farmslot-farm/tasks/feat/tat-4901-1125-090000/TASK.md',
+    })!;
+    t.after(() => runs.updateRun(run.id, { status: 'failed' }));
+    const recorded: TempScrubReceipt[] = [];
+
+    await assert.rejects(
+      slotPrepare({ slotId, runId: run.id, prepareProfile: 'core' }, () => {}, undefined, {
+        onTempScrubbed: (receipt) => recorded.push(receipt),
+      }),
+      /temp\/ still holds another run's files: temp \(temp\/ is not a plain directory/,
+    );
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0]?.refusedCount, 1);
+    assert.equal(recorded[0]?.refused[0]?.path, 'temp');
+    assert.equal(recorded[0]?.removedCount, 0);
+    assert.equal(existsSync(path.join(outside, 'scratch.json')), true);
   },
 );

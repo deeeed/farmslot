@@ -10,7 +10,11 @@ import type {
   Run,
   RunArtifactBundleRef,
 } from '@farmslot/protocol';
-import { resolveRetainedRunBundleRef, runBundleRefs } from '@farmslot/run-bundle';
+import {
+  resolveRetainedRunBundleRef,
+  runBundleRecordPaths,
+  runBundleRefs,
+} from '@farmslot/run-bundle';
 
 import { makeRun } from '../methods/run/test-fixtures.js';
 
@@ -72,7 +76,10 @@ function referenceOwnedPaths(removed: Run[], kept: Run[], roots: RunRetentionRoo
       ? owned(
           (run) => bundleDigests(run, bundles.id),
           () => true,
-        ).map((digest) => path.join(bundles.root, 'sha256', digest))
+        ).flatMap((digest) => [
+          path.join(bundles.root, 'sha256', digest),
+          ...runBundleRecordPaths(bundles.root, digest),
+        ])
       : [],
   };
 }
