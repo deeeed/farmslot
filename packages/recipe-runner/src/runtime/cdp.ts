@@ -815,16 +815,24 @@ export class CdpWebPage {
       } else {
         const geometry = JSON.stringify(target);
         if (geometry !== previousGeometry) {
-          await this.session.call(
-            'Input.dispatchMouseEvent',
-            {
-              type: 'mouseMoved',
-              x: target.x,
-              y: target.y,
-              button: 'none',
-            },
-            { timeoutMs: Math.max(1, deadline - Date.now()) },
-          );
+          try {
+            await this.session.call(
+              'Input.dispatchMouseEvent',
+              {
+                type: 'mouseMoved',
+                x: target.x,
+                y: target.y,
+                button: 'none',
+              },
+              { timeoutMs: Math.max(1, deadline - Date.now()) },
+            );
+          } catch (error) {
+            // Same leftover-budget limit as the readiness probe above.
+            if (error instanceof CdpCallTimeoutError) {
+              throw new Error(`Click target readiness timed out: ${label}`, { cause: error });
+            }
+            throw error;
+          }
           previousGeometry = geometry;
           stableSince = Date.now();
         } else if (Date.now() - stableSince >= 50 && Date.now() < deadline) {
@@ -1018,6 +1026,8 @@ export class CdpWebPage {
     const deadline = Date.now() + timeoutMs;
     const expression = `(() => { ${deepQueryHelpersExpression()} return ${waitForPredicateExpression(options)}; })()`;
     let lastEnabled: boolean | undefined;
+    let answered = false;
+    let pollTimeout: CdpCallTimeoutError | undefined;
     do {
       options.signal?.throwIfAborted();
       let observed: boolean | { matched: boolean; enabled?: boolean };
@@ -1030,11 +1040,14 @@ export class CdpWebPage {
           },
         );
       } catch (error) {
-        // A poll gets only the budget left, so a busy page outlasts the last one:
-        // that is this wait timing out, not a CDP failure.
-        if (error instanceof CdpCallTimeoutError) break;
+        // Each poll's limit is the remaining budget, so its expiry is this wait's timeout.
+        if (error instanceof CdpCallTimeoutError) {
+          pollTimeout = error;
+          break;
+        }
         throw error;
       }
+      answered = true;
       options.signal?.throwIfAborted();
       if (typeof observed === 'object' && typeof observed.enabled === 'boolean')
         lastEnabled = observed.enabled;
@@ -1048,12 +1061,17 @@ export class CdpWebPage {
         signal: options.signal,
       });
     } while (Date.now() <= deadline);
+    const cause = pollTimeout ? { cause: pollTimeout } : undefined;
+    // A page that never answered says nothing about the subject: keep it a transport diagnostic.
+    if (!answered)
+      throw new Error(`ui.wait_for timed out: the page answered no poll in ${timeoutMs}ms`, cause);
     if (options.enabled !== undefined)
       throw new RecipeExecutionError(
         'subject',
         `ui.wait_for timed out: expected enabled=${options.enabled}, last observed enabled=${lastEnabled ?? 'unavailable'}.`,
+        cause,
       );
-    throw new Error('ui.wait_for timed out');
+    throw new Error('ui.wait_for timed out', cause);
   }
 
   async waitForSelector(selector: string, options: { timeoutMs?: number } = {}): Promise<unknown> {
