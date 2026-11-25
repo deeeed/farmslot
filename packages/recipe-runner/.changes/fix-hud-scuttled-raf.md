@@ -1,0 +1,1 @@
+- The CDP HUD and DOM settlement waits no longer read the page's `requestAnimationFrame` directly. On a MetaMask Extension page under LavaMoat scuttling, reading it throws in the main world, so every `app.hud` update failed and a recipe smoke stopped with `APP_LOGIC_FAILURE`. Where the global is scuttled, a 16 ms timer stands in for the frame.
