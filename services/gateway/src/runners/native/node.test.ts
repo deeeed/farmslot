@@ -479,12 +479,12 @@ test('launches and messages to a node that refreshes its host wait long enough f
 test('a launch to a node that refreshes its host waits past 60 s for its answer', async () => {
   const machine = 'native-host-refresh-timeout';
   const owner = 'native-owner';
-  let sent = 0;
+  const sent: string[] = [];
   // The node never answers.
   const ws = {
     readyState: WebSocket.OPEN,
-    send() {
-      sent++;
+    send(raw: string) {
+      sent.push(raw);
     },
   } as WebSocket;
   registerNode(
@@ -505,7 +505,7 @@ test('a launch to a node that refreshes its host waits past 60 s for its answer'
       cwd: '/tmp',
     }).finally(() => (settled = true));
     launch.catch(() => undefined);
-    while (!sent) await new Promise((resolve) => setImmediate(resolve));
+    while (!sent.length) await new Promise((resolve) => setImmediate(resolve));
     mock.timers.tick(60_001);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(settled, false, 'still waiting after the usual 60 s');
