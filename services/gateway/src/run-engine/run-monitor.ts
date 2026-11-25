@@ -1589,8 +1589,36 @@ export async function monitorRun(
 
   let warnedNoSignalPath = false;
   let lastArtifactContractMessage: string | null = null;
-  // Whether the worker saw the notice for lastArtifactContractMessage; the card says so.
-  let artifactContractNoticeDelivered = false;
+  // How the notice for lastArtifactContractMessage was delivered; the card reports it.
+  let artifactContractNotice: ArtifactContractNotice = 'not-attempted';
+  async function notifyArtifactContractRejection(
+    message: string,
+    terminalCommand: ArtifactTerminalCommand,
+  ): Promise<ArtifactContractNotice> {
+    const currentRun = getRun(runId) ?? initialRun;
+    if (isArtifactOnlyScriptedCommandRun(currentRun)) return 'no-worker';
+    const context = currentMonitorContext();
+    try {
+      return await sendOneShotWorkerInstruction(
+        runId,
+        slotId,
+        {
+          text: artifactContractWorkerInstruction(message, terminalCommand),
+          key: 'artifact-contract',
+          channel: 'artifact-contract',
+        },
+        context?.role,
+        context?.id,
+      );
+    } catch (err) {
+      // The durable blocked decision is the recovery path. A tmux throw here never
+      // touched the pane; a native one may come after the host took the notice.
+      console.warn(
+        `[run-monitor] run ${runId.slice(0, 8)} — artifact-contract worker notification failed: ${(err as Error).message}`,
+      );
+      return currentRun.transport === 'native' ? 'attempted' : 'not-attempted';
+    }
+  }
   async function resolveSignalJsonPath(): Promise<string | undefined> {
     return resolveSignalJsonPathForRun(initialRun, slotId, currentMonitorContext());
   }
@@ -1629,59 +1657,15 @@ export async function monitorRun(
           : 'complete';
         if (lastArtifactContractMessage !== probe.message) {
           lastArtifactContractMessage = probe.message;
-          artifactContractNoticeDelivered = false;
-          try {
-            const context = currentMonitorContext();
-            const currentRun = getRun(runId) ?? initialRun;
-            const instruction = artifactContractWorkerInstruction(probe.message, terminalCommand);
-            if (currentRun.transport === 'native') {
-              const outcome = await sendNativeWorkerInstruction({
-                runId,
-                slotId,
-                role: context?.role,
-                contextId: context?.id,
-                key: 'artifact-contract',
-                text: instruction,
-              });
-              if (outcome !== 'confirmed')
-                throw new Error('Native artifact notification is unconfirmed');
-            } else {
-              const retainedSession = resolveRunRetainedSessionBinding(currentRun, context);
-              const vars = await loadSlotVars(slotId);
-              const target = (
-                await resolveAgentTarget(slotId, {
-                  runId,
-                  role: context?.role,
-                  contextId: context?.id,
-                })
-              ).target;
-              const delivered = await sendRunnerInstructionSafely(
-                vars,
-                target,
-                context?.runner ?? initialRun.metrics.runner ?? 'claude',
-                instruction,
-                'artifact-contract',
-                undefined,
-                retainedSessionSendOption(retainedSession),
-              );
-              if (!delivered) throw new Error('Artifact notification was not delivered');
-            }
-            artifactContractNoticeDelivered = true;
-          } catch (err) {
-            // The durable blocked decision below is the recovery path when the
-            // best-effort worker notification cannot be delivered.
-            console.warn(
-              `[run-monitor] run ${runId.slice(0, 8)} — artifact-contract worker notification failed: ${(err as Error).message}`,
-            );
-          }
+          artifactContractNotice = await notifyArtifactContractRejection(
+            probe.message,
+            terminalCommand,
+          );
         }
-        const notice = artifactContractNoticeDelivered
-          ? 'The worker was notified.'
-          : `The worker was not notified: tell it to fix the listed artifacts and run ./mark ${terminalCommand} again.`;
         const actionId = await createMonitorDecision(
           runId,
           'interactive_handoff',
-          `Completion is blocked by the worker artifact contract. ${notice} The run will resume automatically after a valid fresh signal.\n\n${probe.message}`,
+          `Completion is blocked by the worker artifact contract. ${artifactContractNoticeText(artifactContractNotice, terminalCommand)} The run will resume automatically after a valid fresh signal.\n\n${probe.message}`,
         );
         if (actionId === 'abort') return undefined;
         const retry = await probeWorkerSignalForRun(runId, slotId, currentMonitorContext());
@@ -2750,6 +2734,28 @@ function buildNudgeMessage(violation: MonitorViolation): string {
  * cap and the worker would never hear about a real breach.
  */
 export type WorkerInstructionDelivery = 'confirmed' | 'attempted' | 'queued' | 'not-attempted';
+
+type ArtifactTerminalCommand = NonNullable<ReturnType<typeof artifactTerminalCommandForSignal>>;
+/** A worker notice's delivery, or `no-worker` for a scripted command run. */
+export type ArtifactContractNotice = WorkerInstructionDelivery | 'no-worker';
+
+/** What the artifact-contract card says about the notice it sent the worker. */
+export function artifactContractNoticeText(
+  notice: ArtifactContractNotice,
+  terminalCommand: ArtifactTerminalCommand,
+): string {
+  switch (notice) {
+    case 'confirmed':
+      return 'The worker was notified.';
+    case 'attempted':
+    case 'queued':
+      return 'The notice may not have reached the worker yet: check its pane before sending it again.';
+    case 'no-worker':
+      return 'This scripted command run has no worker to notify.';
+    case 'not-attempted':
+      return `The worker was not notified: tell it to fix the problem below and run ./mark ${terminalCommand} again.`;
+  }
+}
 
 /**
  * One-shot instruction into the worker pane: a usage-budget warning, or the

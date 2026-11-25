@@ -11,39 +11,42 @@ import type { RunDecision, WorkerSignal } from '@farmslot/protocol';
 import '../core/private-pool.test-support.js';
 import '../runtime/mock-pty.test-support.js';
 
+import type { RunnerInstructionOutcome } from '../runners/registry.js';
+
+import type { WorkerInstructionDelivery } from './run-monitor.js';
+
 // A stale receipt rejected f613c8af's completion signal; the card said "The worker was
-// notified" while the instruction never reached the pane. The card now says what happened.
-const MESSAGE =
-  'TASK_ARTIFACT_CONTRACT_FAIL\n- CHECKLIST.md step 10 (ci.local_check): Command or publishable inputs changed; rerun this mark step';
-type Delivery = 'delivered' | 'undelivered' | 'throws';
-let tmuxDelivery: Delivery = 'delivered';
-let nativeOutcome = 'confirmed';
+// notified" while the worker pane sat idle. The card now reports what the send did.
+const rejection = (detail: string) =>
+  'Terminal SIGNAL.json was rejected by the worker artifact contract. Fix the listed artifacts, ' +
+  `then run ./mark complete again.\n\nTASK_ARTIFACT_CONTRACT_FAIL\n- ${detail}`;
+const STALE = rejection(
+  'CHECKLIST.md step 10 (ci.local_check): Command or publishable inputs changed; rerun this mark step',
+);
+let contractMessage = STALE;
+let tmuxOutcome: RunnerInstructionOutcome | 'throws' = 'sent';
+let nativeOutcome: WorkerInstructionDelivery | 'throws' = 'confirmed';
 const sent: string[] = [];
 
 const contract = await import('../tasks/worker-terminal-contract.js');
 mock.module('../tasks/worker-terminal-contract.js', {
   namedExports: {
     ...contract,
-    validateTerminalSignalArtifacts: async () => ({
-      ok: false,
-      kind: 'contract',
-      message: MESSAGE,
-    }),
+    validateTerminalSignalArtifacts: async (): Promise<
+      Awaited<ReturnType<typeof contract.validateTerminalSignalArtifacts>>
+    > => ({ ok: false, kind: 'artifact', message: contractMessage }),
   },
 });
 const registry = await import('../runners/registry.js');
 mock.module('../runners/registry.js', {
   namedExports: {
     ...registry,
-    sendRunnerInstructionSafely: async (
-      _vars: unknown,
-      _target: string,
-      _runner: string,
-      text: string,
-    ) => {
+    sendRunnerInstructionWithOutcome: async (
+      ...[, , , text]: Parameters<typeof registry.sendRunnerInstructionWithOutcome>
+    ): Promise<RunnerInstructionOutcome> => {
       sent.push(text);
-      if (tmuxDelivery === 'throws') throw new Error('tmux send failed');
-      return tmuxDelivery === 'delivered';
+      if (tmuxOutcome === 'throws') throw new Error('ssh to the slot failed');
+      return tmuxOutcome;
     },
   },
 });
@@ -51,8 +54,13 @@ const native = await import('../runners/native/worker-control.js');
 mock.module('../runners/native/worker-control.js', {
   namedExports: {
     ...native,
-    sendNativeWorkerInstruction: async ({ text }: { text: string }) => {
+    sendNativeWorkerInstruction: async ({
+      text,
+    }: Parameters<
+      typeof native.sendNativeWorkerInstruction
+    >[0]): Promise<WorkerInstructionDelivery> => {
       sent.push(text);
+      if (nativeOutcome === 'throws') throw new Error('native host stopped responding');
       return nativeOutcome;
     },
   },
@@ -71,8 +79,11 @@ const { createRun, getRun, updateRun } = await import('../runs/store.js');
 const { monitorRun, resolveMonitorDecision } = await import('./run-monitor.js');
 const { deleteTestRunIfPresent } = await import('./test-fixtures.js');
 
-async function fixture(t: TestContext, transport: 'tmux' | 'native') {
-  tmuxDelivery = 'delivered';
+type Transport = 'tmux' | 'native' | 'scripted';
+
+async function fixture(t: TestContext, transport: Transport, signal: Partial<WorkerSignal> = {}) {
+  contractMessage = STALE;
+  tmuxOutcome = 'sent';
   nativeOutcome = 'confirmed';
   sent.length = 0;
   const project = `artifact-notice-${randomUUID()}`;
@@ -85,29 +96,20 @@ async function fixture(t: TestContext, transport: 'tmux' | 'native') {
   const controller = new AbortController();
   let execution: Promise<unknown> | undefined;
   const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  const base = {
+    project,
+    flowType: 'dev' as const,
+    mode: 'autonomous' as const,
+    ticketOrPr: 'NOTICE-1',
+  };
+  if (transport === 'native') process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'fixture-service';
   const run =
     transport === 'native'
-      ? (() => {
-          process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'fixture-service';
-          return createRun(
-            {
-              project,
-              flowType: 'dev',
-              mode: 'autonomous',
-              ticketOrPr: 'NOTICE-1',
-              transport: 'native',
-              runner: 'codex',
-            },
-            { nativeOwnerPrincipalId: 'fixture-service' },
-          );
-        })()
-      : createRun({
-          project,
-          flowType: 'dev',
-          mode: 'autonomous',
-          ticketOrPr: 'NOTICE-1',
-          runner: 'claude',
-        });
+      ? createRun(
+          { ...base, transport: 'native', runner: 'codex' },
+          { nativeOwnerPrincipalId: 'fixture-service' },
+        )
+      : createRun({ ...base, runner: 'claude' });
   t.after(async () => {
     controller.abort();
     for (const decision of getRun(run.id)?.decisions ?? []) {
@@ -159,12 +161,21 @@ async function fixture(t: TestContext, transport: 'tmux' | 'native') {
     step: '23. Signal completion',
     timestamp: new Date().toISOString(),
     evidence: { reportPath: 'artifacts/pr-description.md' },
+    ...signal,
   };
   await writeFile(signalFile, JSON.stringify(complete));
   await writeFile(path.join(taskDir, 'TASK.md'), '# Worker\n');
+  const current = getRun(run.id)!;
   updateRun(run.id, {
     status: 'monitoring',
     ...(transport === 'native' ? { transport: 'native' as const } : {}),
+    ...(transport === 'scripted'
+      ? {
+          completionPolicy: 'artifact-only' as const,
+          scripted: { mode: 'command' as const, commandRef: 'fixture-command' },
+          metrics: { ...current.metrics, runner: 'scripted' },
+        }
+      : {}),
     slotId,
     taskFile: path.join(taskDir, 'TASK.md'),
     agentContexts: [
@@ -213,59 +224,117 @@ async function nextCard(runId: string, seen = 0): Promise<RunDecision> {
   }
 }
 
-const NOTIFIED = /The worker was notified/;
-const NOT_NOTIFIED =
-  /The worker was not notified: tell it to fix the listed artifacts and run \.\/mark complete again\./;
+const NOTIFIED = /The worker was notified\./;
+const UNCONFIRMED =
+  /The notice may not have reached the worker yet: check its pane before sending it again\./;
+const notNotified = (command: string) =>
+  new RegExp(
+    `The worker was not notified: tell it to fix the problem below and run \\./mark ${command} again\\.`,
+  );
+const NOT_NOTIFIED = notNotified('complete');
+const NOTICES = [NOTIFIED, UNCONFIRMED, NOT_NOTIFIED, /has no worker to notify/];
 
-for (const [delivery, label] of [
-  ['undelivered', 'an undelivered'],
-  ['throws', 'a failed'],
-] as const) {
-  test(`${label} tmux notice is not reported as delivered`, { timeout: 5000 }, async (t) => {
-    const f = await fixture(t, 'tmux');
-    tmuxDelivery = delivery;
-    void f.start();
-    const card = await nextCard(f.run.id);
-    assert.equal(sent.length, 1, 'the monitor tried to tell the worker once');
-    assert.doesNotMatch(card.description ?? '', NOTIFIED);
-    assert.match(card.description ?? '', NOT_NOTIFIED);
-    assert.match(card.description ?? '', /step 10 \(ci\.local_check\)/);
-  });
+function assertCard(card: RunDecision, expected: RegExp) {
+  const text = card.description ?? '';
+  for (const notice of NOTICES) {
+    if (notice.source === expected.source) assert.match(text, notice);
+    else assert.doesNotMatch(text, notice);
+  }
+  assert.match(text, /step 10 \(ci\.local_check\)/);
 }
 
-test('a delivered tmux notice keeps the notified card', { timeout: 5000 }, async (t) => {
-  const f = await fixture(t, 'tmux');
-  void f.start();
-  const card = await nextCard(f.run.id);
-  assert.equal(sent.length, 1);
-  assert.match(sent[0]!, /rejected by the artifact contract/);
-  assert.match(card.description ?? '', NOTIFIED);
-  assert.doesNotMatch(card.description ?? '', NOT_NOTIFIED);
-});
+type NoticeCase = { name: string; card: RegExp } & (
+  | { transport: 'tmux'; outcome: RunnerInstructionOutcome | 'throws' }
+  | { transport: 'native'; outcome: WorkerInstructionDelivery | 'throws' }
+);
+const cases: NoticeCase[] = [
+  { name: 'a confirmed tmux send', transport: 'tmux', outcome: 'sent', card: NOTIFIED },
+  {
+    name: 'a tmux send held untouched',
+    transport: 'tmux',
+    outcome: 'held-untouched',
+    card: NOT_NOTIFIED,
+  },
+  {
+    name: 'a tmux send that throws untouched',
+    transport: 'tmux',
+    outcome: 'throws',
+    card: NOT_NOTIFIED,
+  },
+  {
+    name: 'tmux text typed but unconfirmed',
+    transport: 'tmux',
+    outcome: 'typed-unconfirmed',
+    card: UNCONFIRMED,
+  },
+  { name: 'a confirmed native send', transport: 'native', outcome: 'confirmed', card: NOTIFIED },
+  { name: 'a native send attempted', transport: 'native', outcome: 'attempted', card: UNCONFIRMED },
+  { name: 'a native send queued', transport: 'native', outcome: 'queued', card: UNCONFIRMED },
+  {
+    name: 'a native send not attempted',
+    transport: 'native',
+    outcome: 'not-attempted',
+    card: NOT_NOTIFIED,
+  },
+  { name: 'a native send that throws', transport: 'native', outcome: 'throws', card: UNCONFIRMED },
+];
+
+for (const c of cases) {
+  test(`${c.name} is reported as such on the card`, { timeout: 5000 }, async (t) => {
+    const f = await fixture(t, c.transport);
+    if (c.transport === 'tmux') tmuxOutcome = c.outcome;
+    else nativeOutcome = c.outcome;
+    void f.start();
+    assertCard(await nextCard(f.run.id), c.card);
+    assert.equal(sent.length, 1, 'the monitor tried to tell the worker once');
+    assert.match(sent[0]!, /rejected by the artifact contract/);
+  });
+}
 
 test(
   'the same rejection on the next poll keeps the first outcome',
   { timeout: 5000 },
   async (t) => {
     const f = await fixture(t, 'tmux');
-    tmuxDelivery = 'undelivered';
+    tmuxOutcome = 'held-untouched';
     void f.start();
     const first = await nextCard(f.run.id);
-    tmuxDelivery = 'delivered';
+    tmuxOutcome = 'sent';
     resolveMonitorDecision(first.id, 'signal-written');
-    const second = await nextCard(f.run.id, 1);
+    assertCard(await nextCard(f.run.id, 1), NOT_NOTIFIED);
     assert.equal(sent.length, 1, 'an unchanged rejection is not sent again');
-    assert.doesNotMatch(second.description ?? '', NOTIFIED);
-    assert.match(second.description ?? '', NOT_NOTIFIED);
   },
 );
 
-test('an unconfirmed native notice is not reported as delivered', { timeout: 5000 }, async (t) => {
-  const f = await fixture(t, 'native');
-  nativeOutcome = 'unconfirmed';
+test('a new rejection is sent again and reported on its own', { timeout: 5000 }, async (t) => {
+  const f = await fixture(t, 'tmux');
+  void f.start();
+  const first = await nextCard(f.run.id);
+  assertCard(first, NOTIFIED);
+  contractMessage = rejection(
+    'CHECKLIST.md step 10 (ci.local_check): Command did not pass, exit 1',
+  );
+  tmuxOutcome = 'held-untouched';
+  resolveMonitorDecision(first.id, 'signal-written');
+  assertCard(await nextCard(f.run.id, 1), NOT_NOTIFIED);
+  assert.equal(sent.length, 2, 'a changed rejection is a new notice');
+});
+
+test('a no-change signal names ./mark no-change', { timeout: 5000 }, async (t) => {
+  const f = await fixture(t, 'tmux', {
+    disposition: 'already_fixed',
+    evidence: { reportPath: 'artifacts/no-change-report.md' },
+  });
+  tmuxOutcome = 'held-untouched';
   void f.start();
   const card = await nextCard(f.run.id);
-  assert.equal(sent.length, 1);
-  assert.doesNotMatch(card.description ?? '', NOTIFIED);
-  assert.match(card.description ?? '', NOT_NOTIFIED);
+  assert.match(card.description ?? '', notNotified('no-change'));
+  assert.match(sent[0]!, /run \.\/mark no-change again/);
+});
+
+test('a scripted command run sends no worker notice', { timeout: 5000 }, async (t) => {
+  const f = await fixture(t, 'scripted');
+  void f.start();
+  assertCard(await nextCard(f.run.id), /has no worker to notify/);
+  assert.equal(sent.length, 0);
 });

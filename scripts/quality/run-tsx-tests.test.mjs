@@ -337,6 +337,7 @@ const GATEWAY_SERIAL_INVENTORY = [
   'src/run-engine/interrupted-release.test.ts', //      real status-file backstop fixture
   'src/run-engine/monitor-transport-abort.test.ts', // isolation pragma reviewed with its fixture
   'src/run-engine/publish-package-refresh.test.ts', // real JSON under repo pool/
+  'src/run-engine/run-monitor-artifact-notice.test.ts', // temporary project and pool rows in the repo
   'src/run-engine/run-monitor-operator.test.ts', // isolation pragma reviewed with its fixture
   'src/run-engine/runner-resume-text.test.ts', //      writes a pool row for the real sender
   'src/run-engine/runner-unavailable-continue.test.ts', // real project + pool fixtures per case
