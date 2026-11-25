@@ -45,6 +45,10 @@ test('blank prepare params count as unset and take the run values', () => {
       app: 'extension',
     },
   );
+  assert.deepEqual(
+    withRunPrepareContext({ slotId: 's', runId: 'r', flowType: ' ', domain: ' ', app: '\t' }, run),
+    { slotId: 's', runId: 'r', flowType: 'dev', domain: 'perps', app: 'extension' },
+  );
 });
 
 test('a run of another project is refused; the same project or an unknown one passes', () => {

@@ -30,12 +30,23 @@ const { mockFixtureSync, mockPrepareCommand, needsTmuxSandbox, slotPrepare, stac
   await import('./stack-base-prepare.test-support.js');
 const { createRun, deleteRun, persistRunNow, updateRun } = await import('../runs/store.js');
 
+interface PrepareEvent {
+  event: string;
+  data: unknown;
+}
+
+interface PrepareRun {
+  project: string;
+  flowType: 'dev' | 'qa';
+  domain?: string;
+}
+
 async function prepareFor(
   t: import('node:test').TestContext,
   label: string,
-  run: { project: string; flowType: 'dev' | 'qa'; domain?: string },
+  run: PrepareRun,
   ids: (runId: string) => Record<string, string>,
-  other?: { project: string; flowType: 'dev' },
+  other?: PrepareRun,
 ) {
   const { slotId } = await stackFixture(t, `for-run-${label}`, 48828);
   const synced: Array<{ flowType?: string; domain?: string }> = [];
@@ -51,7 +62,7 @@ async function prepareFor(
       await deleteRun(r.id);
     }
   });
-  const events: Array<{ event: string; data: unknown }> = [];
+  const events: PrepareEvent[] = [];
   const prepare = () =>
     slotPrepare(
       {
@@ -67,7 +78,7 @@ async function prepareFor(
   return { prepare, synced, events };
 }
 
-function completed(events: Array<{ event: string; data: unknown }>) {
+function completed(events: PrepareEvent[]) {
   return events
     .filter(({ event }) => event === 'script.complete')
     .map(({ data }) => (data as { exitCode?: number }).exitCode);
