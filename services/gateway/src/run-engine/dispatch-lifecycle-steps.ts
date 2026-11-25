@@ -7,7 +7,11 @@ import { shellQuote } from '../core/tmux.js';
 import { prepareBlindTrialGit } from '../evals/blind-trial.js';
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
-import { slotClaimBlockedByRelease } from '../methods/dispatch/slot-scoring.js';
+import {
+  PARENT_HOLD_CLAIM_FIELDS,
+  parentHoldForWarmChild,
+  slotClaimBlockedByRelease,
+} from '../methods/dispatch/slot-scoring.js';
 import { slotPrepare } from '../methods/slot.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
 import {
@@ -638,7 +642,7 @@ export interface DispatchStepContext {
 }
 
 /** Warm delivery consumes its reservation on success. A fresh launch needs its own claim first. */
-async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean> {
+export async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean> {
   const generation = run.engineState?.generation ?? 0;
   return withRunTransition(run.id, async () => {
     const current = getRun(run.id);
@@ -654,6 +658,34 @@ async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean>
         slotClaimBlockedByRelease(slot),
       );
     const row = await readSlotRow(slotId);
+    // The parent's cleanup held the slot for this run: the fresh launch claims it from here.
+    if (parentHoldForWarmChild(row, current)) {
+      const heldFields: Record<string, unknown> = {
+        lifecycle: 'busy',
+        phase: 'dispatching',
+        current_run_id: run.id,
+        handoff_run_id: null,
+        ...PARENT_HOLD_CLAIM_FIELDS,
+      };
+      const held = await claimSlotStatusIf(
+        slotId,
+        (slot) => {
+          const latest = getRun(run.id);
+          if (
+            !latest ||
+            latest.slotId !== slotId ||
+            runSupersededSince(latest, generation) ||
+            !parentHoldForWarmChild(slot, latest)
+          )
+            return false;
+          if (slot.idle_devserver_epoch === slot.slot_epoch && Array.isArray(slot.idle_devservers))
+            heldFields.idle_devserver_epoch = nextSlotEpoch(slot);
+          return true;
+        },
+        heldFields,
+      );
+      return held.claimed;
+    }
     if (row && blockedSlot(row)) return false;
     // A replay or a completed release may already have left the slot owned by
     // this run or free. The normal fresh launch path handles either state.
