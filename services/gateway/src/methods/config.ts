@@ -49,7 +49,7 @@ import {
   validateBacklogConfig,
 } from '../core/config.js';
 import { saveWithConfigBackup } from '../core/config-backups.js';
-import { type RawPoolSlot, updateSlotStatus } from '../core/index.js';
+import { type RawPoolSlot, readSlotRow, updateSlotStatus } from '../core/index.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import {
   loadFleetStatus,
@@ -359,6 +359,8 @@ function statusFieldsForModeChange(
       fields.phase = null;
     }
   }
+  // A disabled slot is never dispatchable; re-enabling leaves `dispatchable` to the next health refresh.
+  if (fields.lifecycle === 'disabled' || fields.enabled === false) fields.dispatchable = false;
   return fields;
 }
 
@@ -406,12 +408,17 @@ export async function configSlotUpdate(
   // after this returns, but that runs SSH/device health checks and can take 30s+,
   // long enough for a follow-up dispatch to read stale state and fail validation.
   // From the slot as written, not the patch: `enabled: false` disables it whatever its mode says.
+  // The previous lifecycle is the raw row's: the storage overlay reports `disabled` for a missing
+  // volume, which would turn a held or busy row ready on an enabled-only update.
   const mode = effectiveSlotMode(raw.slots[slotIdx]);
-  const fields = statusFieldsForModeChange(mode, mode !== 'disabled', slotStatus?.lifecycle);
-  if (Object.keys(fields).length > 0) {
-    await updateSlotStatus(slotId, fields);
-    await loadFleetStatus(true);
-  }
+  const rawRow = await readSlotRow(slotId);
+  const prevLifecycle =
+    typeof rawRow?.lifecycle === 'string' ? rawRow.lifecycle : slotStatus?.lifecycle;
+  await updateSlotStatus(
+    slotId,
+    statusFieldsForModeChange(mode, mode !== 'disabled', prevLifecycle),
+  );
+  await loadFleetStatus(true);
 
   publishConfigurationResources();
   console.log(`[config] slot ${slotId} updated: ${JSON.stringify(update)}, backup: ${backupPath}`);

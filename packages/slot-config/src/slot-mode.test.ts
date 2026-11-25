@@ -64,14 +64,18 @@ test('slot vars of a held slot written as mode dispatch, enabled false are disab
   assert.equal(vars.slotEnabled, false);
 });
 
-test('slot vars of a held custom slot and of a disabled-mode slot are disabled', async (t) => {
-  for (const slot of [{ mode: 'custom', enabled: false }, { mode: 'disabled', enabled: true }]) {
-    invalidateProjectVarsCache();
-    pool(t, slot);
-    const vars = await loadSlotVars('a');
-    assert.equal(vars.slotMode, 'disabled', JSON.stringify(slot));
-    assert.equal(vars.slotEnabled, false, JSON.stringify(slot));
-  }
+test('slot vars of a held custom slot are disabled', async (t) => {
+  pool(t, { mode: 'custom', enabled: false });
+  const vars = await loadSlotVars('a');
+  assert.equal(vars.slotMode, 'disabled');
+  assert.equal(vars.slotEnabled, false);
+});
+
+test('slot vars of a disabled-mode slot are disabled even when enabled is true', async (t) => {
+  pool(t, { mode: 'disabled', enabled: true });
+  const vars = await loadSlotVars('a');
+  assert.equal(vars.slotMode, 'disabled');
+  assert.equal(vars.slotEnabled, false);
 });
 
 test('slot vars keep an explicit mode on an enabled slot', async (t) => {

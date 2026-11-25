@@ -1355,8 +1355,20 @@ test('a host whose slots are all held is skipped even when they name a mode', as
         host: 'held.invalid',
         ssh_user: 'operator',
         slots: [
-          { id: 'held-1', mode: 'dispatch', enabled: false, repo: '/repos/held-1', session: 'held-1' },
-          { id: 'held-2', mode: 'custom', enabled: false, repo: '/repos/held-2', session: 'held-2' },
+          {
+            id: 'held-1',
+            mode: 'dispatch',
+            enabled: false,
+            repo: '/repos/held-1',
+            session: 'held-1',
+          },
+          {
+            id: 'held-2',
+            mode: 'custom',
+            enabled: false,
+            repo: '/repos/held-2',
+            session: 'held-2',
+          },
         ],
       },
     ],
