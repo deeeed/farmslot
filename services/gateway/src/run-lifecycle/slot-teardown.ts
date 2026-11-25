@@ -16,7 +16,8 @@ import {
   ownsRunSlotCleanup,
   readSlotRow,
   resetSlotIf,
-  RUN_CLEANUP_TOKEN_PREFIX,
+  type RunCleanupIntent,
+  runCleanupToken,
   SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
   SLOT_RELEASING_SINCE,
@@ -114,11 +115,12 @@ export async function retryOccupiedRunSlot(slotId: string): Promise<boolean> {
 export async function fenceRunSlotCleanup(
   run: Run,
   blocker: string | null,
+  intent?: RunCleanupIntent,
 ): Promise<RunSlotCleanupFence> {
   if (!run.slotId) return { before: null };
   const before = await readSlotRow(run.slotId);
   if (blocker) return { before };
-  const token = `${RUN_CLEANUP_TOKEN_PREFIX}${randomUUID()}`;
+  const token = runCleanupToken(intent, randomUUID());
   const marked = await markSlotStatusIf(
     run.slotId,
     (slot) =>
@@ -149,6 +151,11 @@ function findOtherActiveRunOnSlot(
 /** Another run, reservation or release that owns this slot keeps it; cancel checks only this. */
 export async function slotOwnershipBlocker(run: Run): Promise<string | null> {
   return inspectSlotOwnership(run, false);
+}
+
+/** The ownership check run under this run's own releasing fence (a cancel resumed after restart). */
+export async function fencedSlotOwnershipBlocker(run: Run): Promise<string | null> {
+  return inspectSlotOwnership(run, true);
 }
 
 async function inspectSlotOwnership(

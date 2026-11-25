@@ -394,6 +394,23 @@ export const SLOT_CLEANUP_STOP_UNCONFIRMED = 'cleanup_stop_unconfirmed';
 /** Marks a terminal run's own cleanup fence (fenceRunSlotCleanup), apart from a release retry's. */
 export const RUN_CLEANUP_TOKEN_PREFIX = 'run-cleanup:';
 
+/** What a cancel's cleanup fence settles on: the replay hold, or a released slot. */
+export type RunCleanupIntent = 'replay' | 'release';
+
+/** A cancel's fence carries its intent in the token, so a restarted gateway can finish it. */
+export function runCleanupToken(intent: RunCleanupIntent | undefined, id: string): string {
+  return `${RUN_CLEANUP_TOKEN_PREFIX}${intent ? `${intent}:` : ''}${id}`;
+}
+
+/** The intent a run-cleanup token carries; undefined for done/failed fences and older tokens. */
+export function runCleanupTokenIntent(token: unknown): RunCleanupIntent | undefined {
+  if (typeof token !== 'string' || !token.startsWith(RUN_CLEANUP_TOKEN_PREFIX)) return undefined;
+  const rest = token.slice(RUN_CLEANUP_TOKEN_PREFIX.length);
+  if (rest.startsWith('replay:')) return 'replay';
+  if (rest.startsWith('release:')) return 'release';
+  return undefined;
+}
+
 /** The releasing fence, stamped so a stalled one can be told from a live one. */
 export function slotReleasingFenceFields(now = new Date()): Record<string, unknown> {
   return {
