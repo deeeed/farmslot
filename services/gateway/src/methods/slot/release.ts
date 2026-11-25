@@ -64,8 +64,8 @@ import {
 } from '../../fleet/slot-scaffolding.js';
 import {
   cleanupSlotStorage,
-  normalizeTaskRelativeDir,
   deleteTaskScratch,
+  normalizeTaskRelativeDir,
 } from '../../fleet/slot-storage-cleanup.js';
 import { publicationStatusForRun } from '../../run-completion/publication-status.js';
 import {
