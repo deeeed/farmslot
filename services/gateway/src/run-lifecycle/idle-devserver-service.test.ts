@@ -42,6 +42,7 @@ let identityReads = 0;
 let identityReadFails = false;
 let siblingStatus: 'running' | 'stopped' | undefined;
 let serverStatus: 'unknown' | undefined;
+let simulatorUp = false;
 let reapThrows = false;
 // A real prepare scope token: 32 hex characters.
 let recordedScope = '0123456789abcdef0123456789abcdef';
@@ -77,6 +78,15 @@ const devServer = (id: string, status: SlotResource['status']): SlotResource => 
 });
 const resources = (): SlotResource[] => [
   ...(siblingStatus ? [devServer('metro', siblingStatus)] : []),
+  ...(simulatorUp
+    ? [
+        {
+          id: 'ios-sim',
+          status: 'running' as const,
+          definition: { type: 'device' as const, label: 'iOS Sim', controllable: true, streamable: true },
+        },
+      ]
+    : []),
   {
     id: 'server',
     status: serverStatus ?? (alive ? 'running' : 'stopped'),
@@ -411,6 +421,7 @@ beforeEach(() => {
   identityReadFails = false;
   siblingStatus = undefined;
   serverStatus = undefined;
+  simulatorUp = false;
   reapThrows = false;
   recordedScope = '0123456789abcdef0123456789abcdef';
 });
@@ -594,8 +605,9 @@ test('ghost, misconfigured and offline slots are skipped without a read', async 
   assert.equal(identityReads, 0);
 });
 
-test('an unreachable machine or a failed reap is logged; the guard and fence are freed', async (t) => {
+test('an unreachable machine or a failed reap is warned; the guard and fence are freed', async (t) => {
   t.mock.method(console, 'info', () => {});
+  t.mock.method(console, 'warn', () => {});
   alive = false;
   slotRunsGone = true;
   row = ownerless();
@@ -612,7 +624,7 @@ test('an unreachable machine or a failed reap is logged; the guard and fence are
   assert.equal(row.lifecycle, 'ready');
 });
 
-test('an unrecorded worker pane found at expiry keeps the scope', async () => {
+test('an unrecorded worker pane found at expiry keeps the scope and restarts its window', async () => {
   alive = false;
   slotRunsGone = true;
   unrecordedWorker = true;
@@ -621,6 +633,52 @@ test('an unrecorded worker pane found at expiry keeps the scope', async () => {
   clock += DEVSERVER_IDLE_LIMIT_MS;
   await scopePass();
   assert.deepEqual(scopeReaps, []);
+  assert.deepEqual(row.idle_prepare_scope, { scope: SCOPE, epoch, since: clock });
+});
+
+// A gateway restart or node reconnect reports every resource unknown until its watch answers.
+test('an unreported dev server status keeps a timed window; only activity clears it', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  const window = row.idle_prepare_scope;
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  serverStatus = 'unknown';
+  await scopePass();
+  assert.deepEqual(row.idle_prepare_scope, window, 'kept while unknown');
+  assert.deepEqual(scopeReaps, [], 'but not stopped');
+  serverStatus = undefined;
+  await scopePass();
+  assert.deepEqual(scopeReapScopes, [SCOPE], 'the original window, not a new one');
+});
+
+test('a simulator or browser left up does not keep a run-less scope', async () => {
+  alive = false;
+  slotRunsGone = true;
+  simulatorUp = true;
+  row = ownerless();
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  assert.deepEqual(scopeReapScopes, [SCOPE]);
+});
+
+test('a scope stop that keeps failing is warned on every pass', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  t.mock.method(console, 'info', () => {});
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  reapThrows = true;
+  await scopePass();
+  await scopePass();
+  const warned = warn.mock.calls.map((call) => String(call.arguments[0]));
+  assert.equal(warned.length, 2);
+  assert.match(warned[1]!, /slot-a: Prepare scope cleanup failed: group survived/);
+  assert.ok(row.idle_prepare_scope, 'the window stays for the retry');
 });
 
 test('a PID file older than the process it names grants no stop authority', async () => {

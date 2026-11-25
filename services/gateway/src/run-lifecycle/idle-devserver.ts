@@ -10,7 +10,7 @@ export const DEVSERVER_IDLE_LIMIT_MS = 15 * 60_000;
  * keep-warm release on mini-mmt-3 left its dev server and prepare scope up for two days.
  */
 export const WARM_DEVSERVER_IDLE_LIMIT_MS = 2 * 60 * 60_000;
-type SlotRow = Readonly<Record<string, unknown>>;
+export type SlotRow = Readonly<Record<string, unknown>>;
 
 export type IdleDevServerPointer = Pick<ProcessCensusRow, 'identity' | 'group'> & { pid: number };
 

@@ -40,15 +40,21 @@ for (const [key, value] of Object.entries({
   TMUX: '',
 }))
   process.env[key] = value;
+delete process.env.TMUX_PANE;
+// The proof's own tmux server: the socket the gateway code reaches through TMUX_TMPDIR.
+const socket = path.join(socketDir, `tmux-${process.getuid?.() ?? 0}`, 'default');
+const tmux = (...args: string[]) => execute('tmux', ['-S', socket, ...args]);
 
 const started: number[] = [];
 const alive = (pid: number) => {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    // ESRCH: gone. Any other refusal means it exists and is not ours to probe.
-    return false;
+  } catch (error) {
+    // ESRCH: gone. EPERM: it exists under another user, so it counts as alive.
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
+    throw error;
   }
 };
 const groupAlive = async (pgid: number) => {
@@ -62,19 +68,42 @@ const groupAlive = async (pgid: number) => {
     );
 };
 
-async function cleanup(): Promise<void> {
-  // Only what this proof started: the scope's group leader and the foreign sleeper.
-  for (const pid of started) {
-    try {
-      process.kill(-pid, 'SIGKILL');
-    } catch {
-      // Already gone, which is what the proof expects for the scope.
+let cleaning: Promise<void> | undefined;
+/** Signal only the process groups this proof started, stop its own tmux server, remove files. */
+function cleanup(): Promise<void> {
+  cleaning ??= (async () => {
+    for (const pid of started) {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch (error) {
+        // ESRCH: the group is already gone, which the proof expects for the scope.
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
     }
-  }
-  await execute('tmux', ['kill-server']).catch(() => undefined);
-  await rm(scratch, { recursive: true, force: true });
-  await rm(socketDir, { recursive: true, force: true });
+    if (existsSync(socket)) {
+      try {
+        await tmux('kill-server');
+      } catch (error) {
+        // A server that already exited leaves its socket behind; anything else fails cleanup.
+        const stderr = String((error as { stderr?: unknown }).stderr ?? '');
+        if (!/no server running|error connecting to/u.test(stderr)) throw error;
+      }
+    }
+    await rm(scratch, { recursive: true, force: true });
+    await rm(socketDir, { recursive: true, force: true });
+  })();
+  return cleaning;
 }
+// A cancelled or timed-out recipe still stops what the proof started.
+for (const signal of ['SIGINT', 'SIGTERM'] as const)
+  process.once(signal, () => {
+    void cleanup().finally(() => process.exit(1));
+  });
+const deadline = setTimeout(() => {
+  process.stderr.write('idle-prepare-scope proof timed out\n');
+  void cleanup().finally(() => process.exit(1));
+}, 50_000);
+deadline.unref();
 
 try {
   await mkdir(path.join(repo, runtimeDir), { recursive: true });
@@ -108,14 +137,8 @@ try {
     }),
   );
   // An unrelated tmux session: its pane is outside the slot and must not block the stop.
-  await execute('tmux', [
-    'new-session',
-    '-d',
-    '-s',
-    'proof-other',
-    '-c',
-    path.join(scratch, 'other'),
-  ]);
+  await mkdir(path.dirname(socket), { recursive: true, mode: 0o700 });
+  await tmux('new-session', '-d', '-s', 'proof-other', '-c', path.join(scratch, 'other'));
 
   const { claimSlotStatusIf, readSlotRow, updateSlotStatusIf } =
     await import('../../../services/gateway/src/core/state.js');

@@ -50,6 +50,7 @@ mock.module('./state.js', {
 const idle = await import('../run-lifecycle/idle-devserver-service.js');
 const swept: string[] = [];
 const forgotten: string[] = [];
+const scopePasses: string[][] = [];
 mock.module('../run-lifecycle/idle-devserver-service.js', {
   namedExports: {
     ...idle,
@@ -59,6 +60,9 @@ mock.module('../run-lifecycle/idle-devserver-service.js', {
       if (slotId === 'slot-a') await idle.reapIdleDevServers(slotId);
     },
     forgetIdleDevServers: (slotId: string) => forgotten.push(slotId),
+    reapIdlePrepareScopes: async (slots: Array<{ slot: string }>) => {
+      scopePasses.push(slots.map((slot) => slot.slot));
+    },
   },
 });
 const modulePath = './resource-manager.js?resource-poll-idle';
@@ -96,11 +100,14 @@ test('the idle dev-server sweep runs without full-fleet polling, on slots with l
   const clock = captureTick(t);
   swept.length = 0;
   forgotten.length = 0;
+  scopePasses.length = 0;
   try {
     startIdleDevServerSweep();
     await clock.tick();
     assert.deepEqual(swept, ['slot-c']);
     assert.deepEqual(forgotten, ['slot-a', 'slot-b'], 'unobserved slots lose their idle windows');
+    // One scope pass per sweep, offered every slot: a live simulator or browser must not hide one.
+    assert.deepEqual(scopePasses, [['slot-a', 'slot-b', 'slot-c']]);
     const lost = resourceObservationLosses('slot-c', 'server');
     setCachedResourceStatus('slot-c', 'server', 'unknown', { broadcast: false });
     setCachedResourceStatus('slot-c', 'server', 'running', { broadcast: false });

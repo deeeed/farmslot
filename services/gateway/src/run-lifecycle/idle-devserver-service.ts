@@ -11,6 +11,8 @@ import {
   markSlotStatusIf,
   readSlotRow,
   sameSlotField,
+  SLOT_RELEASE_GATEWAY_INSTANCE,
+  SLOT_RELEASING_SINCE,
   slotReleasingFenceFields,
   updateSlotStatusIf,
 } from '../core/state.js';
@@ -47,6 +49,7 @@ import {
   DEVSERVER_IDLE_LIMIT_MS,
   type IdleDevServerPointer,
   IdleDevServerReaper,
+  type SlotRow,
   slotWorkerRuns,
   WARM_DEVSERVER_IDLE_LIMIT_MS,
 } from './idle-devserver.js';
@@ -432,7 +435,8 @@ const idleDevServers = new IdleDevServerReaper({
       if (scopeBefore) {
         const row = await readSlotRow(slotId);
         const kept = row
-          ? (scopeQuietBlocker(row, slotId, liveRunSlots()) ?? (await devServersBlocker(slotId)))
+          ? (scopeQuietBlocker(row, slotId, liveRunSlots()) ??
+            (await devServersBlocker(slotId))?.reason)
           : 'slot row unavailable';
         if (kept) logDecision(slotId, undefined, `kept prepare scope: ${kept}`);
         else if (row) await stopPrepareScope(slotId, vars, identityPath, scopeBefore, row, true);
@@ -455,7 +459,6 @@ export function forgetIdleDevServers(slotId: string): void {
   idleDevServers.forget(slotId);
 }
 
-type SlotRow = Readonly<Record<string, unknown>>;
 /** Slot-row field holding when the sweep first saw a run-less prepare scope: survives restarts. */
 const IDLE_SCOPE_FIELD = 'idle_prepare_scope';
 interface IdleScope {
@@ -497,12 +500,22 @@ function scopeQuietBlocker(row: SlotRow, slotId: string, live: Set<string>): str
   return null;
 }
 
-/** A dev server not definitely stopped (unknown counts as up), or a lease on the slot. */
-async function devServersBlocker(slotId: string): Promise<string | null> {
+/**
+ * A dev server not definitely stopped, or a lease on the slot. `definite` is false for a status
+ * not yet reported (a restart or node reconnect): that blocks a stop but keeps a timed window.
+ */
+async function devServersBlocker(
+  slotId: string,
+): Promise<{ reason: string; definite: boolean } | null> {
   for (const resource of await resolveSlotResources(slotId))
     if (resource.definition.type === 'dev-server' && resource.status !== 'stopped')
-      return `dev server ${resource.id} ${resource.status}`;
-  return (await capabilityRetains(slotId)) ? 'retained by a capability lease' : null;
+      return {
+        reason: `dev server ${resource.id} ${resource.status}`,
+        definite: resource.status !== 'unknown',
+      };
+  return (await capabilityRetains(slotId))
+    ? { reason: 'retained by a capability lease', definite: true }
+    : null;
 }
 
 /**
@@ -525,6 +538,8 @@ async function stopPrepareScope(
   }
   let claimed = false;
   let stopped = false;
+  // A reap that threw keeps the window, so the next pass retries it.
+  let settled = false;
   const free = (current: SlotRow) =>
     current.slot_epoch === row.slot_epoch &&
     !current.current_run_id &&
@@ -540,6 +555,7 @@ async function stopPrepareScope(
     if (!mark.applied) return false;
     claimed = true;
     stopped = await reapSlotPrepareScope(vars, { identityPath, expectedScope: scope });
+    settled = true;
     return stopped;
   } finally {
     // Free the guard before the slot reads ready again, so a claim right after can prepare.
@@ -551,8 +567,9 @@ async function stopPrepareScope(
         {
           lifecycle: row.lifecycle,
           phase: row.phase,
-          releasing_since: null,
-          [IDLE_SCOPE_FIELD]: null,
+          [SLOT_RELEASING_SINCE]: null,
+          [SLOT_RELEASE_GATEWAY_INSTANCE]: null,
+          ...(settled ? { [IDLE_SCOPE_FIELD]: null } : {}),
           ...(stopped ? { warm: false } : {}),
         },
       );
@@ -608,12 +625,21 @@ async function timeScope(entry: ScopeCandidate, scope: string | undefined): Prom
   }
   if (Date.now() - saved.since < limit) return;
   const pane = await unrecordedWorkerPane(slotId, vars, await slotProcessCensus(slotId), null);
+  if (pane) {
+    // A worker may still use it: start a fresh window instead of re-running both censuses
+    // every sweep.
+    await updateSlotStatusIf(slotId, sameEpoch, {
+      [IDLE_SCOPE_FIELD]: { scope, epoch: row.slot_epoch, since: Date.now() },
+    });
+    logDecision(slotId, undefined, `skip ${label} stop: ${pane}; window restarted`);
+    return;
+  }
   const current = await readSlotRow(slotId);
   const late =
-    pane ??
-    (!current || !sameEpoch(current)
+    !current || !sameEpoch(current)
       ? 'slot epoch changed'
-      : (scopeQuietBlocker(current, slotId, liveRunSlots()) ?? (await devServersBlocker(slotId))));
+      : (scopeQuietBlocker(current, slotId, liveRunSlots()) ??
+        (await devServersBlocker(slotId))?.reason);
   if (late || !current) {
     logDecision(slotId, undefined, `skip ${label} stop: ${late}`);
     return;
@@ -627,10 +653,12 @@ async function timeScope(entry: ScopeCandidate, scope: string | undefined): Prom
 }
 
 /**
- * Once per idle sweep, for slots with no live resource: a prepare scope that outlived its dev
- * server on a quiet, ownerless slot (mini-mmt-3 kept one for two days) stops after the dev-server
- * idle window (2 h on a keep-warm slot), timed from the slot row. Local checks first; then one
- * identity read per machine. Ghost, misconfigured and offline slots are skipped.
+ * Once per idle sweep, for every slot: a prepare scope that outlived its dev server on a quiet,
+ * ownerless slot (mini-mmt-3 kept one for two days) stops after the dev-server idle window
+ * (2 h on a keep-warm slot), timed from the slot row. Local checks first; then one identity
+ * read per machine. Ghost, misconfigured and offline slots are skipped. Only definite activity
+ * clears a timed window. Per-slot and per-machine failures are collected and warned each pass,
+ * so one slot's failure neither hides another's stop nor goes quiet after its first report.
  */
 export async function reapIdlePrepareScopes(
   slots: ReadonlyArray<
@@ -639,18 +667,18 @@ export async function reapIdlePrepareScopes(
 ): Promise<void> {
   const live = liveRunSlots();
   const byMachine = new Map<string, ScopeCandidate[]>();
+  const failures: string[] = [];
   for (const slot of slots) {
     if (slot.missingFromPool || slot.configError || slot.health?.ssh === 'FAIL') continue;
     const slotId = slot.slot;
     try {
       const row = await readSlotRow(slotId);
       if (!row) continue;
-      const blocker =
-        scopeQuietBlocker(row, slotId, live) ??
-        (activePrepareSlots.has(slotId) ? 'slot preparing' : null) ??
-        (await devServersBlocker(slotId));
-      if (blocker) {
-        if (idleScopeOf(row))
+      const quiet = scopeQuietBlocker(row, slotId, live);
+      const servers = quiet || activePrepareSlots.has(slotId) ? null : await devServersBlocker(slotId);
+      if (quiet || activePrepareSlots.has(slotId) || servers) {
+        // A prepare or an unreported status says nothing about the scope: keep its window.
+        if ((quiet || servers?.definite) && idleScopeOf(row))
           await updateSlotStatusIf(slotId, (current) => current.slot_epoch === row.slot_epoch, {
             [IDLE_SCOPE_FIELD]: null,
           });
@@ -665,7 +693,7 @@ export async function reapIdlePrepareScopes(
       group.push({ slotId, row, vars, identityPath });
       byMachine.set(slot.machine, group);
     } catch (error) {
-      logDecision(slotId, undefined, `skip prepare scope: ${(error as Error).message}`);
+      failures.push(`${slotId}: ${(error as Error).message}`);
     }
   }
   for (const [machine, group] of byMachine) {
@@ -673,18 +701,23 @@ export async function reapIdlePrepareScopes(
     try {
       scopes = await recordedScopes(group);
     } catch (error) {
-      // An unreachable machine skips this pass; its windows stay recorded on the slot rows.
-      logDecision(machine, undefined, `skip prepare scopes: ${(error as Error).message}`);
+      // An unreachable machine: its slots wait for the next pass, their windows still recorded.
+      failures.push(`${machine}: ${(error as Error).message}`);
       continue;
     }
     for (const entry of group) {
       try {
         await timeScope(entry, scopes.get(entry.identityPath));
       } catch (error) {
-        logDecision(entry.slotId, undefined, `skip prepare scope: ${(error as Error).message}`);
+        // A failed stop leaves its window in place, so the next pass retries it.
+        failures.push(`${entry.slotId}: ${(error as Error).message}`);
       }
     }
   }
+  if (failures.length)
+    console.warn(
+      `[idle-devserver] ${failures.length} prepare-scope check(s) failed: ${failures.slice(0, 5).join('; ')}${failures.length > 5 ? `; +${failures.length - 5} more` : ''}`,
+    );
 }
 
 /** Runs on the idle sweep, serialized with run resume and machine parking. */
