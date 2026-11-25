@@ -83,6 +83,11 @@ import {
   setRunFlags,
   startRun,
 } from '../../run-engine/orchestrator.js';
+import {
+  replayResumesNativeWorker,
+  runPrepareIsPinned,
+  shouldReroutePinnedReplayToPrepare,
+} from '../../run-engine/pinned-prepare.js';
 import { requiresPublicationApproval } from '../../run-engine/publication-policy.js';
 import {
   probeWorkerSignalForRun,
@@ -1613,6 +1618,34 @@ async function replayRunStep(
     targetIdx = prepareIdx;
     console.log(
       `[run] replay from ${params.stepName} — starting at prepare so eval harness is reinstalled`,
+    );
+  }
+  // A pinned run restarts from prepare when the replay would re-dispatch, so the
+  // slot gets its build again; an eval experiment already took the branch above.
+  const pinnedRun = !existing.engineState?.evalExperiment && (await runPrepareIsPinned(existing));
+  if (
+    replayStepName !== PS.FIND_SLOT &&
+    shouldReroutePinnedReplayToPrepare({
+      pinned: pinnedRun,
+      adoptedLiveWorker: Boolean(adoptedTaskSignal || blockedAttempt),
+      liveNativeWorker: replayResumesNativeWorker(existing, {
+        freshDispatch: params.freshDispatch,
+        runnerOverride: params.runner !== undefined || params.model !== undefined,
+      }),
+      targetIdx,
+      prepareIdx,
+      dispatchIdx,
+    })
+  ) {
+    replayStepName = PS.PREPARE;
+    targetIdx = prepareIdx;
+    console.log(
+      `[run] replay from ${params.stepName} — starting at prepare so the pinned build is installed again`,
+    );
+  }
+  if (params.skipPrepare && pinnedRun && targetIdx >= 0 && targetIdx <= dispatchIdx) {
+    throw new Error(
+      'A pinned comparison run cannot skip prepare; prepare installs the build of its start commit.',
     );
   }
   if (replayStepName === PS.MONITOR && probeBlockedMonitor && !blockedAttempt) {

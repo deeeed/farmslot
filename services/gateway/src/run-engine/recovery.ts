@@ -52,6 +52,7 @@ import { withSourcePlanning } from '../sources/runtime.js';
 
 import { pendingDecisionForRun } from './decision-projection.js';
 import { pendingReviewContinuation } from './gate-policy.js';
+import { pinnedDispatchRefusal, prepareIsPinned } from './pinned-prepare.js';
 import {
   publicationFinalizationAction,
   shouldResumePublicationGate,
@@ -1355,11 +1356,16 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
             // kill or incomplete sub-steps means a passing health probe can only
             // reflect stale artifacts, not a genuinely prepared slot.
             const substepsComplete = prepareSubstepsShowCompletion(prepareStep);
-            const canTrustHealth = !killedPrepareProcess && substepsComplete;
+            // A healthy app proves nothing about which build it is: a pinned run
+            // whose prepare recorded no matching build prepares again.
+            const pinnedBuildMissing =
+              prepareIsPinned(run, pv?.projectJson) &&
+              pinnedDispatchRefusal(deps.getRun(run.id) ?? run) !== undefined;
+            const canTrustHealth = !killedPrepareProcess && substepsComplete && !pinnedBuildMissing;
             if (!canTrustHealth) {
               console.log(
                 `[run-engine] run ${run.id.slice(0, 8)} — not trusting recovery health ` +
-                  `(killedPrepareProcess=${killedPrepareProcess}, substepsComplete=${substepsComplete}), re-running prepare (warm)`,
+                  `(killedPrepareProcess=${killedPrepareProcess}, substepsComplete=${substepsComplete}, pinnedBuildMissing=${pinnedBuildMissing}), re-running prepare (warm)`,
               );
             }
             const healthHook =

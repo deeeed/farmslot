@@ -27,6 +27,7 @@ import { slotFileExists } from '../../core/slot-io.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import { captureRunOutput, failRunOutputCapture } from '../../run-completion/output.js';
 import { refreshResultDecisionAfterCapture } from '../../run-completion/result-decision.js';
+import { runPrepareIsPinned } from '../../run-engine/pinned-prepare.js';
 import { loadProjectVarsOrNull } from '../../run-engine/project-vars.js';
 import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
 import { refreshReviewGate } from '../../run-engine/review-gate.js';
@@ -282,7 +283,10 @@ export async function runActivateOnSlot(
       {
         runId: params.runId,
         stepName: PipelineSteps.PREPARE,
-        prepareProfile: params.prepareProfile ?? 'attach',
+        // A pinned run's default comes from prepare.pinned_profiles; attach, which
+        // installs nothing, is not one of them.
+        prepareProfile:
+          params.prepareProfile ?? ((await runPrepareIsPinned(run)) ? undefined : 'attach'),
         skipPrepare: false,
         triggeredBy: 'operator',
       },

@@ -2156,6 +2156,26 @@ export type RunStartRefSource =
   | { kind: 'merged-pr'; repo?: string; prNumber?: number }
   | { kind: 'git-ref'; repository?: string; ref?: string };
 
+/**
+ * The build on the slot when the run's worker started: installed by a pinned
+ * prepare (`enforced`), or observed on an excluded eval trial. Analysis filters
+ * comparison cells whose build does not match their start commit.
+ */
+export interface RunPrepareArtifact {
+  kind: 'runway' | 'source';
+  slotId: string;
+  /** The start commit the build was installed for. */
+  baseSha: string;
+  /** Runway workflow run id; absent for a source build. */
+  runId?: string;
+  /** Commit the installed build was made from. */
+  revision: string;
+  platform: string;
+  installedAt: string;
+  /** True when prepare installed and verified it; false when it was only observed. */
+  enforced: boolean;
+}
+
 export interface RunStartRefProvenance {
   requestedRef: string;
   resolvedSha?: string;
@@ -3250,6 +3270,8 @@ export interface Run {
   pressureAdmissionRef?: import('./pressure-admission.js').PressureAdmissionReference;
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
+  /** The build prepare installed for `startRef` (pinned runs), cleared when a prepare starts. */
+  prepareArtifact?: RunPrepareArtifact | null;
   /** Stack position when this run builds on another run's published PR. */
   stack?: RunStack;
   /** Gateway-captured template provenance for the rendered worker task. */

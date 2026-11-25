@@ -3102,6 +3102,79 @@ test('runReplayStep forces eval worker replays through prepare to reinstall harn
   assert.equal(replayed.recoveryAttempts?.at(-1)?.stepName, 'prepare');
 });
 
+// A pinned comparison run (comparison dev run with a start ref) whose project config
+// cannot be read counts as taking part, so the project name below pins it without a pack.
+function pinnedRunFailedAt(failedStep: 'dispatch' | 'monitor') {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'pinned-prepare-absent-project',
+    ticketOrPr: `PROJ-${Date.now() + (failedStep === 'dispatch' ? 0 : 1)}`,
+  });
+  const failedAt = run.steps.findIndex((step) => step.name === failedStep);
+  updateRun(run.id, {
+    status: 'failed',
+    lane: 'comparison',
+    startRef: { requestedRef: '260bd3a5', resolvedSha: '260bd3a5b20c3f9126510b7b71d0e5527f395b5d' },
+    steps: run.steps.map((step, index) =>
+      index < failedAt
+        ? { ...step, status: 'done' }
+        : index === failedAt
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+  return run;
+}
+
+test('a pinned run replayed from dispatch prepares its build again', async (t) => {
+  const run = pinnedRunFailedAt('dispatch');
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  await runReplayStep({ runId: run.id, stepName: 'dispatch', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+  });
+  const replayed = getRun(run.id);
+  assert.equal(replayed?.steps.find((step) => step.name === 'prepare')?.status, 'pending');
+  assert.equal(replayed?.recoveryAttempts?.at(-1)?.stepName, 'prepare');
+});
+
+test('a pinned run replayed from monitor keeps its prepared slot', async (t) => {
+  const run = pinnedRunFailedAt('monitor');
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  await runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+  });
+  const replayed = getRun(run.id);
+  assert.equal(replayed?.steps.find((step) => step.name === 'prepare')?.status, 'done');
+  assert.equal(replayed?.steps.find((step) => step.name === 'dispatch')?.status, 'done');
+});
+
+test('a pinned run cannot skip prepare on a replay that re-dispatches, but can on a monitor replay', async (t) => {
+  const run = pinnedRunFailedAt('dispatch');
+  const monitorRun = pinnedRunFailedAt('monitor');
+  t.after(async () => {
+    for (const id of [run.id, monitorRun.id]) if (getRun(id)) await evictTestRun(id, 'failed');
+  });
+  await assert.rejects(
+    runReplayStep(
+      { runId: run.id, stepName: 'dispatch', triggeredBy: 'operator', skipPrepare: true },
+      () => {},
+      { startEngine: async () => {} },
+    ),
+    /A pinned comparison run cannot skip prepare/,
+  );
+  await assert.doesNotReject(
+    runReplayStep(
+      { runId: monitorRun.id, stepName: 'monitor', triggeredBy: 'operator', skipPrepare: true },
+      () => {},
+      { startEngine: async () => {} },
+    ),
+  );
+});
+
 test('blocked eval monitor without a slot restarts at find-slot instead of requiring proof', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

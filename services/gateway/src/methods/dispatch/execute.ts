@@ -175,6 +175,7 @@ export {
 import { blindLaunchScript, blindTrialWorkerBoundary } from '../../evals/blind-git.js';
 import { usesEvalTrialCapsule } from '../../evals/trial-policy.js';
 import { ensureNodeSupportBundle } from '../../node-support/ensure.js';
+import { pinnedDispatchRefusal, prepareIsPinned } from '../../run-engine/pinned-prepare.js';
 import { admitWorkerLaunch } from '../../run-engine/worker-launch-preflight.js';
 
 /**
@@ -1759,6 +1760,12 @@ export async function dispatchExecute(
       currentRun,
       options.nativeRetainedFrom?.runId === currentRun.id,
     );
+    // Prepare refuses a build that does not match; this covers every path that
+    // reaches dispatch without that prepare (skipPrepare, restart recovery).
+    if (prepareIsPinned(currentRun, projectJson)) {
+      const refusal = pinnedDispatchRefusal(currentRun);
+      if (refusal) throw new Error(refusal);
+    }
   }
 
   // We just wrote artifacts/recipe.json + artifacts/recipe-library/ into the

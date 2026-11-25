@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { FlowType } from '@farmslot/protocol';
 
 import {
+  assertStartRefSkipPrepareEligible,
   assertStartRefWorkBranchIsLocalOnly,
   normalizeStartRefRequest,
   StartRefPolicyError,
@@ -112,5 +113,27 @@ test('assertStartRefWorkBranchIsLocalOnly rejects remote branch reuse for startR
         startRef: { requestedRef: 'd0932457' },
       }),
     /refuses to mutate or reuse existing remote branch 'feat\/proj-1-candidate'/,
+  );
+});
+
+test('a pinned comparison run cannot skip prepare, whatever its slot HEAD', async () => {
+  // A project config that cannot be read counts as one that pins prepare.
+  await assert.rejects(
+    assertStartRefSkipPrepareEligible({
+      startRef: '260bd3a5',
+      skipPrepare: true,
+      slotId: 'macwork-mm-2',
+      project: 'pinned-prepare-absent-project',
+    }),
+    /A pinned comparison run cannot skip prepare/,
+  );
+  // A project that does not pin keeps the HEAD check, which needs the slot.
+  await assert.rejects(
+    assertStartRefSkipPrepareEligible({
+      startRef: '260bd3a5',
+      skipPrepare: true,
+      project: 'farmslot-farm',
+    }),
+    /startRef with skipPrepare requires slotId/,
   );
 });

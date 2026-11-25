@@ -8,8 +8,9 @@ import type {
 
 import { execOnSlot } from '../core/exec.js';
 import { withFarmGitConfig } from '../core/farm-git.js';
-import { loadSlotVars } from '../core/index.js';
+import { loadProjectVars, loadSlotVars, type RawProjectJson } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
+import { projectPinsPrepare } from '../methods/slot/pinned-prepare.js';
 
 import { resolveStartRefInRepo, sanitizeStartRef } from './start-ref-resolution.js';
 
@@ -110,9 +111,22 @@ export function normalizeStartRefRequest(
 }
 
 export async function assertStartRefSkipPrepareEligible(
-  params: Pick<RunCreateParams, 'startRef' | 'skipPrepare' | 'slotId'>,
+  params: Pick<RunCreateParams, 'startRef' | 'skipPrepare' | 'slotId' | 'project'>,
 ): Promise<void> {
   if (!params.startRef?.trim() || !params.skipPrepare) return;
+  // A matching HEAD says nothing about the installed app: a project that pins
+  // prepare installs the start commit's build there, so it cannot be skipped.
+  let projectJson: RawProjectJson | undefined;
+  try {
+    projectJson = params.project ? (await loadProjectVars(params.project)).projectJson : undefined;
+  } catch {
+    projectJson = undefined;
+  }
+  if (!projectJson || projectPinsPrepare(projectJson)) {
+    throw new StartRefPolicyError(
+      'A pinned comparison run cannot skip prepare; prepare installs the build of its start commit.',
+    );
+  }
   if (!params.slotId?.trim()) {
     throw new StartRefPolicyError(
       'startRef with skipPrepare requires slotId so slot HEAD can be verified against the requested startRef',

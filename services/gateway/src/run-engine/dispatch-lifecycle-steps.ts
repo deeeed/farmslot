@@ -46,6 +46,7 @@ import { taskExecutionAtDispatch } from '../runs/task-execution.js';
 import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
+import { runPrepareIsPinned } from './pinned-prepare.js';
 import { probeRemotePath } from './remote-probes.js';
 import { runSupersededSince } from './run-generation.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
@@ -361,6 +362,12 @@ export async function executePrepareStep(
       'Eval replay cannot skip prepare; prepare installs and verifies the pinned recipe harness.',
     );
   }
+  const pinned = await runPrepareIsPinned(current);
+  if (skipPrepare && pinned) {
+    throw new Error(
+      'A pinned comparison run cannot skip prepare; prepare installs the build of its start commit.',
+    );
+  }
   if (skipPrepare) {
     console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (${skipReason})`);
     await completeRunTaskInitialization(runId);
@@ -452,6 +459,12 @@ export async function executePrepareStep(
   const warmRecovery = getRunFlags(runId)?.warmRecovery;
   const forceNewBranch = shouldForceNewPrepareBranch(current, warmRecovery);
   const prepareController = new AbortController();
+  // A record from an earlier prepare must not outlive this one: a prepare that
+  // fails, or runs on another slot, would otherwise leave the old build standing.
+  if (current.prepareArtifact) {
+    await persistRunNow(updateRun(runId, { prepareArtifact: null }), 'prepare artifact cleared');
+  }
+
   // activeMonitors[runId] is exclusively owned for the duration of one
   // step; an existing entry orphans the prior controller from cancellation.
   if (activeMonitors.has(runId)) {
@@ -481,6 +494,7 @@ export async function executePrepareStep(
       prepareController.signal,
       {
         requireRunOwnership: true,
+        ...(pinned ? { pinned: true } : {}),
         ...(warmRecovery ? { stripClean: true } : {}),
         ...(isPrepareReplay ||
         usesEvalTrialCapsule(current.engineState?.evalExperiment?.blind) ||
@@ -559,6 +573,18 @@ export async function executePrepareStep(
           resolvedAt: prepareResult.startRef.resolvedAt,
         },
       });
+    }
+    if (prepareResult.prepareArtifact) {
+      await persistRunNow(
+        updateRun(runId, {
+          prepareArtifact: {
+            ...prepareResult.prepareArtifact,
+            slotId: current.slotId,
+            enforced: true,
+          },
+        }),
+        'pinned build recorded',
+      );
     }
     const afterPrepare = getRun(runId)!;
     if (afterPrepare.flowType === 'qa' && afterPrepare.qaSource) {
