@@ -49,7 +49,7 @@ const SLOT_RECEIPT = `${remoteRepo}/temp/tasks/dev/rerun/artifacts/harness-prove
 const REMEDY =
   'Re-dispatch with --ticket, or author a fresh task dir: copy TASK.md and CHECKLIST.md to a new folder, leave out artifacts/ and inputs/handoff.json, and update the task paths written inside them.';
 
-/** tasks/dev/rerun with TASK.md and CHECKLIST.md, plus a receipt and a handoff when asked. */
+/** tasks/dev/rerun with TASK.md, plus a receipt and a handoff when asked. */
 function taskDir(t: TestContext, files: { attemptId?: string; receipt?: boolean }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'foreign-task-dir-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -57,7 +57,6 @@ function taskDir(t: TestContext, files: { attemptId?: string; receipt?: boolean 
   fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'inputs'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'TASK.md'), '# Task\n');
-  fs.writeFileSync(path.join(dir, 'CHECKLIST.md'), '- [ ] one\n');
   if (files.receipt) fs.writeFileSync(path.join(dir, 'artifacts/harness-provenance.json'), '{}');
   if (files.attemptId)
     fs.writeFileSync(
