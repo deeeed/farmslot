@@ -90,6 +90,7 @@ const fakeGithub = {
       mergeStateStatus: 'CLEAN',
       reviewDecision: 'APPROVED',
       headRefName: 'feat/a',
+      headRefOid: 'b'.repeat(40),
       createdAt: '2026-01-01',
       updatedAt: '2026-01-02',
       closedAt: null,
@@ -204,6 +205,7 @@ describe('gateway-owned PR detail observations', { concurrency: 1 }, () => {
     assert.equal(calls.length, before, 'the retained read is not fetched a second time');
     assert.equal(first.pr.title, 'First title');
     assert.equal(first.observation?.status, 'ready');
+    assert.equal(first.pr.headSha, 'b'.repeat(40), 'pr.status carries the PR head');
     const key = prStatusObservation.resourceKey({ pr: 7, project: 'app' });
     assert.equal(key.queryId, 'pr.status:{"pr":7,"project":"app"}');
     const revision = resourceRevisions.revision(key);

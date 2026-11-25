@@ -2925,6 +2925,18 @@ async function replayRunStep(
         supersedePendingResultDecisions(clearedDecisions, new Date().toISOString()),
         new Date().toISOString(),
       ),
+      // Replay keeps resolved CI decisions, so an operator hold would survive it.
+      // Re-running ci-watch is the operator handing the PR back to automation.
+      ...(existing.ciWatchState &&
+      flowSteps.indexOf(PS.CI_WATCH) >= 0 &&
+      targetIdx <= flowSteps.indexOf(PS.CI_WATCH)
+        ? {
+            ciWatchState: {
+              ...existing.ciWatchState,
+              holdReleasedAt: new Date().toISOString(),
+            },
+          }
+        : {}),
       ...(existing.reviewWorkspace && replayStepName === PS.HUMAN_GATE
         ? {
             reviewAutoFinish: false,

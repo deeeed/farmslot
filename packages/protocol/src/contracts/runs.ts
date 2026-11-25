@@ -3618,6 +3618,13 @@ export interface RunEngineState {
   };
 }
 
+/** CI-watch gates that can auto-dispatch, and so offer "Keep holding" while a PR is held. */
+export type CIHoldGate =
+  | 'merge_conflict'
+  | 'ci_failed'
+  | 'review_comments'
+  | 'review_comments_early';
+
 /**
  * Per-run CI-watch inline-fix state — persisted on {@link Run} so dedup signatures
  * and attempt counters survive gateway restart (ADR-027).
@@ -3625,6 +3632,21 @@ export interface RunEngineState {
 export interface RunCiWatchState {
   /** Scope refusals stop automatic CI fix retries. */
   fixScopeRefusal?: string;
+  /**
+   * When a replay that re-ran ci-watch handed the PR back to automation. An
+   * operator hold is derived from `Run.decisions` (a `wait` at
+   * `inline_fix_blocked` while that gate offered a dispatch); replay keeps those
+   * resolved decisions, so a hold resolved before this time no longer applies.
+   */
+  holdReleasedAt?: string;
+  /**
+   * Per held gate (`merge_conflict`, `ci_failed`, `review_comments`,
+   * `review_comments_early`), the last time a complete GitHub read showed that
+   * gate's state clear while the PR was held. A "Keep holding" answered at or
+   * before it no longer quiets the gate, so a state that clears and returns asks
+   * again, across a gateway restart too.
+   */
+  holdClearedAt?: Partial<Record<CIHoldGate, string>>;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };

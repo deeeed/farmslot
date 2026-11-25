@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import {
   type CiCheckSummary,
   ciDecisionSnapshotContext,
+  type CIHoldGate,
   type CIWatchPhase,
   Events,
   type PRStatus,
@@ -24,6 +25,9 @@ import {
   buildCIBotCommentFingerprint,
   buildCIWatchCheckFingerprint,
   type CICheckTimelineEntry,
+  ciHoldBarrier,
+  ciHoldIsQuiet,
+  ciHoldSince,
   type CIOutcome,
   type CIWatchPhasePatch,
   detectCIWatchProgress,
@@ -45,6 +49,8 @@ export {
 } from './state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { computePRRecommendation, prStatus } from '../methods/pr.js';
+import { PR_COMMENT_READ_LABELS } from '../methods/pr/raw-cache.js';
+import { resolveCIWatchChainFlowType } from '../run-engine/ci-watch-chain-flow.js';
 import { pendingDecisionForRun } from '../run-engine/decision-projection.js';
 import { recordPrMerge } from '../run-traces/output.js';
 import { getRun, prRelinked, updateRun, updateRunStep } from '../runs/store.js';
@@ -129,6 +135,8 @@ const ciPokeCooldown = new Map<string, number>();
 
 // Minimum gap between pokes per run (anti-hammer)
 const POKE_MIN_GAP_MS = 5_000;
+
+const KEEP_HOLDING = { id: 'wait', label: 'Keep holding', style: 'secondary' } as const;
 
 /** Force the active `pokeablePoll` for this run to resolve early. */
 export function pokeCIPoll(runId: string): { ok: boolean; woken?: boolean; reason?: string } {
@@ -371,6 +379,24 @@ export async function monitorCI(
       ...timeoutDeadlines(),
     });
     return pokeablePoll(runId, config.pollIntervalMs, signal);
+  };
+
+  // The hold protocol, shared by every gate that can auto-dispatch. While the
+  // operator holds the PR, a gate offers "Keep holding"; that answer is stored on
+  // the decision with the state it was given for, so the gate stays quiet, across a
+  // restart too, until GitHub shows another head or failure, a read shows the state
+  // clear, or the hold ends.
+  // No key means the read GitHub returned cannot show this gate's state: while held,
+  // that gate neither asks nor answers. Where nothing else is left to ask (a quiet
+  // conflict, or green checks with unknown comments) the poll waits inside the caps.
+  const heldGate = (gate: CIHoldGate, holdKey: string | undefined) => {
+    const current = getRun(runId);
+    if (!ciHoldSince(current)) return null;
+    return {
+      quiet: holdKey === undefined || ciHoldIsQuiet(current, gate, holdKey),
+      action: KEEP_HOLDING,
+      context: holdKey === undefined ? {} : { holdKey },
+    };
   };
 
   const canDispatchRepair = (): boolean =>
@@ -670,10 +696,54 @@ export async function monitorCI(
       continue;
     }
 
-    // Merge conflict — prefer update-branch (lighter), fallback to pr-complete
-    if (mergeConflict) {
+    // "Keep holding" keys: a held gate stays quiet only for the PR head and the
+    // watched failures or comments the answer was given for. Each gate needs only its
+    // own reads: the conflict the head (one read with mergeability), failed checks the
+    // check snapshot, comments both comment reads. A failed read leaves its key unset.
+    const commentsRead =
+      !!pr.headSha &&
+      !pr.readErrors?.some((error) =>
+        PR_COMMENT_READ_LABELS.some((label) => error.startsWith(label)),
+      );
+    const holdKeys = {
+      conflict: pr.headSha,
+      failed:
+        pr.headSha && pr.checkSnapshot
+          ? `${pr.headSha}:${[...failedNames].sort().join(',')}`
+          : undefined,
+      comments: commentsRead ? `${pr.headSha}:${actionableFingerprint}` : undefined,
+    };
+    // A read that shows a gate's state clear ends that gate's answer, recorded on the
+    // run; a gate whose reads failed records nothing.
+    if (ciHoldSince(getRun(runId))) {
+      const cleared: CIHoldGate[] = [
+        ...(holdKeys.conflict && pr.mergeable === 'MERGEABLE' ? (['merge_conflict'] as const) : []),
+        ...(holdKeys.failed && !anyFailed ? (['ci_failed'] as const) : []),
+        ...(holdKeys.comments && effectiveActionable.length === 0
+          ? (['review_comments', 'review_comments_early'] as const)
+          : []),
+      ];
+      if (cleared.length > 0) {
+        const seenAt = new Date().toISOString();
+        mutateDedup(runId, (state) => {
+          state.holdClearedAt = {
+            ...state.holdClearedAt,
+            ...Object.fromEntries(cleared.map((gate) => [gate, seenAt])),
+          };
+        });
+      }
+    }
+
+    // Merge conflict — prefer update-branch (lighter), fallback to pr-complete.
+    // GitHub reports UNKNOWN while it recomputes mergeability after the base moves. A
+    // held conflict quieted at this head keeps that state, rather than reading UNKNOWN
+    // as "no conflict" and asking about the failed checks instead.
+    const conflictGate = heldGate('merge_conflict', holdKeys.conflict);
+    const quietConflict =
+      conflictGate?.quiet === true && (mergeConflict || pr.mergeable === 'UNKNOWN');
+    if (mergeConflict && !quietConflict) {
       console.log(`[ci-monitor] run ${runId.slice(0, 8)} — merge conflict detected`);
-      const autoAction = pickCIAutoDispatchAction('merge_conflict', [], config);
+      const autoAction = pickCIAutoDispatchAction('merge_conflict', [], config, !!conflictGate);
       if (autoAction) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for merge conflict`,
@@ -689,13 +759,18 @@ export async function monitorCI(
         [
           { id: 'dispatch-update-branch', label: 'Dispatch update-branch', style: 'primary' },
           { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'secondary' },
+          ...(conflictGate ? [conflictGate.action] : []),
           { id: 'skip', label: 'Skip (manual)', style: 'secondary' },
         ],
-        ciDecisionSnapshotContext(pr),
+        { ...ciDecisionSnapshotContext(pr), ...conflictGate?.context },
       );
       if (actionId === 'dispatch-update-branch' || actionId === 'dispatch-pr-complete') {
         const outcome = await finishDispatch('failed', ['MERGE_CONFLICT'], actionId);
         if (outcome) return outcome;
+        continue;
+      }
+      if (actionId === 'wait') {
+        forceNextRefresh = await waitForNextPoll('polling');
         continue;
       }
       return buildOutcome('passed');
@@ -707,7 +782,11 @@ export async function monitorCI(
     const now = Date.now();
     const progressWindowExpired = now - timeoutWindowStartedAt > config.maxPollTimeMs;
     const totalWindowExpired = now - totalTimeoutWindowStartedAt > config.maxTotalPollTimeMs;
-    const waitingForCI = !allPassed || effectiveActionable.length > 0;
+    // Green checks do not finish a held watch whose comments GitHub could not read:
+    // the comment it is held on may be the one the failed read carried.
+    const commentsUnread = !!conflictGate && !holdKeys.comments;
+    const waitingForCI =
+      quietConflict || commentsUnread || !allPassed || effectiveActionable.length > 0;
     if (waitingForCI && (progressWindowExpired || totalWindowExpired)) {
       const elapsedMs = progressWindowExpired
         ? now - timeoutWindowStartedAt
@@ -745,6 +824,13 @@ export async function monitorCI(
       // claiming that CI made progress.
       totalTimeoutWindowStartedAt = Date.now();
       syncTimeoutProgressState({ timeoutWindowStartedAt: totalTimeoutWindowStartedAt });
+      forceNextRefresh = await waitForNextPoll('polling');
+      continue;
+    }
+
+    // A conflict the operator keeps holding, a held PR whose head GitHub could not
+    // read, or a held green PR with unknown comments waits here, inside the caps.
+    if (quietConflict || (commentsUnread && allPassed)) {
       forceNextRefresh = await waitForNextPoll('polling');
       continue;
     }
@@ -815,7 +901,8 @@ export async function monitorCI(
           });
         }
 
-        const autoAction = pickCIAutoDispatchAction('bot_comments', [], config);
+        const commentsGate = heldGate('review_comments', holdKeys.comments);
+        const autoAction = pickCIAutoDispatchAction('bot_comments', [], config, !!commentsGate);
         if (autoAction) {
           console.log(
             `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for actionable bot comments`,
@@ -825,6 +912,10 @@ export async function monitorCI(
           continue;
         }
 
+        if (commentsGate?.quiet) {
+          forceNextRefresh = await waitForNextPoll('polling');
+          continue;
+        }
         // Inline fix failed or not applicable — fall through to decision
         const actionId = await createCIDecision(
           runId,
@@ -832,14 +923,19 @@ export async function monitorCI(
           `CI passed but ${effectiveActionable.length} actionable comment(s) on PR #${prNumber} (${labels})`,
           [
             { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'primary' },
+            ...(commentsGate ? [commentsGate.action] : []),
             { id: 'skip', label: 'Skip (manual)', style: 'secondary' },
             { id: 'dismiss', label: 'Dismiss comments', style: 'secondary' },
           ],
-          ciDecisionSnapshotContext(pr),
+          { ...ciDecisionSnapshotContext(pr), ...commentsGate?.context },
         );
         if (actionId === 'dispatch-pr-complete') {
           const outcome = await finishDispatch('comments', [], actionId);
           if (outcome) return outcome;
+          continue;
+        }
+        if (actionId === 'wait') {
+          forceNextRefresh = await waitForNextPoll('polling');
           continue;
         }
       }
@@ -955,7 +1051,8 @@ export async function monitorCI(
         });
       }
 
-      const autoAction = pickCIAutoDispatchAction('ci_failed', failedNames, config);
+      const failedGate = heldGate('ci_failed', holdKeys.failed);
+      const autoAction = pickCIAutoDispatchAction('ci_failed', failedNames, config, !!failedGate);
       if (autoAction) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for failed checks`,
@@ -965,6 +1062,10 @@ export async function monitorCI(
         continue;
       }
 
+      if (failedGate?.quiet) {
+        forceNextRefresh = await waitForNextPoll('polling');
+        continue;
+      }
       const actionId = await createCIDecision(
         runId,
         'ci_failed',
@@ -972,10 +1073,11 @@ export async function monitorCI(
         [
           { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete to fix', style: 'primary' },
           { id: 'retry', label: 'Retry CI', style: 'secondary' },
+          ...(failedGate ? [failedGate.action] : []),
           { id: 'skip', label: 'Skip (manual)', style: 'secondary' },
           { id: 'abort', label: 'Abort', style: 'danger' },
         ],
-        { checks: pr.checks, ...ciDecisionSnapshotContext(pr) },
+        { checks: pr.checks, ...ciDecisionSnapshotContext(pr), ...failedGate?.context },
       );
       if (actionId === 'abort') return buildOutcome('aborted');
       if (actionId === 'dispatch-pr-complete') {
@@ -1007,6 +1109,10 @@ export async function monitorCI(
           `[ci-monitor] run ${runId.slice(0, 8)} — operator retry CI: reset inline-fix window, polling now`,
         );
         forceNextRefresh = true;
+        continue;
+      }
+      if (actionId === 'wait') {
+        forceNextRefresh = await waitForNextPoll('polling');
         continue;
       }
       return buildOutcome('passed');
@@ -1074,7 +1180,8 @@ export async function monitorCI(
         });
       }
 
-      const autoAction = pickCIAutoDispatchAction('bot_comments_early', [], config);
+      const earlyGate = heldGate('review_comments_early', holdKeys.comments);
+      const autoAction = pickCIAutoDispatchAction('bot_comments_early', [], config, !!earlyGate);
       if (autoAction) {
         console.log(
           `[ci-monitor] run ${runId.slice(0, 8)} — auto-dispatching ${autoAction} for early actionable bot comments`,
@@ -1084,6 +1191,10 @@ export async function monitorCI(
         continue;
       }
 
+      if (earlyGate?.quiet) {
+        forceNextRefresh = await waitForNextPoll('polling');
+        continue;
+      }
       // Inline fix failed or not applicable — fall through to decision
       const actionId = await createCIDecision(
         runId,
@@ -1091,9 +1202,9 @@ export async function monitorCI(
         `${effectiveActionable.length} actionable comment(s) on PR #${prNumber} (${labels}) — CI still pending`,
         [
           { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete now', style: 'primary' },
-          { id: 'wait', label: 'Wait for CI first', style: 'secondary' },
+          earlyGate?.action ?? { id: 'wait', label: 'Wait for CI first', style: 'secondary' },
         ],
-        ciDecisionSnapshotContext(pr),
+        { ...ciDecisionSnapshotContext(pr), ...earlyGate?.context },
       );
       if (actionId === 'dispatch-pr-complete') {
         const outcome = await finishDispatch('comments', [], actionId);
@@ -1130,13 +1241,20 @@ async function createCIDecision(
     nextPollAt: null,
   });
 
-  // Dedup: if a decision of this type was already resolved, return its action
+  // Dedup: if a decision of this type was already resolved, return its action.
+  // A dispatch resolved before the operator's latest wait in a hold is not replayed past it.
+  const holdBarrier = ciHoldBarrier(run);
   const resolved = run.decisions.find(
     (d) =>
       d.type === type &&
       d.resolvedAt &&
       shouldReuseResolvedCIDecisionAction(d.resolvedAction) &&
-      actions.some((action) => action.id === d.resolvedAction),
+      actions.some((action) => action.id === d.resolvedAction) &&
+      !(
+        holdBarrier &&
+        resolveCIWatchChainFlowType(d.resolvedAction) &&
+        d.resolvedAt <= holdBarrier
+      ),
   );
   if (resolved) return resolved.resolvedAction!;
 
@@ -1244,7 +1362,11 @@ export function pickCIAutoDispatchAction(
   reason: 'merge_conflict' | 'bot_comments' | 'bot_comments_early' | 'ci_failed',
   failedChecks: string[],
   config: Pick<CIMonitorConfig, 'autoDispatch'>,
+  held: boolean,
 ): 'dispatch-update-branch' | 'dispatch-pr-complete' | null {
+  // While the operator holds the PR, nothing dispatches automatically, whatever
+  // the category config says; the decision gates still offer a dispatch.
+  if (held) return null;
   switch (reason) {
     case 'merge_conflict':
       return config.autoDispatch.mergeConflicts ? 'dispatch-update-branch' : null;
