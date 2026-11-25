@@ -113,6 +113,10 @@ const prepare: typeof slotPrepare = async (_params, _emit, _signal, options) => 
 };
 const slots = await import('../methods/slot/index.js');
 mock.module('../methods/slot.js', { namedExports: { ...slots, slotPrepare: prepare } });
+let foreignTaskDir: string | null = null;
+mock.module('./foreign-task-dir.js', {
+  namedExports: { foreignTaskDirRefusal: async () => foreignTaskDir },
+});
 const owner: string = './dispatch-lifecycle-steps.js?pinned-prepare-step-test';
 const { executePrepareStep }: typeof import('./dispatch-lifecycle-steps.js') = await import(owner);
 
@@ -129,6 +133,7 @@ const stale: RunPrepareArtifact = {
 
 beforeEach(() => {
   slotDisabled = false;
+  foreignTaskDir = null;
   scrubReceipt = undefined;
   failAfterScrub = false;
   persisted.length = 0;
@@ -266,4 +271,24 @@ test('a failed observed read never fails the prepare and leaves no stale record'
   };
   assert.equal((await prepareRun()).outputs?.success, true);
   assert.equal(run.prepareArtifact, null, 'the earlier record was cleared and nothing replaced it');
+});
+
+const REFUSAL =
+  'Task dir /tasks/dev/rerun was initialized by run archived-run (its handoff names it), and slot slot-1 no longer has its copy. Re-dispatch with --ticket, or author a fresh task dir.';
+
+test('a task dir another run initialized is refused before slot prepare, with no stale record', async () => {
+  run = { ...run, project: 'extension' };
+  foreignTaskDir = REFUSAL;
+  const stepPartialIO = new Map<string, StepIO>();
+  await assert.rejects(prepareRun(undefined, stepPartialIO), { message: REFUSAL });
+  assert.equal(prepareOptions, undefined, 'slot prepare never ran');
+  assert.equal(run.prepareArtifact, null, 'the earlier record was cleared before the refusal');
+  assert.ok(stepPartialIO.get(run.id)?.inputs, 'the failed step records its inputs');
+});
+
+test('a skipped prepare (warm handoff, operator skip) is not refused for its task dir', async () => {
+  run = { ...run, project: 'extension' };
+  foreignTaskDir = REFUSAL;
+  assert.equal((await prepareRun({ skipPrepare: true })).outputs?.skipped, true);
+  assert.equal(prepareOptions, undefined);
 });
