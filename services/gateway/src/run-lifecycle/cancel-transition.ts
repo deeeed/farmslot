@@ -10,16 +10,21 @@ import { closeStepWait, Events, isSlotFreedByPark, type Run } from '@farmslot/pr
 import { runReachedDispatch } from '../agents/contexts.js';
 import { markBacklogRunObserved } from '../backlog/store.js';
 import {
+  currentReleaseGatewayInstance,
   ownsRunSlotCleanup,
+  readSlotField,
   readSlotRow,
-  type RunCleanupIntent,
   runCleanupTokenIntent,
+  SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
+  SLOT_RELEASE_GATEWAY_INSTANCE,
+  SLOT_RELEASING_SINCE,
+  updateSlotStatusIf,
 } from '../core/index.js';
-import { currentReleaseGatewayInstance, SLOT_RELEASE_GATEWAY_INSTANCE } from '../core/state.js';
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { invalidateWarmReviewerSessions } from '../review/session-mode.js';
 import { cancelRunEngine } from '../run-engine/orchestrator.js';
+import type { InterruptedCancelFence } from '../run-engine/recovery.js';
 import { scheduledGraphOf } from '../run-engine/stack-base.js';
 import {
   isTerminalTeardownInFlight,
@@ -300,7 +305,6 @@ export function defaultCancelCollaborators({
       // prepare before the slot is released, as slot.release does; one that will not stop
       // keeps the slot held for the run instead of publishing it ready under a live prepare.
       let prepareBlocker: string | null = null;
-      const { readSlotRow } = await import('../core/index.js');
       if (!state.keep && run.slotId) {
         const { activePrepareAborts } = await import('../methods/slot/shared.js');
         const inflight = activePrepareAborts.get(run.slotId);
@@ -359,7 +363,6 @@ export function defaultCancelCollaborators({
         (await fenceRunSlotCleanup(run, blocker, keeps(run) ? 'replay' : 'release'));
       cleanup.delete(run.id);
       try {
-        const { readSlotField, updateSlotStatusIf } = await import('../core/index.js');
         await cancelNativeRunWorkers(run.id, { machineTransitionHeld: true });
         if (run.transport === 'native') {
           // A completed handoff can leave the prior run cancellable while its successor
@@ -373,13 +376,7 @@ export function defaultCancelCollaborators({
             return;
           }
         }
-        return await finishCancelledSlot(
-          run,
-          fence,
-          blocker,
-          state ? state.keep : keeps(run),
-          broadcastTransitionEvent,
-        );
+        return await finishCancelledSlot(run, fence, blocker, state ? state.keep : keeps(run));
       } catch (error) {
         await settleFailedRunSlotCleanup(run, fence, error);
         throw error;
@@ -396,14 +393,15 @@ export function defaultCancelCollaborators({
 /**
  * The rest of a cancel's slot cleanup once its fence stands: restore a blind trial's Git, settle
  * the replay hold or release the slot, return a parked checkout to idle, and publish the fleet.
- * Shared with reconcile, which finishes a cancel that a gateway restart interrupted.
+ * Shared with reconcile, which finishes a cancel that a gateway restart interrupted. Native
+ * workers are stopped before the fence is raised (releaseCapabilities); the live path stops
+ * them again just before this, and a restarted gateway has none of this run's left to stop.
  */
 export async function finishCancelledSlot(
   run: Run,
   fence: RunSlotCleanupFence,
   blocker: string | null,
   keepSlot: boolean,
-  broadcastTransitionEvent: (event: string, payload: unknown) => unknown,
 ): Promise<{ skipped: string } | undefined> {
   const { loadFleetStatus } = await import('../fleet/state.js');
   // Keep replay by default; on-demand selection releases the confirmed owned cleanup.
@@ -446,43 +444,56 @@ export async function finishCancelledSlot(
 
 /**
  * Finish a cancel's slot cleanup that a gateway restart interrupted, from the intent its fence
- * carries. Runs inside the run's transition and the slot's terminal teardown, and rechecks the
- * fence there, so a manual release, a replay or a revived run that got in first wins. Returns
- * null once finished, or why it did not run.
+ * carries. Runs inside the run's transition and the slot's terminal teardown, and acts only while
+ * the row holds exactly the fence reconcile observed, so a manual release, a replay or a revived
+ * run that got in first wins. Returns null once finished; otherwise what happened instead: a
+ * refusal leaves the fence, and a failed finish settles the cleanup hold the live cancel would.
  */
 export async function resumeInterruptedCancelCleanup(
   run: Run,
   slotId: string,
-  intent: RunCleanupIntent,
+  observed: InterruptedCancelFence,
 ): Promise<string | null> {
   const result = await tryWithRunTransition(run.id, async () => {
     const latest = getRun(run.id);
     if (!latest || latest.status !== 'cancelled' || latest.slotId !== slotId)
-      return 'the cancelled run changed';
+      return 'refused: the cancelled run changed';
     // Check and begin in one synchronous step: a release takeover starting now sees the teardown.
-    if (isTerminalTeardownInFlight(slotId)) return 'another teardown owns this slot';
-    return withTerminalTeardown(slotId, async () => {
-      const row = await readSlotRow(slotId);
-      if (
-        !row ||
-        row.phase !== SLOT_PHASE_RELEASING ||
-        runCleanupTokenIntent(row.cleanup_release_token) !== intent ||
-        row[SLOT_RELEASE_GATEWAY_INSTANCE] === currentReleaseGatewayInstance() ||
-        row.handoff_run_id ||
-        row.workspace_recovery ||
-        !ownsRunSlotCleanup(row, latest.id)
-      )
-        return 'the release fence changed';
-      const fence: RunSlotCleanupFence = { before: row, token: String(row.cleanup_release_token) };
-      const stopped = await finishCancelledSlot(
-        latest,
-        fence,
-        null,
-        intent === 'replay',
-        broadcastTransitionEvent,
-      );
-      return stopped?.skipped ?? null;
-    });
+    if (isTerminalTeardownInFlight(slotId)) return 'refused: another teardown owns this slot';
+    let fence: RunSlotCleanupFence | undefined;
+    try {
+      return await withTerminalTeardown(slotId, async () => {
+        const row = await readSlotRow(slotId);
+        if (
+          !row ||
+          row.phase !== SLOT_PHASE_RELEASING ||
+          row.cleanup_release_token !== observed.token ||
+          runCleanupTokenIntent(row.cleanup_release_token) !== observed.intent ||
+          row[SLOT_RELEASE_GATEWAY_INSTANCE] !== observed.instance ||
+          observed.instance === currentReleaseGatewayInstance() ||
+          row[SLOT_RELEASING_SINCE] !== observed.releasingSince ||
+          (Number(row.slot_epoch) || 0) !== observed.slotEpoch ||
+          row[SLOT_CLEANUP_STOP_UNCONFIRMED] === true ||
+          row.handoff_run_id ||
+          row.workspace_recovery ||
+          !ownsRunSlotCleanup(row, latest.id) ||
+          // The replay hold keeps the slot's owner: a cleanup-only row would lose it.
+          (observed.intent === 'replay' && row.current_run_id !== latest.id)
+        )
+          return 'refused: the release fence changed';
+        fence = { before: row, token: observed.token };
+        const stopped = await finishCancelledSlot(latest, fence, null, observed.intent === 'replay');
+        if (!stopped) return null;
+        // The finish settled a cleanup hold instead, or lost the fence: publish what it left.
+        const { loadFleetStatus } = await import('../fleet/state.js');
+        await broadcastTransitionEvent(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+        return `not finished: ${stopped.skipped}`;
+      });
+    } catch (error) {
+      if (!fence) throw error;
+      // As the live cancel does: settle the fence as a visible hold, named on the run.
+      return `not finished: ${await settleFailedRunSlotCleanup(latest, fence, error)}`;
+    }
   });
-  return result === undefined ? 'a transition holds the run' : result;
+  return result === undefined ? 'refused: a transition holds the run' : result;
 }

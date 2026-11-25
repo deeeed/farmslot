@@ -1902,10 +1902,10 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
       const { fencedSlotOwnershipBlocker } = await import('../run-lifecycle/slot-teardown.js');
       return fencedSlotOwnershipBlocker(run);
     },
-    resumeInterruptedCancel: async (run, slotId, intent) => {
+    resumeInterruptedCancel: async (run, slotId, fence) => {
       const { resumeInterruptedCancelCleanup } =
         await import('../run-lifecycle/cancel-transition.js');
-      return resumeInterruptedCancelCleanup(run, slotId, intent);
+      return resumeInterruptedCancelCleanup(run, slotId, fence);
     },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {

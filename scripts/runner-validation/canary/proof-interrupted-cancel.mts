@@ -3,7 +3,9 @@
 // cancelled for real; while the gateway is down, the slot row is put back into the fence that
 // cancel raises before it finishes (busy/releasing, the previous gateway's instance and the
 // cancel's run-cleanup token with its intent). After the restart, reconcile must settle it:
-// `replay` on the cancelled run's replay hold, `release` on a ready slot.
+// `replay` on the cancelled run's replay hold, `release` on a ready slot. Each case also needs
+// the restarted gateway's own log line for finishing that intent, so a fence that was never
+// picked up cannot pass on the row the cancel had already left.
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
@@ -153,14 +155,19 @@ try {
       },
       180_000,
     );
+    const finishLine = `${slot} finished the cancel a gateway restart interrupted (${intent})`;
+    const finishedByReconcile = readdirSync(evidence)
+      .filter((name) => /^gateway-\d+\.log$/.test(name))
+      .some((name) => readFileSync(path.join(evidence, name), 'utf8').includes(finishLine));
     const ok =
-      intent === 'replay'
+      finishedByReconcile &&
+      (intent === 'replay'
         ? settled.lifecycle === 'held' &&
           settled.phase === 'occupied' &&
           settled.currentRunId === run.id
-        : settled.lifecycle === 'ready' && settled.currentRunId === null;
-    cases.push({ intent, downMs, afterRestart: interrupted, settled, ok });
-    await log(`case ${intent}`, { interrupted, settled, ok });
+        : settled.lifecycle === 'ready' && settled.currentRunId === null);
+    cases.push({ intent, downMs, afterRestart: interrupted, settled, finishedByReconcile, ok });
+    await log(`case ${intent}`, { interrupted, settled, finishedByReconcile, ok });
   }
   receipt = {
     status: cases.every((entry) => entry.ok) ? 'pass' : 'fail',

@@ -39,6 +39,10 @@ interface Fence {
   ageMs?: number;
   owned?: boolean;
   handoff?: string;
+  stopUnconfirmed?: boolean;
+  workspaceRecovery?: boolean;
+  ownerSlot?: string;
+  native?: boolean;
 }
 
 function fenceRow(fence: Fence, owner: Run) {
@@ -56,6 +60,8 @@ function fenceRow(fence: Fence, owner: Run) {
       fence.token ??
       state.runCleanupToken(fence.intent === null ? undefined : (fence.intent ?? 'release'), 'id'),
     ...(fence.handoff ? { handoff_run_id: fence.handoff } : {}),
+    ...(fence.stopUnconfirmed ? { cleanup_stop_unconfirmed: true } : {}),
+    ...(fence.workspaceRecovery ? { workspace_recovery: { runId: owner.id } } : {}),
   };
 }
 
@@ -65,6 +71,7 @@ interface Pass {
   census?: string | null;
   replayBlocker?: string | null;
   resume?: (run: Run, slotId: string, intent: Intent) => Promise<string | null>;
+  gateThrows?: boolean;
   extraRuns?: Run[];
 }
 
@@ -73,16 +80,20 @@ async function reconcile(pass: Pass) {
     makeRun({
       id: `cancelled-${index}`,
       status: fence.ownerStatus ?? 'cancelled',
-      slotId: fence.slot ?? 'cancel-slot',
+      slotId: fence.ownerSlot ?? fence.slot ?? 'cancel-slot',
+      ...(fence.native ? { transport: 'native' as const } : {}),
     }),
   );
   const rows = pass.fences.map((fence, index) => fenceRow(fence, owners[index]!));
   await writeFile(state.statusFile, JSON.stringify({ slots: rows }));
   const runs = [...owners, ...(pass.extraRuns ?? [])];
   const resumed: Array<[string, string, Intent]> = [];
+  const observed: Array<Parameters<NonNullable<Deps['resumeInterruptedCancel']>>[2]> = [];
+  const runUpdates: Array<[string, Partial<Run>]> = [];
   const census: string[] = [];
   const replayChecks: string[] = [];
   const retried: string[] = [];
+  const recoveries: string[] = [];
   const deps: Deps = {
     listRuns: (options) => ({
       runs: options?.active
@@ -102,7 +113,9 @@ async function reconcile(pass: Pass) {
     isTerminalTeardownInFlight: () => false,
     readSlotField: state.readSlotField,
     getRun: (id) => runs.find((run) => run.id === id),
-    updateRun: () => {},
+    updateRun: (id, fields) => {
+      runUpdates.push([id, fields]);
+    },
     resetSlot: state.resetSlot,
     resetSlotIf: state.resetSlotIf,
     updateSlotStatusIf: state.updateSlotStatusIf,
@@ -111,26 +124,29 @@ async function reconcile(pass: Pass) {
       retried.push(slotId);
       return false;
     },
-    resumeInterruptedRecovery: () => {
-      throw new Error('No workspace recovery journal here');
+    resumeInterruptedRecovery: (slotId) => {
+      recoveries.push(slotId);
     },
     absentExecutionNode: async () => pass.absentNode ?? null,
     releaseFenceBlocker: async (run) => {
       census.push(run.id);
+      if (pass.gateThrows) throw new Error('census command failed');
       return pass.census ?? null;
     },
     cancelledReplayBlocker: async (run) => {
       replayChecks.push(run.id);
+      if (pass.gateThrows) throw new Error('ownership read failed');
       return pass.replayBlocker ?? null;
     },
-    resumeInterruptedCancel: async (run, slotId, intent) => {
-      resumed.push([run.id, slotId, intent]);
-      return pass.resume ? pass.resume(run, slotId, intent) : null;
+    resumeInterruptedCancel: async (run, slotId, fence) => {
+      resumed.push([run.id, slotId, fence.intent]);
+      observed.push(fence);
+      return pass.resume ? pass.resume(run, slotId, fence.intent) : null;
     },
   };
   await reconcileOrphanedSlots(deps);
   const read = async (slot = 'cancel-slot') => state.readSlotRow(slot);
-  return { owners, resumed, census, replayChecks, retried, read };
+  return { owners, rows, recoveries, resumed, observed, runUpdates, census, replayChecks, retried, read };
 }
 
 test('a release intent is finished after a clean census', async () => {
@@ -147,6 +163,48 @@ test('a replay intent is finished after the ownership check, not the census', as
   assert.deepEqual(pass.replayChecks, ['cancelled-0']);
 });
 
+test('the resume gets the exact fence reconcile observed', async () => {
+  const pass = await reconcile({ fences: [{ intent: 'release' }] });
+  const row = pass.rows[0]!;
+  assert.deepEqual(pass.observed, [
+    {
+      intent: 'release',
+      token: row.cleanup_release_token,
+      instance: 'previous-gateway',
+      releasingSince: row.releasing_since,
+      slotEpoch: 5,
+    },
+  ]);
+});
+
+test('a blocked or failing gate keeps the fence inside the bound and takes the backstop after it', async () => {
+  for (const pass of [
+    { fences: [{ intent: 'replay' }], replayBlocker: 'A publication gate still holds this slot' },
+    { fences: [{ intent: 'replay' }], gateThrows: true },
+    { fences: [{ intent: 'release' }], gateThrows: true },
+  ] satisfies Pass[]) {
+    const label = JSON.stringify(pass);
+    const fresh = await reconcile(pass);
+    assert.deepEqual(fresh.resumed, [], label);
+    assert.equal((await fresh.read())?.phase, 'releasing', label);
+    const fence = { ...pass.fences[0]!, ageMs: STALE_RELEASE_RECLAIM_MS + 1 };
+    const expired = await reconcile({ ...pass, fences: [fence] });
+    assert.deepEqual(expired.resumed, [], label);
+    assert.equal((await expired.read())?.cleanup_stop_unconfirmed, true, label);
+  }
+});
+
+test('a resume that stops past the bound leaves the slot to the backstop hold', async () => {
+  const pass = await reconcile({
+    fences: [{ intent: 'release', ageMs: STALE_RELEASE_RECLAIM_MS + 1 }],
+    resume: async () => 'refused: a transition holds the run',
+  });
+  assert.equal(pass.resumed.length, 1);
+  const row = await pass.read();
+  assert.equal(row?.lifecycle, 'held');
+  assert.equal(row?.cleanup_stop_unconfirmed, true);
+});
+
 test('an absent node keeps the fence, even past the reclaim bound', async () => {
   for (const ageMs of [0, STALE_RELEASE_RECLAIM_MS + 1]) {
     const pass = await reconcile({ fences: [{ intent: 'release', ageMs }], absentNode: 'node-a' });
@@ -154,6 +212,15 @@ test('an absent node keeps the fence, even past the reclaim bound', async () => 
     assert.deepEqual(pass.resumed, [], `age ${ageMs}`);
     assert.equal(row?.phase, 'releasing', 'no backstop hold while the node is away');
     assert.equal(row?.cleanup_stop_unconfirmed ?? null, null);
+    assert.deepEqual(pass.runUpdates, [
+      [
+        'cancelled-0',
+        {
+          slotTeardownSkipped:
+            'Cancel cleanup interrupted by a gateway restart waits for node node-a',
+        },
+      ],
+    ]);
   }
 });
 
@@ -195,6 +262,11 @@ test('a fence without an intent, this gateway’s own fence and a handoff row ke
     { intent: 'release', instance: state.currentReleaseGatewayInstance() },
     { intent: 'release', handoff: 'successor-run' },
     { intent: 'release', ownerStatus: 'monitoring' },
+    { intent: 'release', stopUnconfirmed: true },
+    { intent: 'release', native: true },
+    { intent: 'release', ownerSlot: 'another-slot' },
+    // The replay hold is written for the slot's owner, which a cleanup-only row has lost.
+    { intent: 'replay', owned: false },
   ] satisfies Fence[]) {
     const pass = await reconcile({ fences: [fence] });
     assert.deepEqual(pass.resumed, [], JSON.stringify(fence));
@@ -202,10 +274,30 @@ test('a fence without an intent, this gateway’s own fence and a handoff row ke
   }
 });
 
+test('a fence with a workspace recovery journal is left to that recovery', async () => {
+  const pass = await reconcile({ fences: [{ intent: 'release', workspaceRecovery: true }] });
+  assert.deepEqual(pass.resumed, []);
+  assert.deepEqual(pass.recoveries, ['cancel-slot']);
+});
+
 test('a run pinned to the slot, still waiting to claim it, does not stop the resume', async () => {
   const pin = makeRun({ id: 'pinned-requester', status: 'slot-finding', slotId: 'cancel-slot' });
   const pass = await reconcile({ fences: [{ intent: 'release' }], extraRuns: [pin] });
   assert.deepEqual(pass.resumed, [['cancelled-0', 'cancel-slot', 'release']]);
+});
+
+test('a pinned requester never exempts this gateway’s own fence or one with no instance', async () => {
+  for (const instance of [state.currentReleaseGatewayInstance(), '']) {
+    const pin = makeRun({ id: 'pinned-requester', status: 'slot-finding', slotId: 'cancel-slot' });
+    const pass = await reconcile({
+      fences: [{ intent: 'release', instance, ageMs: STALE_RELEASE_RECLAIM_MS + 1 }],
+      extraRuns: [pin],
+    });
+    assert.deepEqual(pass.resumed, [], `instance '${instance}'`);
+    const row = await pass.read();
+    assert.equal(row?.phase, 'releasing', 'the pin keeps the slot out of this pass');
+    assert.equal(row?.cleanup_stop_unconfirmed ?? null, null);
+  }
 });
 
 test('a cancelled run’s own cleanup hold, interrupted by a restart, is reopened and retried', async () => {

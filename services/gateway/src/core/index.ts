@@ -86,6 +86,7 @@ export {
 } from './slot-io.js';
 export {
   claimSlotStatusIf,
+  currentReleaseGatewayInstance,
   markRunSlotHeld,
   markSlotBusy,
   markSlotHeld,
@@ -104,6 +105,7 @@ export {
   runCleanupTokenIntent,
   SLOT_CLEANUP_STOP_UNCONFIRMED,
   SLOT_PHASE_RELEASING,
+  SLOT_RELEASE_GATEWAY_INSTANCE,
   SLOT_RELEASING_SINCE,
   slotOwnershipReleaseFields,
   slotReleasingFenceFields,
