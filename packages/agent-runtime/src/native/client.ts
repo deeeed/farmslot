@@ -384,9 +384,11 @@ export class NativeSessionClient {
     policy?: NativeHostRefreshPolicy,
   ): Promise<{ refreshed: boolean; busy: string[] }> {
     if (policy) return this.refreshUnder(policy);
-    this.refreshing ??= this.refreshOnce({ policy: this.refreshPolicy, perLaunch: false }).finally(() => {
-      this.refreshing = undefined;
-    });
+    this.refreshing ??= this.refreshOnce({ policy: this.refreshPolicy, perLaunch: false }).finally(
+      () => {
+        this.refreshing = undefined;
+      },
+    );
     return this.refreshing;
   }
 

@@ -39,7 +39,11 @@ async function skewedNode(fields: Record<string, unknown> = {}) {
   const file = path.join(hostRoot, 'host.json');
   writeFileSync(
     file,
-    JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), runtimeVersion: '0.0.0', ...fields }),
+    JSON.stringify({
+      ...JSON.parse(readFileSync(file, 'utf8')),
+      runtimeVersion: '0.0.0',
+      ...fields,
+    }),
   );
   return {
     session,

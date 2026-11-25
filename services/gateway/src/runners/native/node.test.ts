@@ -334,13 +334,22 @@ test('a launch a node refuses as skewed is sent once more with the gateway’s r
     await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create);
     // An older node gets no list, so its refusal stands.
     refuse = 1;
-    await assert.rejects(routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create), skewed);
+    await assert.rejects(
+      routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create),
+      skewed,
+    );
     getNode(machine)!.nativeSessions!.supportsHostRefresh = true;
     // A node that reads one gets it on the second send; a refusal then stands.
     refuse = 1;
     await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create);
     refuse = 2;
-    await assert.rejects(routeNativeExecution(owner, Methods.NATIVE_SESSION_ENSURE, { ...create, sessionId: 'session' }), skewed);
+    await assert.rejects(
+      routeNativeExecution(owner, Methods.NATIVE_SESSION_ENSURE, {
+        ...create,
+        sessionId: 'session',
+      }),
+      skewed,
+    );
     assert.deepEqual(frames, [
       { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
       { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },

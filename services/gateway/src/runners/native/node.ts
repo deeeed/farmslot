@@ -22,8 +22,8 @@ import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-
 import {
   type ExecResult,
   Methods,
-  type NativeSessionInfo,
   type NativeNodeSessionEnvelope,
+  type NativeSessionInfo,
   type NativeSessionListResult,
   type NativeSessionReadResult,
   type NativeSessionRequester,

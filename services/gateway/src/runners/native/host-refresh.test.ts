@@ -132,7 +132,9 @@ test('a node launch may stop its owner’s bound sessions there that no active r
 test('an ensure’s own session is never on its release list; a transfer’s is', () => {
   const finished = run(
     { status: 'done' },
-    { agentContexts: [context('review', 'target', 'macpro'), context('review', 'other', 'macpro')] },
+    {
+      agentContexts: [context('review', 'target', 'macpro'), context('review', 'other', 'macpro')],
+    },
   );
   const release = (method: string) =>
     nodeLaunchRelease([finished], 'macpro', 'farm-automation', method, { sessionId: 'target' });

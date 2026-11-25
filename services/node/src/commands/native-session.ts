@@ -198,9 +198,7 @@ export class NativeNodeSessions {
   }
 
   /** The gateway's `native.session` request; its fields are checked here. */
-  async route(
-    value: Partial<Record<keyof NativeNodeSessionEnvelope, unknown>>,
-  ): Promise<unknown> {
+  async route(value: Partial<Record<keyof NativeNodeSessionEnvelope, unknown>>): Promise<unknown> {
     if (!this.declaration || value.owner !== this.declaration.ownerPrincipalId)
       throw Object.assign(new Error('Native profile is not owned by this principal'), {
         code: 'AUTH_FORBIDDEN',
