@@ -1211,5 +1211,8 @@ if (process.platform === 'darwin') {
   startScreenControlServer();
 }
 
-await nativeSessions.prepareRuntime();
+// Native preparation never keeps the node from registering.
+await nativeSessions.prepareRuntime().catch((error: unknown) => {
+  console.error('Native runtime preparation failed; registering without it:', error);
+});
 connect();

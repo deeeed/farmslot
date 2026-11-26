@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync } from 'node:fs';
 import { open, readdir } from 'node:fs/promises';
@@ -116,6 +116,23 @@ export interface NativeIdleStopLimits {
   maxRunners: number;
 }
 
+/**
+ * How long a host start may take. A new supervisor writes host.json at once, but its host is
+ * ready only after it replays every session journal, which takes many seconds on a node with
+ * hundreds of them. So a start waits up to `timeoutMs` while that supervisor is alive, and
+ * gives up after `noProgressMs` only when no live supervisor has claimed the host.
+ */
+export interface NativeHostStartLimits {
+  timeoutMs: number;
+  noProgressMs: number;
+  progressMs: number;
+}
+export const NATIVE_HOST_START_LIMITS: NativeHostStartLimits = {
+  timeoutMs: 120_000,
+  noProgressMs: 10_000,
+  progressMs: 15_000,
+};
+
 /** The policy a refresh runs under, and whether it is one launch's own. */
 interface RefreshScope {
   policy?: NativeHostRefreshPolicy;
@@ -205,6 +222,7 @@ export class NativeSessionClient {
     readonly executionNodeId = 'local',
     private readonly checkoutBuild: () => string = runtimeBuildIdentity,
     private readonly idleStopLimits?: NativeIdleStopLimits,
+    private readonly hostStartLimits: NativeHostStartLimits = NATIVE_HOST_START_LIMITS,
   ) {
     this.root = resolve(root);
     // This process's build is read now, before a checkout update can change the files under it.
@@ -294,20 +312,31 @@ export class NativeSessionClient {
 
   private async host(): Promise<HostIdentity> {
     privateDirectory(this.root);
-    const path = join(this.root, 'host.json');
-    if (existsSync(path)) {
-      const host = readJson<HostIdentity>(path);
-      this.assertHostNode(host);
-      if (alive(host.pid) && existsSync(join(this.root, 'ready.json')) && existsSync(host.socket))
-        return host;
-    }
     if (this.starting) return this.starting;
-    this.starting = this.start();
+    const current = this.recordedHost();
+    if (current?.ready) return current.host;
+    // A live supervisor that has not finished starting owns the host: wait for it rather
+    // than spawn a duplicate. If it dies before ready, start a host of our own.
+    this.starting = current
+      ? this.waitForReady(undefined).catch((error: unknown) => {
+          if (this.recordedHost()) throw error;
+          return this.start();
+        })
+      : this.start();
     try {
       return await this.starting;
     } finally {
       this.starting = undefined;
     }
+  }
+  /** The host.json host if its supervisor is alive; ready once it accepts requests. */
+  private recordedHost(): { host: HostIdentity; ready: boolean } | undefined {
+    const path = join(this.root, 'host.json');
+    if (!existsSync(path)) return undefined;
+    const host = readJson<HostIdentity>(path);
+    this.assertHostNode(host);
+    if (!alive(host.pid)) return undefined;
+    return { host, ready: existsSync(join(this.root, 'ready.json')) && existsSync(host.socket) };
   }
   private assertHostNode(host: HostIdentity) {
     if ((host.executionNodeId ?? 'local') !== this.executionNodeId)
@@ -315,6 +344,26 @@ export class NativeSessionClient {
   }
   private async start(): Promise<HostIdentity> {
     privateDirectory(this.root);
+    const child = this.spawnSupervisor();
+    let spawnError: Error | undefined;
+    let exited = false;
+    child.on('error', (error) => {
+      spawnError = error;
+    });
+    child.once('exit', () => {
+      exited = true;
+    });
+    return this.waitForReady({
+      failed: () => {
+        if (spawnError) throw spawnError;
+        // A clean exit can hand off to another supervisor still starting. An abnormal
+        // exit of our child cannot become ready.
+        return exited && child.exitCode !== 0;
+      },
+    });
+  }
+  /** Starts a detached supervisor for this home; its host replays the journals, then listens. */
+  protected spawnSupervisor(): ChildProcess {
     // A prebuilt CLI snapshot runs the .js built beside each source: start the supervisor from
     // its source with TSX, as when this module itself runs from source.
     const running = fileURLToPath(import.meta.url);
@@ -331,27 +380,28 @@ export class NativeSessionClient {
     });
     closeSync(log);
     child.unref();
-    let spawnError: Error | undefined;
-    let exited = false;
-    child.on('error', (error) => {
-      spawnError = error;
-    });
-    child.once('exit', () => {
-      exited = true;
-    });
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      if (spawnError) throw spawnError;
-      const path = join(this.root, 'host.json');
-      if (existsSync(path)) {
-        const host = readJson<HostIdentity>(path);
-        this.assertHostNode(host);
-        if (alive(host.pid) && existsSync(join(this.root, 'ready.json')) && existsSync(host.socket))
-          return host;
+    return child;
+  }
+  /**
+   * Waits for a ready host. While a live supervisor holds host.json the wait lasts up to the
+   * start timeout, logging progress; without one it ends after the no-progress bound. With no
+   * child of ours (`own` undefined), the recorded supervisor dying ends it at once.
+   */
+  private async waitForReady(own: { failed: () => boolean } | undefined): Promise<HostIdentity> {
+    const { timeoutMs, noProgressMs, progressMs } = this.hostStartLimits;
+    const started = Date.now();
+    let nextProgress = started + progressMs;
+    while (Date.now() - started < timeoutMs) {
+      if (own?.failed()) break;
+      const current = this.recordedHost();
+      if (current?.ready) return current.host;
+      if (!current && (!own || Date.now() - started >= noProgressMs)) break;
+      if (current && Date.now() >= nextProgress) {
+        nextProgress += progressMs;
+        console.warn(
+          `Waiting for native host supervisor ${current.host.pid} to become ready (${Math.round((Date.now() - started) / 1000)}s; see ${join(this.root, 'host.log')})`,
+        );
       }
-      // A clean exit can hand off to another supervisor still starting. An abnormal
-      // exit of our child cannot become ready; keep the live-start ceiling unchanged.
-      if (exited && child.exitCode !== 0) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw nativeHostUnavailableError(join(this.root, 'host.log'));
