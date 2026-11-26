@@ -67,7 +67,7 @@ function encoder(): Worker {
   });
   started.on('error', (error) => {
     worker = undefined;
-    // @types/node 22 types a worker error as Error, 24+ as unknown.
+    // @types/node 24+ no longer types a worker error as an Error.
     const failure = error instanceof Error ? error : new Error(String(error));
     for (const request of pending.values()) request.reject(failure);
     pending.clear();
