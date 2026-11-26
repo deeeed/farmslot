@@ -24,6 +24,8 @@ import {
 import { capturePublicationSource } from '../run-completion/publication-source.js';
 import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
+import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
+import type { RunProgressObservation } from '../runners/run-progress.js';
 import {
   commitRunBeforeAttemptAttestation,
   createRun,
@@ -38,10 +40,15 @@ import {
   ensureCurrentPublishPackage,
   reconcilePublicationPackageForInspection,
   refreshPublishPackage,
+  refreshPublishPackageForCaller,
   summarizePublishPackageRefreshEvidence,
 } from './publish-package-refresh.js';
 import { refreshReviewGate } from './review-gate.js';
-import { deleteTestRunIfPresent, makeReadyGatePackage } from './test-fixtures.js';
+import {
+  deleteTestRunIfPresent,
+  makeFreedSlotPark,
+  makeReadyGatePackage,
+} from './test-fixtures.js';
 
 test('pending publication reload retains its approved package without reading live source', async (t) => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'approved-package-reload-'));
@@ -155,8 +162,10 @@ test('publish package refresh evidence summary uses shared path variants', () =>
   assert.deepEqual(summary.addedEvidenceKeys, ['artifacts/screenshots/new.png']);
 });
 
-test('refreshPublishPackage fails closed when worker artifacts cannot be mirrored', async (t) => {
-  const testId = `refresh-package-fail-${process.pid}-${Date.now()}`;
+/** A pending ready gate on a real slot whose artifact mirror fails: a refresh that gets past the
+ * worker check stops at the mirror, so the refusal names how far it got. */
+async function mirrorRefusalFixture(t: import('node:test').TestContext, name: string) {
+  const testId = `${name}-${process.pid}-${Date.now()}`;
   const poolFile = path.join(poolDirectory(), `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(os.tmpdir(), `${testId}-worker-`));
   const taskRoot = path.join(farmslotRoot(), '.sandbox/farmslot-farm/tasks');
@@ -217,7 +226,7 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
     flowType: 'dev',
     mode: 'autonomous',
     project: 'farmslot-farm',
-    ticketOrPr: 'PROJ-REFRESH-FAIL',
+    ticketOrPr: `PROJ-${name.toUpperCase()}`,
     runner: 'codex',
   });
   updateRun(run.id, {
@@ -228,27 +237,249 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
     engineState: { publishGate: { publicationStatus: 'not_published', reviews: [] } },
   });
 
+  const source = (current: import('@farmslot/protocol').Run) =>
+    capturePublicationSource(current, {
+      slot: async () => ({ current_run_id: current.id, slot_epoch: 1 }),
+    });
+  const params = {
+    runId: run.id,
+    decisionId: decision.id,
+    selectedEvidenceKeys: [],
+    publicationTarget: 'ready' as const,
+  };
+  return { run, params, source, preservedReviewDiff };
+}
+
+const MIRROR_REFUSAL =
+  /Artifact mirror refresh failed; cannot build an authoritative publish package/;
+
+/** Progress readings in order, then idle; `reads` records each one taken. */
+function progressReadings(...kinds: RunProgressObservation['kind'][]) {
+  const reads: RunProgressObservation['kind'][] = [];
+  return {
+    reads,
+    progress: async (): Promise<RunProgressObservation> => {
+      const kind = kinds.shift() ?? 'idle';
+      reads.push(kind);
+      return { kind };
+    },
+  };
+}
+
+const FAST_WAIT = { bounds: { pollMs: 1, maxPollMs: 1, timeoutMs: 2_000 } };
+
+test('refreshPublishPackage fails closed when worker artifacts cannot be mirrored', async (t) => {
+  const { params, source, preservedReviewDiff } = await mirrorRefusalFixture(
+    t,
+    'refresh-package-fail',
+  );
   await assert.rejects(
-    () =>
-      refreshPublishPackage(
-        {
-          runId: run.id,
-          decisionId: decision.id,
-          selectedEvidenceKeys: [],
-          publicationTarget: 'ready',
-        },
-        {
-          progress: async () => ({ kind: 'idle' }),
-          source: (current) =>
-            capturePublicationSource(current, {
-              slot: async () => ({ current_run_id: current.id, slot_epoch: 1 }),
-            }),
-        },
-      ),
-    /Artifact mirror refresh failed; cannot build an authoritative publish package/,
+    () => refreshPublishPackage(params, { progress: async () => ({ kind: 'idle' }), source }),
+    MIRROR_REFUSAL,
   );
   assert.equal((await stat(preservedReviewDiff)).isFile(), true);
 });
+
+test('the refresh RPC waits for a worker finishing its last turn, then refreshes', async (t) => {
+  const { params, source } = await mirrorRefusalFixture(t, 'refresh-wait-idle');
+  t.mock.method(console, 'log', () => {});
+  // eb8840ff: busy when the gate opened, still busy at the first poll, idle at the next.
+  const worker = progressReadings('making-progress', 'making-progress', 'idle');
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
+      readers: { progress: worker.progress, source },
+      wait: FAST_WAIT,
+    }),
+    MIRROR_REFUSAL,
+  );
+  assert.deepEqual(worker.reads, ['making-progress', 'making-progress', 'idle', 'idle']);
+});
+
+test('the refresh RPC refuses a worker still busy when the wait ends', async (t) => {
+  const { params, source } = await mirrorRefusalFixture(t, 'refresh-wait-timeout');
+  t.mock.method(console, 'log', () => {});
+  const warn = t.mock.method(console, 'warn', () => {});
+  const busy = async (): Promise<RunProgressObservation> => ({ kind: 'making-progress' });
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
+      readers: { progress: busy, source },
+      wait: { bounds: { pollMs: 1, maxPollMs: 1, timeoutMs: 20 } },
+    }),
+    (error) => error instanceof OwnedWorkerBusyError,
+  );
+  assert.match(
+    String(warn.mock.calls.at(-1)?.arguments[0]),
+    /publish package refresh refused after \d+s: Wait for the owned worker to be idle/,
+  );
+});
+
+test('a replay during the refresh wait ends it without refreshing', async (t) => {
+  const { run, params, source } = await mirrorRefusalFixture(t, 'refresh-wait-replay');
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  let reads = 0;
+  const progress = async (): Promise<RunProgressObservation> => {
+    if (++reads === 2) {
+      const latest = getRun(run.id)!;
+      updateRun(run.id, {
+        engineState: {
+          ...latest.engineState,
+          generation: (latest.engineState?.generation ?? 0) + 1,
+        },
+      });
+      return { kind: 'idle' };
+    }
+    return { kind: 'making-progress' };
+  };
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
+      readers: { progress, source },
+      wait: FAST_WAIT,
+    }),
+    /replayed, paused or cancelled while its owned worker was busy/,
+  );
+  assert.equal(reads, 2, 'the superseded refresh did not run again');
+});
+
+test('a caller that disconnects ends the refresh wait at once and gets no late refresh', async (t) => {
+  const { params, source } = await mirrorRefusalFixture(t, 'refresh-wait-disconnect');
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const worker = progressReadings('making-progress');
+  let connected = true;
+  setTimeout(() => {
+    connected = false; // the CLI gave up and closed its socket
+  }, 50);
+  const started = Date.now();
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => connected,
+      readers: { progress: worker.progress, source },
+      // The first poll is a minute away: the disconnect, not the poll, ends the wait.
+      wait: { bounds: { pollMs: 60_000, maxPollMs: 60_000, timeoutMs: 120_000, cancelCheckMs: 5 } },
+    }),
+    /caller disconnected while the owned worker was busy/,
+  );
+  assert.ok(Date.now() - started < 1_000, 'the wait ended soon after the disconnect');
+  assert.deepEqual(worker.reads, ['making-progress'], 'no progress read or refresh after it');
+});
+
+test('a caller that disconnects while the retry waits for the run lock gets no refresh', async (t) => {
+  const { run, params, source } = await mirrorRefusalFixture(t, 'refresh-retry-disconnect');
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  let connected = true;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let holder: Promise<unknown> | undefined;
+  const worker = progressReadings('making-progress', 'idle');
+  const progress = async () => {
+    const reading = await worker.progress();
+    if (worker.reads.length === 2) {
+      // Other run work takes the lock as the worker goes idle; the CLI gives up meanwhile.
+      holder = withRunTransition(run.id, () => held);
+      setTimeout(() => {
+        connected = false;
+        release();
+      }, 20);
+    }
+    return reading;
+  };
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => connected,
+      readers: { progress, source },
+      wait: FAST_WAIT,
+    }),
+    /caller disconnected while the owned worker was busy/,
+  );
+  await holder;
+  assert.deepEqual(worker.reads, ['making-progress', 'idle'], 'the retry read nothing');
+});
+
+test('a gate resolved by another client ends the refresh wait', async (t) => {
+  const { run, params, source } = await mirrorRefusalFixture(t, 'refresh-wait-resolved');
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const worker = progressReadings('making-progress');
+  setTimeout(() => {
+    updateRun(run.id, {
+      decisions: getRun(run.id)!.decisions.map((decision) => ({
+        ...decision,
+        resolvedAt: new Date().toISOString(),
+        resolvedAction: 'hold',
+      })),
+    });
+  }, 20);
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
+      readers: { progress: worker.progress, source },
+      wait: { bounds: { pollMs: 60_000, maxPollMs: 60_000, timeoutMs: 120_000, cancelCheckMs: 5 } },
+    }),
+    /gate was resolved while its owned worker was busy/,
+  );
+  assert.deepEqual(worker.reads, ['making-progress']);
+});
+
+test('a gate park during the refresh wait is refused as a park, not as a busy worker', async (t) => {
+  const { run, params, source } = await mirrorRefusalFixture(t, 'refresh-wait-park');
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const worker = progressReadings('making-progress');
+  const progress = async () => {
+    // The machine parks the slot while the worker is still busy.
+    updateRun(run.id, { park: makeFreedSlotPark(getRun(run.id)!) });
+    return worker.progress();
+  };
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
+      readers: { progress, source },
+      wait: FAST_WAIT,
+    }),
+    (error) =>
+      error instanceof BlockedRunError &&
+      !(error instanceof OwnedWorkerBusyError) &&
+      /gate park started while the owned worker was busy/.test(error.message),
+  );
+  assert.deepEqual(worker.reads, ['making-progress']);
+});
+
+test('the refresh RPC does not wait for a worker at a prompt', async (t) => {
+  const { params, source } = await mirrorRefusalFixture(t, 'refresh-wait-prompt');
+  t.mock.method(console, 'warn', () => {});
+  const worker = progressReadings('awaiting-input');
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
+      readers: { progress: worker.progress, source },
+      wait: { bounds: { pollMs: 60_000, maxPollMs: 60_000, timeoutMs: 120_000 } },
+    }),
+    (error) =>
+      error instanceof BlockedRunError &&
+      !(error instanceof OwnedWorkerBusyError) &&
+      /Observed state: awaiting-input/.test(error.message),
+  );
+  assert.deepEqual(worker.reads, ['awaiting-input']);
+});
+
+test('the internal refresh keeps its immediate busy refusal', async (t) => {
+  const { params, source } = await mirrorRefusalFixture(t, 'refresh-internal-busy');
+  t.mock.method(console, 'warn', () => {});
+  const worker = progressReadings('making-progress');
+  await assert.rejects(
+    refreshPublishPackage(params, { progress: worker.progress, source }),
+    (error) => error instanceof OwnedWorkerBusyError,
+  );
+  assert.deepEqual(worker.reads, ['making-progress']);
+});
+
 test('refreshReviewGate does not let worker artifacts overwrite gateway-owned package state', async (t) => {
   const testId = `refresh-review-gateway-owned-${process.pid}-${Date.now()}`;
   const poolFile = path.join(poolDirectory(), `${testId}.json`);

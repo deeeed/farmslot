@@ -91,7 +91,7 @@ test(
       if (context.systemPrompt?.startsWith('Curate learning')) {
         curationCalls += 1;
         const packet = JSON.parse(user.content);
-        if (!packet.entries[0].includes('provider-owned') && !retryInjected) {
+        if (!packet.entries[0].text.includes('provider-owned') && !retryInjected) {
           retryInjected = true;
           throw new Error('503 fixture provider cooling down');
         }
@@ -104,16 +104,18 @@ test(
             line: 1,
             quote: d.text,
           }));
+        // Another run's reviewer: a run never confirms its own lesson (ADR-026 Amendment 4).
         const reviewer = packet.documents.find(
           (d: { runId: string; path: string }) =>
-            d.runId === packet.sourceRunId && d.path === 'artifacts/review-result.json',
+            d.runId !== packet.sourceRunId && d.path === 'artifacts/review-result.json',
         );
         return fauxAssistantMessage(
           JSON.stringify(
-            packet.entries.map((entry: string) =>
-              entry.includes('provider-owned')
-                ? { outcome: 'drop', reason: 'Existing rule covers this check' }
+            packet.entries.map(({ id, text }: { id: string; text: string }) =>
+              text.includes('provider-owned')
+                ? { id, outcome: 'drop', reason: 'Existing rule covers this check' }
                 : {
+                    id,
                     outcome: 'keep',
                     reason: 'Two independent tasks confirm the wrong-order failure',
                     instruction: 'Inspect the order size before dispatch.',

@@ -1636,6 +1636,10 @@ export interface LearningsAntipatternDraft {
   targetPath: string;
   /** Canonical library repository the draft belongs in. */
   targetRepo?: string;
+  /** The rules file section a tightening edits, for a checked (v1) lesson. */
+  targetSection?: string;
+  /** The rule change a checked (v1) lesson proposes, pending a person's decision. */
+  proposal?: import('./review-rules.js').ReviewRuleProposal;
   symptom: string;
   cause: string;
   action: string;
@@ -1660,6 +1664,8 @@ export interface KnowledgeDestination {
   path: string;
   library?: string;
   source: 'vars.knowledge_destination' | 'static_review';
+  /** `vars.knowledge_clients`: evidence repo → client, whose rules file is `<base>.<client>.md`. */
+  clients?: Record<string, string>;
 }
 
 export interface LearningsDraftPayload {

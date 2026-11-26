@@ -74,7 +74,7 @@ test('run evidence follows only the gateway-bound HUD-off attempt', async (t) =>
     const response = await routeRunMethod(
       Methods.RUN_RECIPE_RUNS_FOR_RUN,
       { runId: id, includeRecordedEvidence: true, ...overrides },
-      { emit: unexpected, broadcast: unexpected },
+      { callerConnected: () => true, emit: unexpected, broadcast: unexpected },
     );
     assert(response.handled);
     return response.value as import('@farmslot/protocol').RunRecipeRunsForRunResult;

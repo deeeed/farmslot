@@ -48,6 +48,7 @@ const TERMINAL_COMMANDS = new Set(['complete', 'no-change', 'blocked']);
 const NO_CHANGE_REPORT = path.join('artifacts', 'no-change-report.md');
 const LEARNINGS_ARTIFACT = path.join('artifacts', 'learnings.md');
 const ARTIFACT_CONTRACT_SCRIPT = path.resolve(__dirname, 'check-task-artifact-contract.mjs');
+const LEARNINGS_CHECK_SCRIPT = path.resolve(__dirname, 'learnings-check.mjs');
 
 const FLOW_REPORT_ARTIFACTS = {
   qa: ['report.html', 'qa-report.md', 'report.md'],
@@ -460,6 +461,17 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
     if (result.stdout) process.stdout.write(result.stdout);
     process.exit(result.status ?? 1);
   }
+  // A passing contract can still carry warnings, such as learnings v1 issues.
+  if (result.stderr) process.stderr.write(result.stderr);
+}
+
+/** Learnings v1 issues, shown on any step mark while the worker can still fix the file. */
+function warnLearnings(taskDir) {
+  if (!fs.existsSync(path.join(taskDir, LEARNINGS_ARTIFACT))) return;
+  const result = spawnSync(process.execPath, [LEARNINGS_CHECK_SCRIPT, taskDir], {
+    encoding: 'utf8',
+  });
+  if (result.stderr) process.stderr.write(result.stderr);
 }
 
 // Engine proof attempts that nothing selects are evidence completion never checks and
@@ -907,6 +919,7 @@ function assertEvidenceManifests() {
 if (stepNumber != null || terminalCommand === 'complete' || terminalCommand === 'no-change') {
   assertEvidenceManifests();
 }
+if (stepNumber != null) warnLearnings(taskDir);
 
 /**
  * A step owned by a child unit belongs to that child until it is settled
