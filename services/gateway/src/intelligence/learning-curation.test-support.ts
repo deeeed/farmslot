@@ -20,7 +20,7 @@ export function curationFixture(runId = 'source-run'): LearningCurationContext {
         path: 'artifacts/review-result.json',
         actor: 'reviewer',
         confirms: 'independent-review',
-        text: 'Same failure reproduced independently.',
+        text: 'Same failure reproduced independently.\nThe reviewer confirmed the fix.',
       },
     ],
   };
@@ -34,10 +34,10 @@ export function keptCuration(context: LearningCurationContext) {
     instruction: 'Inspect the affected caller and verify the confirmed invariant.',
     observed: [
       { runId: source.runId, path: source.path, line: 1, quote: source.text.split('\n')[0] },
-      { runId: other.runId, path: other.path, line: 1, quote: other.text },
+      { runId: other.runId, path: other.path, line: 1, quote: other.text.split('\n')[0] },
     ],
     confirmation: [
-      { runId: source.runId, path: source.path, line: 2, quote: source.text.split('\n')[1] },
+      { runId: other.runId, path: other.path, line: 2, quote: other.text.split('\n')[1] },
     ],
     coverage: 'new',
     rule: null,
@@ -47,7 +47,9 @@ export function keptCuration(context: LearningCurationContext) {
 }
 export function installCurationFixture(): () => void {
   setLearningContextLoaderForTest(async (_project, _destination, runId) => curationFixture(runId));
-  setLearningEvaluatorForTest(async (entries, context) => entries.map(() => keptCuration(context)));
+  setLearningEvaluatorForTest(async (entries, context) =>
+    entries.map(({ id }) => ({ id, ...keptCuration(context) })),
+  );
   return () => {
     setLearningEvaluatorForTest();
     setLearningContextLoaderForTest();

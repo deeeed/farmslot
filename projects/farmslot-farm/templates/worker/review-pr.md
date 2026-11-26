@@ -84,7 +84,7 @@ proof only. Missing evidence is a finding or marked unverified.
 
 - [ ] **21. Write `{{TASK_DIR}}/artifacts/review.md`** — use report contract in `{{review_quality_path}}`. Include Recipe Coverage matrix, Evidence Audit, Recommended Action. Coverage &lt; 100% without UNTESTABLE rationale → `REQUEST_CHANGES` or explicit escalation.
 - [ ] **22. Write `{{TASK_DIR}}/artifacts/line-comments.json`** — inline findings with severities; empty array if none.
-- [ ] **23. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
+- [ ] **23. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Write it in Learnings v1: first line `# Learnings v1`, then `- None` when there is none, or one entry per failure in this run that is likely to recur: `- <kind>: <one-line lesson>` with two-space-indented fields. Kinds: `add`, `edit` or `retire` for a review rule (`evidence: <repo> <path>:<line>`; `family: <file>.md#<section>`, or `examined: <file>.md#<section>, ...` for an add; `confirmation: run <other run id> <path>:<line>`, `fix <owner/repo#n>` or `none`, where this run's own report or review is `none`), `recipe-broken` or `recipe-missing` for a recipe, `workflow` for a template, tool or setup step. `./mark` prints the full format and warns on a malformed file.
 
 ### Finish (24)
 

@@ -31,6 +31,32 @@ draft gates and human-recorded consumption. Historical absence of evaluation
 receipts MUST be reported as unknown, not as dropped. Audits may evaluate frozen
 copies in an isolated gateway; those receipts are not live production history.
 
+## Checked learnings (Amendment 4)
+
+A file whose first line is `# Learnings v1` MUST be read with `parseLearnings` from
+`@farmslot/protocol`; any other file is free text, read as above. A v1 entry with an
+issue is held for a person; a `workflow` entry goes to the system arm; the recipe kinds
+are held for the recipe library owner. Before the model sees a rule-kind entry:
+
+- a confirmation that names the source run, its own PR, or `none` records a drop with
+  `unconfirmed: true`, never promoted;
+- an `edit` whose cited family's review row (`artifacts/review-coverage.json` of the run's
+  family) recorded FINDING records a drop: the rule worked; one that recorded PASS stays
+  an `edit` from a miss. A `retire` claim stands, since no row records a rejected finding.
+  The source run's rows are required; a family run whose rows cannot be read is skipped;
+- the target is the cited family's file and section, or for an `add` the client file
+  when `vars.knowledge_clients` maps every evidence repo to one client, else the shared
+  file. A requirement, a missing file or a missing section is a hold.
+
+The curator also MUST NOT count the source run's own review as confirmation of any
+lesson; an accepted PR comment fix from that run still counts. Each entry is sent with
+an id and its outcome is matched by id: a reply that omits, repeats or adds entries
+gives only the affected entries a retryable drop. The reply is its first JSON array of
+records that carry an `id`. A keep records its recurrence bar on its receipt. A kept v1 entry records the
+`ReviewRuleProposal` it became, validated by `parseReviewRuleProposal`, on its receipt
+and its draft. A peer run whose evidence cannot be read is skipped with a warning; the
+source run's evidence stays required.
+
 ## Public surface
 
 No new CLI, RPC, SDK export or flag. `@farmslot/protocol` retains the existing
