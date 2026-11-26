@@ -1,1 +1,1 @@
-- The status file watcher no longer broadcasts a fleet read that a newer read overtook, so state-change listeners never get an older slot binding after a newer one.
+- Fleet broadcasts (the status file watcher, the slot-update hook and `FLEET_UPDATED` events) share one read loop that broadcasts only the newest read, so listeners never get a fleet that a newer read had already replaced.

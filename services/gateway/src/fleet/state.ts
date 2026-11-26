@@ -737,10 +737,16 @@ export function markGhostSlots(fleet: FleetStatus, liveIds: ReadonlySet<string>)
 
 // ─── Public API ───
 
+/**
+ * The fleet from the status file and pools. `newest` is for a fleet about to be broadcast:
+ * it joins the shared read loop and resolves with the newest read (see loadNewestFleetStatus).
+ */
 export async function loadFleetStatus(
   forceRefresh = false,
   strictRead = false,
+  options: { newest?: boolean } = {},
 ): Promise<FleetStatus> {
+  if (options.newest) return loadNewestFleetStatus();
   if (cachedFleet && !forceRefresh) return getCachedFleet()!;
   const version = ++fleetReadVersion;
   let next: FleetStatus;
@@ -841,19 +847,37 @@ export function stateChangeHandlerCountForTests(): number {
   return changeHandlers.length;
 }
 
+let newestFleetRead: Promise<FleetStatus> | undefined;
+let newestFleetDirty = false;
+
 /**
- * A read overtaken by a newer read, a commit or an overlay change returns its own,
- * older snapshot and leaves the cache to the newer one (readers tag it with its older
- * revisions). The file watcher broadcasts what it reads, so it reads again until its
- * read is the newest: state-change handlers never get a fleet older than the cache.
+ * The fleet to broadcast: what the newest read sees. A read overtaken by a newer read, a
+ * commit or an overlay change returns its own, older snapshot and leaves the cache to the
+ * newer one (readers tag that snapshot with its older revisions), so broadcasting it can
+ * hand listeners an older fleet after a newer one. Callers share one read loop: a call
+ * while it runs asks for one more read, and the loop resolves for everyone once a read
+ * is neither overtaken nor asked to repeat. Only this loop reads for broadcasts, so
+ * broadcasters cannot keep overtaking each other.
  */
-async function loadNewestFleetStatus(): Promise<FleetStatus> {
-  for (;;) {
-    // loadFleetStatus(true) takes the next version synchronously, before its first await.
-    const version = fleetReadVersion + 1;
-    const fleet = await loadFleetStatus(true);
-    if (version === fleetReadVersion) return fleet;
+function loadNewestFleetStatus(): Promise<FleetStatus> {
+  if (newestFleetRead) {
+    newestFleetDirty = true;
+    return newestFleetRead;
   }
+  newestFleetRead = (async () => {
+    try {
+      for (;;) {
+        newestFleetDirty = false;
+        // loadFleetStatus(true) takes the next version synchronously, before its first await.
+        const version = fleetReadVersion + 1;
+        const fleet = await loadFleetStatus(true);
+        if (version === fleetReadVersion && !newestFleetDirty) return fleet;
+      }
+    } finally {
+      newestFleetRead = undefined;
+    }
+  })();
+  return newestFleetRead;
 }
 
 export function startFileWatcher() {
