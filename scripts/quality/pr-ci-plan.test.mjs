@@ -413,10 +413,30 @@ test('inline plan works without an artifact and keeps selection scoped to suite 
     const verified = spawnSync(process.execPath, [worker, 'verify'], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...env, CI_INLINE_PR_PLAN: inline, CI_MATRIX_RESULT: 'success' },
+      env: {
+        ...env,
+        CI_INLINE_PR_PLAN: inline,
+        CI_MATRIX_RESULT: 'success',
+        CI_INSTALL_RESULT: 'success',
+      },
     });
     assert.equal(verified.status, 0, verified.stdout + verified.stderr);
     assert.match(verified.stdout, /Verified 1 jobs/);
+  }
+  // Every receipt is in, but the install the checks ran on did not validate.
+  for (const install of ['failure', 'cancelled', undefined]) {
+    const refused = spawnSync(process.execPath, [worker, 'verify'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...env,
+        CI_INLINE_PR_PLAN: '',
+        CI_MATRIX_RESULT: 'success',
+        CI_INSTALL_RESULT: install,
+      },
+    });
+    assert.notEqual(refused.status, 0, String(install));
+    assert.match(refused.stderr, new RegExp(`Install validation result: ${install}`));
   }
 });
 

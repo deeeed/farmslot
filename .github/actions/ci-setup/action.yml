@@ -53,6 +53,19 @@ runs:
       with:
         path: ${{ steps.cache-paths.outputs.dependencies }}
         key: ${{ steps.dependencies.outputs.cache-primary-key }}
+    # The PR planner needs only TypeScript; publish this install's copy so the
+    # planner can start without restoring and validating the whole install.
+    - id: planner-typescript
+      uses: actions/cache/restore@v4
+      with:
+        path: node_modules/typescript
+        key: planner-typescript-v1-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+        lookup-only: true
+    - if: steps.planner-typescript.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: node_modules/typescript
+        key: ${{ steps.planner-typescript.outputs.cache-primary-key }}
     - uses: actions/cache@v4
       with:
         path: |
