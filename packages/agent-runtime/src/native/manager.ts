@@ -401,10 +401,24 @@ export class NativeSessionManager {
         });
       } else this.writeSummary(record, path);
     }
+    // A summary whose journal is gone (archived, or removed by hand) is not kept.
+    const summaries = join(this.root, 'summaries');
+    if (existsSync(summaries))
+      for (const name of readdirSync(summaries))
+        if (
+          name.endsWith('.json') &&
+          !existsSync(join(this.root, `${basename(name, '.json')}.journal`))
+        )
+          rmSync(join(summaries, name), { force: true });
     durableWrite(join(this.root, 'metadata.json'), { revision: randomUUID() });
   }
+  /** Records whose journal run retention archived; nothing writes their journal again. */
+  private readonly archived = new WeakSet<SessionRecord>();
   /** Journals of settled sessions not yet replayed in this host, by record. */
   private readonly dormant = new WeakMap<SessionRecord, string>();
+  private archiveDirectory(): string {
+    return join(dirname(this.root), 'archive');
+  }
   private summaryPath(journal: string): string {
     return join(this.root, 'summaries', `${basename(journal, '.journal')}.json`);
   }
@@ -440,8 +454,12 @@ export class NativeSessionManager {
     };
     try {
       summary = readJson(file);
-    } catch {
-      return undefined;
+    } catch (error) {
+      // An unreadable or torn summary only costs a full replay of its journal, which is the
+      // authority; anything else (a foreign or unsafe file) still stops the host.
+      if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT')
+        return undefined;
+      throw error;
     }
     const { info, context } = summary;
     if (
@@ -538,6 +556,8 @@ export class NativeSessionManager {
     return record;
   }
   private persist(record: SessionRecord, event?: NativeSessionEvent): void {
+    // A late event from an archived session's stopped adapter must not recreate its journal.
+    if (this.archived.has(record)) return;
     const previous = this.persisted.get(record) ?? { commands: new Map<string, string>() };
     const info = JSON.stringify(record.info);
     const context = JSON.stringify(record.context);
@@ -1022,7 +1042,12 @@ export class NativeSessionManager {
     workerLaunch?: NativeWorkerLaunch,
   ): SessionRecord | undefined {
     const found = reservedId ? this.sessions.get(reservedId) : undefined;
-    if (!found) return undefined;
+    if (!found) {
+      // A reserved id whose journal run retention archived is never reused for a new session.
+      if (reservedId && existsSync(join(this.archiveDirectory(), `${reservedId}.journal`)))
+        throw new Error('Reserved sessionId belongs to an archived native session');
+      return undefined;
+    }
     const record = this.hydrate(found);
     if (record.info.ownerPrincipalId !== owner)
       throw new Error('Reserved sessionId belongs to another owner');
@@ -1646,7 +1671,7 @@ export class NativeSessionManager {
    * its reason. Idempotent: an archived session reports so again.
    */
   archiveSessions(owner: string, ids: readonly string[]): NativeSessionArchiveReceipt[] {
-    const archive = join(dirname(this.root), 'archive');
+    const archive = this.archiveDirectory();
     return ids.map((sessionId): NativeSessionArchiveReceipt => {
       const record = this.sessions.get(sessionId);
       if (!record) {
@@ -1672,9 +1697,12 @@ export class NativeSessionManager {
                 ? 'conversation open'
                 : undefined;
       if (reason) return { sessionId, outcome: 'kept', reason };
+      const destination = join(archive, `${sessionId}.journal`);
+      // An archived journal is never replaced, even by a later session under the same id.
+      if (existsSync(destination)) return { sessionId, outcome: 'kept', reason: 'archive exists' };
       privateDirectory(archive);
       const journal = join(this.root, `${sessionId}.journal`);
-      renameSync(journal, join(archive, `${sessionId}.journal`));
+      renameSync(journal, destination);
       for (const directory of [this.root, archive]) {
         const fd = openSync(directory, 'r');
         try {
@@ -1683,8 +1711,10 @@ export class NativeSessionManager {
           closeSync(fd);
         }
       }
+      this.archived.add(record);
       this.sessions.delete(sessionId);
       this.dormant.delete(record);
+      this.persisted.delete(record);
       rmSync(this.summaryPath(journal), { force: true });
       return { sessionId, outcome: 'archived' };
     });

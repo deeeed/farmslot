@@ -11,9 +11,11 @@ import { getNode } from '../fleet/machine-registry.js';
 import { requestNativeNode } from '../runners/native/node.js';
 import {
   nodeJournalBatches,
+  noteJournalAnswers,
+  pruneJournalRetention,
   readJournalRetention,
-  recordJournalAnswers,
   skippedJournals,
+  writeJournalRetention,
 } from '../runs/native-journal-retention.js';
 import { runSettledAt } from '../runs/retention.js';
 
@@ -75,9 +77,12 @@ function decodeReceipts(value: unknown, sent: readonly string[]): NativeSessionA
   return value as NativeSessionArchiveReceipt[];
 }
 
+const LOG = '[native-journal retention]';
+
 /**
  * One bounded batch per node per hourly retention pass (ADR-039 Amendment 11). A node that is
- * offline, or whose node or host lacks the capability, is skipped and asked again next pass.
+ * offline, whose node or host lacks the capability, or that another owner holds is not sent
+ * anything and is asked again next pass.
  */
 export async function nodeJournalRetentionPass(
   released: readonly Run[],
@@ -85,51 +90,56 @@ export async function nodeJournalRetentionPass(
   deps: NodeJournalRetentionDeps,
 ): Promise<void> {
   const record = await readJournalRetention(deps.file);
-  const oldestFirst = [...released].sort((a, b) => runSettledAt(a) - runSettledAt(b));
-  const { batches, pending } = nodeJournalBatches(
-    oldestFirst,
-    held,
-    skippedJournals(record, deps.now()),
-  );
-  for (const batch of batches) {
-    const machine = batch.executionNodeId;
-    const node = deps.node(machine);
-    const skip = !node.connected
+  const now = deps.now();
+  const nodes = new Map<string, JournalNode>();
+  const refusal = (machine: string, owner: string) => {
+    let node = nodes.get(machine);
+    if (!node) nodes.set(machine, (node = deps.node(machine)));
+    return !node.connected
       ? 'offline'
       : !node.supportsSessionArchive
         ? 'no session archive'
-        : node.ownerPrincipalId !== batch.ownerPrincipalId
+        : node.ownerPrincipalId !== owner
           ? 'another owner'
           : undefined;
-    if (skip) {
-      deps.log(
-        `[native-journal retention] ${machine} skipped ${batch.sessionIds.length} (${skip}); pending=${pending[machine]}`,
-      );
-      continue;
-    }
+  };
+  const oldestFirst = [...released].sort((a, b) => runSettledAt(a) - runSettledAt(b));
+  const plan = nodeJournalBatches(oldestFirst, held, skippedJournals(record, now), refusal);
+  for (const [machine, reasons] of Object.entries(plan.unsendable))
+    deps.log(
+      `${LOG} ${machine} not sent ${Object.entries(reasons)
+        .map(([reason, count]) => `${count} (${reason})`)
+        .join(', ')}; pending=${plan.pending[machine]}`,
+    );
+  for (const batch of plan.batches) {
+    const machine = batch.executionNodeId;
     try {
       const receipts = decodeReceipts(
         await deps.archive(batch.ownerPrincipalId, machine, batch.sessionIds),
         batch.sessionIds,
       );
-      const count = (outcome: string) => receipts.filter((r) => r.outcome === outcome).length;
-      const kept = receipts.filter((r) => r.outcome === 'kept');
-      await recordJournalAnswers(
-        deps.file,
+      const kept = receipts.filter((receipt) => receipt.outcome === 'kept');
+      const confirmed = receipts.filter((receipt) => receipt.outcome !== 'kept');
+      noteJournalAnswers(
+        record,
         machine,
-        receipts.filter((r) => r.outcome !== 'kept').map((r) => r.sessionId),
-        kept.map((r) => r.sessionId),
-        new Date(deps.now()).toISOString(),
+        confirmed.map((receipt) => receipt.sessionId),
+        kept.map((receipt) => receipt.sessionId),
+        new Date(now).toISOString(),
       );
+      const count = (outcome: string) => receipts.filter((r) => r.outcome === outcome).length;
       const reasons = [...new Set(kept.map((r) => (r.outcome === 'kept' ? r.reason : '')))];
+      plan.pending[machine]! -= confirmed.length;
       deps.log(
-        `[native-journal retention] ${machine} archived=${count('archived')} already=${count('already-archived')} missing=${count('missing')} kept=${kept.length}${reasons.length ? ` (${reasons.join('; ')})` : ''} pending=${pending[machine]! - receipts.length + kept.length}`,
+        `${LOG} ${machine} archived=${count('archived')} already=${count('already-archived')} missing=${count('missing')} kept=${kept.length}${reasons.length ? ` (${reasons.join('; ')})` : ''} pending=${plan.pending[machine]}`,
       );
     } catch (error) {
       // The node keeps every journal it did not confirm; the next pass asks again.
       deps.log(
-        `[native-journal retention] ${machine} retained on failure: ${error instanceof Error ? error.message : String(error)}`,
+        `${LOG} ${machine} retained on failure: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
+  pruneJournalRetention(record, plan.released, now);
+  await writeJournalRetention(deps.file, record);
 }

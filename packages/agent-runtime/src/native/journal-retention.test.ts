@@ -81,43 +81,48 @@ test('a failed session whose process stop is unconfirmed is kept', () => {
   }
 });
 
-test('a restarted host replays a settled session only when something reads it', async () => {
-  const fixture = setup();
-  const { repo } = testRepository();
-  const manager = new NativeSessionManager(fixture.root);
-  const journal = (id: string) => join(fixture.root, `${id}.journal`);
-  try {
-    const closed = await closedSession(manager, repo);
-    // The first restart replays the journal and records the settled session's summary.
-    const first = new NativeSessionManager(fixture.root);
-    const listed = first.list('owner');
-    const events = allEvents(first, closed);
-    // Later restarts do not read the journal: an unreadable one still starts and lists.
-    chmodSync(journal(closed), 0o000);
-    const second = new NativeSessionManager(fixture.root);
-    assert.deepEqual(second.list('owner'), listed);
-    // Reading it replays it then, with the same history as before.
-    assert.throws(() => second.read('owner', closed));
-    chmodSync(journal(closed), 0o600);
-    assert.deepEqual(allEvents(second, closed), events);
-    // A journal that changed after its summary is replayed in full at startup.
-    writeFileSync(journal(closed), `${JSON.stringify({ context: { changed: '1' } })}\n`, {
-      flag: 'a',
-    });
-    chmodSync(journal(closed), 0o000);
-    assert.throws(() => new NativeSessionManager(fixture.root));
-    chmodSync(journal(closed), 0o600);
-    // Archiving also removes its summary.
-    const third = new NativeSessionManager(fixture.root);
-    assert.deepEqual(third.archiveSessions('owner', [closed]), [
-      { sessionId: closed, outcome: 'archived' },
-    ]);
-    assert.equal(existsSync(join(fixture.root, 'summaries', `${closed}.json`)), false);
-  } finally {
-    fixture.restore();
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
+test(
+  'a restarted host replays a settled session only when something reads it',
+  // An unreadable journal is what proves it was not read; root reads it anyway.
+  { skip: process.getuid?.() === 0 },
+  async () => {
+    const fixture = setup();
+    const { repo } = testRepository();
+    const manager = new NativeSessionManager(fixture.root);
+    const journal = (id: string) => join(fixture.root, `${id}.journal`);
+    try {
+      const closed = await closedSession(manager, repo);
+      // The first restart replays the journal and records the settled session's summary.
+      const first = new NativeSessionManager(fixture.root);
+      const listed = first.list('owner');
+      const events = allEvents(first, closed);
+      // Later restarts do not read the journal: an unreadable one still starts and lists.
+      chmodSync(journal(closed), 0o000);
+      const second = new NativeSessionManager(fixture.root);
+      assert.deepEqual(second.list('owner'), listed);
+      // Reading it replays it then, with the same history as before.
+      assert.throws(() => second.read('owner', closed));
+      chmodSync(journal(closed), 0o600);
+      assert.deepEqual(allEvents(second, closed), events);
+      // A journal that changed after its summary is replayed in full at startup.
+      writeFileSync(journal(closed), `${JSON.stringify({ context: { changed: '1' } })}\n`, {
+        flag: 'a',
+      });
+      chmodSync(journal(closed), 0o000);
+      assert.throws(() => new NativeSessionManager(fixture.root));
+      chmodSync(journal(closed), 0o600);
+      // Archiving also removes its summary.
+      const third = new NativeSessionManager(fixture.root);
+      assert.deepEqual(third.archiveSessions('owner', [closed]), [
+        { sessionId: closed, outcome: 'archived' },
+      ]);
+      assert.equal(existsSync(join(fixture.root, 'summaries', `${closed}.json`)), false);
+    } finally {
+      fixture.restore();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+);
 
 test('host IPC decodes a bounded archive request of session IDs', () => {
   assert.deepEqual(decodeRequest({ method: 'archiveSessions', owner: 'owner', ids: [ID] }), {
@@ -130,4 +135,59 @@ test('host IPC decodes a bounded archive request of session IDs', () => {
       () => decodeRequest({ method: 'archiveSessions', owner: 'owner', ids }),
       /Invalid IPC ids/,
     );
+});
+
+test('an archived session stays archived: no late write, no reuse of its id, no overwrite', async () => {
+  const fixture = setup();
+  const { repo } = testRepository();
+  const manager = new NativeSessionManager(fixture.root);
+  try {
+    const closed = await closedSession(manager, repo);
+    const sessions: unknown = Reflect.get(manager, 'sessions');
+    const append: unknown = Reflect.get(manager, 'append');
+    assert.ok(sessions instanceof Map && typeof append === 'function');
+    const record: unknown = sessions.get(closed);
+    assert.deepEqual(manager.archiveSessions('owner', [closed]), [
+      { sessionId: closed, outcome: 'archived' },
+    ]);
+    // A late event from its stopped adapter does not recreate the journal in startup replay.
+    append.call(manager, record, { type: 'session.closed' });
+    assert.equal(existsSync(join(fixture.root, `${closed}.journal`)), false);
+    new NativeSessionManager(fixture.root);
+    // Its reserved id is never reused for a new session.
+    await assert.rejects(
+      manager.ensure('owner', { runner: 'codex', cwd: repo, sessionId: closed }),
+      /belongs to an archived native session/,
+    );
+    // A session that reappears under an archived id is kept, never replacing the archive.
+    writeFileSync(
+      join(fixture.root, `${closed}.journal`),
+      `${JSON.stringify({ info: { id: closed, ownerPrincipalId: 'owner', executionNodeId: 'local', runner: 'codex', cwd: repo, state: 'closed', processStopped: true }, context: {} })}\n`,
+      { mode: 0o600 },
+    );
+    assert.deepEqual(new NativeSessionManager(fixture.root).archiveSessions('owner', [closed]), [
+      { sessionId: closed, outcome: 'kept', reason: 'archive exists' },
+    ]);
+  } finally {
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('host startup removes summaries whose journals are gone', async () => {
+  const fixture = setup();
+  const { repo } = testRepository();
+  const manager = new NativeSessionManager(fixture.root);
+  try {
+    const closed = await closedSession(manager, repo);
+    new NativeSessionManager(fixture.root);
+    const summary = join(fixture.root, 'summaries', `${closed}.json`);
+    assert.equal(existsSync(summary), true);
+    rmSync(join(fixture.root, `${closed}.journal`));
+    new NativeSessionManager(fixture.root);
+    assert.equal(existsSync(summary), false);
+  } finally {
+    fixture.restore();
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

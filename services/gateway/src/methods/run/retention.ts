@@ -459,10 +459,15 @@ export async function runRetentionPass(
   }
   if (options.nodeJournals) {
     try {
-      await options.nodeJournals(
-        removable,
-        runs.filter((run) => !removableIds.has(run.id)),
-      );
+      // Read the runs again: one held since the pass began (reopened, or dispatched to resume a
+      // released session) keeps its sessions, and a run created since then is held.
+      const released: Run[] = [];
+      const held: Run[] = [];
+      for (const run of await getAllRunsWithArchived())
+        (currentRetentionHold(run, context) || (await deps.holdsSlot(run)) ? held : released).push(
+          run,
+        );
+      await options.nodeJournals(released, held);
     } catch (error) {
       console.error(`[native-journal retention] pass failed: ${(error as Error).message}`);
     }

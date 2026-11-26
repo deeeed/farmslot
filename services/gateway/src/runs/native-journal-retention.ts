@@ -17,6 +17,8 @@ export interface NodeSessionRef {
 }
 
 const key = (node: string, sessionId: string) => `${node}/${sessionId}`;
+/** Host session ids are lowercase UUIDs; a malformed one would fail its whole batch. */
+const HOST_SESSION_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
 /** The node-hosted sessions a run's agent contexts bound, current and earlier. */
 export function runNodeSessions(run: Run): NodeSessionRef[] {
@@ -26,6 +28,7 @@ export function runNodeSessions(run: Run): NodeSessionRef[] {
       session &&
       session.executionNodeId !== 'local' &&
       typeof session.sessionId === 'string' &&
+      HOST_SESSION_ID.test(session.sessionId) &&
       typeof session.ownerPrincipalId === 'string'
         ? [
             {
@@ -39,10 +42,11 @@ export function runNodeSessions(run: Run): NodeSessionRef[] {
 }
 
 /**
- * Every native session a run names anywhere in its record (agent contexts, usage, reviews), so a
- * held run keeps any session it might still resume or read.
+ * Every native session a run names anywhere in its record (agent contexts, usage, reviews, pause
+ * recovery handles), so a held run keeps any session it might still resume or read. A recovery
+ * handle names the host session as `nativeSessionId` beside the runner's own `sessionId`.
  */
-export function runReferencedSessions(run: Run): Set<string> {
+export function runReferencedSessions(run: unknown): Set<string> {
   const found = new Set<string>();
   const walk = (value: unknown): void => {
     if (Array.isArray(value)) {
@@ -51,44 +55,67 @@ export function runReferencedSessions(run: Run): Set<string> {
     }
     if (!value || typeof value !== 'object') return;
     const record = value as Record<string, unknown>;
-    if (typeof record.sessionId === 'string' && typeof record.executionNodeId === 'string')
-      found.add(key(record.executionNodeId, record.sessionId));
+    if (typeof record.executionNodeId === 'string')
+      for (const field of ['sessionId', 'nativeSessionId'])
+        if (typeof record[field] === 'string')
+          found.add(key(record.executionNodeId, record[field] as string));
     for (const item of Object.values(record)) walk(item);
   };
   walk(run);
   return found;
 }
 
-/** The archive requests of one pass, per node and owner, oldest-settled runs first. */
+/** The archive requests of one pass, per node and owner, in the order of `released`. */
 export interface NodeJournalBatch {
   executionNodeId: string;
   ownerPrincipalId: string;
   sessionIds: string[];
 }
 
+export interface NodeJournalPlan {
+  batches: NodeJournalBatch[];
+  /** Sessions still to archive per node, sent this pass or not. */
+  pending: Record<string, number>;
+  /** Sessions not sent because their node cannot take them now, per node and reason. */
+  unsendable: Record<string, Record<string, number>>;
+  /** Every session the released runs bound, for pruning the record of confirmed ones. */
+  released: Set<string>;
+}
+
 /**
  * The sessions to archive this pass: those of `released` runs that no `held` run references and
- * that the pass does not skip, at most `limit` per node; `pending` counts all of them per node.
+ * that the pass does not skip. Only sessions their node can take now (`refusal` returns no
+ * reason) count toward the `limit` per node, so sessions of another owner or an offline node
+ * never take the place of ones it can archive.
  */
 export function nodeJournalBatches(
   released: readonly Run[],
   held: readonly Run[],
   skipped: ReadonlySet<string>,
+  refusal: (node: string, owner: string) => string | undefined,
   limit = NATIVE_SESSION_ARCHIVE_LIMIT,
-): { batches: NodeJournalBatch[]; pending: Record<string, number> } {
+): NodeJournalPlan {
   const keep = new Set<string>();
   for (const run of held) for (const ref of runReferencedSessions(run)) keep.add(ref);
   const batches = new Map<string, NodeJournalBatch>();
   const pending: Record<string, number> = {};
+  const unsendable: Record<string, Record<string, number>> = {};
   const sent = new Map<string, number>();
-  const seen = new Set<string>();
+  const all = new Set<string>();
   for (const run of released)
     for (const ref of runNodeSessions(run)) {
       const node = ref.executionNodeId;
       const id = key(node, ref.sessionId);
-      if (seen.has(id) || keep.has(id) || skipped.has(id)) continue;
-      seen.add(id);
+      if (all.has(id)) continue;
+      all.add(id);
+      if (keep.has(id) || skipped.has(id)) continue;
       pending[node] = (pending[node] ?? 0) + 1;
+      const reason = refusal(node, ref.ownerPrincipalId);
+      if (reason) {
+        const reasons = (unsendable[node] ??= {});
+        reasons[reason] = (reasons[reason] ?? 0) + 1;
+        continue;
+      }
       if ((sent.get(node) ?? 0) >= limit) continue;
       sent.set(node, (sent.get(node) ?? 0) + 1);
       const batchKey = `${node}\0${ref.ownerPrincipalId}`;
@@ -99,12 +126,14 @@ export function nodeJournalBatches(
       }
       batch.sessionIds.push(ref.sessionId);
     }
-  return { batches: [...batches.values()], pending };
+  return { batches: [...batches.values()], pending, unsendable, released: all };
 }
 
 /**
- * What nodes answered: sessions confirmed archived (or already gone) are never resent; sessions
- * a node kept wait a day before they are asked about again, so they cannot crowd out the rest.
+ * What nodes answered. Sessions confirmed archived, already archived or missing are not resent.
+ * `missing` is final: the node's one host root has neither the journal nor its archive, so
+ * asking again cannot change the answer. Sessions a node kept wait a day before they are asked
+ * about again, so they cannot crowd out the rest.
  */
 export interface JournalRetentionRecord {
   version: 1;
@@ -143,23 +172,43 @@ export function skippedJournals(record: JournalRetentionRecord, now: number): Se
   return skipped;
 }
 
-/** Record one node's answers: confirmed sessions are kept forever, kept ones deferred. */
-export async function recordJournalAnswers(
-  file: string,
+/** Note one node's answers in the record: confirmed sessions stay, kept ones are deferred. */
+export function noteJournalAnswers(
+  record: JournalRetentionRecord,
   node: string,
   confirmed: readonly string[],
   kept: readonly string[],
   at: string,
-): Promise<void> {
-  if (!confirmed.length && !kept.length) return;
-  const current = await readJournalRetention(file);
+): void {
   for (const sessionId of confirmed) {
-    current.confirmed[key(node, sessionId)] ??= at;
-    delete current.deferred[key(node, sessionId)];
+    record.confirmed[key(node, sessionId)] ??= at;
+    delete record.deferred[key(node, sessionId)];
   }
-  for (const sessionId of kept) current.deferred[key(node, sessionId)] = at;
+  for (const sessionId of kept) record.deferred[key(node, sessionId)] = at;
+}
+
+/**
+ * Drop what no longer matters: confirmations of sessions no released run binds (a run held
+ * again is asked about afresh once released) and deferrals past their day.
+ */
+export function pruneJournalRetention(
+  record: JournalRetentionRecord,
+  released: ReadonlySet<string>,
+  now: number,
+): void {
+  for (const id of Object.keys(record.confirmed))
+    if (!released.has(id)) delete record.confirmed[id];
+  for (const [id, at] of Object.entries(record.deferred))
+    if (now - Date.parse(at) >= JOURNAL_RETRY_DEFERRAL_MS) delete record.deferred[id];
+}
+
+/** Write the record whole and rename it into place. */
+export async function writeJournalRetention(
+  file: string,
+  record: JournalRetentionRecord,
+): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
-  await writeFile(temp, JSON.stringify(current), { mode: 0o600 });
+  await writeFile(temp, JSON.stringify(record), { mode: 0o600 });
   await rename(temp, file);
 }

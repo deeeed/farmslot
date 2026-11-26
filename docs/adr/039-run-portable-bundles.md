@@ -856,9 +856,15 @@ Each hourly pass, after the run pass:
   conversation listener; any other is kept with its reason. The request never starts or
   refreshes a host, and a host without the capability is reported unavailable; and
 - the gateway records what nodes confirmed (archived, already archived, missing) in
-  `native-journals.json` under the run archive root and never resends those. A session a
-  node kept is asked about again after a day; an offline or older node is asked again
-  next pass.
+  `native-journals.json` under the run archive root and does not resend those while their
+  run stays released. `missing` is final: the node's one host root has neither the journal
+  nor its archive. A session a node kept is asked about again after a day; sessions an
+  offline, older or other-owner node cannot take are not counted toward its 50 and are
+  asked about next pass. The runs are read again just before the requests, so a run held
+  since the pass began keeps its sessions.
+
+An archived journal is never overwritten, and its session id is never reused for a new
+session.
 
 A host also stops replaying settled sessions it does not need: after a start replays a
 closed or failed session whose process is confirmed stopped and nothing is pending, it
@@ -868,10 +874,14 @@ time something reads that session.
 
 ### Rationale and consequences
 
-Archiving rather than deleting keeps a released run's conversation restorable: run
-bundles do not capture native journals. The archive is not pruned yet; at about 3 MB a
-journal it grows with each released run, and its own retention is a later decision.
-Standalone native sessions, which no run references, are out of scope.
+Archiving rather than deleting keeps a released run's conversation on disk, since run
+bundles do not capture native journals. Nothing restores it automatically: an operator
+moves `archive/<id>.journal` back into `sessions/` and restarts the host. Until then the
+host no longer knows the session, so reading, resuming or listing it answers not found,
+including a native transcript view of an old released run in the Command Center; showing
+such a session as archived rather than missing is a follow-up. The archive is not pruned
+yet; at about 3 MB a journal it grows with each released run, and its own retention is a
+later decision. Standalone native sessions, which no run references, are out of scope.
 
 At 50 per node an hour, macpro's backlog of about 250 released journals drains in about
 5 hours after deploy, and the rest wait for their runs to settle. Pruning alone would
