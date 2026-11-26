@@ -6,6 +6,10 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.36 - 2026-11-26
+
+- Recover Web DApp launches when the saved browser has lost its app tab or shows an error page, using the existing profile and network protections.
+
 ## 0.19.35 - 2026-11-25
 
 - Uses recipe-runner 0.52.5: `ui.wait_for` on a busy page ends with its own timeout instead of a raw CDP timeout.

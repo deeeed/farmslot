@@ -1,1 +1,0 @@
-- Recover Web DApp launches when the saved browser has lost its app tab or shows an error page, using the existing profile and network protections.
