@@ -88,11 +88,14 @@ test('a slow pre-push hook succeeds within the project push budget', async (t) =
 });
 
 test('pool push budget wins and a slow hook timeout names its budget', async (t) => {
-  const f = fixture(t, 'echo started > hook-started\nsleep 0.8\necho ran > hook-ran');
-  projectBudget = '2500';
-  poolBudget = '500';
-  await assert.rejects(f.push(), /git push.*timed out.*500 ms.*pre-push hook budget/);
-  assert.deepEqual(f.budgets, [500]);
+  // The budget also covers git reaching the hook: on a loaded host that took over 500 ms, so
+  // git timed out before the hook started (fails 10/10 with every core busy; over 1.5 s seen).
+  // The hook blocks until the budget kills it.
+  const f = fixture(t, 'echo started > hook-started\nsleep 30\necho ran > hook-ran');
+  projectBudget = '10000';
+  poolBudget = '3000';
+  await assert.rejects(f.push(), /git push.*timed out.*3000 ms.*pre-push hook budget/);
+  assert.deepEqual(f.budgets, [3000]);
   assert.ok(existsSync(path.join(repo, 'hook-started')));
   assert.equal(existsSync(path.join(repo, 'hook-ran')), false);
   assert.equal(f.git('ls-remote', 'origin', 'refs/heads/fix/fixture'), '');
