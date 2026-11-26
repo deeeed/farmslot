@@ -472,7 +472,8 @@ function countedIo(io: NodeSupportIo): { io: NodeSupportIo; calls: () => number 
  * bundle is checked against its inputs only when a test moves the clock.
  */
 function settledClock(t: test.TestContext): { advance: (ms: number) => void } {
-  let now = Date.now() + 5_000;
+  // Far enough ahead that edits made while a slow host runs the test still read as settled.
+  let now = Date.now() + 30_000;
   t.mock.method(Date, 'now', () => now);
   return { advance: (ms) => (now += ms) };
 }
@@ -576,6 +577,32 @@ test('a delivery overtaken by a support-path change while nobody waited caches n
   const before = counted.calls();
   await resolveRemoteFarmCommand(vars, cmd, { io: counted.io });
   assert.ok(counted.calls() > before, 'the overtaken delivery left no cache entry');
+});
+
+test('a delivery overtaken by a newer bundle with the same paths caches nothing', async (t) => {
+  resetRemoteFarmCommandCache();
+  const clock = settledClock(t);
+  const farm = await withTempFarm(t);
+  const node = gatedNode();
+  const counted = countedIo(node.io);
+  const vars = farmVars(farm.name, 'mini-x-1');
+  const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
+  // Read-only, so a selection can never be what refuses the entry: only the bundle hash can.
+  const readOnly = { selectSlot: false };
+
+  await pendingCommand(vars, cmd, counted.io, readOnly);
+  // Another command collects bundle 2 from the same paths; it is held and current.
+  farm.editScript('echo v2\n');
+  clock.advance(2_100);
+  await pendingCommand(vars, cmd, counted.io, readOnly);
+  node.release();
+  await settleNodeSupportDeliveries();
+
+  farm.editScript('echo v1\n');
+  clock.advance(2_100);
+  const before = counted.calls();
+  await resolveRemoteFarmCommand(vars, cmd, { io: counted.io, ...readOnly });
+  assert.ok(counted.calls() > before, 'bundle 1 recorded nothing once bundle 2 was held');
 });
 
 test('a background-finished delivery is not cached after a newer selection for its slot', async (t) => {
