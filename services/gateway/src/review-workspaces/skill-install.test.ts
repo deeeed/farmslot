@@ -140,12 +140,14 @@ test('a skill review links its writable round folders into the read-only checkou
     const failPublish = path.join(root, 'fail-publish.cjs');
     writeFileSync(
       failPublish,
-      `const fs = require('node:fs');
-      const link = fs.linkSync;
-      fs.linkSync = (from, to) => {
-        if (to.endsWith('/.installed-review-skill-mms-perps-review-pr.json'))
-          throw Error('Receipt publication refused by fixture');
-        return link(from, to);
+      `const cp = require('node:child_process');
+      const spawn = cp.spawnSync;
+      cp.spawnSync = (program, args, options) => {
+        if (program === 'python3') {
+          args = [...args];
+          args[2] = args[2].replace("    os.link('.receipt.json',", "    raise OSError('Receipt publication refused by fixture')\\n    os.link('.receipt.json',");
+        }
+        return spawn(program, args, options);
       };`,
     );
     assert.throws(() => run({}, failPublish), /Receipt publication refused by fixture/);
@@ -205,6 +207,41 @@ test('a skill review links its writable round folders into the read-only checkou
       existsSync(path.join(root, '.installed-review-skill-mms-perps-review-pr.json')),
       false,
     );
+    rmSync(taskConflict, { recursive: true });
+    writeFileSync(path.join(temp, 'original.txt'), 'original parent');
+    const parentSwap = path.join(root, 'parent-swap.cjs');
+    const swapSource = [
+      "        if entry['relative'] == 'temp/tasks':",
+      "            os.rename('temp', 'displaced-temp', src_dir_fd=checkout, dst_dir_fd=checkout)",
+      "            os.mkdir('temp', dir_fd=checkout)",
+      "            os.mkdir('temp/tasks', dir_fd=checkout)",
+      "            with open(os.path.join(sys.argv[2], 'temp/tasks/owner.txt'), 'w') as sentinel:",
+      "                sentinel.write('replacement parent')",
+      "        move(source, entry['name'], parent, parts[-1])",
+    ].join('\n');
+    writeFileSync(
+      parentSwap,
+      `const cp = require('node:child_process');
+      const spawn = cp.spawnSync;
+      cp.spawnSync = (program, args, options) => {
+        if (program === 'python3') {
+          args = [...args];
+          args[2] = args[2].replace("        move(source, entry['name'], parent, parts[-1])", ${JSON.stringify(swapSource)});
+        }
+        return spawn(program, args, options);
+      };`,
+    );
+    assert.throws(() => run({}, parentSwap), /publication parent changed: temp\/tasks/);
+    assertNoOwnedSkillLinks();
+    assert.equal(readFileSync(path.join(taskConflict, 'owner.txt'), 'utf8'), 'replacement parent');
+    const displaced = path.join(checkout, 'displaced-temp');
+    assert.equal(readFileSync(path.join(displaced, 'original.txt'), 'utf8'), 'original parent');
+    assert.equal(existsSync(path.join(displaced, 'tasks')), false);
+    assert.equal(
+      readdirSync(root).some((name) => name.startsWith('.review-skills-')),
+      false,
+    );
+    rmSync(displaced, { recursive: true });
     rmSync(temp, { recursive: true });
 
     const missingPublisher = path.join(root, 'missing-publisher.cjs');

@@ -14,21 +14,82 @@ exclusive = 4 if darwin else 1
 flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 source = os.open(sys.argv[1], flags)
 checkout = os.open(sys.argv[2], flags)
-try:
-    for name, relative in json.loads(sys.argv[3]):
-        parts = relative.split('/')
-        parent = os.dup(checkout)
-        try:
-            for part in parts[:-1]:
-                child = os.open(part, flags, dir_fd=parent)
-                os.close(parent)
-                parent = child
-            if rename(source, os.fsencode(name), parent, os.fsencode(parts[-1]), exclusive):
-                code = ctypes.get_errno()
-                raise OSError(code, errno.errorcode.get(code, os.strerror(code)), relative)
-        finally:
+stage = os.open('..', flags, dir_fd=source)
+workspace = os.open('..', flags, dir_fd=stage)
+entries = json.loads(sys.argv[3])
+parents = []
+moved = []
+
+def parent_of(parts):
+    parent = os.dup(checkout)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, flags, dir_fd=parent)
             os.close(parent)
+            parent = child
+        return parent
+    except OSError:
+        os.close(parent)
+        raise
+
+def move(from_parent, name, to_parent, dest):
+    if rename(from_parent, os.fsencode(name), to_parent, os.fsencode(dest), exclusive):
+        code = ctypes.get_errno()
+        raise OSError(code, errno.errorcode.get(code, os.strerror(code)), dest)
+
+def identity(stat):
+    return [str(stat.st_dev), str(stat.st_ino)]
+
+def at(parent, name):
+    return os.stat(name, dir_fd=parent, follow_symlinks=False)
+
+try:
+    for entry in entries:
+        parts = entry['relative'].split('/')
+        parent = parent_of(parts)
+        parents.append(parent)
+        move(source, entry['name'], parent, parts[-1])
+        moved.append((entry, parts, parent))
+    for entry, parts, parent in moved:
+        current = parent_of(parts)
+        try:
+            if identity(os.fstat(current)) != identity(os.fstat(parent)):
+                raise RuntimeError('Review publication parent changed: ' + entry['relative'])
+        finally:
+            os.close(current)
+        name = parts[-1]
+        if entry['relative'] == 'temp':
+            if identity(at(parent, name)) != entry['identity'][:2]:
+                raise RuntimeError('Review task parent identity changed')
+            child = os.open(name, flags, dir_fd=parent)
+            try:
+                if identity(at(child, 'tasks')) != entry['linkIdentity'][:2]:
+                    raise RuntimeError('Review task link identity changed')
+            finally:
+                os.close(child)
+        elif identity(at(parent, name)) != entry['linkIdentity'][:2]:
+            raise RuntimeError('Review publication link identity changed: ' + entry['relative'])
+    if identity(at(workspace, os.path.basename(sys.argv[2]))) != identity(os.fstat(checkout)):
+        raise RuntimeError('Review publication checkout changed')
+    os.link('.receipt.json', sys.argv[4], src_dir_fd=stage, dst_dir_fd=workspace, follow_symlinks=False)
+except Exception:
+    failures = []
+    for entry, parts, parent in reversed(moved):
+        try:
+            expected = entry.get('identity', entry['linkIdentity'])[:2]
+            if identity(at(parent, parts[-1])) != expected:
+                raise OSError('Review publication identity changed: ' + entry['relative'])
+            move(parent, parts[-1], source, entry['name'])
+        except OSError as error:
+            failures.append(str(error))
+    if failures:
+        raise RuntimeError('Review publication rollback incomplete: ' + ', '.join(failures))
+    raise
 finally:
+    for parent in parents:
+        os.close(parent)
+    os.close(workspace)
+    os.close(stage)
     os.close(checkout)
     os.close(source)
 `;
@@ -222,22 +283,23 @@ function prepareInstaller(){
    directoryIdentity(taskRoot);
    ignoreCheckoutPaths(['/temp/tasks']);
   }
-  const entries=owner.publications.map(({name,relative})=>[name,relative]);
-  const result=cp.spawnSync('python3',['-I','-c',PUBLISH,publicationRoot,checkout,JSON.stringify(entries)],{encoding:'utf8'});
-  if(result.status!==0)throw Error('Review publication failed: '+(result.stderr?.trim()||result.error?.message||result.status));
-  for(const publication of owner.publications)verifyPublication(path.join(checkout,publication.relative),publication);
   const pending=path.join(stage,'.receipt.json');
   fs.writeFileSync(pending,JSON.stringify(owner),{flag:'wx',mode:0o600});
-  fs.linkSync(pending,marker);
+  const result=cp.spawnSync('python3',
+   ['-I','-c',PUBLISH,publicationRoot,checkout,JSON.stringify(owner.publications),path.basename(marker)],
+   {encoding:'utf8'});
+  if(result.status!==0)throw Error('Review publication failed: '+(result.stderr?.trim()||result.error?.message||result.status));
  }catch(error){
-  // Only a successful rename removes a prepared entry from our private tree.
-  const failures=[];
-  for(const publication of [...owner.publications].reverse()){
-   if(exists(path.join(publicationRoot,publication.name)))continue;
-   try{retirePublication(publication);}
-   catch(problem){failures.push(problem.message);}
+  // The publisher returns moved entries through the original directory handles.
+  // If it returned foreign bytes or left a move incomplete, preserve the stage for recovery.
+  try{
+   for(const publication of owner.publications)
+    verifyPublication(path.join(publicationRoot,publication.name),publication);
+  }catch(problem){
+   const recovery=fs.mkdtempSync(path.join(path.dirname(checkout),'.review-skill-retire-'));
+   fs.renameSync(stage,path.join(recovery,'stage'));
+   throw Error(error.message+'; install rollback preserved at '+recovery+': '+problem.message);
   }
-  if(failures.length)throw Error(error.message+'; install rollback: '+failures.join(', '));
   retireSkill(owner);
   throw error;
  }
