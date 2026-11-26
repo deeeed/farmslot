@@ -327,14 +327,6 @@ interface ProjectKnowledgeConfig {
   reference_repos?: Record<string, { repo_url?: unknown }>;
 }
 
-/**
- * The destination comes from project configuration, never guessed. Explicit
- * `vars.knowledge_destination {repo, path}` wins; otherwise the library the
- * static reviewer already consumes (`static_review.support.libraries[0]` +
- * `reference_repos.<name>_library.repo_url`) with the library's shared
- * anti-pattern file. Null when neither is configured — the caller holds the
- * entry visibly instead of inventing a path.
- */
 /** `vars.knowledge_clients`: which client each evidence repo belongs to, when the project says. */
 function knowledgeClients(projectJson: ProjectKnowledgeConfig): Record<string, string> | undefined {
   const raw = projectJson.vars?.knowledge_clients;
@@ -348,6 +340,14 @@ function knowledgeClients(projectJson: ProjectKnowledgeConfig): Record<string, s
   return Object.keys(clients).length ? clients : undefined;
 }
 
+/**
+ * The destination comes from project configuration, never guessed. Explicit
+ * `vars.knowledge_destination {repo, path}` wins; otherwise the library the
+ * static reviewer already consumes (`static_review.support.libraries[0]` +
+ * `reference_repos.<name>_library.repo_url`) with the library's shared
+ * anti-pattern file. Null when neither is configured — the caller holds the
+ * entry visibly instead of inventing a path.
+ */
 export function knowledgeDestinationFromConfig(
   projectJson: ProjectKnowledgeConfig,
 ): KnowledgeDestination | null {

@@ -12,7 +12,8 @@ try {
   protocol = await import('@farmslot/protocol/contracts/learnings');
 } catch (error) {
   // A warning must never fail a mark or a run, so any load failure (a source checkout before
-  // @farmslot/protocol has built, an older install) only turns the checks off, and says so.
+  // @farmslot/protocol has built, an older install) only turns the checks off; the reason is
+  // printed under FARMSLOT_DEBUG_AGENT_RUNTIME.
   unavailable = `learnings v1 checks unavailable: ${error?.code ?? error?.message ?? error}`;
 }
 
