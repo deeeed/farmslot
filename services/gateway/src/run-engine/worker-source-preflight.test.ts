@@ -301,3 +301,32 @@ test('a legacy receipt with a missing pin stays unverified, in the runtime verif
   assert.notEqual(result.status, 'mismatch');
   assert.doesNotMatch(result.detail, /TASK_PIN_RELEASED/);
 });
+
+for (const [code, expectedDetail] of [
+  ['TASK_PIN_RELEASED', /^TASK_PIN_RELEASED: Run run-new: this task's installation pin /],
+  ['TASK_PROVENANCE_INVALID', /^TASK_PROVENANCE_INVALID: The task pin is outside/],
+] as const)
+  test(`a current runtime decides a missing pin first (${code})`, async (t) => {
+    const { root, value } = await requiredSkillsFixture(t, { runtimeChecks: true });
+    const pin = path.join(root, 'pins', 'gone');
+    await writeFile(
+      path.join(value.taskDir, 'artifacts/harness-provenance.json'),
+      JSON.stringify({ bindingIdentity: null, pin }),
+    );
+    const message =
+      code === 'TASK_PIN_RELEASED'
+        ? taskPinReleasedMessage(pin, 'run-new')
+        : 'The task pin is outside the configured installation store.';
+    await writeFile(
+      path.join(root, 'runtime/dist/index.js'),
+      `export function taskPinReleasedMessage() { return ''; }
+export function verifyTaskExecutionProvenance() {
+  throw Object.assign(new Error(${JSON.stringify(message)}), { code: ${JSON.stringify(code)}, exitCode: 5 });
+}
+`,
+    );
+    const result = await probe({ ...value, runId: 'run-new' });
+    assert.equal(result.status, 'mismatch');
+    assert.match(result.detail, expectedDetail);
+    assert.equal(result.retry, code === 'TASK_PIN_RELEASED' ? false : undefined);
+  });

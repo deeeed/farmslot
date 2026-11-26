@@ -233,7 +233,18 @@ function contentStore(root) {
     quarantine: path.join(store, 'quarantine'),
     migrated: path.join(store, 'migrated'),
     sweepCursor: path.join(store, 'sweep-cursor'),
+    quarantineCursor: path.join(store, 'quarantine-cursor'),
+    shareCursor: path.join(store, 'share-cursor'),
   };
+}
+/** The next `limit` names of `dir` after the one a cursor file recorded, wrapping around. */
+async function rotate(dir, cursorFile, limit, names) {
+  const all = names ?? (await entries(dir));
+  const cursor = await fs.readFile(cursorFile, 'utf8').catch(unlessMissing(''));
+  return all
+    .filter((name) => name > cursor)
+    .concat(all.filter((name) => name <= cursor))
+    .slice(0, limit);
 }
 async function entries(dir) {
   return (await fs.readdir(dir).catch(unlessMissing([]))).sort();
@@ -267,8 +278,10 @@ async function sweepContentStore(root, now, hooks = {}) {
     for (const name of await entries(path.join(store.objects, shard)))
       if (await sweepUnlinked(path.join(store.objects, shard, name), now, hooks)) swept++;
   if (ordered.length) await fs.writeFile(store.sweepCursor, ordered.at(-1));
-  for (const name of (await entries(store.quarantine)).slice(0, QUARANTINE_SWEEP))
+  const quarantined = await rotate(store.quarantine, store.quarantineCursor, QUARANTINE_SWEEP);
+  for (const name of quarantined)
     await sweepUnlinked(path.join(store.quarantine, name), now, hooks);
+  if (quarantined.length) await fs.writeFile(store.quarantineCursor, quarantined.at(-1));
   for (const name of await entries(store.tmp)) {
     const file = path.join(store.tmp, name);
     const info = await fs.lstat(file).catch(unlessMissing(null));
@@ -422,10 +435,15 @@ async function shareTaskPins(input, hooks = {}) {
     (await fs.readFile(store.migrated, 'utf8').catch(unlessMissing(''))).split('\n'),
   );
   const pins = (await readTaskPins(root)).map((entry) => path.basename(entry.pin));
-  for (const id of pins
-    .filter((name) => !done.has(name))
-    .sort()
-    .slice(0, limit)) {
+  // A rotating cursor: pins that keep failing never hold back the ones after them.
+  const batch = await rotate(
+    undefined,
+    store.shareCursor,
+    limit,
+    pins.filter((name) => !done.has(name)).sort(),
+  );
+  if (batch.length) await fs.writeFile(store.shareCursor, batch.at(-1));
+  for (const id of batch) {
     try {
       if (await sharePin(path.join(root, id), context)) {
         done.add(id);

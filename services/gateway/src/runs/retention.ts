@@ -11,7 +11,7 @@ import {
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 
 import { isTaskDirectoryAdmitting, runTaskDirectories } from './store.js';
-import { taskPinRelease } from './task-pin-owners.js';
+import { taskDirKey, taskPinRelease } from './task-pin-owners.js';
 import { readTaskPins, retiredTaskPinsOf as retiredPins, type TaskPinEntry } from './task-pins.cjs';
 export { readTaskPins, type TaskPinEntry };
 
@@ -300,10 +300,17 @@ export async function retiredTaskPins(
   pendingTaskDirs: ReadonlySet<string> = new Set(),
   releasedTaskDirs: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
+  const entries = await readTaskPins(pinRoot);
+  // Released dirs grow with run history; only those that could name one of these pins are
+  // resolved, and dropping one only keeps a pin longer. Kept dirs are bounded by held runs and
+  // are all resolved, so no symlinked form of a held dir is ever missed.
+  const keys = new Set(entries.map((entry) => taskDirKey(entry.taskDir)));
   const pending = await withRealPaths(pendingTaskDirs);
-  const released = await withRealPaths(releasedTaskDirs);
+  const released = await withRealPaths(
+    [...releasedTaskDirs].filter((dir) => keys.has(taskDirKey(dir))),
+  );
   return retiredTaskPinsOf(
-    await readTaskPins(pinRoot),
+    entries,
     removedTaskDirs,
     context,
     (dir) => pending.has(dir),

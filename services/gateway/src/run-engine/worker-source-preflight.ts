@@ -90,13 +90,14 @@ const fs=require('node:fs'),{createRequire}=require('node:module'),{pathToFileUR
  const receiptFile=path.join(expected.taskDir,'artifacts/harness-provenance.json');
  if(!fs.existsSync(receiptFile)){result('unverified','This task has no retained source receipt; existing source admission still applies.',false);return}
  const receipt=JSON.parse(fs.readFileSync(receiptFile,'utf8'));
- // ADR-039 Amendment 12: retention released the pin with its run. Refuse by name, never retry;
- // checked here too so a node on an older runtime names the cause instead of a bare ENOENT.
- // A legacy receipt (no bindingIdentity) stays the runtime's unverified case, in its order.
- if(receipt&&'bindingIdentity' in receipt&&typeof receipt.pin==='string'&&!fs.existsSync(receipt.pin)){result('mismatch','TASK_PIN_RELEASED: '+(expected.runId?'Run '+expected.runId+': this':'This')+" task's installation pin "+receipt.pin+' is missing: run retention released it after its run settled, or it was removed. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.',false);return}
  const runtime=await import(pathToFileURL(expected.runtimeModule).href);
+ // ADR-039 Amendment 12: retention released the pin with its run. A runtime that knows the case
+ // decides it (store containment first, legacy receipts first); for an older node runtime the
+ // probe names it itself instead of a bare ENOENT. Either way: refused by name, never retried.
+ if(typeof runtime.taskPinReleasedMessage!=='function'&&receipt&&'bindingIdentity' in receipt&&typeof receipt.pin==='string'&&!fs.existsSync(receipt.pin)){result('mismatch','TASK_PIN_RELEASED: '+(expected.runId?'Run '+expected.runId+': this':'This')+" task's installation pin "+receipt.pin+' is missing: run retention released it after its run settled, or it was removed. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.',false);return}
  try{runtime.verifyTaskExecutionProvenance(expected.taskDir,receipt.bindingIdentity??null,{runId:expected.runId})}catch(e){
   if(e.code==='TASK_PROVENANCE_LEGACY'){result('unverified',e.message,false);return}
+  if(e.code==='TASK_PIN_RELEASED'){result('mismatch','TASK_PIN_RELEASED: '+e.message,false);return}
   if((e.exitCode===5 && typeof e.code==='string') || e.code==='ENOENT'){result('mismatch',e.code+': '+e.message+' Repair the retained input through its supported source owner, then retry this same run.');return}
   throw e;
  }

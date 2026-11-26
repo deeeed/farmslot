@@ -449,3 +449,21 @@ test('only the inspected pins’ directories travel to the node, and only they a
   assert.deepEqual(result.removed, ['inspected']);
   assert.equal((await readTaskPins(f.root)).length, 1);
 });
+
+test('review workspace task dirs, all named `task`, still travel one at a time', () => {
+  const released = Array.from({ length: 50 }, (_, i) => ({
+    ...makeRun({ id: `review-${i}`, status: 'done', taskFile: undefined }),
+    reviewWorkspace: {
+      workspaceId: `w${i}`,
+      machine: 'mini',
+      executionNodeId: 'mini',
+      checkoutPath: `/ws/w${i}/source`,
+      taskPath: `/ws/w${i}/task`,
+      artifactPath: `/ws/w${i}/task/artifacts`,
+    },
+  }));
+  const decision = forInspectedPins(taskPinProtection({ held: [], released }), {
+    pins: [{ id: 'p', taskDir: '/ws/w3/task' }],
+  });
+  assert.deepEqual(decision.releasedTaskDirs, ['/ws/w3/task']);
+});

@@ -1090,6 +1090,55 @@ test(
   },
 );
 
+for (const keeper of [
+  'a live run through a symlinked path',
+  'an archived held run’s review workspace',
+])
+  test(
+    `apply keeps a released run’s pin that ${keeper} still reads`,
+    { timeout: 4500 },
+    async (t) => {
+      const f = await recreatableRun(t);
+      const slots = path.join(path.dirname(f.roots.taskPins), 'slot');
+      const slotTask = path.join(slots, 'temp', 'tasks', f.run.id);
+      await file(path.join(slotTask, 'TASK.md'));
+      updateRun(f.run.id, { activeTaskFile: path.join(await realpath(slotTask), 'TASK.md') });
+      await persistRunNow(f.run);
+      const slotPin = await pin(
+        f.roots,
+        `${f.run.id}-slot`,
+        await realpath(slotTask),
+        NOW - RUN_RETENTION_AGE_MS - 60_000,
+      );
+      const holder = createRun({
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        mode: 'autonomous',
+        ticketOrPr: 'RETENTION-HOLDER',
+      });
+      if (keeper.startsWith('a live')) {
+        const linked = path.join(path.dirname(f.roots.taskPins), 'linked-slot');
+        await symlink(slots, linked);
+        updateRun(holder.id, {
+          status: 'monitoring',
+          activeTaskFile: path.join(linked, 'temp', 'tasks', f.run.id, 'TASK.md'),
+        });
+        await persistRunNow(holder);
+      } else {
+        updateRun(holder.id, {
+          status: 'done',
+          completedAt: settled,
+          tags: ['keep'],
+          reviewWorkspace: { ...workspace(path.join(slots, 'review')), taskPath: slotTask },
+        });
+        await persistRunNow(holder);
+        assert.equal(await archiveRun(holder.id), true);
+      }
+      await runRetentionPass(f.options, privateDeps);
+      assert.ok(existsSync(slotPin), 'a kept run still reads this pin’s task directory');
+    },
+  );
+
 test('the gateway root keeps pins a held run reads through its review workspace, and a parked run’s', async (t) => {
   const roots = await retentionRoots(t);
   const shared = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks', 'shared');

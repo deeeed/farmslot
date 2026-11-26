@@ -10,7 +10,7 @@ import { loadPoolConfigs } from '../fleet/state.js';
 import type { RetentionSplit } from '../methods/run/retention.js';
 import { reclaimReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
 import { hasTaskAdmissions } from '../runs/store.js';
-import { taskPinRelease } from '../runs/task-pin-owners.js';
+import { taskDirKey, taskPinRelease } from '../runs/task-pin-owners.js';
 import type {
   TaskPinInspection,
   TaskPinProtection,
@@ -74,15 +74,14 @@ export function forInspectedPins(
   decision: ReturnType<typeof taskPinProtection>,
   inspected: TaskPinInspection,
 ): Pick<TaskPinSweepInput, 'protection' | 'releasedTaskDirs' | 'ids'> {
-  const names = new Set(inspected.pins.map((pin) => path.basename(pin.taskDir)));
-  const near = (dir: string) => names.has(path.basename(dir));
+  // Only the release list grows with run history, and only it is narrowed: by the last two path
+  // segments (e.g. `fix/<run id>`, `<workspace>/task`), so a bare `task` name does not let every
+  // review workspace through. Dropping a released dir only keeps a pin longer. The protection
+  // list is bounded by held runs and travels whole, so no symlinked form of a held dir is lost.
+  const keys = new Set(inspected.pins.map((pin) => taskDirKey(pin.taskDir)));
   return {
-    protection: {
-      taskDirs: decision.protection.taskDirs.filter(near),
-      taskNames: decision.protection.taskNames.filter((name) => names.has(name)),
-      pinIds: decision.protection.pinIds,
-    },
-    releasedTaskDirs: decision.releasedTaskDirs.filter(near),
+    protection: decision.protection,
+    releasedTaskDirs: decision.releasedTaskDirs.filter((dir) => keys.has(taskDirKey(dir))),
     ids: inspected.pins.map((pin) => pin.id),
   };
 }

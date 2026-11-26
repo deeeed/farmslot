@@ -891,7 +891,8 @@ bring host start under 5 s.
 
 ## Amendment 12: 2026-11-26 task pins follow their runs
 
-**Status:** Accepted by the farm lead, 2026-11-26.
+**Status:** Accepted by the farm lead, 2026-11-26. Arthur's confirmation of the shared content
+store, a new on-disk format under the pin root, is requested with this PR.
 
 ### Decision
 
@@ -916,18 +917,22 @@ Each hourly pass, after the run pass:
   it was given;
 - a pin no run references keeps the earlier rule and goes only once its task directory is gone,
   so manual tasks keep their pins; and
-- each node pass inspects at most 32 pins (read only) and removes at most 8. The gateway sends
-  only the release and protection entries whose directory names match those 32 pins, and the
-  node decides only the pins it reported, so the request stays bounded by the window, not by
-  run history. The gateway ships the node program with every command, so no protocol method or
+- each node pass inspects at most 32 pins (read only) and removes at most 8, and decides only
+  the pins it reported. The release list, which grows with run history, travels only for
+  directories whose last two path segments match one of those pins; dropping a released
+  directory only keeps its pin longer. The protection list is bounded by held runs and travels
+  whole, so no symlinked form of a held directory is lost. The gateway's own pin root resolves
+  real paths the same way: every kept directory, and only the released ones that could name a
+  pin. The gateway ships the node program with every command, so no protocol method or
   capability changes.
 
 A task whose pin was released never runs on other tooling. Verifying its execution receipt
 first checks that the pin lies in the store, then refuses a missing pin with
 `TASK_PIN_RELEASED` (exit 5), naming the run when known and the pin path ("missing: run
 retention released it after its run settled, or it was removed"). Task init names its attempt.
-The worker launch preflight refuses the same way without retry, also on nodes whose runtime
-predates this amendment; a legacy receipt keeps the verifier's earlier unverified order. Re-pinning from the receipt is not attempted: it would need every
+The worker launch preflight refuses the same way without retry: a node runtime that knows
+the case decides it (containment and legacy receipts first), and for an older runtime the probe
+names a missing pin itself instead of a bare ENOENT. Re-pinning from the receipt is not attempted: it would need every
 recorded source to still hash to its receipt value, and installs and library checkouts move
 between versions, so a fresh task pins the current tooling instead.
 
@@ -947,14 +952,16 @@ node pass now links at most 8 not-yet-shared pins into a content store at
   `.content/quarantine` and the file keeps a private copy; a refused hard link (EXDEV, EPERM)
   keeps a private copy. All stay read-only, and the gateway logs each;
 - the pin's whole tree (paths, kinds, exec bits, sizes and bytes) is fingerprinted before and
-  recomputed after, from the hashes taken on each linked inode. A pin whose fingerprint changed
-  is logged and not recorded as shared; a pin whose sharing fails is logged with its error and
-  retried, never blocking the others. `.content/migrated` lists the pins already shared, and
+  compared after, using the hash taken on each linked inode (files kept private are hashed
+  again). A pin whose fingerprint changed is logged and not recorded as shared. A write between
+  that hash and the rename is not caught here but by the launch re-verify. A pin whose sharing
+  fails is logged with its error and retried; a rotating cursor picks each pass's pins, so
+  failing pins never hold back the rest. `.content/migrated` lists the pins already shared, and
   each pass logs the bytes it hashed and its seconds;
 - the filesystem link count is the reference count. Inside the fence, before staging, each pass
   sweeps the next 16 of the 256 shards: an entry with one link (only the store's) whose last link
-  change is over an hour old is removed, as are quarantined entries and temporary links past the
-  same grace by their ctime. link and unlink keep the count exact through any crash, the sweep
+  change is over an hour old is removed, as are quarantined entries (64 a pass, on their own
+  cursor) and temporary links past the same grace by their ctime. link and unlink keep the count exact through any crash, the sweep
   re-checks the count before it unlinks, and a creator that loses an entry to the sweep inserts
   its own copy instead, so a removal never takes bytes a pin still links; and
 - the pin scan skips every dot-name, so `.content` never counts toward the 32 pins inspected.

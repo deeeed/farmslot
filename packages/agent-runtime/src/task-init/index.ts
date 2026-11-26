@@ -73,6 +73,7 @@ export {
   retainedSourceFor,
   type TaskExecutionInput,
   type TaskExecutionProvenance,
+  taskPinReleasedMessage,
   type TaskRecipeBindingIdentity,
   type TaskRepinDocuments,
   type TaskRetainedInput,

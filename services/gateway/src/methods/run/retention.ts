@@ -382,16 +382,23 @@ export async function runRetentionPass(
             files.push({ source, store, bytes: await diskBytes(source) });
           }
         const pending = owners.view(keptLive, keeps).keepsTaskDirectory;
-        // ADR-039 Amendment 12: this run's pins go with it even while its task dir exists,
-        // unless a kept run also reads that dir; the node pass applies the same rule.
-        const releasedPins = await withRealPaths(
-          [...taskPinRelease(keptLive, [run]).releasedDirs].filter((dir) => !pending(dir)),
+        // ADR-039 Amendment 12, the plan's and the node pass's rule: this run's pins go with it
+        // even while its task dir exists, unless any kept run, live or archived, reads that dir
+        // through any path (task files, review workspace, park), compared by real path.
+        const pinRule = taskPinRelease(
+          [...runs.filter((other) => !live.has(other)), ...keptLive].filter(keeps),
+          [run],
+        );
+        const keptPinDirs = await withRealPaths(pinRule.keptDirs);
+        const keepsPin = (dir: string) => pending(dir) || keptPinDirs.has(dir);
+        const releasedPins = new Set(
+          [...(await withRealPaths(pinRule.releasedDirs))].filter((dir) => !keepsPin(dir)),
         );
         const pins = await retiredTaskPinsOf(
           await taskPins(),
           new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
           context,
-          pending,
+          keepsPin,
           exists,
           releasedPins,
         );
@@ -439,7 +446,11 @@ export async function runRetentionPass(
                 );
                 const taskDir = provenance.taskDir;
                 if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
-                if (current.keepsTaskDirectory(path.resolve(taskDir))) return false;
+                if (
+                  current.keepsTaskDirectory(path.resolve(taskDir)) ||
+                  keptPinDirs.has(path.resolve(taskDir))
+                )
+                  return false;
                 return (
                   !existsSync(taskDir) ||
                   releasedPins.has(path.resolve(taskDir)) ||

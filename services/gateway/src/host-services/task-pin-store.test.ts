@@ -382,3 +382,42 @@ test('each stage sweeps a bounded slice of store shards, rotating through all of
   assert.equal(await sweepContentStore(root, later), 4);
   assert.deepEqual(await storeEntries(root), []);
 });
+
+test('pins that fail every pass never hold back the pins after them', async (t) => {
+  const { root } = await rawPins(t, 9);
+  const failing = (file: string) => /pin-0[0-7]/.test(file);
+  const hooks = {
+    link: async (existing: string, created: string) => {
+      if (failing(existing)) throw Object.assign(new Error('EIO: device error'), { code: 'EIO' });
+      await link(existing, created);
+    },
+  };
+  const first = await shareTaskPins({ root, limit: 8 }, hooks);
+  assert.equal(first.failed.length, 8);
+  assert.deepEqual(
+    first.failed.map((f) => f.code),
+    Array(8).fill('EIO'),
+  );
+  // The cursor moved past the failing pins: the next pass starts at the one they held back.
+  const second = await shareTaskPins({ root, limit: 8 }, hooks);
+  assert.equal(second.pins[0], 'pin-08');
+});
+
+test('the quarantine sweep rotates, so linked entries never stall it', async (t) => {
+  const { root } = await rawPins(t, 0);
+  const quarantine = path.join(root, '.content', 'quarantine');
+  const holder = path.join(root, 'holder');
+  await mkdir(quarantine, { recursive: true });
+  await mkdir(holder);
+  // The first 64 quarantined entries are still linked by a pin; the last 6 are not.
+  for (let i = 0; i < 70; i++) {
+    const entry = path.join(quarantine, `q-${String(i).padStart(2, '0')}`);
+    await writeFile(entry, 'bad');
+    if (i < 64) await link(entry, path.join(holder, String(i)));
+  }
+  const later = Date.now() + 2 * HOUR;
+  await sweepContentStore(root, later);
+  assert.equal((await readdir(quarantine)).length, 70, 'the first slice is all still linked');
+  await sweepContentStore(root, later);
+  assert.equal((await readdir(quarantine)).length, 64, 'the next slice reaches the unlinked six');
+});

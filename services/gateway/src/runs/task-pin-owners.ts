@@ -32,3 +32,9 @@ export function taskPinRelease(
       for (const dir of pinTaskDirs(run)) if (!keptDirs.has(dir)) releasedDirs.add(dir);
   return { keptDirs, releasedDirs };
 }
+
+/** A task directory's last two segments: stable across a symlink above them, specific enough. */
+export function taskDirKey(dir: string): string {
+  const resolved = path.resolve(dir);
+  return path.join(path.basename(path.dirname(resolved)), path.basename(resolved));
+}
