@@ -58,7 +58,7 @@
   measures default-branch freshness; it does not select the rebase target.
   Record `behindMain`, `mergeConflicts`, and the next command used in the report.
 - [ ] **10. Write report** — create `{{TASK_DIR}}/artifacts/comments-report.md` with: files changed, issue addressed, validation results, behindMain/mergeConflicts.
-- [ ] **11. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
+- [ ] **11. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Write it in Learnings v1: first line `# Learnings v1`, then `- None` when there is none, or one entry per failure in this run that is likely to recur: `- <kind>: <one-line lesson>` with two-space-indented fields. Kinds: `add`, `edit` or `retire` for a review rule (`evidence: <repo> <path>:<line>`; `family: <file>.md#<section>`, or `examined: <file>.md#<section>, ...` for an add; `confirmation: run <other run id> <path>:<line>`, `fix <owner/repo#n>` or `none`, where this run's own report or review is `none`), `recipe-broken` or `recipe-missing` for a recipe, `workflow` for a template, tool or setup step. `./mark` prints the full format and warns on a malformed file.
 - [ ] **12. Signal completion** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, report, checklist, artifact contract)
 
 ## Recipe proof + acceptance review

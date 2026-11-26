@@ -68,6 +68,27 @@ test('curation reads configured shared/overlay rules and retained evidence after
     ),
   );
 
+  // The review rows decide a v1 lesson's kind: a pack family id, or a heading's anchor.
+  await writeFile(
+    path.join(task, 'artifacts/review-coverage.json'),
+    JSON.stringify({
+      rows: [
+        {
+          definition: { kind: 'criterion', label: 'Data Flow & State' },
+          value: { outcome: 'FINDING' },
+        },
+        {
+          definition: { kind: 'criterion', label: 'Ignored label', family: 'order-size' },
+          value: { outcome: 'PASS' },
+        },
+        {
+          definition: { kind: 'criterion', label: 'Sentry' },
+          value: { outcome: 'NOT_APPLICABLE' },
+        },
+        { definition: { kind: 'scope', path: 'src/order.ts' }, value: { outcome: 'PASS' } },
+      ],
+    }),
+  );
   updateRun(run.id, {
     taskFile: path.join(task, 'TASK.md'),
     status: 'done',
@@ -95,6 +116,10 @@ test('curation reads configured shared/overlay rules and retained evidence after
   const context = await loadLearningCurationContext(project, destination, run.id);
   assert.equal(context.unavailable, undefined);
   assert.equal(context.library.length, 2);
+  assert.deepEqual(context.results, [
+    { runId: run.id, family: 'data-flow-state', outcome: 'FINDING' },
+    { runId: run.id, family: 'order-size', outcome: 'PASS' },
+  ]);
   assert.equal(
     context.evidence.find((d) => d.path === 'artifacts/report.md')?.text,
     'Observed source failure.',
@@ -111,6 +136,45 @@ test('curation reads configured shared/overlay rules and retained evidence after
     unowned.confirms,
     undefined,
     'unowned worker files cannot supply reviewer confirmation',
+  );
+
+  // A peer run whose evidence cannot be read is skipped; the source run's evidence stays.
+  const peer = createRun({ project, flowType: 'fix-bug', ticketOrPr: 'PEER-1' });
+  t.after(async () => {
+    updateRun(peer.id, { status: 'cancelled' });
+    await deleteRun(peer.id);
+  });
+  const peerTask = path.join(root, 'peer-task');
+  await mkdir(path.join(peerTask, 'artifacts'), { recursive: true });
+  await writeFile(path.join(peerTask, 'TASK.md'), '# Peer');
+  await writeFile(path.join(peerTask, 'artifacts/comments-triage.json'), '{unreadable');
+  updateRun(peer.id, { taskFile: path.join(peerTask, 'TASK.md'), status: 'done' });
+  const withPeer = await loadLearningCurationContext(project, destination, run.id);
+  assert.equal(withPeer.unavailable, undefined);
+  assert.equal(
+    withPeer.evidence.some((d) => d.runId === peer.id),
+    false,
+  );
+  assert.equal(
+    withPeer.evidence.some((d) => d.runId === run.id),
+    true,
+  );
+
+  // The source run's own review rows are required: unreadable rows would leave every kind
+  // claim unchecked.
+  const broken = createRun({ project, flowType: 'fix-bug', ticketOrPr: 'BROKEN-ROWS-1' });
+  t.after(async () => {
+    updateRun(broken.id, { status: 'cancelled' });
+    await deleteRun(broken.id);
+  });
+  const brokenTask = path.join(root, 'broken-task');
+  await mkdir(path.join(brokenTask, 'artifacts'), { recursive: true });
+  await writeFile(path.join(brokenTask, 'TASK.md'), '# Broken');
+  await writeFile(path.join(brokenTask, 'artifacts/review-coverage.json'), '{unreadable');
+  updateRun(broken.id, { taskFile: path.join(brokenTask, 'TASK.md'), status: 'done' });
+  assert.match(
+    (await loadLearningCurationContext(project, destination, broken.id)).unavailable ?? '',
+    /Curation evidence unavailable: .*JSON/,
   );
 
   const missing = await loadLearningCurationContext(
