@@ -51,6 +51,7 @@ export interface NodeHostRefreshOptions {
 
 type Info = { id: string; state: string; processStopped?: boolean };
 type Launch = { name: string; launched?: string; code?: unknown; message?: string };
+type HostSnapshot = { pid: number; runtimeVersion: string; runtimeBuild: string };
 
 export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promise<CheckResult> {
   const started = performance.now();
@@ -69,7 +70,6 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
       removeBump(bump);
       return (await stopStack?.()) ?? [];
     })());
-  options.onCleanup(cleanup);
   const check: CheckResult = {
     case: 'node-host-refresh',
     variant: 'busy-then-closed',
@@ -91,12 +91,15 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
     return check;
   }
   if (existsSync(bump)) {
-    // Never this case's to remove here: nightly.sh clears its own after the checkout.
+    // Left by an earlier run: not removed here; nightly.sh clears a marked one after its checkout.
+    check.status = 'fail';
     check.differences.push(`${NODE_HOST_REFRESH_BUMP} already exists; remove it first`);
     check.durationS = (performance.now() - started) / 1000;
     await writeFile(path.join(out, 'result.json'), JSON.stringify(check, null, 2));
     return check;
   }
+  // Only once this case may write the change, so canary's cleanup never removes one it found.
+  options.onCleanup(cleanup);
   try {
     const machine = 'refresh-node';
     const slotId = `${PIPE_PROJECT}-1`;
@@ -144,11 +147,7 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
         .session;
     const host = async () => {
       const { pid, runtimeVersion, runtimeBuild } = JSON.parse(await readFile(hostFile, 'utf8'));
-      return { pid, runtimeVersion, runtimeBuild } as {
-        pid: number;
-        runtimeVersion: string;
-        runtimeBuild: string;
-      };
+      return { pid, runtimeVersion, runtimeBuild } as HostSnapshot;
     };
     const snapshot = async (name: string) => {
       await writeFile(path.join(out, `host-${name}.json`), await readFile(hostFile));
