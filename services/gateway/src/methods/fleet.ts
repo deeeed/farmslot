@@ -66,6 +66,7 @@ import {
 } from '../fleet/state.js';
 import { backgroundHost } from '../host-services/background/client.js';
 import { BACKGROUND_OPERATIONS } from '../host-services/background/protocol.js';
+import { commandWaitsForNodeSupport } from '../node-support/remote-command.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
@@ -85,11 +86,7 @@ import {
   markFailedWorkspacesUnverified,
   observedFleetWorkspaces,
 } from './slot/workspace.js';
-import {
-  parseSlotProbeOutput,
-  type SlotProbeOutcome,
-  slotProbeScript,
-} from './slot-probe-batch.js';
+import { runSlotProbeBatches, type SlotProbeOutcome } from './slot-probe-batch.js';
 
 const loadExec = lazyImport(() => import('../core/exec.js'));
 
@@ -1361,35 +1358,24 @@ async function runSlotProbes(
   commands: ReadonlyArray<string | undefined>,
   timeoutMs: number,
 ): Promise<SlotProbeOutcome[]> {
-  const present = commands.flatMap((command, index) => (command ? [{ command, index }] : []));
-  const results: SlotProbeOutcome[] = commands.map(() => undefined);
-  if (!present.length) return results;
-  let stdout: string;
-  try {
-    stdout = (
-      await execOnSlot(
-        vars,
-        slotProbeScript(
-          present.map((entry) => entry.command),
-          timeoutMs / 1000,
-        ),
+  return runSlotProbeBatches(commands, {
+    needsBundle: (command) => commandWaitsForNodeSupport(vars, command),
+    timeoutSeconds: timeoutMs / 1000,
+    runBatch: async (script) => {
+      try {
         // The in-script deadline decides each probe; this one only bounds the batch.
-        { timeout: timeoutMs + 5_000 },
-      )
-    ).stdout;
-  } catch (error) {
-    // Transport failure is not evidence about any probe: each reads as unavailable, as when
-    // its own exec failed before probes were batched.
-    console.warn(
-      `[fleet.refresh] ${vars.slotId}: slot probes did not run`,
-      (error as Error).message ?? error,
-    );
-    return results;
-  }
-  parseSlotProbeOutput(stdout, present.length).forEach((result, position) => {
-    results[present[position].index] = result;
+        return (await execOnSlot(vars, script, { timeout: timeoutMs + 5_000 })).stdout;
+      } catch (error) {
+        // Transport failure is not evidence about any probe: each reads as unavailable, as when
+        // its own exec failed before probes were batched.
+        console.warn(
+          `[fleet.refresh] ${vars.slotId}: slot probes did not run`,
+          (error as Error).message ?? error,
+        );
+        return undefined;
+      }
+    },
   });
-  return results;
 }
 
 function readSlotDefaultBranch(

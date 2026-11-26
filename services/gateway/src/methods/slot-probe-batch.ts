@@ -55,3 +55,43 @@ export function parseSlotProbeOutput(stdout: string, count: number): SlotProbeOu
   }
   return results;
 }
+
+/**
+ * Runs a slot's probes as one batch, or as two when some of them call farm scripts. A farm-script
+ * command waits for the node support bundle first, and a delivery still running when the batch's
+ * budget ends returns no output at all. Batched together, that empty answer erased the probes
+ * that need no bundle: a slot on `main` read as branch `-`. Kept apart, only the bundle's probes
+ * wait on it. A slot with no farm-script probe still runs one batch, one round trip.
+ *
+ * `runBatch` returns the batch's stdout, or undefined when the batch could not run.
+ */
+export async function runSlotProbeBatches(
+  commands: ReadonlyArray<string | undefined>,
+  options: {
+    needsBundle: (command: string) => boolean;
+    timeoutSeconds: number;
+    runBatch: (script: string) => Promise<string | undefined>;
+  },
+): Promise<SlotProbeOutcome[]> {
+  const present = commands.flatMap((command, index) => (command ? [{ command, index }] : []));
+  const results: SlotProbeOutcome[] = commands.map(() => undefined);
+  const groups = [
+    present.filter((entry) => !options.needsBundle(entry.command)),
+    present.filter((entry) => options.needsBundle(entry.command)),
+  ].filter((group) => group.length > 0);
+  await Promise.all(
+    groups.map(async (group) => {
+      const stdout = await options.runBatch(
+        slotProbeScript(
+          group.map((entry) => entry.command),
+          options.timeoutSeconds,
+        ),
+      );
+      if (stdout === undefined) return;
+      parseSlotProbeOutput(stdout, group.length).forEach((result, position) => {
+        results[group[position].index] = result;
+      });
+    }),
+  );
+  return results;
+}
