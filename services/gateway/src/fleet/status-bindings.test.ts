@@ -594,6 +594,10 @@ test(
     t.diagnostic('Both filesystem watchers are ready');
     let receiver: ((fleet: FleetStatus) => void) | undefined;
     onStateChange((fleet) => receiver?.(fleet));
+    // A timed-out run must not leave its asserting receiver on later tests' broadcasts.
+    t.after(() => {
+      receiver = undefined;
+    });
     const observe = async (write: () => Promise<void>, expected: string | null) => {
       const seen = new Promise<void>((resolve) => {
         receiver = (fleet) => {
