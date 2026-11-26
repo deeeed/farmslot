@@ -260,10 +260,19 @@ test('a write into a shared pinned file fails loudly and changes no other copy',
   const [a, b] = receipts.map((receipt) =>
     path.join(receipt.pin, 'cli', 'node_modules', 'dep', 'index.js'),
   );
+  const receiptFiles = tasks.map((task) => path.join(task, 'artifacts/harness-provenance.json'));
+  const before = await Promise.all(receiptFiles.map((file) => readFile(file, 'utf8')));
+  const entry = (await storeEntries(root)).find(
+    (file) => lstatSync(file).ino === lstatSync(a!).ino,
+  )!;
+  assert.ok(entry, 'pin A’s file is a store entry link');
   await assert.rejects(writeFile(a!, 'tampered'), (error: NodeJS.ErrnoException) =>
     ['EACCES', 'EPERM'].includes(error.code ?? ''),
   );
+  // Pin B's copy, the store entry and both receipts are unchanged, and both pins still verify.
   assert.equal(await readFile(b!, 'utf8'), 'x'.repeat(9000));
+  assert.equal(await readFile(entry, 'utf8'), 'x'.repeat(9000));
+  assert.deepEqual(await Promise.all(receiptFiles.map((file) => readFile(file, 'utf8'))), before);
   receipts.forEach((receipt, i) => verifiesExactly(tasks[i]!, receipt));
   // The owner can still chmod and write; that changes the one shared inode, so every pin that
   // shares it fails its launch re-verify instead of running changed bytes.

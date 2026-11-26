@@ -319,17 +319,29 @@ export async function retiredTaskPins(
   );
 }
 
-/** A pin records its task directory's real path; a run may record it through a symlink. */
-export async function withRealPaths(dirs: Iterable<string>): Promise<Set<string>> {
+/**
+ * A pin records its task directory's real path; a run may record it through a symlink. `cache`
+ * resolves each directory once per pass however many candidates ask.
+ */
+export async function withRealPaths(
+  dirs: Iterable<string>,
+  cache = new Map<string, string | null>(),
+): Promise<Set<string>> {
   const all = new Set<string>();
   for (const dir of dirs) {
-    all.add(path.resolve(dir));
-    try {
-      all.add(await realpath(dir));
-    } catch (error) {
-      // A directory that no longer exists has no other form to match.
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const resolved = path.resolve(dir);
+    all.add(resolved);
+    if (!cache.has(resolved)) {
+      try {
+        cache.set(resolved, await realpath(resolved));
+      } catch (error) {
+        // A directory that no longer exists has no other form to match.
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        cache.set(resolved, null);
+      }
     }
+    const real = cache.get(resolved);
+    if (real) all.add(real);
   }
   return all;
 }

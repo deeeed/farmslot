@@ -899,8 +899,8 @@ store, a new on-disk format under the pin root, is requested with this PR.
 A task pin now follows its run's retention, under the same rule as Amendment 11's journals.
 Before this, a pin went only once its task directory was gone and, on an execution node, only
 once its run was archived (Amendment 7). Retention never archives a terminal run, and slot
-checkouts keep task directories, so pins of settled runs stayed forever: on 2026-11-26 mini
-held 79 pins (29 GB, about 0.4 GB each, 17 written that day) and macwork 15 (4.6 GB).
+checkouts keep task directories, so pins of settled runs stayed forever: on 2026-11-26 mini held
+79 pins (29 GB, about 0.4 GB each, 17 written that day) and macwork 15 (4.6 GB).
 
 Each hourly pass, after the run pass:
 
@@ -926,25 +926,25 @@ Each hourly pass, after the run pass:
   pin. The gateway ships the node program with every command, so no protocol method or
   capability changes.
 
-A task whose pin was released never runs on other tooling. Verifying its execution receipt
-first checks that the pin lies in the store, then refuses a missing pin with
-`TASK_PIN_RELEASED` (exit 5), naming the run when known and the pin path ("missing: run
-retention released it after its run settled, or it was removed"). Task init names its attempt.
-The worker launch preflight refuses the same way without retry: a node runtime that knows
-the case decides it (containment and legacy receipts first), and for an older runtime the probe
-names a missing pin itself instead of a bare ENOENT. Re-pinning from the receipt is not attempted: it would need every
+A task whose pin was released never runs on other tooling. Verifying its execution receipt first
+checks that the pin lies in the store, then refuses a missing pin with `TASK_PIN_RELEASED` (exit
+5), naming the run when known and the pin path ("missing: run retention released it after its
+run settled, or it was removed"). Task init names its attempt. The worker launch preflight
+refuses the same way without retry: a node runtime that knows the case decides it (containment
+and legacy receipts first), and for an older runtime the probe names a missing pin itself
+instead of a bare ENOENT. Re-pinning from the receipt is not attempted: it would need every
 recorded source to still hash to its receipt value, and installs and library checkouts move
 between versions, so a fresh task pins the current tooling instead.
 
 Pins also share their bytes. Each task pin is a full private copy of the CLI and task inputs,
 about 0.4 GB, and successive CLI builds differ in a few MB, yet nothing was shared on disk. Each
-node pass now links at most 8 not-yet-shared pins into a content store at
-`<pin root>/.content/sha256/<aa>/<sha256>-<mode>`, on the pins' own volume:
+node pass now links at most 8 not-yet-shared pins into a content store at `<pin
+root>/.content/sha256/<aa>/<sha256>-<mode>`, on the pins' own volume:
 
 - every regular file under a pin except its `provenance.json` becomes a hard link to the one
-  entry for its content and read and exec bits, and every linked file loses its write bits
-  (its read and exec bits stay, so a 0600 input stays owner-only). Pin digests hash content and
-  exec bits only, so no receipt changes;
+  entry for its content and read and exec bits, and every linked file loses its write bits (its
+  read and exec bits stay, so a 0600 input stays owner-only). Pin digests hash content and exec
+  bits only, so no receipt changes;
 - nothing replaces a file on a hash taken elsewhere: a new entry is linked from the pin's file
   and hashed on that linked inode before it is named, and an existing entry is linked to a
   temporary name under `.content/tmp` and hashed there before it is renamed over the pin's file.
@@ -959,11 +959,12 @@ node pass now links at most 8 not-yet-shared pins into a content store at
   failing pins never hold back the rest. `.content/migrated` lists the pins already shared, and
   each pass logs the bytes it hashed and its seconds;
 - the filesystem link count is the reference count. Inside the fence, before staging, each pass
-  sweeps the next 16 of the 256 shards: an entry with one link (only the store's) whose last link
-  change is over an hour old is removed, as are quarantined entries (64 a pass, on their own
-  cursor) and temporary links past the same grace by their ctime. link and unlink keep the count exact through any crash, the sweep
-  re-checks the count before it unlinks, and a creator that loses an entry to the sweep inserts
-  its own copy instead, so a removal never takes bytes a pin still links; and
+  sweeps the next 16 of the 256 shards: an entry with one link (only the store's) whose last
+  link change is over an hour old is removed, as are quarantined entries (64 a pass, on their
+  own cursor) and temporary links past the same grace by their ctime. link and unlink keep the
+  count exact through any crash, the sweep re-checks the count before it unlinks, and a creator
+  that loses an entry to the sweep inserts its own copy instead, so a removal never takes bytes
+  a pin still links; and
 - the pin scan skips every dot-name, so `.content` never counts toward the 32 pins inspected.
 
 New pins are written private as before and shared by the next pass, within about an hour; the
@@ -972,13 +973,14 @@ a pin removes only its own links: every other pin and the store keep the inode.
 
 A write into a shared file fails with EACCES. The owning user can still chmod and write, which
 would change the one shared inode; every pin sharing it then fails its launch re-verify
-(`TASK_INPUT_CHANGED` or `TASK_EXECUTABLE_CHANGED`) instead of running changed bytes. Workers run
-as that user, so this is detection, not prevention.
+(`TASK_INPUT_CHANGED` or `TASK_EXECUTABLE_CHANGED`) instead of running changed bytes. Workers
+run as that user, so this is detection, not prevention.
 
 A paths migration that copies the pin root to another volume copies each link separately: the
 target then needs the pins' unshared size, the copied entries are swept, and the next passes
 share the pins again there. A migration inventory taken before a share pass and applied after it
-refuses with "Migration bytes changed", since sharing drops write bits; take the inventory again.
+refuses with "Migration bytes changed", since sharing drops write bits; take the inventory
+again.
 
 ### Rationale and consequences
 
@@ -987,6 +989,6 @@ task if that run is ever replayed after the retention window. At 8 removals per 
 mini's 11 pins older than 7 days (about 4 GB) go within 2 hours of deploy. Afterwards each pin
 lasts about the retention window after its run settles, so a node holds about a week of pins.
 Measured 2026-11-26, sharing per file cuts what those pins hold by about five times: six pins
-with six different CLI builds held 1.20 GB of CLI files and need 0.21 GB shared, and their inputs
-0.45 GB and 0.09 GB. The existing backlog shares at 8 pins per node an hour: mini's 79 pins in
-about 10 hours, macpro's 305 (118 GB) in about 38.
+with six different CLI builds held 1.20 GB of CLI files and need 0.21 GB shared, and their
+inputs 0.45 GB and 0.09 GB. The existing backlog shares at 8 pins per node an hour: mini's 79
+pins in about 10 hours, macpro's 305 (118 GB) in about 38.

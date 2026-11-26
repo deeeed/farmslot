@@ -156,7 +156,9 @@ async function stageTaskPins(input, hooks = {}) {
   const ordered = input.ids ? window.filter((name) => input.ids.includes(name)) : window;
   const entries = await readTaskPins(root, ordered);
   const released = await realDirs(input.releasedTaskDirs ?? [], 'Released task directories');
-  const protection = async () => normalizedProtection(hooks.protection?.() ?? input.protection);
+  // Resolved once; a test hook that changes protection mid-stage is re-read each time.
+  const fixed = hooks.protection ? undefined : await normalizedProtection(input.protection);
+  const protection = async () => fixed ?? normalizedProtection(hooks.protection());
   const initial = await protection();
   const candidates = new Set(
     await retiredTaskPinsOf(
@@ -237,14 +239,15 @@ function contentStore(root) {
     shareCursor: path.join(store, 'share-cursor'),
   };
 }
-/** The next `limit` names of `dir` after the one a cursor file recorded, wrapping around. */
-async function rotate(dir, cursorFile, limit, names) {
-  const all = names ?? (await entries(dir));
-  const cursor = await fs.readFile(cursorFile, 'utf8').catch(unlessMissing(''));
-  return all
+/** The next `limit` of sorted `names` after `cursor`, wrapping around. */
+function rotate(names, cursor, limit) {
+  return names
     .filter((name) => name > cursor)
-    .concat(all.filter((name) => name <= cursor))
+    .concat(names.filter((name) => name <= cursor))
     .slice(0, limit);
+}
+async function readCursor(file) {
+  return fs.readFile(file, 'utf8').catch(unlessMissing(''));
 }
 async function entries(dir) {
   return (await fs.readdir(dir).catch(unlessMissing([]))).sort();
@@ -268,17 +271,17 @@ async function sweepUnlinked(file, now, hooks) {
 async function sweepContentStore(root, now, hooks = {}) {
   const store = contentStore(root);
   const shards = await entries(store.objects);
-  const cursor = await fs.readFile(store.sweepCursor, 'utf8').catch(unlessMissing(''));
-  const ordered = shards
-    .filter((shard) => shard > cursor)
-    .concat(shards.filter((shard) => shard <= cursor))
-    .slice(0, SWEEP_SHARDS);
+  const ordered = rotate(shards, await readCursor(store.sweepCursor), SWEEP_SHARDS);
   let swept = 0;
   for (const shard of ordered)
     for (const name of await entries(path.join(store.objects, shard)))
       if (await sweepUnlinked(path.join(store.objects, shard, name), now, hooks)) swept++;
   if (ordered.length) await fs.writeFile(store.sweepCursor, ordered.at(-1));
-  const quarantined = await rotate(store.quarantine, store.quarantineCursor, QUARANTINE_SWEEP);
+  const quarantined = rotate(
+    await entries(store.quarantine),
+    await readCursor(store.quarantineCursor),
+    QUARANTINE_SWEEP,
+  );
   for (const name of quarantined)
     await sweepUnlinked(path.join(store.quarantine, name), now, hooks);
   if (quarantined.length) await fs.writeFile(store.quarantineCursor, quarantined.at(-1));
@@ -436,11 +439,10 @@ async function shareTaskPins(input, hooks = {}) {
   );
   const pins = (await readTaskPins(root)).map((entry) => path.basename(entry.pin));
   // A rotating cursor: pins that keep failing never hold back the ones after them.
-  const batch = await rotate(
-    undefined,
-    store.shareCursor,
-    limit,
+  const batch = rotate(
     pins.filter((name) => !done.has(name)).sort(),
+    await readCursor(store.shareCursor),
+    limit,
   );
   if (batch.length) await fs.writeFile(store.shareCursor, batch.at(-1));
   for (const id of batch) {

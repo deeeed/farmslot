@@ -353,6 +353,16 @@ export async function runRetentionPass(
   // Pins are listed once per pass; each candidate rechecks that a listed pin still exists.
   let pinList: Promise<TaskPinEntry[]> | undefined;
   const taskPins = () => (pinList ??= readTaskPins(roots.taskPins));
+  // ADR-039 Amendment 12: the task dirs held runs' pins serve, resolved once per pass. Held runs
+  // are bounded (live, in the window, on open PRs); each directory resolves once via the cache.
+  const realPaths = new Map<string, string | null>();
+  const heldPinDirs = await withRealPaths(
+    taskPinRelease(
+      runs.filter((run) => !removableIds.has(run.id)),
+      removable,
+    ).keptDirs,
+    realPaths,
+  );
   for (const candidate of removable) {
     await turn(async () => {
       try {
@@ -383,16 +393,22 @@ export async function runRetentionPass(
           }
         const pending = owners.view(keptLive, keeps).keepsTaskDirectory;
         // ADR-039 Amendment 12, the plan's and the node pass's rule: this run's pins go with it
-        // even while its task dir exists, unless any kept run, live or archived, reads that dir
-        // through any path (task files, review workspace, park), compared by real path.
-        const pinRule = taskPinRelease(
-          [...runs.filter((other) => !live.has(other)), ...keptLive].filter(keeps),
-          [run],
+        // even while its task dir exists, unless a run held at the pass start (live or archived)
+        // or an unsettled run now reads that dir through any path, compared by real path. Only
+        // the candidate's own dirs and the bounded unsettled set are looked at here.
+        const activeDirs = await withRealPaths(
+          taskPinRelease(
+            getAllRuns().filter((other) => other.id !== run.id && !runIsSettled(other)),
+            [],
+          ).keptDirs,
+          realPaths,
         );
-        const keptPinDirs = await withRealPaths(pinRule.keptDirs);
+        const keptPinDirs = new Set([...heldPinDirs, ...activeDirs]);
         const keepsPin = (dir: string) => pending(dir) || keptPinDirs.has(dir);
         const releasedPins = new Set(
-          [...(await withRealPaths(pinRule.releasedDirs))].filter((dir) => !keepsPin(dir)),
+          [...(await withRealPaths(taskPinRelease([], [run]).releasedDirs, realPaths))].filter(
+            (dir) => !keepsPin(dir),
+          ),
         );
         const pins = await retiredTaskPinsOf(
           await taskPins(),

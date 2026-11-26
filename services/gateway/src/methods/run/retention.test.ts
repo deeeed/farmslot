@@ -40,6 +40,7 @@ import { stageStoragePaths, storageArchiveManifest } from '../../runs/storage-ar
 import {
   archiveRun,
   createRun,
+  getAllRunsWithArchived,
   getRunWithArchived,
   persistRunNow,
   runsDirectory,
@@ -47,6 +48,7 @@ import {
   updateRun,
   withTaskAdmission,
 } from '../../runs/store.js';
+import { pinTaskDirs } from '../../runs/task-pin-owners.js';
 
 import {
   formatRunRetention,
@@ -1138,6 +1140,71 @@ for (const keeper of [
       assert.ok(existsSync(slotPin), 'a kept run still reads this pin’s task directory');
     },
   );
+
+test(
+  'apply resolves each task dir once per pass, however many runs it weighs',
+  { timeout: 9000 },
+  async (t) => {
+    // Performance rule 1: per-candidate work must not grow with run history. Each removable run
+    // is checked against the held runs' dirs, resolved once for the pass.
+    const roots = await retentionRoots(t, runsDirectory());
+    const slots = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks');
+    const dirs: string[] = [];
+    for (const [kind, count] of [
+      ['released', 6],
+      ['held', 6],
+    ] as const)
+      for (let i = 0; i < count; i++) {
+        const run = createRun({
+          flowType: 'fix-bug',
+          project: 'farmslot-farm',
+          mode: 'autonomous',
+          ticketOrPr: `RETENTION-COUNT-${kind}-${i}`,
+        });
+        const dir = path.join(slots, run.id);
+        dirs.push(dir);
+        await file(path.join(dir, 'TASK.md'));
+        updateRun(run.id, {
+          status: 'done',
+          completedAt: settled,
+          activeTaskFile: path.join(dir, 'TASK.md'),
+          ...(kind === 'held' ? { tags: ['keep'] } : {}),
+        });
+        await persistRunNow(run);
+        await pin(roots, run.id, dir, NOW - RUN_RETENTION_AGE_MS - 60_000);
+      }
+    let lookups = 0;
+    const original = fsPromises.realpath;
+    t.mock.method(
+      fsPromises,
+      'realpath',
+      async (...args: Parameters<typeof fsPromises.realpath>) => {
+        lookups++;
+        return original(...args);
+      },
+    );
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+    await runRetentionPass(
+      { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60_000 },
+      privateDeps,
+    );
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    // Every run in the store counts, other tests' runs too: each dir resolves at most once in the
+    // plan and once in apply, never once per candidate.
+    const allDirs = new Set((await getAllRunsWithArchived()).flatMap(pinTaskDirs));
+    assert.ok(
+      lookups <= allDirs.size * 2,
+      `${lookups} real-path lookups for ${allDirs.size} task dirs (plan and apply once each)`,
+    );
+    for (const [i, dir] of dirs.entries())
+      assert.equal(existsSync(path.join(roots.taskPins, path.basename(dir))), i >= 6);
+  },
+);
 
 test('the gateway root keeps pins a held run reads through its review workspace, and a parked run’s', async (t) => {
   const roots = await retentionRoots(t);
