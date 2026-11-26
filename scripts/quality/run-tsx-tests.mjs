@@ -650,7 +650,7 @@ async function runOne(file, context) {
   let result;
   let leaked = [];
   try {
-    result = await runYarn(testCommand(file, context), {
+    result = await runYarn(testCommand(file, { ...context, moduleMock: context.moduleMock || context.moduleMockFiles?.has(file) }), {
       cwd: context.cwd,
       env: {
         ...context.env,
@@ -902,8 +902,6 @@ async function main() {
 
   // Buffer per-file output only when lanes can actually interleave; a single
   // active lane keeps the historical live-streaming behaviour.
-  const activeLanes = partition.parallel.filter((lane) => lane.length > 0);
-  const buffered = activeLanes.length > 1;
   const context = {
     cwd,
     env,
@@ -918,15 +916,16 @@ async function main() {
   const records = [];
   const sharedPool = watchSharedPool();
 
-  // One process per file, sequentially: module mocks are process-global, and a
-  // shared process is what let `--test` skip the whole batch silently.
-  records.push(
-    ...(await runLaneSequentially(partition.moduleMock, { ...context, moduleMock: true })),
-  );
-
+  // EXPERIMENT: module-mock files share the parallel workers (one process per file).
   records.push(...(await runLaneSequentially(partition.serial, context)));
+  const lanes = partition.parallel.map((lane) => [...lane]);
+  partition.moduleMock.forEach((file, index) => lanes[index % lanes.length].push(file));
+  const mixedLanes = lanes.filter((lane) => lane.length > 0);
+  const moduleMockFiles = new Set(partition.moduleMock);
   const parallelRecords = await Promise.all(
-    activeLanes.map((lane) => runLaneSequentially(lane, { ...context, buffered })),
+    mixedLanes.map((lane) =>
+      runLaneSequentially(lane, { ...context, buffered: mixedLanes.length > 1, moduleMockFiles }),
+    ),
   );
   records.push(...parallelRecords.flat());
 
