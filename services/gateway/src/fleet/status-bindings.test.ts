@@ -648,13 +648,17 @@ function holdStatusRead() {
     captured();
     return gate;
   };
+  let heldYet = false;
+  void ready.then(() => {
+    heldYet = true;
+  });
   const held = Promise.race([
     ready,
     new Promise<never>((_resolve, reject) =>
       setTimeout(() => reject(new Error('no status file read was held')), 3000).unref(),
     ),
   ]);
-  return { held, release };
+  return { held, release, captured: () => heldYet };
 }
 
 test('broadcast reads share one loop, and a call during it gets the newer fleet', async () => {
@@ -737,7 +741,11 @@ test('a watcher read overtaken by a newer write never hands handlers its older f
   try {
     // The watcher's read of the first write captures its bytes, then waits. Meanwhile a
     // second write lands and another broadcaster (as the slot-update hook does) reads it.
-    await fs.writeFile(state.statusFile, JSON.stringify(rows('first')));
+    // macOS can deliver a watch event late or drop it: write again until the watcher reads.
+    for (let attempt = 0; attempt < 30 && !hold.captured(); attempt++) {
+      if (attempt % 5 === 0) await fs.writeFile(state.statusFile, JSON.stringify(rows('first')));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     await hold.held;
     await fs.writeFile(state.statusFile, JSON.stringify(rows('second')));
     const broadcaster = loadFleetStatus(true, false, { newest: true });
