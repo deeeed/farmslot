@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib';
 import { isMainModule } from './lib/step-timing.mjs';
 import { ownerOf, readGraph, selectAffectedTests } from './affected-tests.mjs';
 import { ciParitySteps } from './ci-local.mjs';
-import { GIT_LOCATION_ENV, moduleMockWorker } from './run-tsx-tests.mjs';
+import { GIT_LOCATION_ENV } from './run-tsx-tests.mjs';
 import {
   affectedWorkspaceNames,
   isCiControlFile,
@@ -53,26 +53,29 @@ export function packPrTasks(jobs, tasks, budget = 120, maxJobs = PR_MATRIX_LIMIT
   return pooled;
 }
 
-// As run-tsx-tests runs them: serial files alone, then the workers, parallel files
-// round-robin from the first worker and module-mock files from the last.
+/**
+ * Mocks and serial files first, then four sorted round-robin lanes. The runner puts
+ * module-mock files on the workers, but their durations were measured running alone
+ * and run slower four at a time; modelled on the workers they packed 16 gateway
+ * shards into 10-11 and lengthened the slowest. Keep them sequential until the
+ * durations are measured under the new schedule.
+ */
 export function estimateTestMs(files, workers, durations, lanes) {
   let sequential = 0;
   const parallel = Array(workers).fill(0);
-  let parallelIndex = 0;
-  let mockIndex = 0;
+  let index = 0;
   for (const file of [...files].sort()) {
     const ms = durations[file] ?? 1500;
-    const lane = lanes.get(file) ?? 'parallel';
-    if (lane === 'serial') sequential += ms;
-    else if (lane === 'module-mock') parallel[moduleMockWorker(mockIndex++, workers)] += ms;
-    else parallel[parallelIndex++ % workers] += ms;
+    if ((lanes.get(file) ?? 'parallel') !== 'parallel') sequential += ms;
+    else parallel[index++ % workers] += ms;
   }
   return sequential + Math.max(0, ...parallel);
 }
 
 export function balanceTestShards(files, count, workers, durations, lanes) {
   const bins = Array.from({ length: Math.min(count, files.length) }, () => ({ files: [], ms: 0 }));
-  const weight = (file) => (durations[file] ?? 1500) / (lanes.get(file) === 'serial' ? 1 : workers);
+  const weight = (file) =>
+    (durations[file] ?? 1500) / ((lanes.get(file) ?? 'parallel') === 'parallel' ? workers : 1);
   for (const file of [...files].sort((a, b) => weight(b) - weight(a) || a.localeCompare(b))) {
     let best;
     for (const [index, bin] of bins.entries()) {

@@ -881,6 +881,39 @@ test('a serial file that uses module mocks runs alone, before the workers, with 
   }
 });
 
+test('each test file gets its own tmux sandbox, removed when it ends', () => {
+  const fixtureDir = path.join(REPO_ROOT, 'temp', `tsx-runner-tmux-sandbox-${process.pid}`);
+  mkdirSync(fixtureDir, { recursive: true });
+  const record = (name) =>
+    [
+      "import { writeFileSync } from 'node:fs';",
+      "import { test } from 'node:test';",
+      `test('${name} records its sandbox', () => {`,
+      `  writeFileSync(${JSON.stringify(path.join(fixtureDir, `${name}.sandbox`))}, process.env.FARMSLOT_TMUX_SANDBOX ?? '');`,
+      '});',
+    ].join('\n') + '\n';
+  writeFileSync(path.join(fixtureDir, 'a.test.ts'), record('a'));
+  writeFileSync(path.join(fixtureDir, 'b.test.ts'), record('b'));
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', REPO_ROOT, '--workers', '2', path.relative(REPO_ROOT, fixtureDir)],
+      { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 },
+    );
+    const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    assert.equal(result.status, 0, out);
+    const sockets = ['a', 'b'].map((name) =>
+      readFileSync(path.join(fixtureDir, `${name}.sandbox`), 'utf8'),
+    );
+    assert.ok(sockets.every(Boolean), `every file gets a sandbox socket: ${sockets}`);
+    assert.notEqual(sockets[0], sockets[1], 'files never share a tmux server');
+    for (const socket of sockets)
+      assert.equal(existsSync(path.dirname(path.dirname(socket))), false, `${socket} is removed`);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test('a module-mock file that fails cannot present as green', () => {
   const fixtureDir = path.join(REPO_ROOT, 'temp', `tsx-runner-mm-${process.pid}`);
   mkdirSync(fixtureDir, { recursive: true });

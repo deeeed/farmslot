@@ -700,19 +700,26 @@ async function runOne(file, context) {
   linkToolCaches(fileTmp);
   const testStatusFile = join(stateDir, '.farm-status.json');
   writeFileSync(testStatusFile, '{"slots":[]}\n');
+  // One tmux server per file: files running at the same time never share its
+  // sessions, panes or paste buffers.
+  const env = tmuxSandboxEnvironment(
+    {
+      ...context.env,
+      ...(context.tsconfig ? { TSX_TSCONFIG_PATH: resolve(context.cwd, context.tsconfig) } : {}),
+      [TEST_STATUS_ENV]: testStatusFile,
+      TMPDIR: fileTmp,
+      TMP: fileTmp,
+      TEMP: fileTmp,
+    },
+    openTmuxSandbox(),
+  );
   let result;
   let leaked = [];
+  let tmuxFailure;
   try {
     result = await runYarn(testCommand(file, context), {
       cwd: context.cwd,
-      env: {
-        ...context.env,
-        ...(context.tsconfig ? { TSX_TSCONFIG_PATH: resolve(context.cwd, context.tsconfig) } : {}),
-        [TEST_STATUS_ENV]: testStatusFile,
-        TMPDIR: fileTmp,
-        TMP: fileTmp,
-        TEMP: fileTmp,
-      },
+      env,
       buffered: context.buffered,
       timeoutMs: context.fileTimeoutMs,
     });
@@ -721,6 +728,11 @@ async function runOne(file, context) {
     leaked = existsSync(fileTmp) ? readdirSync(fileTmp).filter((entry) => !caches.has(entry)) : [];
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
+    try {
+      closeTmuxSandbox(env);
+    } catch (error) {
+      tmuxFailure = error.message;
+    }
   }
   const label = `${basename(context.cwd)}/${relative(context.cwd, file)}`;
   const leakFailure = tmpdirLeakFailure(label, leaked);
@@ -729,12 +741,13 @@ async function runOne(file, context) {
       ? `[tsx-tests] ${label} did not finish within ${context.fileTimeoutMs} ms (${FILE_TIMEOUT_ENV}); killed its process group`
       : undefined,
     leakFailure ?? knownLeakerNotice(label, leaked),
+    tmuxFailure,
   ]
     .filter(Boolean)
     .join('\n');
   // Buffered lanes print the message inside this file's own output block.
   if (leakMessage && !context.buffered) console.error(leakMessage);
-  const status = leakFailure && result.status === 0 ? 1 : result.status;
+  const status = (leakFailure || tmuxFailure) && result.status === 0 ? 1 : result.status;
   const output = leakMessage ? `${result.output}${leakMessage}\n` : result.output;
   const ms = performance.now() - started;
   if (context.buffered) {

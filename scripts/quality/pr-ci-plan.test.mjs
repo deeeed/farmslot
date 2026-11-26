@@ -21,25 +21,16 @@ test('duration balancing covers every file exactly once', () => {
   assert.ok(Math.max(...bins.map((bin) => bin.reduce((sum, item) => sum + item, 0))) <= 110);
   assert.deepEqual(balance([], 8), []);
 });
-test('PR estimates include serial time before sorted parallel workers', () => {
+test('PR estimates include mock/serial time before sorted parallel workers', () => {
   const durations = { a: 10000, b: 20000, c: 10000, d: 20000, s: 30000 };
-  const lanes = new Map([['s', 'serial']]);
+  const lanes = new Map([['s', 'module-mock']]);
   assert.equal(estimateTestMs(['s', 'd', 'c', 'b', 'a'], 2, durations, lanes), 70000);
   assert.equal(estimateTestMs([], 4, durations, lanes), 0);
-});
-test('PR estimates put module-mock files on the workers, as the runner does', () => {
-  const durations = { a: 10000, b: 20000, m1: 30000, m2: 30000 };
-  const lanes = new Map([
-    ['m1', 'module-mock'],
-    ['m2', 'module-mock'],
-  ]);
-  // Worker 0 runs m2 then a, worker 1 runs m1 then b; nothing runs alone first.
-  assert.equal(estimateTestMs(['m2', 'b', 'm1', 'a'], 2, durations, lanes), 50000);
 });
 test('PR sharding bounds the critical path without repeating tests or losing available workers', () => {
   const files = Array.from({ length: 40 }, (_, index) => `file-${String(index).padStart(2, '0')}`);
   const durations = Object.fromEntries(files.map((file, i) => [file, i < 20 ? 12000 : 2000]));
-  const lanes = new Map(files.slice(0, 20).map((file) => [file, 'serial']));
+  const lanes = new Map(files.slice(0, 20).map((file) => [file, 'module-mock']));
   const bins = balanceTestShards(files, 4, 2, durations, lanes);
   assert.deepEqual(bins.flatMap((bin) => bin.files).sort(), files);
   assert.ok(Math.max(...bins.map((bin) => bin.ms)) <= 72000);
@@ -547,10 +538,7 @@ test('Prepare plans on TypeScript alone only when the install is cached, and the
   const planner = at(/id: planner-typescript/);
   const setup = at(/uses: \.\/\.github\/actions\/ci-setup/);
   const plan = at(/name: Plan dependency-affected tests and checks/);
-  assert.deepEqual(
-    [keys, lookup, planner, setup, plan],
-    [0, 1, 2, 3, 4].map((i) => i + keys),
-  );
+  assert.deepEqual([keys, lookup, planner, setup, plan], [0, 1, 2, 3, 4].map((i) => i + keys));
   // The install lookup uses the same paths and key ci-setup restores, without downloading it.
   assert.match(prepare[lookup], /path: \$\{\{ steps\.cache-keys\.outputs\.install-paths \}\}/);
   assert.match(prepare[lookup], /key: \$\{\{ steps\.cache-keys\.outputs\.install-key \}\}/);
