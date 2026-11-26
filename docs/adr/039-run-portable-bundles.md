@@ -918,8 +918,10 @@ Each hourly pass, after the run pass:
 - just before staging, the gateway re-reads the holds of runs whose recorded or real paths
   match each pin's task directory. It indexes recorded paths once outside the staging fence
   and shares the hold check across pins for the same directory. At staging it refreshes paths
-  added by live admission or missed during indexing, once per path. Unresolved held ownership
-  preserves the gateway's pins while independent archives and node retention proceed;
+  added by live admission and paths that were missed during indexing for owners that now hold
+  their storage. A target that cannot be checked retains its pin. Unresolved held ownership also
+  retains gateway pins. The gateway records a pin veto as kept and stages independently eligible
+  paths in the same batch, while node retention proceeds;
 - a pin no run references keeps the earlier rule and goes only once its task directory is gone,
   so manual tasks keep their pins; and
 - each node pass inspects at most 32 pins (read only) and removes at most 8, and decides only

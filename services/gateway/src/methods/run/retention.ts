@@ -71,6 +71,7 @@ import {
   getAllRuns,
   getAllRunsWithArchived,
   getCachedRunWithArchived,
+  getRun,
   getRunWithArchived,
   isTaskDirectoryAdmitting,
   recordRunStorageArchive,
@@ -245,27 +246,38 @@ function currentRetentionHold(
   return inherited(run) ? 'inherited by an unsettled follow-up' : reviewPriors.get(run.id);
 }
 
-function activePinPathsAtStage(
+function protectedPinPathsAtStage(
   live: readonly Run[],
   activeAtIndex: ReadonlyMap<string, ReadonlySet<string>>,
+  indexedOwners: ReadonlyMap<string, ReadonlySet<string>>,
   realPaths: ReadonlyMap<string, TaskPinPathResolution>,
-): Set<string> | undefined {
+  isHeld: (run: Run) => boolean,
+): { paths: Set<string>; unresolved: boolean } {
   const paths = new Set<string>();
   const fresh = new Map<string, TaskPinPathResolution>();
+  let unresolved = false;
   for (const run of live) {
-    if (runIsSettled(run)) continue;
-    for (const dir of pinTaskDirs(run)) {
+    let dirs = pinTaskDirs(run);
+    if (runIsSettled(run)) {
+      // The index already rechecks holds for paths with known targets. Refresh missing or newly
+      // recorded paths of settled owners only when they now hold their storage.
+      dirs = dirs.filter(
+        (dir) => typeof realPaths.get(dir) !== 'string' || !indexedOwners.get(dir)?.has(run.id),
+      );
+      if (!dirs.length || !isHeld(run)) continue;
+    }
+    for (const dir of dirs) {
       let real = activeAtIndex.get(run.id)?.has(dir) ? realPaths.get(dir) : undefined;
       if (typeof real !== 'string') {
         if (!fresh.has(dir)) fresh.set(dir, readTaskPinPathNow(dir));
         real = fresh.get(dir);
       }
-      if (real === UNRESOLVED_TASK_PIN_PATH) return undefined;
       paths.add(dir);
-      if (real) paths.add(real);
+      if (real === UNRESOLVED_TASK_PIN_PATH) unresolved = true;
+      else if (real) paths.add(real);
     }
   }
-  return paths;
+  return { paths, unresolved };
 }
 
 export async function runHoldsSlot(run: Run): Promise<boolean> {
@@ -516,6 +528,10 @@ export async function runRetentionPass(
         const archiveFiles = files.filter(
           (file) => retentionStoreAction(file.store) === 'archived',
         );
+        const archiveTaskDirs = new Set(
+          archiveFiles.filter((file) => file.store === 'task-dirs').map((file) => file.source),
+        );
+        const keptPaths = new Set<string>();
         await stageStoragePaths(
           roots.archiveRoot,
           run.id,
@@ -526,64 +542,83 @@ export async function runRetentionPass(
             const liveNow = getAllRuns();
             const sources = indexActiveSources(liveNow);
             if (currentRetentionHold(latest, context, sources)) return false;
-            let activePaths: Set<string> | undefined;
-            if (pins.length) {
-              for (const id of unresolvedOwners) {
-                const other = getCachedRunWithArchived(id);
-                if (other && (other.park || currentRetentionHold(other, context, sources)))
-                  return false;
-              }
-              // An owner admitted during this turn may have a path absent from the pass index,
-              // or the cache may predate its symlink. Refresh it before the synchronous renames.
-              activePaths = activePinPathsAtStage(liveNow, activeAtIndex, realPaths);
-              if (!activePaths) return false;
-            }
             const current = owners.view([...liveAtStart, ...liveNow].filter(keeps), keeps);
             const eligible = current.owned(run);
-            // Several pins can serve one directory. The fence makes one owner's hold read per
-            // directory sufficient for this synchronous stage decision.
-            const checkedPinDirs = new Set<string>();
-            return files.every((file) => {
-              if (file.store === 'task-pins') {
-                const provenance: { taskDir?: unknown } = JSON.parse(
-                  readFileSync(path.join(file.source, 'provenance.json'), 'utf8'),
-                );
-                const taskDir = provenance.taskDir;
-                if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
-                const dir = path.resolve(taskDir);
-                if (!checkedPinDirs.has(dir)) {
-                  if (
-                    current.keepsTaskDirectory(dir) ||
-                    keptPinDirs.has(dir) ||
-                    activePaths?.has(dir)
-                  )
-                    return false;
+            if (
+              !files.every(
+                (file) =>
+                  file.store === 'task-pins' ||
+                  (eligible[file.store].includes(file.source) &&
+                    (file.store !== 'task-dirs' || !isTaskDirectoryAdmitting(file.source))),
+              )
+            )
+              return false;
+            if (!pins.length) return true;
+
+            const isHeld = (owner: Run) =>
+              Boolean(owner.park || currentRetentionHold(owner, context, sources));
+            const protection = protectedPinPathsAtStage(
+              liveNow,
+              activeAtIndex,
+              dirRuns,
+              realPaths,
+              isHeld,
+            );
+            let uncertain = protection.unresolved;
+            for (const id of unresolvedOwners) {
+              if (getRun(id)) continue; // Live owners were refreshed above.
+              const owner = getCachedRunWithArchived(id);
+              if (owner && isHeld(owner)) {
+                uncertain = true;
+                break;
+              }
+            }
+            // Share even a rejected check across all pins for that directory.
+            const checked = new Map<string, boolean>();
+            for (const pin of pins) {
+              const provenance: { taskDir?: unknown } = JSON.parse(
+                readFileSync(path.join(pin, 'provenance.json'), 'utf8'),
+              );
+              if (typeof provenance.taskDir !== 'string' || !path.isAbsolute(provenance.taskDir)) {
+                keptPaths.add(pin);
+                continue;
+              }
+              const dir = path.resolve(provenance.taskDir);
+              let deletable = checked.get(dir);
+              if (deletable === undefined) {
+                let held =
+                  isTaskDirectoryAdmitting(dir) ||
+                  current.keepsTaskDirectory(dir) ||
+                  keptPinDirs.has(dir) ||
+                  protection.paths.has(dir);
+                if (!held) {
                   for (const id of dirRuns.get(dir) ?? []) {
                     if (id === run.id) continue;
-                    const other = getCachedRunWithArchived(id);
-                    if (other && currentRetentionHold(other, context, sources)) return false;
+                    const owner = getCachedRunWithArchived(id);
+                    if (owner && isHeld(owner)) {
+                      held = true;
+                      break;
+                    }
                   }
-                  checkedPinDirs.add(dir);
                 }
-                return (
-                  !existsSync(taskDir) ||
-                  releasedPins.has(path.resolve(taskDir)) ||
-                  files.some(
-                    (entry) =>
-                      entry.store === 'task-dirs' && entry.source === path.resolve(taskDir),
-                  )
-                );
+                if (held && archiveTaskDirs.has(dir)) keptPaths.add(dir);
+                deletable =
+                  !uncertain &&
+                  !held &&
+                  (releasedPins.has(dir) ||
+                    archiveTaskDirs.has(dir) ||
+                    readTaskPinPathNow(dir) === null);
+                checked.set(dir, deletable);
               }
-              return (
-                eligible[file.store].includes(file.source) &&
-                (file.store !== 'task-dirs' || !isTaskDirectoryAdmitting(file.source))
-              );
-            });
+              if (!deletable) keptPaths.add(pin);
+            }
+            return { keep: keptPaths };
           },
           deleteFiles,
         );
         processed.add(run.id);
-        stagedRuns.push({ id: run.id, files });
+        const staged = files.filter((file) => !keptPaths.has(file.source));
+        if (staged.length) stagedRuns.push({ id: run.id, files: staged });
       } catch (error) {
         console.error(
           `[run-retention] skipped ${candidate.id}; source/journal retained: ${(error as Error).message}`,

@@ -1767,6 +1767,92 @@ test('a newly admitted owner protects a pin through an alias that was missing at
   );
 });
 
+test('an unappraisable canonical pin target leaves independent retention running', async (t) => {
+  const f = await recreatableRun(t);
+  const root = await realpath(path.dirname(f.roots.taskPins));
+  const parent = path.join(root, 'stale-parent');
+  await file(parent);
+  const target = path.join(parent, 'task');
+  await assert.rejects(realpath(target), { code: 'ENOTDIR' });
+  const stalePin = await pin(f.roots, 'stale-pin', target, NOW - RUN_RETENTION_AGE_MS - 60_000);
+  const alias = path.join(root, 'differently-named-alias');
+  await symlink(target, alias);
+  const old = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'RETENTION-STALE-CANONICAL',
+  });
+  updateRun(old.id, {
+    status: 'done',
+    completedAt: settled,
+    reviewWorkspace: { ...workspace(path.dirname(alias), 'mini'), taskPath: alias },
+  });
+  await persistRunNow(old);
+  assert.equal(await archiveRun(old.id), true);
+  const callbacks: string[] = [];
+  const result = await runRetentionPass(
+    {
+      ...f.options,
+      nodeJournals: async () => {
+        callbacks.push('journals');
+      },
+      nodeTaskPins: async () => {
+        callbacks.push('pins');
+      },
+    },
+    privateDeps,
+  );
+  assert.deepEqual(callbacks, ['journals', 'pins']);
+  assert.ok(result.paths['task-dirs'].includes(f.task));
+  assert.ok(result.paths['task-pins'].includes(f.taskPin));
+  assert.ok(existsSync(stalePin), 'uncertain existence retains the stale canonical pin');
+});
+
+for (const form of ['unresolved alias', 'alias created after indexing'] as const)
+  test(`a settled owner with an ${form} can keep its pin without blocking an independent archive`, async (t) => {
+    const f = await recreatableRun(t);
+    const { task, slotPin } = await pinInSlot(f);
+    const parent = path.join(path.dirname(f.roots.taskPins), 'late-parent');
+    const alias = path.join(parent, 'task');
+    if (form === 'unresolved alias') await file(parent);
+    else await mkdir(parent);
+    const code = form === 'unresolved alias' ? 'ENOTDIR' : 'ENOENT';
+    await assert.rejects(realpath(alias), { code });
+    const owner = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: 'RETENTION-LATE-SETTLED-KEEP',
+    });
+    updateRun(owner.id, {
+      status: 'done',
+      completedAt: settled,
+      reviewWorkspace: { ...workspace(parent, 'mini'), taskPath: alias },
+    });
+    await persistRunNow(owner);
+    let tagged = false;
+    onPinDeletionIntent(t, f, slotPin, async () => {
+      if (form === 'alias created after indexing') await symlink(task, alias);
+      updateRun(owner.id, { tags: ['keep'] });
+      tagged = true;
+    });
+    const result = await runRetentionPass(f.options, privateDeps);
+    assert.ok(tagged, 'the owner was held after deletion was journaled');
+    assert.ok(existsSync(slotPin), 'the settled owner keeps its pin');
+    assert.ok(result.paths['task-dirs'].includes(f.task), 'the independent task was archived');
+    assert.ok(
+      !result.paths['task-pins'].includes(slotPin),
+      'the kept pin is excluded from the summary',
+    );
+    const { entries } = await f.manifest();
+    assert.equal(
+      entries.find((entry: { source: string }) => entry.source === slotPin)?.state,
+      'kept',
+    );
+    assert.equal(existsSync(f.taskPin), form === 'unresolved alias');
+  });
+
 for (const form of ['canonical path', 'symlink alias'] as const)
   test(`a review owner using its ${form} can keep a pin at staging`, async (t) => {
     const f = await recreatableRun(t);

@@ -258,12 +258,12 @@ async function finishEntry(entry: StorageArchiveEntry, save: () => Promise<void>
   entry.state = 'archived';
 }
 
-/** Journal before staging; an interrupted move resumes from the same source/destination. */
+/** Journal before staging. The final check may keep individual paths while the rest stage. */
 export async function stageStoragePaths(
   root: string,
   runId: string,
   files: { source: string; store: string }[],
-  beforeStage: () => boolean = () => true,
+  beforeStage: () => boolean | { keep: ReadonlySet<string> } = () => true,
   deletions: StorageDeletion[] = [],
 ): Promise<void> {
   const manifestPath = storageArchiveManifest(root, runId);
@@ -315,16 +315,19 @@ export async function stageStoragePaths(
   // writeAtomicJSON fsyncs both the intent file and its parent before removal.
   await saveManifest(manifestPath, manifest);
   // Recheck only this pass's selection; old unstarted entries cannot regain ownership.
-  if (!beforeStage()) {
+  const decision = beforeStage();
+  if (decision === false) {
     await keepStorageDeletions(root, runId, 'retention eligibility changed before deletion');
     throw new Error(`Run storage became active before archive: ${runId}`);
   }
+  const keep = decision === true ? undefined : decision.keep;
   const selected = new Set(files.map((file) => path.resolve(file.source)));
   for (const entry of manifest.entries) {
     if (
       isArchiveEntry(entry) &&
       !entry.completedAt &&
       selected.has(entry.source) &&
+      !keep?.has(entry.source) &&
       existsSync(entry.source) &&
       !existsSync(entry.staged)
     ) {
@@ -344,13 +347,6 @@ export async function stageStoragePaths(
     const relative = path.relative(storeRoot, source);
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
       throw new Error(`Deletion must be inside its store: ${source}`);
-    // rm does not follow child symlinks, but a symlink in a parent would escape
-    // the store before rm sees the exact path. Refuse those parents too.
-    for (let parent = path.dirname(source); ; parent = path.dirname(parent)) {
-      if (lstatSync(parent).isSymbolicLink())
-        throw new Error(`Deletion parent is a symlink: ${parent}`);
-      if (parent === storeRoot) break;
-    }
     const index = manifest.entries.findIndex(
       (entry) =>
         entry.state === 'deleting' && entry.store === file.store && entry.source === source,
@@ -358,6 +354,23 @@ export async function stageStoragePaths(
     const intent = manifest.entries[index];
     if (intent?.state !== 'deleting' || !intent.detached)
       throw new Error(`Deletion intent missing: ${source}`);
+    if (keep?.has(source)) {
+      // Recovery still owns any tree detached by an earlier attempt. The source stays in place.
+      if (!lstatSync(intent.detached, { throwIfNoEntry: false }))
+        manifest.entries[index] = {
+          ...intent,
+          state: 'kept',
+          reason: 'retention eligibility changed before deletion',
+        };
+      continue;
+    }
+    // rm does not follow child symlinks, but a symlink in a parent would escape
+    // the store before rm sees the exact path. Refuse those parents too.
+    for (let parent = path.dirname(source); ; parent = path.dirname(parent)) {
+      if (lstatSync(parent).isSymbolicLink())
+        throw new Error(`Deletion parent is a symlink: ${parent}`);
+      if (parent === storeRoot) break;
+    }
     // Like rm, a rename acts on the path itself: a symlinked source moves as a link.
     if (lstatSync(source, { throwIfNoEntry: false })) renameSync(source, intent.detached);
     detachedPaths.push({ index, detached: intent.detached });

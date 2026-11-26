@@ -51,8 +51,16 @@ async function retiredTaskPinsOf(entries, removed, context, pending, present, re
     const resolved = path.resolve(taskDir);
     if (pending(resolved)) continue;
     if (present && !(await present(pin))) continue;
-    if (removed.has(resolved) || released?.has(resolved) || !(await exists(resolved)))
+    if (removed.has(resolved) || released?.has(resolved)) {
       retired.push(pin);
+      continue;
+    }
+    try {
+      if (!(await exists(resolved))) retired.push(pin);
+    } catch (error) {
+      // An inaccessible or invalid path is not evidence of an orphan. Leave that pin in place.
+      if (typeof error?.code !== 'string') throw error;
+    }
   }
   return retired;
 }
