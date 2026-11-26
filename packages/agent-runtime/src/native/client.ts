@@ -15,6 +15,7 @@ import type {
   NativeContextCompactionRequest,
   NativeConversationCursor,
   NativeConversationUpdate,
+  NativeSessionArchiveReceipt,
   NativeSessionCreateParams,
   NativeSessionEnsureParams,
   NativeSessionInfo,
@@ -301,6 +302,18 @@ export class NativeSessionClient {
     if (host.conversationStreaming !== 1)
       throw new Error('Native host upgrade required for passive command receipts');
     return requestHost(host, { method: 'commandStatus', owner, id, commandId, waitForAcceptance });
+  }
+  /**
+   * Run retention: move settled sessions' journals out of startup replay. Never starts or
+   * refreshes a host; a host without the capability is reported unavailable, to retry later.
+   */
+  async archiveSessions(owner: string, ids: string[]): Promise<NativeSessionArchiveReceipt[]> {
+    const host = this.existingHost();
+    if (!host.supportsSessionArchive)
+      throw Object.assign(new Error('Native host upgrade required for session archive'), {
+        code: 'NATIVE_SOURCE_UNAVAILABLE',
+      });
+    return requestHost(host, { method: 'archiveSessions', owner, ids });
   }
   private existingHost(): HostIdentity {
     const file = join(this.root, 'host.json');

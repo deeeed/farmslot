@@ -14,6 +14,10 @@ import {
   resolveFamilyIdentity,
 } from '../../family-observability/context.js';
 import { loadProjectConfig } from '../../fleet/state.js';
+import {
+  nodeJournalRetentionDeps,
+  nodeJournalRetentionPass,
+} from '../../host-services/node-native-journals.js';
 import { nodeTaskPinRetentionPass } from '../../host-services/node-task-pins.js';
 import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
@@ -28,6 +32,7 @@ import {
 import { captureMissingRunEpisodes } from '../../run-completion/run-episode.js';
 import { parkedWorkRetentionPass } from '../../run-lifecycle/parked-work-retention.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
+import { journalRetentionFile } from '../../runs/native-journal-retention.js';
 import {
   archiveOrphanSlotScaffolding,
   type OrphanScaffoldingResult,
@@ -250,7 +255,14 @@ export const RUN_RETENTION_DEPS: RunRetentionDeps = {
 
 /** Archive irreplaceable storage and delete recreatable copies only for eligible runs. Live and archived run records stay in place forever. */
 export async function runRetentionPass(
-  options: { apply: boolean; emit?: Emit; now?: number; roots?: RunRetentionRoots },
+  options: {
+    apply: boolean;
+    emit?: Emit;
+    now?: number;
+    roots?: RunRetentionRoots;
+    /** Archive node-hosted journals of the runs this pass released (ADR-039 Amendment 11). */
+    nodeJournals?: (released: readonly Run[], held: readonly Run[]) => Promise<void>;
+  },
   deps: RunRetentionDeps = RUN_RETENTION_DEPS,
 ): Promise<RunRetentionPlan> {
   if (options.apply && !options.roots) {
@@ -445,6 +457,25 @@ export async function runRetentionPass(
       stores[file.store].bytes += file.bytes;
     }
   }
+  if (options.nodeJournals) {
+    try {
+      // Read the runs again: one held since the pass began (reopened, or dispatched to resume a
+      // released session) keeps its sessions, and a run created since then is held.
+      const released: Run[] = [];
+      const held: Run[] = [];
+      const fresh = await getAllRunsWithArchived();
+      const live = getAllRuns();
+      // currentRetentionHold for every run at once: the live runs' reads are mapped one time.
+      const sources = activeSourceHolds(live, [...fresh, ...live]);
+      for (const run of fresh) {
+        const hold = runRetentionHold(run, context) ?? sources.get(run.id);
+        (hold || (await deps.holdsSlot(run)) ? held : released).push(run);
+      }
+      await options.nodeJournals(released, held);
+    } catch (error) {
+      console.error(`[native-journal retention] pass failed: ${(error as Error).message}`);
+    }
+  }
   return { runs: archived, held: plan.held, paths, stores };
 }
 
@@ -545,7 +576,16 @@ export function startRunRetention(emit: Emit): void {
     if (running) return;
     running = true;
     void retentionTurn(async () => {
-      const plan = await runRetentionPass({ apply: true, emit });
+      const plan = await runRetentionPass({
+        apply: true,
+        emit,
+        nodeJournals: (released, held) =>
+          nodeJournalRetentionPass(
+            released,
+            held,
+            nodeJournalRetentionDeps(journalRetentionFile(runArchiveRoot())),
+          ),
+      });
       await nodeTaskPinRetentionPass(Date.now(), (await retentionContext([])).ageMs);
       await parkedWorkRetentionPass();
       if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);

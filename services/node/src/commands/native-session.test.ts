@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -19,6 +19,7 @@ test('node native execution rejects other owners and conflicting execution ident
     supportsWorkerStopAttestation: true,
     supportsStructuredResults: true,
     supportsHostRefresh: true,
+    supportsSessionArchive: true,
     supportsObservations: true,
   });
   await assert.rejects(
@@ -85,6 +86,33 @@ test('native target metadata reports its actual home and refuses an old ready ho
   );
   assert.equal(service.metadata('owner').supportsStandaloneDelegation, true);
   assert.equal(service.metadata('owner').supportsWorkerCompaction, true);
+});
+
+test('run retention archive requests never start a host and need a host that archives', async (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'native-archive-route-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const service = new NativeNodeSessions('fixture-machine', 'owner', root);
+  const id = '11111111-2222-4333-8444-555555555555';
+  const archive = (params: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    service.route({ owner: 'owner', method: 'native.session.archive', params, ...extra });
+  for (const sessionIds of [undefined, [], Array.from({ length: 51 }, () => id), [1]])
+    await assert.rejects(archive({ sessionIds }), /sessionIds must list 1-50 session IDs/);
+  await assert.rejects(archive({ sessionIds: [id] }, { hostRelease: [] }), /sessionIds must list/);
+  // No host: the request is refused as unavailable, and none is started for it.
+  await assert.rejects(archive({ sessionIds: [id] }), /Native host unavailable/);
+  const hostRoot = path.join(root, 'nodes/fixture-machine');
+  assert.equal(existsSync(path.join(hostRoot, 'host.json')), false);
+  // A running host on an older runtime cannot archive; it is asked again on a later pass.
+  mkdirSync(hostRoot, { recursive: true });
+  const socket = path.join(root, 'fixture-socket');
+  writeFileSync(socket, '');
+  writeFileSync(path.join(hostRoot, 'ready.json'), '{}');
+  writeFileSync(
+    path.join(hostRoot, 'host.json'),
+    JSON.stringify({ executionNodeId: 'fixture-machine', pid: process.pid, socket, token: 'x' }),
+    { mode: 0o600 },
+  );
+  await assert.rejects(archive({ sessionIds: [id] }), /upgrade required for session archive/);
 });
 
 test('a node start whose native host is not ready in time registers instead of exiting', async (t) => {

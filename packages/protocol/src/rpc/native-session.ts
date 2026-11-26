@@ -131,7 +131,21 @@ export interface NativeExecutionNodeDeclaration {
   supportsProfiles?: boolean;
   /** A launch carrying the gateway's release list may refresh a host on another runtime. */
   supportsHostRefresh?: boolean;
+  /** Run retention may move settled sessions' journals out of host startup replay. */
+  supportsSessionArchive?: boolean;
 }
+
+/**
+ * Run retention's request to a node that declares supportsSessionArchive, inside the gateway's
+ * `native.session` envelope. Never a public gateway method.
+ */
+export const NATIVE_SESSION_ARCHIVE = 'native.session.archive';
+/** At most this many sessions in one archive request. */
+export const NATIVE_SESSION_ARCHIVE_LIMIT = 50;
+/** A node's answer for one session it was asked to archive. */
+export type NativeSessionArchiveReceipt =
+  | { sessionId: string; outcome: 'archived' | 'already-archived' | 'missing' }
+  | { sessionId: string; outcome: 'kept'; reason: string };
 /** The gateway's `native.session` request to an execution node. */
 export interface NativeNodeSessionEnvelope {
   owner: string;
