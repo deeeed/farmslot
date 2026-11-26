@@ -16,6 +16,11 @@ export interface TaskPinSweepInput {
   protection: TaskPinProtection;
   /** Task directories of runs retention released; their pins go even if the directory exists. */
   releasedTaskDirs?: string[];
+  /** Pins the gateway inspected; when given, only these are decided this pass. */
+  ids?: string[];
+}
+export interface TaskPinInspection {
+  pins: { id: string; taskDir: string }[];
 }
 export interface TaskPinStage {
   inspected: number;
@@ -35,9 +40,13 @@ export interface TaskPinShareResult {
   unverified: string[];
   shared: number;
   inserted: number;
-  /** Files kept as private read-only copies, by reason (EXDEV, EPERM, mismatch, ...). */
+  /** Pins whose sharing threw, with the error code; retried next pass, never blocking others. */
+  failed: { id: string; code: string; message: string }[];
+  /** Files kept as private read-only copies, by reason (EXDEV, EPERM, mismatch, changed). */
   private: Record<string, number>;
   savedBytes: number;
+  bytesHashed: number;
+  seconds: number;
 }
 export interface TaskPinSweepResult {
   inspected: number;
@@ -62,6 +71,7 @@ export function retiredTaskPinsOf(
   present?: (pin: string) => Promise<boolean>,
   released?: ReadonlySet<string>,
 ): Promise<string[]>;
+export function inspectTaskPins(input: { root: string }): Promise<TaskPinInspection>;
 export function stageTaskPins(
   input: TaskPinSweepInput,
   hooks?: TaskPinSweepHooks,

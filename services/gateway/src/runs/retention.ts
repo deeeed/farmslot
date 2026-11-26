@@ -11,6 +11,7 @@ import {
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
 
 import { isTaskDirectoryAdmitting, runTaskDirectories } from './store.js';
+import { taskPinRelease } from './task-pin-owners.js';
 import { readTaskPins, retiredTaskPinsOf as retiredPins, type TaskPinEntry } from './task-pins.cjs';
 export { readTaskPins, type TaskPinEntry };
 
@@ -299,20 +300,31 @@ export async function retiredTaskPins(
   pendingTaskDirs: ReadonlySet<string> = new Set(),
   releasedTaskDirs: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
-  // A pin records its task directory's real path; a run may record it through a symlink.
-  const released = new Set(releasedTaskDirs);
-  for (const dir of releasedTaskDirs) {
-    const real = await realpath(dir).catch(() => undefined);
-    if (real) released.add(real);
-  }
+  const pending = await withRealPaths(pendingTaskDirs);
+  const released = await withRealPaths(releasedTaskDirs);
   return retiredTaskPinsOf(
     await readTaskPins(pinRoot),
     removedTaskDirs,
     context,
-    (dir) => pendingTaskDirs.has(dir),
+    (dir) => pending.has(dir),
     undefined,
     released,
   );
+}
+
+/** A pin records its task directory's real path; a run may record it through a symlink. */
+export async function withRealPaths(dirs: Iterable<string>): Promise<Set<string>> {
+  const all = new Set<string>();
+  for (const dir of dirs) {
+    all.add(path.resolve(dir));
+    try {
+      all.add(await realpath(dir));
+    } catch (error) {
+      // A directory that no longer exists has no other form to match.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  return all;
 }
 
 /** Whether `file` exists, without following a final symlink. */
@@ -389,20 +401,16 @@ export async function planRunRetention(
     } else removable.push(run);
   }
   const owned = runOwnedPaths(removable, kept, roots);
-  const keptTaskDirs = new Set(kept.flatMap(runTaskDirectories).map((dir) => path.resolve(dir)));
+  // The node pin pass's own rule (ADR-039 Amendment 12), on the gateway's pin root.
+  const pins = taskPinRelease(kept, removable);
   const candidates: RunRetentionPaths = {
     ...owned,
     'task-pins': await retiredTaskPins(
       roots.taskPins,
       new Set(owned['task-dirs']),
       context,
-      keptTaskDirs,
-      new Set(
-        removable
-          .flatMap(runTaskDirectories)
-          .map((dir) => path.resolve(dir))
-          .filter((dir) => !keptTaskDirs.has(dir)),
-      ),
+      pins.keptDirs,
+      pins.releasedDirs,
     ),
   };
   return { plan: await measureRetention(removable, held, candidates), removable };

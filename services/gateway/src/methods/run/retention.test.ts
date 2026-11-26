@@ -4,6 +4,7 @@ import fsPromises, {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -1064,6 +1065,104 @@ test(
     );
   },
 );
+
+test(
+  'apply deletes a released run’s pin whose task directory still exists in its slot',
+  { timeout: 4500 },
+  async (t) => {
+    // ADR-039 Amendment 12 on the gateway's own pin root: plan and apply agree.
+    const f = await recreatableRun(t);
+    const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', 'temp', 'tasks', f.run.id);
+    await file(path.join(slotTask, 'TASK.md'));
+    updateRun(f.run.id, { activeTaskFile: path.join(slotTask, 'TASK.md') });
+    await persistRunNow(f.run);
+    const slotPin = await pin(
+      f.roots,
+      `${f.run.id}-slot`,
+      slotTask,
+      NOW - RUN_RETENTION_AGE_MS - 60_000,
+    );
+    const plan = await runRetentionPass({ ...f.options, apply: false }, privateDeps);
+    assert.ok(plan.paths['task-pins'].includes(slotPin));
+    await runRetentionPass(f.options, privateDeps);
+    assert.equal(existsSync(slotPin), false, 'the pin follows its released run');
+    assert.ok(existsSync(path.join(slotTask, 'TASK.md')), 'the slot checkout is not retention’s');
+  },
+);
+
+test('the gateway root keeps pins a held run reads through its review workspace, and a parked run’s', async (t) => {
+  const roots = await retentionRoots(t);
+  const shared = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks', 'shared');
+  const parkedTask = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks', 'parked');
+  for (const dir of [shared, parkedTask]) await file(path.join(dir, 'TASK.md'));
+  const old = NOW - RUN_RETENTION_AGE_MS - 60_000;
+  const sharedPin = await pin(roots, 'shared', shared, old);
+  const parkedPin = await pin(roots, 'parked', parkedTask, old);
+  const released: Run = {
+    ...makeRun({ id: 'released', status: 'done', activeTaskFile: path.join(shared, 'TASK.md') }),
+    updatedAt: settled,
+  };
+  const reviewer: Run = {
+    ...makeRun({ id: 'reviewer', status: 'monitoring' }),
+    reviewWorkspace: { ...workspace(path.dirname(shared)), taskPath: shared },
+  };
+  const parked: Run = {
+    ...makeRun({ id: 'parked', status: 'done', activeTaskFile: path.join(parkedTask, 'TASK.md') }),
+    updatedAt: settled,
+    park: {
+      version: 1,
+      operationId: 'park-op',
+      previewId: 'park-preview',
+      generation: 1,
+      machine: 'macwork',
+      slotId: 'slot-1',
+      mode: 'release',
+      phase: 'parked',
+      prePauseStatus: 'blocked',
+      prePauseCurrentStep: null,
+      resourceManifest: { capturedAt: settled, resources: [], capabilityLeases: [] },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: settled,
+      updatedAt: settled,
+      runId: 'parked',
+    },
+  };
+  const { plan } = await planRunRetention(
+    [released, reviewer, parked],
+    context(),
+    roots,
+    async () => false,
+  );
+  assert.equal(plan.paths['task-pins'].includes(sharedPin), false);
+  assert.equal(plan.paths['task-pins'].includes(parkedPin), false);
+});
+
+test('a held run recording a task dir through a symlink keeps the pin a released run also names', async (t) => {
+  const roots = await retentionRoots(t);
+  const real = path.join(path.dirname(roots.taskPins), 'real-tasks', 'task');
+  await file(path.join(real, 'TASK.md'));
+  const linked = path.join(path.dirname(roots.taskPins), 'linked-tasks');
+  await symlink(path.dirname(real), linked);
+  const sharedPin = await pin(
+    roots,
+    'linked',
+    await realpath(real),
+    NOW - RUN_RETENTION_AGE_MS - 60_000,
+  );
+  const released: Run = {
+    ...makeRun({ id: 'released', status: 'done', activeTaskFile: path.join(real, 'TASK.md') }),
+    updatedAt: settled,
+  };
+  const held = makeRun({
+    id: 'held',
+    status: 'monitoring',
+    activeTaskFile: path.join(linked, 'task', 'TASK.md'),
+  });
+  const { plan } = await planRunRetention([released, held], context(), roots, async () => false);
+  assert.equal(plan.paths['task-pins'].includes(sharedPin), false);
+});
 
 test(
   'recreatable pins survive admission, a retention hold and an active run',

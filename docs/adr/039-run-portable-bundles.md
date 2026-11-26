@@ -891,7 +891,7 @@ bring host start under 5 s.
 
 ## Amendment 12: 2026-11-26 task pins follow their runs
 
-**Status:** Accepted, 2026-11-26.
+**Status:** Accepted by the farm lead, 2026-11-26.
 
 ### Decision
 
@@ -905,55 +905,73 @@ Each hourly pass, after the run pass:
 
 - the runs are split by `runRetentionHold()` exactly as for journals: one helper reads them
   again and applies the live follow-up reads and slot holds, inside the pin pass's admission
-  fence. A held run keeps the pins of every task directory it reads (its task files, its
-  review workspace's task and a park recovery's), so live runs and the latest review of an
-  open PR (held by Amendment 8) can always run again. A parked run keeps its pins whatever its
-  hold;
-- a released run's task directories, less every directory a held run reads, are released:
-  their pins go even while the directory still exists, on the gateway's own pin root and on
-  each node's. The gateway ships the release list with the existing node pin program, so no
-  protocol method or capability changes;
+  fence. One rule (`taskPinRelease`) then decides pins on the gateway's own pin root (plan and
+  apply) and on each node's: a held run keeps the pins of every task directory it reads (its
+  task files, its review workspace's task and a park recovery's), so live runs and the latest
+  review of an open PR (held by Amendment 8) can always run again. A parked run keeps its pins
+  whatever its hold;
+- a released run's task directories, less every directory a kept run reads, are released: their
+  pins go even while the directory still exists. Both kept and released directories are compared
+  by their real paths too, since a pin records its task directory's real path and a run the path
+  it was given;
 - a pin no run references keeps the earlier rule and goes only once its task directory is gone,
   so manual tasks keep their pins; and
-- each node pass still inspects at most 32 pins and removes at most 8, staged and purged under
-  the existing fence.
+- each node pass inspects at most 32 pins (read only) and removes at most 8. The gateway sends
+  only the release and protection entries whose directory names match those 32 pins, and the
+  node decides only the pins it reported, so the request stays bounded by the window, not by
+  run history. The gateway ships the node program with every command, so no protocol method or
+  capability changes.
 
 A task whose pin was released never runs on other tooling. Verifying its execution receipt
-refuses with `TASK_PIN_RELEASED` (exit 5), naming the run when known and the pin path, and the
-worker launch preflight refuses the same way without retry, also on nodes whose runtime
-predates this amendment. Re-pinning from the receipt is not attempted: it would need every
+first checks that the pin lies in the store, then refuses a missing pin with
+`TASK_PIN_RELEASED` (exit 5), naming the run when known and the pin path ("missing: run
+retention released it after its run settled, or it was removed"). Task init names its attempt.
+The worker launch preflight refuses the same way without retry, also on nodes whose runtime
+predates this amendment; a legacy receipt keeps the verifier's earlier unverified order. Re-pinning from the receipt is not attempted: it would need every
 recorded source to still hash to its receipt value, and installs and library checkouts move
 between versions, so a fresh task pins the current tooling instead.
 
 Pins also share their bytes. Each task pin is a full private copy of the CLI and task inputs,
 about 0.4 GB, and successive CLI builds differ in a few MB, yet nothing was shared on disk. Each
 node pass now links at most 8 not-yet-shared pins into a content store at
-`<pin root>/.content/sha256/<aa>/<sha256>-<exec bits>`, on the pins' own volume:
+`<pin root>/.content/sha256/<aa>/<sha256>-<mode>`, on the pins' own volume:
 
 - every regular file under a pin except its `provenance.json` becomes a hard link to the one
-  entry for its content and exec bits, and every linked file is read-only (`0444` plus its exec
-  bits). Pin digests hash content and exec bits only, so no receipt changes;
-- an existing entry is linked to a temporary name under `.content/tmp`, its bytes are hashed on
-  that inode, and only then is the link renamed over the pin's file. A damaged entry is moved to
-  `.content/quarantine` and the file keeps a private read-only copy. A file whose hard link is
-  refused (EXDEV, EPERM) also keeps a private read-only copy, and the gateway logs both;
+  entry for its content and read and exec bits, and every linked file loses its write bits
+  (its read and exec bits stay, so a 0600 input stays owner-only). Pin digests hash content and
+  exec bits only, so no receipt changes;
+- nothing replaces a file on a hash taken elsewhere: a new entry is linked from the pin's file
+  and hashed on that linked inode before it is named, and an existing entry is linked to a
+  temporary name under `.content/tmp` and hashed there before it is renamed over the pin's file.
+  A file that changed since the pin was fingerprinted stays private; a damaged entry is moved to
+  `.content/quarantine` and the file keeps a private copy; a refused hard link (EXDEV, EPERM)
+  keeps a private copy. All stay read-only, and the gateway logs each;
 - the pin's whole tree (paths, kinds, exec bits, sizes and bytes) is fingerprinted before and
-  recomputed after; a pin whose fingerprint changed is logged and not recorded as shared, and
-  `.content/migrated` lists the pins already shared;
-- the filesystem link count is the reference count. Inside the fence, before staging, an entry
-  with one link (only the store's) whose last link change is over an hour old is removed. link
-  and unlink keep the count exact through any crash, and a creator that loses the entry to the
-  sweep inserts its own copy instead, so a removal never takes bytes a pin still links; and
+  recomputed after, from the hashes taken on each linked inode. A pin whose fingerprint changed
+  is logged and not recorded as shared; a pin whose sharing fails is logged with its error and
+  retried, never blocking the others. `.content/migrated` lists the pins already shared, and
+  each pass logs the bytes it hashed and its seconds;
+- the filesystem link count is the reference count. Inside the fence, before staging, each pass
+  sweeps the next 16 of the 256 shards: an entry with one link (only the store's) whose last link
+  change is over an hour old is removed, as are quarantined entries and temporary links past the
+  same grace by their ctime. link and unlink keep the count exact through any crash, the sweep
+  re-checks the count before it unlinks, and a creator that loses an entry to the sweep inserts
+  its own copy instead, so a removal never takes bytes a pin still links; and
 - the pin scan skips every dot-name, so `.content` never counts toward the 32 pins inspected.
 
 New pins are written private as before and shared by the next pass, within about an hour; the
-task producer does not link at creation, so there is one store writer per node. Deleting a pin
-removes only its own links: every other pin and the store keep the inode.
+task producer does not link at creation, so the pass is the one store writer per node. Deleting
+a pin removes only its own links: every other pin and the store keep the inode.
 
 A write into a shared file fails with EACCES. The owning user can still chmod and write, which
 would change the one shared inode; every pin sharing it then fails its launch re-verify
 (`TASK_INPUT_CHANGED` or `TASK_EXECUTABLE_CHANGED`) instead of running changed bytes. Workers run
 as that user, so this is detection, not prevention.
+
+A paths migration that copies the pin root to another volume copies each link separately: the
+target then needs the pins' unshared size, the copied entries are swept, and the next passes
+share the pins again there. A migration inventory taken before a share pass and applied after it
+refuses with "Migration bytes changed", since sharing drops write bits; take the inventory again.
 
 ### Rationale and consequences
 

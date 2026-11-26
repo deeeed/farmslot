@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { taskPinReleasedMessage } from '../../../../packages/agent-runtime/src/task-init/execution-provenance.js';
 import {
   RUNNER_OBSERVABILITY_SOURCE_FILES,
   verifySupportBundle,
@@ -283,8 +284,20 @@ test('a task whose pin retention released refuses by name without retry, on any 
   const result = await probe({ ...value, runId: 'run-released-1' });
   assert.equal(result.status, 'mismatch');
   assert.equal(result.retry, false);
+  // The probe ships its own copy of the runtime's message; the two must never drift.
   assert.equal(
     result.detail,
-    `TASK_PIN_RELEASED: Run run-released-1: this task's installation pin ${pin} was released by run retention after its run settled. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.`,
+    `TASK_PIN_RELEASED: ${taskPinReleasedMessage(pin, 'run-released-1')}`,
   );
+});
+
+test('a legacy receipt with a missing pin stays unverified, in the runtime verifier order', async (t) => {
+  const { root, value } = await requiredSkillsFixture(t, { runtimeChecks: true });
+  await writeFile(
+    path.join(value.taskDir, 'artifacts/harness-provenance.json'),
+    JSON.stringify({ pin: path.join(root, 'pins', 'gone') }),
+  );
+  const result = await probe({ ...value, runId: 'run-legacy' });
+  assert.notEqual(result.status, 'mismatch');
+  assert.doesNotMatch(result.detail, /TASK_PIN_RELEASED/);
 });

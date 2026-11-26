@@ -23,6 +23,7 @@ import { hasTaskAdmissions, withTaskAdmission } from '../runs/store.js';
 import { readTaskPins, retiredTaskPinsOf, sweepTaskPins } from '../runs/task-pins.cjs';
 
 import {
+  forInspectedPins,
   NODE_PIN_RETENTION_DEPS,
   nodeTaskPinRetentionPass,
   taskPinProtection,
@@ -165,7 +166,8 @@ test('the existing retention predicate still keeps admission and pending task di
 });
 
 test('gateway sweep reaches node roots, stages under fence and purges outside it', async (t) => {
-  const { stageTaskPins, purgeTaskPins, shareTaskPins } = await import('../runs/task-pins.cjs');
+  const { inspectTaskPins, stageTaskPins, purgeTaskPins, shareTaskPins } =
+    await import('../runs/task-pins.cjs');
   const f = await fixture(t);
   await f.pin('remote-orphan');
   let fenced = false;
@@ -184,16 +186,20 @@ test('gateway sweep reaches node roots, stages under fence and purges outside it
     execute: async (_target, payload) => {
       assert.ok('op' in payload);
       operations.push(String(payload.op));
+      if (payload.op === 'inspect') {
+        assert.equal(fenced, true);
+        return inspectTaskPins(payload);
+      }
       if (payload.op === 'stage') {
         assert.equal(fenced, true);
-        return stageTaskPins({ root: f.root, now, ageMs, protection });
+        return stageTaskPins({ root: f.root, now, ageMs, protection, ids: payload.ids });
       }
       assert.equal(fenced, false);
       if (payload.op === 'share') return shareTaskPins(payload);
       return purgeTaskPins(f.root, payload.result);
     },
   });
-  assert.deepEqual(operations, ['stage', 'purge', 'share']);
+  assert.deepEqual(operations, ['inspect', 'stage', 'purge', 'share']);
   assert.deepEqual(await readTaskPins(f.root), []);
 });
 
@@ -409,4 +415,37 @@ test('the shipped node program releases a run-owned pin through the real command
     split: async () => ({ held: [], released: [owner] }),
   });
   assert.deepEqual(await readTaskPins(f.root), []);
+});
+
+test('only the inspected pins’ directories travel to the node, and only they are decided', async (t) => {
+  const f = await fixture(t);
+  const inspectedTask = await f.pin('inspected');
+  await mkdir(inspectedTask, { recursive: true });
+  const released = [
+    makeRun({ id: 'mine', status: 'done', taskFile: path.join(inspectedTask, 'TASK.md') }),
+    ...Array.from({ length: 50 }, (_, i) =>
+      makeRun({
+        id: `other-${i}`,
+        status: 'done',
+        taskFile: `/elsewhere/tasks/other-${i}/TASK.md`,
+      }),
+    ),
+  ];
+  const decision = forInspectedPins(taskPinProtection({ held: [], released }), {
+    pins: [{ id: 'inspected', taskDir: inspectedTask }],
+  });
+  assert.deepEqual(decision.releasedTaskDirs, [path.resolve(inspectedTask)]);
+  assert.deepEqual(decision.ids, ['inspected']);
+  // A pin outside the inspected ids is never staged, whatever the lists say.
+  await f.pin('not-inspected');
+  const result = await sweepTaskPins({
+    root: f.root,
+    now,
+    ageMs,
+    protection,
+    releasedTaskDirs: decision.releasedTaskDirs,
+    ids: ['inspected'],
+  });
+  assert.deepEqual(result.removed, ['inspected']);
+  assert.equal((await readTaskPins(f.root)).length, 1);
 });

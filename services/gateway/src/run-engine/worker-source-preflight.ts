@@ -92,7 +92,8 @@ const fs=require('node:fs'),{createRequire}=require('node:module'),{pathToFileUR
  const receipt=JSON.parse(fs.readFileSync(receiptFile,'utf8'));
  // ADR-039 Amendment 12: retention released the pin with its run. Refuse by name, never retry;
  // checked here too so a node on an older runtime names the cause instead of a bare ENOENT.
- if(receipt&&typeof receipt.pin==='string'&&!fs.existsSync(receipt.pin)){result('mismatch','TASK_PIN_RELEASED: '+(expected.runId?'Run '+expected.runId+': this':'This')+" task's installation pin "+receipt.pin+' was released by run retention after its run settled. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.',false);return}
+ // A legacy receipt (no bindingIdentity) stays the runtime's unverified case, in its order.
+ if(receipt&&'bindingIdentity' in receipt&&typeof receipt.pin==='string'&&!fs.existsSync(receipt.pin)){result('mismatch','TASK_PIN_RELEASED: '+(expected.runId?'Run '+expected.runId+': this':'This')+" task's installation pin "+receipt.pin+' is missing: run retention released it after its run settled, or it was removed. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.',false);return}
  const runtime=await import(pathToFileURL(expected.runtimeModule).href);
  try{runtime.verifyTaskExecutionProvenance(expected.taskDir,receipt.bindingIdentity??null,{runId:expected.runId})}catch(e){
   if(e.code==='TASK_PROVENANCE_LEGACY'){result('unverified',e.message,false);return}

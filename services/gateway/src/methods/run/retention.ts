@@ -58,6 +58,7 @@ import {
   type RunRetentionRoots,
   type RunRetentionStore,
   type TaskPinEntry,
+  withRealPaths,
 } from '../../runs/retention.js';
 import {
   assertArchiveRoot,
@@ -78,6 +79,7 @@ import {
   runsDirectory,
   runSessionArchiveDir,
 } from '../../runs/store.js';
+import { taskPinRelease } from '../../runs/task-pin-owners.js';
 
 type Emit = (event: string, payload: unknown) => void;
 const RUN_RETENTION_FIRST_PASS_MS = 10 * 60 * 1000;
@@ -380,12 +382,18 @@ export async function runRetentionPass(
             files.push({ source, store, bytes: await diskBytes(source) });
           }
         const pending = owners.view(keptLive, keeps).keepsTaskDirectory;
+        // ADR-039 Amendment 12: this run's pins go with it even while its task dir exists,
+        // unless a kept run also reads that dir; the node pass applies the same rule.
+        const releasedPins = await withRealPaths(
+          [...taskPinRelease(keptLive, [run]).releasedDirs].filter((dir) => !pending(dir)),
+        );
         const pins = await retiredTaskPinsOf(
           await taskPins(),
           new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
           context,
           pending,
           exists,
+          releasedPins,
         );
         for (const source of pins)
           files.push({ source, store: 'task-pins', bytes: await diskBytes(source) });
@@ -434,6 +442,7 @@ export async function runRetentionPass(
                 if (current.keepsTaskDirectory(path.resolve(taskDir))) return false;
                 return (
                   !existsSync(taskDir) ||
+                  releasedPins.has(path.resolve(taskDir)) ||
                   files.some(
                     (entry) =>
                       entry.store === 'task-dirs' && entry.source === path.resolve(taskDir),

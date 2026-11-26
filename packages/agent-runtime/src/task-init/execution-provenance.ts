@@ -141,10 +141,12 @@ export class TaskProvenanceError extends Error {
  * tooling is gone, so the task never falls back to the current CLI: a fresh task pins anew.
  */
 export function taskPinReleasedError(pin: string, runId?: string): TaskProvenanceError {
-  return new TaskProvenanceError(
-    'TASK_PIN_RELEASED',
-    `${runId ? `Run ${runId}: this` : 'This'} task's installation pin ${pin} was released by run retention after its run settled. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.`,
-  );
+  return new TaskProvenanceError('TASK_PIN_RELEASED', taskPinReleasedMessage(pin, runId));
+}
+
+/** Shared with the worker launch preflight, which ships its own copy (a test keeps them equal). */
+export function taskPinReleasedMessage(pin: string, runId?: string): string {
+  return `${runId ? `Run ${runId}: this` : 'This'} task's installation pin ${pin} is missing: run retention released it after its run settled, or it was removed. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.`;
 }
 
 const receiptFile = 'artifacts/harness-provenance.json';
@@ -275,6 +277,13 @@ export function verifyTaskExecutionProvenance(
     throw new TaskProvenanceError(
       'TASK_PROVENANCE_INVALID',
       'The installation pin store must be outside the task.',
+    );
+  // Containment first: only a pin inside the store can have been released by its retention.
+  const pinParent = path.dirname(path.resolve(value.pin));
+  if (pinParent !== path.resolve(taskPinRoot()) && pinParent !== storeRoot)
+    throw new TaskProvenanceError(
+      'TASK_PROVENANCE_INVALID',
+      'The task pin is outside the configured installation store.',
     );
   if (!fs.existsSync(value.pin)) throw taskPinReleasedError(value.pin, context.runId);
   const pin = fs.realpathSync(value.pin);

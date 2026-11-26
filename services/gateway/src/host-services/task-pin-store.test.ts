@@ -225,14 +225,22 @@ for (const code of ['EXDEV', 'EPERM'])
 test('a store entry whose bytes no longer match its name is quarantined; the pin keeps its copy', async (t) => {
   const { root, tasks, receipts } = await realPins(t);
   const dep = path.join(receipts[0]!.pin, 'cli', 'node_modules', 'dep', 'index.js');
-  const key = `${sha256(dep)}-0`;
+  const key = `${sha256(dep)}-${(lstatSync(dep).mode & 0o555).toString(8)}`;
   const entry = path.join(objectsOf(root), key.slice(0, 2), key);
   await mkdir(path.dirname(entry), { recursive: true });
   await writeFile(entry, 'y'.repeat(9000));
   const result = await shareTaskPins({ root, limit: 8 });
   assert.equal(result.private.mismatch, 1);
-  assert.equal(lstatSync(dep).nlink, 1, 'kept private, never linked to the damaged entry');
-  assert.equal(lstatSync(dep).mode & 0o222, 0);
+  // Whichever pin met the damaged entry first kept a private copy; the other became the
+  // fresh entry. Neither is ever linked to the damaged bytes.
+  const links = receipts
+    .map((receipt) => lstatSync(path.join(receipt.pin, 'cli', 'node_modules', 'dep', 'index.js')))
+    .map((info) => {
+      assert.equal(info.mode & 0o222, 0);
+      return info.nlink;
+    })
+    .sort();
+  assert.deepEqual(links, [1, 2]);
   assert.equal((await readdir(path.join(root, '.content', 'quarantine'))).length, 1);
   receipts.forEach((receipt, i) => verifiesExactly(tasks[i]!, receipt));
 });
@@ -316,4 +324,51 @@ test('a pin that changes while it is shared is not recorded and is logged as unv
     await readFile(path.join(root, '.content', 'migrated'), 'utf8'),
     new RegExp(result.unverified[0]!),
   );
+});
+
+test('a file changed after fingerprinting is never labelled with its old hash', async (t) => {
+  const { root, tasks, receipts } = await realPins(t);
+  let mutated = false;
+  const result = await shareTaskPins(
+    { root, limit: 1 },
+    {
+      // The first insert's source changes between the fingerprint and the link (chmod + write).
+      link: async (existing, created) => {
+        if (!mutated && existing.endsWith(path.join('dep', 'index.js'))) {
+          mutated = true;
+          await chmod(existing, 0o644);
+          await writeFile(existing, 'w'.repeat(9000));
+        }
+        await link(existing, created);
+      },
+    },
+  );
+  assert.ok(mutated);
+  assert.equal(result.private.changed, 1);
+  assert.deepEqual(result.pins, [], 'the changed pin is not recorded as shared');
+  assert.equal(result.unverified.length, 1);
+  // The other pin shares nothing with the changed inode and still verifies byte-exactly.
+  await shareTaskPins({ root, limit: 8 });
+  const other = receipts.findIndex((r) => path.basename(r.pin) !== result.unverified[0]);
+  verifiesExactly(tasks[other]!, receipts[other]!);
+  assert.equal(
+    await readFile(
+      path.join(receipts[other]!.pin, 'cli', 'node_modules', 'dep', 'index.js'),
+      'utf8',
+    ),
+    'x'.repeat(9000),
+  );
+});
+
+test('each stage sweeps a bounded slice of store shards, rotating through all of them', async (t) => {
+  const { root } = await rawPins(t, 0);
+  for (let shard = 0; shard < 20; shard++) {
+    const name = shard.toString(16).padStart(2, '0');
+    await mkdir(path.join(objectsOf(root), name), { recursive: true });
+    await writeFile(path.join(objectsOf(root), name, `${name}aa-444`), 'orphan');
+  }
+  const later = Date.now() + 2 * HOUR;
+  assert.equal(await sweepContentStore(root, later), 16);
+  assert.equal(await sweepContentStore(root, later), 4);
+  assert.deepEqual(await storeEntries(root), []);
 });
