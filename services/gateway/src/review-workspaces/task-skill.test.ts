@@ -298,7 +298,7 @@ test('an unmarked fallback can replay after the harness returns', async () => {
 
 test('a replay generation replaces an unpublished round and fences the older start', async () => {
   await withReviewWorkspaceTaskFixture(async (f) => {
-    const { deps, folder, setGeneration } = await skillReview(f);
+    const { deps, folder, setGeneration, workspaceDir } = await skillReview(f);
     await assert.rejects(
       materializeReviewWorkspaceTask(f.run.id, f.subject, {
         ...deps,
@@ -318,6 +318,14 @@ test('a replay generation replaces an unpublished round and fences the older sta
     await assert.rejects(
       materializeReviewWorkspaceTask(f.run.id, f.subject, deps),
       /generation was superseded/,
+    );
+    assert.equal(await readFile(path.join(folder, 'review.json'), 'utf8'), currentRecord);
+    const identity = await readFile(path.join(workspaceDir, 'identity.json'), 'utf8');
+    await writeFile(path.join(workspaceDir, 'cancel.json'), identity);
+    setGeneration(2);
+    await assert.rejects(
+      materializeReviewWorkspaceTask(f.run.id, f.subject, deps),
+      /Workspace operation was cancelled/,
     );
     assert.equal(await readFile(path.join(folder, 'review.json'), 'utf8'), currentRecord);
   });

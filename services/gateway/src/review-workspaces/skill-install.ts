@@ -52,6 +52,20 @@ function directoryIdentity(dir){
  if(!st.isDirectory()||st.isSymbolicLink()||fs.realpathSync(dir)!==dir)throw Error('Review skill destination is not an owned directory');
  return [String(st.dev),String(st.ino),String(st.birthtimeNs)];
 }
+function retireOwnedDirectory(dir,expected,recursive){
+ if(!exists(dir))return;
+ // Moving within the workspace makes the verification and deletion apply to the same directory.
+ const staging=fs.mkdtempSync(path.join(path.dirname(checkout),'.review-skill-retire-'));
+ const staged=path.join(staging,'directory');
+ try{fs.renameSync(dir,staged);}
+ catch(error){fs.rmdirSync(staging);throw error;}
+ const st=fs.lstatSync(staged);
+ if(!st.isDirectory()||JSON.stringify(directoryIdentity(staged))!==JSON.stringify(expected))
+  throw Error('Review skill destination identity changed; preserved at '+staged);
+ if(recursive)fs.rmSync(staged,{recursive:true});
+ else fs.rmdirSync(staged);
+ fs.rmdirSync(staging);
+}
 function installedOwner(install,destinations,create,cleanup=false){
  const marker=path.join(path.dirname(checkout),'.installed-review-skill-'+install.installedName+'.json');
  const state=exists(marker);
@@ -66,35 +80,57 @@ function installedOwner(install,destinations,create,cleanup=false){
    if(JSON.stringify(directoryIdentity(dir))!==JSON.stringify(owner.directories[dir]))
     throw Error('Review skill destination identity changed');
   }
-  return {marker,cursorRules:owner.cursorRules};
+  return {marker,cursorRules:owner.cursorRules,directories:owner.directories};
  }
  if(!create)return undefined;
  if(destinations.some(dir=>exists(dir)))throw Error('Review skill destination already exists without an owner');
- const rules=path.join(checkout,'.cursor','rules');
- const cursorRules=exists(rules)?undefined:rules;
- for(const dir of destinations){
-  directory(path.dirname(dir));
+ const created=new Map();
+ const reserve=dir=>{
+  if(exists(dir)){directoryIdentity(dir);return;}
+  reserve(path.dirname(dir));
   fs.mkdirSync(dir);
+  created.set(dir,directoryIdentity(dir));
+ };
+ const staging=fs.mkdtempSync(path.join(path.dirname(checkout),'.review-skill-claim-'));
+ try{
+  for(const dir of destinations){
+   reserve(path.dirname(dir));
+   fs.mkdirSync(dir);
+   created.set(dir,directoryIdentity(dir));
+  }
+  const rules=path.join(checkout,'.cursor','rules');
+  const cursorRules=created.has(rules)?rules:undefined;
+  const paths=[...destinations,...(cursorRules?[cursorRules]:[])];
+  const directories=Object.fromEntries(paths.map(dir=>[dir,created.get(dir)]));
+  const pending=path.join(staging,'receipt.json');
+  fs.writeFileSync(pending,JSON.stringify({install,cursorRules,directories}),{flag:'wx',mode:0o600});
+  fs.linkSync(pending,marker);
+  return {marker,cursorRules,directories};
+ }catch(error){
+  const failures=[];
+  for(const [dir,binding] of [...created].reverse()){
+   try{retireOwnedDirectory(dir,binding,false);}
+   catch(problem){failures.push(problem.message);}
+  }
+  if(failures.length)throw Error(error.message+'; install rollback: '+failures.join(', '));
+  throw error;
+ }finally{
+  fs.rmSync(staging,{recursive:true});
  }
- const paths=[...destinations,...(cursorRules?[cursorRules]:[])];
- const directories=Object.fromEntries(paths.map(dir=>[dir,directoryIdentity(dir)]));
- fs.writeFileSync(marker,JSON.stringify({install,cursorRules,directories}),{flag:'wx',mode:0o600});
- return {marker,cursorRules};
 }
 if(input.action==='cleanup'){
+ // A failed retirement preserves the unexpected directory for operator recovery.
+ if(fs.readdirSync(path.dirname(checkout)).some(name=>name.startsWith('.review-skill-retire-')))
+  throw Error('Review skill cleanup has a preserved directory awaiting recovery');
  const links=[],directories=[];
  for(const skill of input.skills.filter(skill=>skill.install)){
   const destinations=installCheck(skill.install);
   const owner=installedOwner(skill.install,destinations,false,true);
   if(!owner)continue;
   verifyInstallDestinations(destinations);
-  for(const dir of destinations){
-   const st=exists(dir);
-   if(!st)continue;
-   if(st.isSymbolicLink()||!st.isDirectory()||!within(checkout,fs.realpathSync(dir)))throw Error('Installed review skill changed; refusing cleanup');
-   fs.rmSync(dir,{recursive:true});
-  }
-  if(owner.cursorRules&&exists(owner.cursorRules)&&fs.readdirSync(owner.cursorRules).length===0)fs.rmdirSync(owner.cursorRules);
+  for(const dir of destinations)retireOwnedDirectory(dir,owner.directories[dir],true);
+  if(owner.cursorRules&&exists(owner.cursorRules)&&fs.readdirSync(owner.cursorRules).length===0)
+   retireOwnedDirectory(owner.cursorRules,owner.directories[owner.cursorRules],false);
   fs.unlinkSync(owner.marker);
  }
  if(input.skills.some(skill=>skill.install)){

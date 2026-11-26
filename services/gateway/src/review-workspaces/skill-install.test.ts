@@ -6,8 +6,10 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -94,10 +96,15 @@ test('a skill review links its writable round folders into the read-only checkou
       },
     ],
   };
-  const run = (extra = {}) =>
+  const run = (extra = {}, preload?: string) =>
     execFileSync(
       process.execPath,
-      ['-e', REVIEW_SKILL_INSTALL_SCRIPT, JSON.stringify({ ...input, ...extra })],
+      [
+        ...(preload ? ['--require', preload] : []),
+        '-e',
+        REVIEW_SKILL_INSTALL_SCRIPT,
+        JSON.stringify({ ...input, ...extra }),
+      ],
       { stdio: 'pipe' },
     );
   try {
@@ -109,6 +116,24 @@ test('a skill review links its writable round folders into the read-only checkou
     assert.throws(() => run(), /destination parent is not an owned directory/);
     assert.equal(existsSync(path.join(outside, 'rules')), false);
     unlinkSync(cursor);
+    const failPublish = path.join(root, 'fail-publish.cjs');
+    writeFileSync(
+      failPublish,
+      `const fs = require('node:fs');
+      const link = fs.linkSync;
+      fs.linkSync = (from, to) => {
+        if (to.endsWith('/.installed-review-skill-mms-perps-review-pr.json'))
+          throw Error('Receipt publication refused by fixture');
+        return link(from, to);
+      };`,
+    );
+    assert.throws(() => run({}, failPublish), /Receipt publication refused by fixture/);
+    for (const surface of ['.agents', '.claude', '.cursor'])
+      assert.equal(existsSync(path.join(checkout, surface)), false);
+    assert.equal(
+      existsSync(path.join(root, '.installed-review-skill-mms-perps-review-pr.json')),
+      false,
+    );
     const existing = path.join(checkout, '.agents/skills/mms-perps-review-pr');
     mkdirSync(existing, { recursive: true });
     writeFileSync(path.join(existing, 'original.txt'), 'preserve this file');
@@ -130,6 +155,30 @@ test('a skill review links its writable round folders into the read-only checkou
       'preserve the replacement',
     );
     rmSync(existing, { recursive: true });
+    renameSync(saved, existing);
+    const swap = path.join(root, 'swap-before-retire.cjs');
+    writeFileSync(
+      swap,
+      `const fs = require('node:fs');
+      const rename = fs.renameSync;
+      fs.renameSync = (from, to) => {
+        if (from === ${JSON.stringify(realpathSync(existing))} && to.endsWith('/directory')) {
+          rename(from, ${JSON.stringify(saved)});
+          fs.mkdirSync(from);
+          fs.writeFileSync(from + '/replacement.txt', 'preserved during retirement');
+        }
+        return rename(from, to);
+      };`,
+    );
+    assert.throws(() => run({ action: 'cleanup' }, swap), /identity changed; preserved at/);
+    const retained = readdirSync(root).find((name) => name.startsWith('.review-skill-retire-'));
+    assert.ok(retained);
+    assert.equal(
+      readFileSync(path.join(root, retained, 'directory/replacement.txt'), 'utf8'),
+      'preserved during retirement',
+    );
+    assert.throws(() => run({ action: 'cleanup' }), /awaiting recovery/);
+    renameSync(path.join(root, retained), path.join(root, 'retained-replacement'));
     renameSync(saved, existing);
     const link = path.join(checkout, 'temp/tasks');
     assert(lstatSync(link).isSymbolicLink());
