@@ -86,12 +86,14 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
     check.differences.push(
       'Writes a build change into its checkout: runs only where FARMSLOT_CANARY_DISPOSABLE_CHECKOUT=1 (nightly.sh)',
     );
+    check.durationS = (performance.now() - started) / 1000;
     await writeFile(path.join(out, 'result.json'), JSON.stringify(check, null, 2));
     return check;
   }
   if (existsSync(bump)) {
     // Never this case's to remove here: nightly.sh clears its own after the checkout.
     check.differences.push(`${NODE_HOST_REFRESH_BUMP} already exists; remove it first`);
+    check.durationS = (performance.now() - started) / 1000;
     await writeFile(path.join(out, 'result.json'), JSON.stringify(check, null, 2));
     return check;
   }
