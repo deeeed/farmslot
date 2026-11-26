@@ -155,12 +155,29 @@ function testRepository() {
   return { repo, git };
 }
 
+/**
+ * Record an event on a session as its adapter would, after the fact: the one place tests reach
+ * the manager's private session table and append path, so a rename breaks only this helper.
+ */
+function appendLateEvent(manager: NativeSessionManager, record: unknown, type: 'session.closed') {
+  const append: unknown = Reflect.get(manager, 'append');
+  assert.ok(typeof append === 'function');
+  append.call(manager, record, { type });
+}
+function sessionRecordOf(manager: NativeSessionManager, id: string): unknown {
+  const sessions: unknown = Reflect.get(manager, 'sessions');
+  assert.ok(sessions instanceof Map);
+  return sessions.get(id);
+}
+
 export {
   allEvents,
+  appendLateEvent,
   delay,
   fixture,
   gitIn,
   nativeStack,
+  sessionRecordOf,
   setup,
   stopNativeStack,
   testRepository,

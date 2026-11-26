@@ -102,6 +102,7 @@ durableWrite(join(root, 'host.json'), {
   supportsStructuredResults: true,
   supportsWorkerRelocation: true,
   supportsProfiles: true,
+  supportsSessionArchive: true,
   executionNodeId: process.env.FARMSLOT_NATIVE_EXECUTION_NODE_ID ?? 'local',
   pid: process.pid,
   token: randomBytes(32).toString('hex'),

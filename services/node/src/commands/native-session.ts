@@ -17,11 +17,13 @@ import {
   routeNativeSession,
 } from '@farmslot/agent-runtime/native/service';
 import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-service';
-import type {
-  NativeConversationCursor,
-  NativeConversationUpdate,
-  NativeExecutionNodeDeclaration,
-  NativeNodeSessionEnvelope,
+import {
+  NATIVE_SESSION_ARCHIVE,
+  NATIVE_SESSION_ARCHIVE_LIMIT,
+  type NativeConversationCursor,
+  type NativeConversationUpdate,
+  type NativeExecutionNodeDeclaration,
+  type NativeNodeSessionEnvelope,
 } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
@@ -49,6 +51,7 @@ export class NativeNodeSessions {
         supportsStructuredResults: true,
         supportsProfiles: true,
         supportsHostRefresh: true,
+        supportsSessionArchive: true,
         ...{ supportsObservations: true },
       };
     }
@@ -205,6 +208,23 @@ export class NativeNodeSessions {
     });
   }
 
+  /** Run retention's archive request; it never starts or refreshes the host. */
+  private archive(value: Partial<Record<keyof NativeNodeSessionEnvelope, unknown>>) {
+    const ids = (value.params as { sessionIds?: unknown } | undefined)?.sessionIds;
+    if (
+      value.hostRelease !== undefined ||
+      !Array.isArray(ids) ||
+      !ids.length ||
+      ids.length > NATIVE_SESSION_ARCHIVE_LIMIT ||
+      !ids.every((id) => typeof id === 'string')
+    )
+      throw Object.assign(
+        new Error(`sessionIds must list 1-${NATIVE_SESSION_ARCHIVE_LIMIT} session IDs`),
+        { code: 'INVALID_PARAMS' },
+      );
+    return this.client.archiveSessions(this.declaration!.ownerPrincipalId, ids as string[]);
+  }
+
   /** The gateway's `native.session` request; its fields are checked here. */
   async route(value: Partial<Record<keyof NativeNodeSessionEnvelope, unknown>>): Promise<unknown> {
     if (!this.declaration || value.owner !== this.declaration.ownerPrincipalId)
@@ -215,6 +235,7 @@ export class NativeNodeSessions {
       throw Object.assign(new Error('Native method is required'), { code: 'INVALID_PARAMS' });
     const owner = this.declaration.ownerPrincipalId;
     const method = value.method;
+    if (method === NATIVE_SESSION_ARCHIVE) return this.archive(value);
     const route = () =>
       NATIVE_WORKER_METHODS.includes(method)
         ? routeNativeWorkerSession(this.client, owner, method, value.params)

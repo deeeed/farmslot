@@ -2,14 +2,15 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 
-import type {
-  NativeApprovalMode,
-  NativeContextCompactionRequest,
-  NativeConversationCursor,
-  NativeSessionCreateParams,
-  NativeSessionEnsureParams,
-  NativeSessionRequester,
-  NativeSessionResponse,
+import {
+  NATIVE_SESSION_ARCHIVE_LIMIT,
+  type NativeApprovalMode,
+  type NativeContextCompactionRequest,
+  type NativeConversationCursor,
+  type NativeSessionCreateParams,
+  type NativeSessionEnsureParams,
+  type NativeSessionRequester,
+  type NativeSessionResponse,
 } from '@farmslot/protocol';
 import { isNativeResultSchema } from '@farmslot/protocol/recipe/pipeline-visual-judgments';
 
@@ -54,6 +55,8 @@ export interface HostIdentity {
   supportsStructuredResults?: boolean;
   supportsWorkerRelocation?: boolean;
   supportsProfiles?: boolean;
+  /** archiveSessions moves settled sessions' journals out of startup replay. */
+  supportsSessionArchive?: boolean;
   pid: number;
   token: string;
   socket: string;
@@ -164,6 +167,7 @@ export type HostRequest =
       response: NativeSessionResponse;
     }
   | { method: 'list'; owner: string }
+  | { method: 'archiveSessions'; owner: string; ids: string[] }
   | {
       method: 'commandStatus';
       owner: string;
@@ -210,6 +214,18 @@ export function decodeRequest(value: unknown): HostRequest {
   const owner = string(p, 'owner');
   const method = p.method;
   if (method === 'list') return { method, owner };
+  if (method === 'archiveSessions') {
+    const ids = p.ids;
+    if (
+      !Array.isArray(ids) ||
+      ids.length > NATIVE_SESSION_ARCHIVE_LIMIT ||
+      !ids.every(
+        (id) => typeof id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id),
+      )
+    )
+      throw new Error('Invalid IPC ids');
+    return { method, owner, ids: ids as string[] };
+  }
   if (method === 'prepareUpgrade')
     return p.idleRunners === true ? { method, owner, idleRunners: true } : { method, owner };
   if (

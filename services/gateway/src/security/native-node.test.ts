@@ -87,6 +87,7 @@ test('native node declarations keep every declared boolean capability', () => {
     supportsObservations: true,
     supportsStructuredResults: true,
     supportsHostRefresh: true,
+    supportsSessionArchive: true,
   } satisfies Required<
     Omit<NativeExecutionNodeDeclaration, 'ownerPrincipalId' | 'conversationStreaming'>
   >;
