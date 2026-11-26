@@ -43,13 +43,7 @@ def identity(stat):
 def at(parent, name):
     return os.stat(name, dir_fd=parent, follow_symlinks=False)
 
-try:
-    for entry in entries:
-        parts = entry['relative'].split('/')
-        parent = parent_of(parts)
-        parents.append(parent)
-        move(source, entry['name'], parent, parts[-1])
-        moved.append((entry, parts, parent))
+def verify_paths():
     for entry, parts, parent in moved:
         current = parent_of(parts)
         try:
@@ -71,9 +65,30 @@ try:
             raise RuntimeError('Review publication link identity changed: ' + entry['relative'])
     if identity(at(workspace, os.path.basename(sys.argv[2]))) != identity(os.fstat(checkout)):
         raise RuntimeError('Review publication checkout changed')
-    os.link('.receipt.json', sys.argv[4], src_dir_fd=stage, dst_dir_fd=workspace, follow_symlinks=False)
+
+receipt = sys.argv[4]
+receipt_identity = identity(at(stage, '.receipt.json'))
+receipt_published = False
+try:
+    for entry in entries:
+        parts = entry['relative'].split('/')
+        parent = parent_of(parts)
+        parents.append(parent)
+        move(source, entry['name'], parent, parts[-1])
+        moved.append((entry, parts, parent))
+    verify_paths()
+    os.link('.receipt.json', receipt, src_dir_fd=stage, dst_dir_fd=workspace, follow_symlinks=False)
+    receipt_published = True
+    verify_paths()
 except Exception:
     failures = []
+    if receipt_published:
+        try:
+            if identity(at(workspace, receipt)) != receipt_identity:
+                raise OSError('Review publication receipt identity changed')
+            os.unlink(receipt, dir_fd=workspace)
+        except OSError as error:
+            failures.append(str(error))
     for entry, parts, parent in reversed(moved):
         try:
             expected = entry.get('identity', entry['linkIdentity'])[:2]
@@ -293,6 +308,8 @@ function prepareInstaller(){
   // The publisher returns moved entries through the original directory handles.
   // If it returned foreign bytes or left a move incomplete, preserve the stage for recovery.
   try{
+   if(exists(marker)&&exists(path.join(stage,'.receipt.json'))&&sameIdentity(statIdentity(fs.lstatSync(marker,{bigint:true})),statIdentity(fs.lstatSync(path.join(stage,'.receipt.json'),{bigint:true}))))
+    throw Error('Review publication receipt remains linked');
    for(const publication of owner.publications)
     verifyPublication(path.join(publicationRoot,publication.name),publication);
   }catch(problem){

@@ -208,41 +208,61 @@ test('a skill review links its writable round folders into the read-only checkou
       false,
     );
     rmSync(taskConflict, { recursive: true });
-    writeFileSync(path.join(temp, 'original.txt'), 'original parent');
-    const parentSwap = path.join(root, 'parent-swap.cjs');
-    const swapSource = [
-      "        if entry['relative'] == 'temp/tasks':",
-      "            os.rename('temp', 'displaced-temp', src_dir_fd=checkout, dst_dir_fd=checkout)",
-      "            os.mkdir('temp', dir_fd=checkout)",
-      "            os.mkdir('temp/tasks', dir_fd=checkout)",
-      "            with open(os.path.join(sys.argv[2], 'temp/tasks/owner.txt'), 'w') as sentinel:",
-      "                sentinel.write('replacement parent')",
-      "        move(source, entry['name'], parent, parts[-1])",
-    ].join('\n');
-    writeFileSync(
-      parentSwap,
-      `const cp = require('node:child_process');
-      const spawn = cp.spawnSync;
-      cp.spawnSync = (program, args, options) => {
-        if (program === 'python3') {
-          args = [...args];
-          args[2] = args[2].replace("        move(source, entry['name'], parent, parts[-1])", ${JSON.stringify(swapSource)});
-        }
-        return spawn(program, args, options);
-      };`,
-    );
-    assert.throws(() => run({}, parentSwap), /publication parent changed: temp\/tasks/);
-    assertNoOwnedSkillLinks();
-    assert.equal(readFileSync(path.join(taskConflict, 'owner.txt'), 'utf8'), 'replacement parent');
+    const displacement = [
+      "os.rename('temp', 'displaced-temp', src_dir_fd=checkout, dst_dir_fd=checkout)",
+      "os.mkdir('temp', dir_fd=checkout)",
+      "os.mkdir('temp/tasks', dir_fd=checkout)",
+      "with open(os.path.join(sys.argv[2], 'temp/tasks/owner.txt'), 'w') as sentinel:",
+      "    sentinel.write('replacement parent')",
+    ];
+    const moveNeedle = "        move(source, entry['name'], parent, parts[-1])";
+    const receiptNeedle = "    os.link('.receipt.json',";
+    const swaps = [
+      {
+        needle: moveNeedle,
+        source: [
+          "        if entry['relative'] == 'temp/tasks':",
+          ...displacement.map((line) => '            ' + line),
+          moveNeedle,
+        ].join('\n'),
+      },
+      {
+        needle: receiptNeedle,
+        source: [...displacement.map((line) => '    ' + line), receiptNeedle].join('\n'),
+      },
+    ];
     const displaced = path.join(checkout, 'displaced-temp');
-    assert.equal(readFileSync(path.join(displaced, 'original.txt'), 'utf8'), 'original parent');
-    assert.equal(existsSync(path.join(displaced, 'tasks')), false);
-    assert.equal(
-      readdirSync(root).some((name) => name.startsWith('.review-skills-')),
-      false,
-    );
-    rmSync(displaced, { recursive: true });
-    rmSync(temp, { recursive: true });
+    for (const { needle, source } of swaps) {
+      mkdirSync(temp, { recursive: true });
+      writeFileSync(path.join(temp, 'original.txt'), 'original parent');
+      const parentSwap = path.join(root, 'parent-swap.cjs');
+      writeFileSync(
+        parentSwap,
+        `const cp = require('node:child_process');
+        const spawn = cp.spawnSync;
+        cp.spawnSync = (program, args, options) => {
+          if (program === 'python3') {
+            args = [...args];
+            args[2] = args[2].replace(${JSON.stringify(needle)}, ${JSON.stringify(source)});
+          }
+          return spawn(program, args, options);
+        };`,
+      );
+      assert.throws(() => run({}, parentSwap), /publication parent changed: temp\/tasks/);
+      assertNoOwnedSkillLinks();
+      assert.equal(
+        readFileSync(path.join(taskConflict, 'owner.txt'), 'utf8'),
+        'replacement parent',
+      );
+      assert.equal(readFileSync(path.join(displaced, 'original.txt'), 'utf8'), 'original parent');
+      assert.equal(existsSync(path.join(displaced, 'tasks')), false);
+      assert.equal(
+        readdirSync(root).some((name) => name.startsWith('.review-skills-')),
+        false,
+      );
+      rmSync(displaced, { recursive: true });
+      rmSync(temp, { recursive: true });
+    }
 
     const missingPublisher = path.join(root, 'missing-publisher.cjs');
     writeFileSync(
