@@ -1953,6 +1953,7 @@ function archivedRunsDirectory(): string {
  * `deleteRun` unlinks from `runsDirectory()` and never touches the archive directory.
  */
 let archivedRunsCache: Run[] | null = null;
+const archivedRunsById = new Map<string, Run>();
 /**
  * Bumped on every archive write so a union of live and archived runs that awaited across one
  * retries, instead of missing a run that moved between the two halves meanwhile.
@@ -1989,8 +1990,11 @@ function recordArchivedRunWrite(id: string, raw: string | null): void {
   // A file that is not a run record is skipped by a scan, so it has no entry here either.
   const record = raw === null ? null : archivedRunRecord(`${id}.json`, raw);
   archivedRunsGeneration++;
-  if (archivedRunsCache) archivedRunsCache = withArchivedRunWrite(archivedRunsCache, id, record);
-  else if (archivedRunsScan) archivedRunWrites.set(id, record);
+  if (archivedRunsCache) {
+    archivedRunsCache = withArchivedRunWrite(archivedRunsCache, id, record);
+    if (record) archivedRunsById.set(id, record);
+    else archivedRunsById.delete(id);
+  } else if (archivedRunsScan) archivedRunWrites.set(id, record);
   // With neither a cache nor a scan, the next scan reads the file itself.
 }
 
@@ -2001,6 +2005,7 @@ function recordArchivedRunWrite(id: string, raw: string | null): void {
 export function forgetArchivedRuns(): void {
   archivedRunsGeneration++;
   archivedRunsCache = null;
+  archivedRunsById.clear();
   // A scan already in flight may predate the outside change: let it finish for its waiters,
   // but do not let it become the cache.
   archivedRunsScan = null;
@@ -2023,6 +2028,7 @@ export async function getArchivedRuns(): Promise<Run[]> {
         cached = withArchivedRunWrite(cached, id, record);
       archivedRunWrites.clear();
       archivedRunsScan = null;
+      for (const run of cached) archivedRunsById.set(run.id, run);
       archivedRunsCache = cached;
       return cached;
     },
@@ -2089,7 +2095,7 @@ export async function getAllRunsWithArchived(): Promise<Run[]> {
 
 /** Synchronous admission checks fail closed until an archived record has been loaded. */
 export function getCachedRunWithArchived(id: string): Run | undefined {
-  return getRun(id) ?? archivedRunsCache?.find((run) => run.id === id);
+  return getRun(id) ?? archivedRunsById.get(id);
 }
 
 /** Read historical authority without making archived runs eligible for execution. */

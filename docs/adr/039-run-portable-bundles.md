@@ -915,20 +915,19 @@ Each hourly pass, after the run pass:
   pins go even while the directory still exists. Both kept and released directories are compared
   by their real paths too, since a pin records its task directory's real path and a run the path
   it was given;
-- just before a pin is staged, the gateway re-reads the hold of every run that names the pin's
-  task directory, so a settled run that gains a hold during the pass keeps the pins of every
-  directory it reads; a run that names it only through a different symlinked path is matched by
-  the node's next pass instead;
+- just before staging, the gateway re-reads the holds of runs whose recorded or real paths
+  match each pin's task directory. It resolves recorded paths at most once per apply pass,
+  outside the staging fence, and shares the hold check across pins for the same directory;
 - a pin no run references keeps the earlier rule and goes only once its task directory is gone,
   so manual tasks keep their pins; and
 - each node pass inspects at most 32 pins (read only) and removes at most 8, and decides only
   the pins it reported. The release list, which grows with run history, travels only for
   directories whose last two path segments match one of those pins; dropping a released
   directory only keeps its pin longer. The protection list is bounded by held runs and travels
-  whole, so no symlinked form of a held directory is lost. The gateway's own pin root resolves
-  real paths the same way: every kept directory, and only the released ones that could name a
-  pin. The gateway ships the node program with every command, so no protocol method or
-  capability changes.
+  whole, so no symlinked form of a held directory is lost. The gateway plan resolves every
+  kept directory and only released directories that could name a pin. Apply indexes all
+  recorded paths when there are gateway pins to check. The gateway ships the node program
+  with every command, so no protocol method or capability changes.
 
 A task whose pin was released never runs on other tooling. Verifying its execution receipt first
 checks that the pin lies in the store, then refuses a missing pin with `TASK_PIN_RELEASED` (exit

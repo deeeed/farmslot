@@ -39,6 +39,7 @@ import {
   forgetArchivedRuns,
   getAllRunsWithArchived,
   getArchivedRuns,
+  getCachedRunWithArchived,
   getRun,
   isSyntheticLeak,
   listRuns,
@@ -1300,14 +1301,17 @@ test('archiving, changing and deleting an archived run update its one record wit
   const second = await archivedFixture(t, 'archive-cache-second');
   let ids = await archivedIds();
   assert.ok(ids.has(second), 'the newly archived run is readable at once');
+  assert.equal(getCachedRunWithArchived(second)?.id, second);
   assert.ok(!ids.has(decoy), 'archiving did not scan the archive again');
 
   await updateReviewPublication(first, { error: 'publication refused' });
   const changed = (await getArchivedRuns()).find((run) => run.id === first);
   assert.equal(changed?.reviewPublication?.error, 'publication refused');
+  assert.equal(getCachedRunWithArchived(first), changed);
   assert.ok(!(await archivedIds()).has(decoy), 'a retained change did not scan the archive again');
 
   assert.equal(await deleteArchivedRun(second), true);
+  assert.equal(getCachedRunWithArchived(second), undefined);
   ids = await archivedIds();
   assert.ok(!ids.has(second));
   assert.ok(ids.has(first));
@@ -1315,7 +1319,9 @@ test('archiving, changing and deleting an archived run update its one record wit
 
   // The decoy is on disk all along: a real scan finds it.
   forgetArchivedRuns();
+  assert.equal(getCachedRunWithArchived(first), undefined);
   assert.ok((await archivedIds()).has(decoy));
+  assert.equal(getCachedRunWithArchived(first)?.id, first);
 });
 
 /**

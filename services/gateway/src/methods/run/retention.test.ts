@@ -1638,44 +1638,114 @@ test('the hourly turn runs the shared-store pass after the run pass fails', asyn
   assert.equal(shared, 1);
 });
 
-test('a settled run that gains a hold mid-pass keeps the pin of a dir its review workspace reads', async (t) => {
-  const f = await recreatableRun(t);
-  const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', 'temp', 'tasks', f.run.id);
-  await file(path.join(slotTask, 'TASK.md'));
-  updateRun(f.run.id, { activeTaskFile: path.join(slotTask, 'TASK.md') });
-  await persistRunNow(f.run);
-  const slotPin = await pin(
-    f.roots,
-    `${f.run.id}-slot`,
-    slotTask,
-    NOW - RUN_RETENTION_AGE_MS - 60_000,
-  );
-  const reviewer = createRun({
-    flowType: 'fix-bug',
-    project: 'farmslot-farm',
-    mode: 'autonomous',
-    ticketOrPr: 'RETENTION-LATE-HOLD',
-  });
-  updateRun(reviewer.id, {
-    status: 'done',
-    completedAt: settled,
-    reviewWorkspace: { ...workspace(path.dirname(slotTask)), taskPath: slotTask },
-  });
-  await persistRunNow(reviewer);
-  let tagged = false;
-  let checks = 0;
-  await runRetentionPass(f.options, {
-    ...privateDeps,
-    // The plan sees the reviewer released; it gains a keep tag when apply reaches the candidate,
-    // after the pass's held set was taken.
-    holdsSlot: async (run) => {
-      if (run.id === f.run.id && ++checks === 2) {
+for (const form of ['canonical path', 'symlink alias'] as const)
+  test(`a review owner using its ${form} can keep a pin at staging`, async (t) => {
+    const f = await recreatableRun(t);
+    const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', 'temp', 'tasks', f.run.id);
+    await file(path.join(slotTask, 'TASK.md'));
+    const canonicalTask = await realpath(slotTask);
+    const alias = path.join(path.dirname(f.roots.taskPins), 'review-task-alias');
+    await symlink(canonicalTask, alias);
+    updateRun(f.run.id, { activeTaskFile: path.join(canonicalTask, 'TASK.md') });
+    await persistRunNow(f.run);
+    const slotPin = await pin(
+      f.roots,
+      `${f.run.id}-slot`,
+      canonicalTask,
+      NOW - RUN_RETENTION_AGE_MS - 60_000,
+    );
+    const reviewer = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: 'RETENTION-LATE-HOLD',
+    });
+    const taskPath = form === 'canonical path' ? canonicalTask : alias;
+    assert.equal(await realpath(taskPath), canonicalTask);
+    updateRun(reviewer.id, {
+      status: 'done',
+      completedAt: settled,
+      reviewWorkspace: { ...workspace(path.dirname(slotTask)), taskPath },
+    });
+    await persistRunNow(reviewer);
+    const manifest = storageArchiveManifest(f.roots.archiveRoot, f.run.id);
+    let tagged = false;
+    const original = fsPromises.rename;
+    t.mock.method(fsPromises, 'rename', async (...args: Parameters<typeof fsPromises.rename>) => {
+      await original(...args);
+      if (args[1] !== manifest || tagged) return;
+      const contents = await f.manifest();
+      // Wait until the deletion intent is written. Planning and selection already allowed it.
+      if (
+        contents.entries.some(
+          (entry: { source: string; state: string }) =>
+            entry.source === slotPin && entry.state === 'deleting',
+        )
+      ) {
         tagged = true;
         updateRun(reviewer.id, { tags: ['keep'] });
       }
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+    await runRetentionPass(f.options, privateDeps);
+    assert.ok(tagged, 'the pin was selected for deletion before the keep arrived');
+    assert.ok(existsSync(slotPin), 'the late hold keeps the pin');
+    const { entries } = await f.manifest();
+    assert.equal(
+      entries.find((entry: { source: string }) => entry.source === slotPin)?.state,
+      'kept',
+    );
+  });
+
+test('multiple pins of one task directory share the stage owner check', async (t) => {
+  const f = await recreatableRun(t);
+  const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', f.run.id);
+  await file(path.join(slotTask, 'TASK.md'));
+  const task = await realpath(slotTask);
+  updateRun(f.run.id, { activeTaskFile: path.join(task, 'TASK.md') });
+  await persistRunNow(f.run);
+  let ownerChecks = 0;
+  let measuring = false;
+  const ownerCount = 12;
+  for (let i = 0; i < ownerCount; i++) {
+    const owner = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: `RETENTION-SHARED-${i}`,
+    });
+    updateRun(owner.id, {
+      status: 'done',
+      completedAt: settled,
+      reviewWorkspace: { ...workspace(path.dirname(task), 'mini'), taskPath: task },
+    });
+    await persistRunNow(owner);
+    const tags: string[] = [];
+    tags.includes = () => {
+      if (measuring) ownerChecks++;
+      return false;
+    };
+    owner.tags = tags;
+  }
+  const pins: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    pins.push(await pin(f.roots, `${f.run.id}-${i}`, task, NOW - RUN_RETENTION_AGE_MS - 60_000));
+  }
+  let producerChecks = 0;
+  await runRetentionPass(f.options, {
+    ...privateDeps,
+    holdsSlot: async (run) => {
+      measuring = run.id === f.run.id && ++producerChecks === 2;
       return false;
     },
   });
-  assert.ok(tagged);
-  assert.ok(existsSync(slotPin), 'the late hold keeps the pin');
+  assert.ok(
+    pins.every((entry) => !existsSync(entry)),
+    'all unheld pins are removed',
+  );
+  assert.equal(ownerChecks, ownerCount, 'stage checks each owner once across all eight pins');
 });
