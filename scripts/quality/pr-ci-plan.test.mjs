@@ -522,7 +522,7 @@ test('Prepare plans on TypeScript alone only when the install is cached, and the
     'utf8',
   );
   const job = (name) => {
-    const match = new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z-]+:\\n|$)`).exec(workflow);
+    const match = new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [\\w-]+:\\n|$)`).exec(workflow);
     assert.ok(match, `job ${name}`);
     return match[1];
   };
