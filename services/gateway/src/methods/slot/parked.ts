@@ -139,7 +139,7 @@ export async function slotParked(value: unknown, emit: EventEmitter): Promise<Sl
       }))
     )
       throw new Error('Restore completed but slot registration changed; inspect the saved branch');
-    emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+    emit(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true, false, { newest: true }) });
     return { action: 'restore', ref, branch: restored.branch, headSha: restored.head };
   } catch (error) {
     if (claimed && marker) {

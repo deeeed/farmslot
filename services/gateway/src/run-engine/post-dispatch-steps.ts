@@ -1208,7 +1208,9 @@ export async function holdSlotForPublicationGate(
   broadcastFn: (event: string, payload: unknown) => void,
 ): Promise<void> {
   await markSlotBusy(slotId, 'review-gate', 'working');
-  broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+  broadcastFn(Events.FLEET_UPDATED, {
+    fleet: await loadFleetStatus(true, false, { newest: true }),
+  });
 }
 
 /**
@@ -1383,7 +1385,9 @@ export async function executeHumanGateStep(
   // No-change COMPLETE can already have released the checkout.
   if (current.slotId && !noChangeGate) {
     await markSlotBusy(current.slotId, 'review-gate', 'working');
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+    broadcastFn(Events.FLEET_UPDATED, {
+      fleet: await loadFleetStatus(true, false, { newest: true }),
+    });
   }
 
   // Gate re-entry (restart recovery, step replay) presents a fresh decision;
@@ -1783,7 +1787,9 @@ export async function executeHumanGateStep(
   // Publication keeps its worker alive through finalize.
   if (current.slotId && !noChangeGate) {
     await markSlotBusy(current.slotId, 'working', 'working');
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+    broadcastFn(Events.FLEET_UPDATED, {
+      fleet: await loadFleetStatus(true, false, { newest: true }),
+    });
   }
 
   const after = getRun(runId)!;

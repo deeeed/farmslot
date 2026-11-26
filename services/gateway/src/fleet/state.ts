@@ -737,10 +737,23 @@ export function markGhostSlots(fleet: FleetStatus, liveIds: ReadonlySet<string>)
 
 // ─── Public API ───
 
+/**
+ * `newest`: a fleet about to be broadcast. It joins the shared read loop and resolves with
+ * the newest read (see loadNewestFleetStatus); such reads are always fresh and non-strict.
+ * An option rather than its own export, so the many module mocks of this file keep working.
+ */
+export type FleetReadOptions = { newest?: boolean };
+
+/** The fleet from the status file and pools. */
 export async function loadFleetStatus(
   forceRefresh = false,
   strictRead = false,
+  options: FleetReadOptions = {},
 ): Promise<FleetStatus> {
+  if (options.newest) {
+    if (strictRead) throw new Error('A newest fleet read is a non-strict broadcast read');
+    return loadNewestFleetStatus();
+  }
   if (cachedFleet && !forceRefresh) return getCachedFleet()!;
   const version = ++fleetReadVersion;
   let next: FleetStatus;
@@ -841,6 +854,59 @@ export function stateChangeHandlerCountForTests(): number {
   return changeHandlers.length;
 }
 
+let newestFleetRead: Promise<FleetStatus> | undefined;
+let newestFleetDirty = false;
+/** The loop's capped last read is in flight: a call now cannot join it, it would miss its bytes. */
+let newestFleetLastRead = false;
+/** A fresh loop that starts when the current one ends, for calls during its last read. */
+let newestFleetAfter: Promise<FleetStatus> | undefined;
+/** Reads one shared loop makes at most; then it resolves with the last, so waiters are bounded. */
+export const NEWEST_FLEET_READS = 5;
+
+/**
+ * The fleet to broadcast: what the newest read sees. A read overtaken by a newer read, a
+ * commit or an overlay change returns its own, older snapshot and leaves the cache to the
+ * newer one (readers tag that snapshot with its older revisions), so broadcasting it can
+ * hand listeners an older fleet after a newer one. Callers share one read loop: a call
+ * while it runs asks for one more read, and the loop resolves for everyone once a read
+ * is neither overtaken nor asked to repeat, or after NEWEST_FLEET_READS reads with the
+ * last (newest) of them. A call during that capped last read waits for a fresh loop
+ * after it. Only this loop reads for broadcasts, so broadcasters cannot keep overtaking
+ * each other.
+ */
+function loadNewestFleetStatus(): Promise<FleetStatus> {
+  if (newestFleetRead && newestFleetLastRead) {
+    // Start the fresh loop however the capped one ends, so a rejection cannot stay latched.
+    const next = () => {
+      newestFleetAfter = undefined;
+      return loadNewestFleetStatus();
+    };
+    newestFleetAfter ??= newestFleetRead.then(next, next);
+    return newestFleetAfter;
+  }
+  if (newestFleetRead) {
+    newestFleetDirty = true;
+    return newestFleetRead;
+  }
+  newestFleetRead = (async () => {
+    try {
+      for (let reads = 1; ; reads++) {
+        newestFleetDirty = false;
+        newestFleetLastRead = reads >= NEWEST_FLEET_READS;
+        // loadFleetStatus(true) takes the next version synchronously, before its first await.
+        const version = fleetReadVersion + 1;
+        const fleet = await loadFleetStatus(true);
+        const current = version === fleetReadVersion && !newestFleetDirty;
+        if (current || reads >= NEWEST_FLEET_READS) return fleet;
+      }
+    } finally {
+      newestFleetRead = undefined;
+      newestFleetLastRead = false;
+    }
+  })();
+  return newestFleetRead;
+}
+
 export function startFileWatcher() {
   // A file watch can lose an unlink immediately after a change on macOS.
   // Keep watching its directory across atomic replacements and recreation.
@@ -867,7 +933,7 @@ export function startFileWatcher() {
       await reloadPRRules();
       return;
     }
-    const fleet = await loadFleetStatus(true);
+    const fleet = await loadNewestFleetStatus();
     for (const handler of changeHandlers) handler(fleet);
   });
   watcher.on('raw', (_event, filename: unknown, details: unknown) => {

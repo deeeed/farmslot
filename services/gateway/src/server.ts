@@ -469,7 +469,7 @@ export function createWebSocketServer(
           seq: ++eventSeq,
         });
         // Broadcast fleet update so UI reflects offline status immediately
-        loadFleetStatus(true)
+        loadFleetStatus(true, false, { newest: true })
           .then((fleet) => {
             broadcast({
               type: 'event',
@@ -664,7 +664,7 @@ export function initServerGlobals(): void {
   // Hook: broadcast fleet update whenever updateSlotStatus writes to disk.
   // This ensures the UI sees changes immediately instead of waiting for chokidar.
   setSlotUpdateHook(() => {
-    loadFleetStatus(true)
+    loadFleetStatus(true, false, { newest: true })
       .then(publishFleetChange)
       .catch((err) => {
         console.warn(`[server] slot update hook fleet refresh failed: ${(err as Error).message}`);

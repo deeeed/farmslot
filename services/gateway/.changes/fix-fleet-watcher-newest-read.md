@@ -1,0 +1,1 @@
+- The status file watcher, the slot-update hook and the fleet broadcasts on node disconnect, run finalize, dispatch gates and slot parking take the newest fleet read from one shared loop, so those listeners never get a fleet that a newer read had already replaced.

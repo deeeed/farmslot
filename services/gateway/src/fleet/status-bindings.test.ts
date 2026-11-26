@@ -48,7 +48,7 @@ mock.module('node:fs/promises', {
   },
 });
 const state = await import('../core/state.js');
-const { getCachedFleet, loadFleetStatus, onStateChange, startFileWatcher } =
+const { getCachedFleet, loadFleetStatus, NEWEST_FLEET_READS, onStateChange, startFileWatcher } =
   await import('./state.js');
 const overlays = await import('./state.js');
 const resources = await import('./resource-manager.js');
@@ -594,6 +594,10 @@ test(
     t.diagnostic('Both filesystem watchers are ready');
     let receiver: ((fleet: FleetStatus) => void) | undefined;
     onStateChange((fleet) => receiver?.(fleet));
+    // A timed-out run must not leave its asserting receiver on later tests' broadcasts.
+    t.after(() => {
+      receiver = undefined;
+    });
     const observe = async (write: () => Promise<void>, expected: string | null) => {
       const seen = new Promise<void>((resolve) => {
         receiver = (fleet) => {
@@ -629,6 +633,142 @@ test(
     resources.setCachedResourceStatus('proof', 'watch-resource', 'unknown', { broadcast: false });
   },
 );
+
+/** Hold the next status-file read after it captured its bytes, until released. */
+function holdStatusRead() {
+  let captured!: () => void;
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  holdNextRead = () => {
+    captured();
+    return gate;
+  };
+  let heldYet = false;
+  void ready.then(() => {
+    heldYet = true;
+  });
+  const held = Promise.race([
+    ready,
+    new Promise<never>((_resolve, reject) =>
+      setTimeout(() => reject(new Error('no status file read was held')), 3000).unref(),
+    ),
+  ]);
+  return { held, release, captured: () => heldYet };
+}
+
+test('broadcast reads share one loop, and a call during it gets the newer fleet', async () => {
+  await fs.writeFile(state.statusFile, JSON.stringify(rows('older')));
+  await loadFleetStatus(true, true);
+  const hold = holdStatusRead();
+  try {
+    const first = loadFleetStatus(true, false, { newest: true });
+    await hold.held;
+    await fs.writeFile(state.statusFile, JSON.stringify(rows('newer')));
+    const reads = statusReads;
+    // A broadcaster arriving while the loop reads joins it instead of overtaking it.
+    const second = loadFleetStatus(true, false, { newest: true });
+    hold.release();
+    const [one, two] = await Promise.all([first, second]);
+    assert.equal(one.slots[0].currentRunId, 'newer');
+    assert.equal(two.slots[0].currentRunId, 'newer');
+    assert.equal(statusReads, reads + 1, 'the joined call costs one more read, not a race');
+    assert.equal(getCachedFleet()?.slots[0].currentRunId, 'newer');
+  } finally {
+    holdNextRead = undefined;
+    hold.release();
+  }
+});
+
+test('a broadcast read loop overtaken on every read still resolves after a bounded number', async () => {
+  await fs.writeFile(state.statusFile, JSON.stringify(rows('busy')));
+  await loadFleetStatus(true, true);
+  const reads = statusReads;
+  let rounds = 0;
+  let late: Promise<FleetStatus> | undefined;
+  // An overlay change during every read overtakes it, as sustained commits would. During
+  // the capped last read, which already took its bytes, a final write lands and its
+  // broadcaster asks for the fleet.
+  const overtake = async () => {
+    rounds++;
+    overlays.setBranchOverlay('proof', `busy-${rounds}`);
+    if (rounds < NEWEST_FLEET_READS) holdNextRead = overtake;
+    else {
+      await fs.writeFile(state.statusFile, JSON.stringify(rows('final')));
+      late = loadFleetStatus(true, false, { newest: true });
+    }
+  };
+  holdNextRead = overtake;
+  try {
+    const fleet = await loadFleetStatus(true, false, { newest: true });
+    assert.equal(fleet.slots[0].currentRunId, 'busy');
+    assert.equal(statusReads - reads, NEWEST_FLEET_READS, 'the loop stops at its read cap');
+    // The late broadcaster is not handed the capped read's older bytes.
+    assert.equal((await late!).slots[0].currentRunId, 'final');
+    assert.equal(statusReads - reads, NEWEST_FLEET_READS + 1, 'one fresh read after the cap');
+    await assert.rejects(
+      loadFleetStatus(true, true, { newest: true }),
+      /non-strict broadcast read/,
+    );
+  } finally {
+    holdNextRead = undefined;
+    overlays.clearBranchOverlay('proof');
+  }
+});
+
+test('a watcher read overtaken by a newer write never hands handlers its older fleet', async (t) => {
+  await fs.writeFile(state.statusFile, JSON.stringify(rows('older')));
+  await loadFleetStatus(true, true);
+  await withWatcherClock(t, async () => {
+    const watcher = startFileWatcher();
+    t.after(() => watcher.close());
+    await watcher.ready;
+    return watcher;
+  });
+  const owners: (string | null)[] = [];
+  let listening = true;
+  t.after(() => {
+    listening = false;
+  });
+  onStateChange((fleet) => {
+    if (listening) owners.push(fleet.slots[0]?.currentRunId ?? null);
+  });
+  const hold = holdStatusRead();
+  try {
+    // The watcher's read of the first write captures its bytes, then waits. Meanwhile a
+    // second write lands and another broadcaster (as the slot-update hook does) reads it.
+    // macOS can deliver a watch event late or drop it: write again until the watcher reads.
+    for (let attempt = 0; attempt < 30 && !hold.captured(); attempt++) {
+      if (attempt % 5 === 0) await fs.writeFile(state.statusFile, JSON.stringify(rows('first')));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    await hold.held;
+    await fs.writeFile(state.statusFile, JSON.stringify(rows('second')));
+    const broadcaster = loadFleetStatus(true, false, { newest: true });
+    hold.release();
+    assert.equal((await broadcaster).slots[0].currentRunId, 'second');
+    for (let attempt = 0; attempt < 300 && owners.length === 0; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    // The watcher's own read was overtaken; what it broadcasts must be the newer fleet.
+    assert.equal(
+      owners[0],
+      'second',
+      `the watcher broadcasts the newer fleet: ${JSON.stringify(owners)}`,
+    );
+    assert.ok(
+      !owners.includes('first'),
+      `the overtaken read is never broadcast: ${JSON.stringify(owners)}`,
+    );
+    assert.equal(getCachedFleet()?.slots[0].currentRunId, 'second');
+  } finally {
+    holdNextRead = undefined;
+    hold.release();
+  }
+});
 
 test('fleet reads after a gateway commit read neither the status file nor unchanged pools; an outside write wins', async (t) => {
   const poolFile = path.join(process.env.FARMSLOT_POOL_DIR!, 'commit-proof.json');
