@@ -158,7 +158,10 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
 
     // A real build change while the node is down; the node restarts on it.
     await stack.restartNode(async () => {
-      writeFileSync(bump, '// Runtime build change for the node host refresh canary.\nexport {};\n');
+      writeFileSync(
+        bump,
+        '// Runtime build change for the node host refresh canary.\nexport {};\n',
+      );
     });
     await stack.waitForNode(true);
     await poll(
@@ -216,7 +219,16 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
     );
     await writeFile(
       path.join(out, 'receipt.json'),
-      JSON.stringify({ hostBefore: before, hostAfterNodeRestart: restarted, hostAfter: after, launches: [whileBusy, whileIdle, next] }, null, 2),
+      JSON.stringify(
+        {
+          hostBefore: before,
+          hostAfterNodeRestart: restarted,
+          hostAfter: after,
+          launches: [whileBusy, whileIdle, next],
+        },
+        null,
+        2,
+      ),
     );
   } catch (error) {
     check.status = 'fail';
