@@ -385,6 +385,33 @@ describe('leaf CLI launch', () => {
     assert.deepEqual(stop.stopped.map((entry) => entry.name).sort(), ['browser', 'wallet-host']);
   });
 
+  for (const [mode, problem] of [
+    ['reuse-closed', 'the app tab was closed'],
+    ['reuse-error', 'the app tab shows the framework error document'],
+  ]) {
+    it(`restarts the browser with its saved profile when ${problem}`, async () => {
+      const s = await slot();
+      const args = await launchArgs(s);
+      const cdpPort = args['cdp-port'];
+      try {
+        const first = await launchWebDappBrowser(args, launchEnv(s, { mode }));
+        trackPids(s.runtime);
+        const recovered = await launchWebDappBrowser(args, launchEnv(s));
+        trackPids(s.runtime);
+        assert.equal(recovered.reused, false);
+        assert.notEqual(recovered.browserPid, first.browserPid);
+        assert.equal(recovered.profile, first.profile);
+        assert.equal(recovered.network, 'testnet');
+        assert.equal(
+          recovered.networkEnforcement.fingerprint,
+          first.networkEnforcement.fingerprint,
+        );
+      } finally {
+        await stopWebDappBrowser(s.root, { cdpPort });
+      }
+    });
+  }
+
   it('forwards the mainnet override and keeps terminal flags to the terminal adapter', () => {
     assert.deepEqual(webDappOnlyLaunchFlags({ signer: 'injected', headless: true, build: true }), [
       '--signer',

@@ -47,6 +47,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { disableMacCodeSignClone } from '../chrome-args.cjs';
+import { isAppUrl } from '../origin.cjs';
 
 import { blindBrowserOptions } from './lib/blind-browser.mjs';
 import { hostResolverRules } from './lib/blocked-hosts.mjs';
@@ -284,13 +285,42 @@ function focusLog(runtime, message) {
 }
 
 // Browser-level CDP helpers for a background launch.
-async function withBrowserClient(cdpPort, callback) {
-  const client = await CdpClient.connect(await browserWebSocketUrl(cdpPort, 15000));
+async function withBrowserClient(cdpPort, callback, timeoutMs = 15000) {
+  const client = await CdpClient.connect(await browserWebSocketUrl(cdpPort, timeoutMs));
   try {
     return await callback(client);
   } finally {
     client.close?.();
   }
+}
+
+async function hasHealthyAppPage(cdpPort, appOrigin) {
+  return withBrowserClient(
+    cdpPort,
+    async (client) => {
+      const { targetInfos } = await client.send('Target.getTargets');
+      const page = targetInfos.find(
+        (target) => target.type === 'page' && isAppUrl(target.url, appOrigin),
+      );
+      if (!page) return false;
+      const { sessionId } = await client.send('Target.attachToTarget', {
+        targetId: page.targetId,
+        flatten: true,
+      });
+      const { result } = await client.send(
+        'Runtime.evaluate',
+        {
+          // Next can keep the requested URL when it replaces the app with its error document.
+          expression:
+            "!document.documentURI.startsWith('chrome-error:') && document.documentElement?.id !== '__next_error__'",
+          returnByValue: true,
+        },
+        sessionId,
+      );
+      return result?.value === true;
+    },
+    5000,
+  );
 }
 
 export function backgroundWindowParams(url, placement) {
@@ -537,14 +567,15 @@ export async function launchWebDappBrowser(
     previous.networkEnforcement?.fingerprint === enforcementFingerprint &&
     ownsProcess('browser', previous.browserPid, runtime) &&
     ownsProcess('wallet-host', previous.hostPid, runtime);
-  if (reusable) {
-    await browserWebSocketUrl(cdpPort, 5000);
+  if (reusable && (await hasHealthyAppPage(cdpPort, appOrigin))) {
     log(`reusing browser pid ${previous.browserPid} (${signer}, ${account.name})`);
     const state = { ...previous, slowMoMs };
     if (previous.slowMoMs !== slowMoMs)
       writePrivateFile(stateFile, `${JSON.stringify(state, null, 2)}\n`);
     return { ...state, reused: true };
   }
+  if (reusable)
+    log('restarting the slot browser because its app tab is missing or on an error page');
   await stopWebDappBrowser(target, { cdpPort, log });
 
   const browser = await resolveBrowser(env);

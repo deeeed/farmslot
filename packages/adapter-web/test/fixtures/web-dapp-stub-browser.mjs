@@ -49,6 +49,7 @@ if (args.includes('--version')) {
 const port = Number(args.find((arg) => arg.startsWith('--remote-debugging-port='))?.split('=')[1]);
 const mode = process.env.STUB_MODE ?? 'ok';
 const appOrigin = process.env.STUB_APP_ORIGIN ?? 'http://localhost:1';
+let committedAppUrl;
 
 // Detached like a real browser, so nothing reaps it when its test dies before
 // teardown: it exits once that test's worker (STUB_WORKER_PID) is gone, and on
@@ -226,8 +227,16 @@ function serveCdp(socket) {
     if (method === 'Target.getTargets') {
       result = {
         targetInfos:
-          mode === 'restored' ? [{ targetId: 'OLD', type: 'page', url: `${appOrigin}/` }] : [],
+          committedAppUrl && mode !== 'reuse-closed'
+            ? [{ targetId: 'APP', type: 'page', url: committedAppUrl }]
+            : mode === 'restored'
+              ? [{ targetId: 'OLD', type: 'page', url: `${appOrigin}/` }]
+              : [],
       };
+    } else if (method === 'Target.attachToTarget' && params.targetId === 'APP') {
+      result = { sessionId: 'SREUSE' };
+    } else if (method === 'Runtime.evaluate' && sessionId === 'SREUSE') {
+      result = { result: { type: 'boolean', value: mode !== 'reuse-error' } };
     } else if (method === 'Target.createTarget') {
       result = { targetId: createdTargets++ === 0 ? 'APP' : 'RESOLVER' };
     } else if (method === 'Page.getFrameTree') {
@@ -409,6 +418,7 @@ function serveCdp(socket) {
         'S1',
       );
     } else if (method === 'Page.navigate' && sessionId === 'S1') {
+      committedAppUrl = params.url;
       committed.set('APP', `${appOrigin}/`);
       setTimeout(() => {
         emit('Runtime.executionContextsCleared', {}, 'S1');
