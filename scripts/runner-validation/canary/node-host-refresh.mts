@@ -31,7 +31,8 @@ import type { CheckResult } from './outcome.mjs';
  * nightly.sh also removes it after its checkout, in case a killed run left it.
  */
 export const NODE_HOST_REFRESH_BUMP = 'packages/agent-runtime/src/native/.canary-runtime-bump.ts';
-const BUMP_MARKER = '// Runtime build change for the node host refresh canary (node-host-refresh.mts).';
+const BUMP_MARKER =
+  '// Runtime build change for the node host refresh canary (node-host-refresh.mts).';
 
 /** Removes the build change, and only the file this case writes. */
 function removeBump(file: string): void {
@@ -118,7 +119,14 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
       log,
     });
     // The node's host lives at <native state>/nodes/<machine>.
-    const hostFile = path.join(stack.fixture, 'node-home', 'native-sessions', 'nodes', machine, 'host.json');
+    const hostFile = path.join(
+      stack.fixture,
+      'node-home',
+      'native-sessions',
+      'nodes',
+      machine,
+      'host.json',
+    );
     const cwd = stack.slotRepo(slotId);
     const target = { executionNodeId: machine };
     const create = async () =>
