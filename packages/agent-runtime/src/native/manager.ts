@@ -1658,7 +1658,7 @@ export class NativeSessionManager {
         return { sessionId, outcome: 'kept', reason: 'owned by another principal' };
       const reason = !['closed', 'failed'].includes(record.info.state)
         ? `state ${record.info.state}`
-        : record.adapter || record.startup
+        : !record.info.processStopped && (record.adapter || record.startup)
           ? 'live process'
           : record.info.processPid && !record.info.processStopped
             ? 'process stop unconfirmed'
