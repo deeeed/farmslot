@@ -876,10 +876,12 @@ export const NEWEST_FLEET_READS = 5;
  */
 function loadNewestFleetStatus(): Promise<FleetStatus> {
   if (newestFleetRead && newestFleetLastRead) {
-    newestFleetAfter ??= newestFleetRead.then(() => {
+    // Start the fresh loop however the capped one ends, so a rejection cannot stay latched.
+    const next = () => {
       newestFleetAfter = undefined;
       return loadNewestFleetStatus();
-    });
+    };
+    newestFleetAfter ??= newestFleetRead.then(next, next);
     return newestFleetAfter;
   }
   if (newestFleetRead) {
