@@ -681,8 +681,43 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
       assert.ok(entry.completedAt);
     }
   }
-  const after = await runRetentionPass({ apply: true, roots, now: passNow }, privateDeps);
+  // Node journals follow every released run, including runs whose storage is already archived.
+  // The runs are read again for them, so a run held since the pass began keeps its sessions.
+  const [stays, heldAgain] = runIds;
+  let slotChecks = 0;
+  let created: string | undefined;
+  let journals: { released: string[]; held: string[] } | undefined;
+  const after = await runRetentionPass(
+    {
+      apply: true,
+      roots,
+      now: passNow,
+      nodeJournals: async (released, held) => {
+        journals = { released: released.map((run) => run.id), held: held.map((run) => run.id) };
+      },
+    },
+    {
+      ...privateDeps,
+      // The planning and storage checks see heldAgain free; the journal check sees it hold its
+      // slot. A run created during the pass is read too, held as not settled.
+      holdsSlot: async (run) => {
+        if (run.id === stays && !created)
+          created = createRun({
+            flowType: 'fix-bug',
+            project: 'farmslot-farm',
+            mode: 'autonomous',
+            ticketOrPr: 'RETENTION-DURING-PASS',
+          }).id;
+        return run.id === heldAgain && ++slotChecks > 2;
+      },
+    },
+  );
   assert.deepEqual(after.runs, [], 'a repeat pass never destroys or duplicates archived storage');
+  assert.ok(journals?.released.includes(stays!));
+  assert.ok(!journals?.held.includes(stays!));
+  assert.ok(journals?.held.includes(heldAgain!));
+  assert.ok(!journals?.released.includes(heldAgain!));
+  assert.ok(created && journals?.held.includes(created));
   assert.equal(after.stores['task-dirs'].entries, 0);
   for (const record of originals) assert.ok(existsSync(record));
 });

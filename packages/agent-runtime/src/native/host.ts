@@ -184,6 +184,9 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
             value = await manager.interrupt(p.owner, p.id);
             break;
+          case 'archiveSessions':
+            value = manager.archiveSessions(p.owner, p.ids);
+            break;
           case 'list':
             value = manager.list(p.owner);
             break;

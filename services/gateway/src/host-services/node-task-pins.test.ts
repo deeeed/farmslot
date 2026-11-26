@@ -289,7 +289,7 @@ test('terminal replay waits until the node pin staging fence is released', async
     },
   );
   try {
-    await new Promise<void>(setImmediate);
+    await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(settled, false);
   } finally {
     release();
