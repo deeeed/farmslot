@@ -14,6 +14,8 @@ export interface TaskPinSweepInput {
   now: number;
   ageMs: number;
   protection: TaskPinProtection;
+  /** Task directories of runs retention released; their pins go even if the directory exists. */
+  releasedTaskDirs?: string[];
 }
 export interface TaskPinStage {
   inspected: number;
@@ -36,6 +38,7 @@ export function retiredTaskPinsOf(
   context: { now: number; ageMs: number },
   pending: (dir: string) => boolean,
   present?: (pin: string) => Promise<boolean>,
+  released?: ReadonlySet<string>,
 ): Promise<string[]>;
 export function stageTaskPins(
   input: TaskPinSweepInput,

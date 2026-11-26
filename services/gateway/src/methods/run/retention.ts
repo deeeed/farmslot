@@ -18,7 +18,10 @@ import {
   nodeJournalRetentionDeps,
   nodeJournalRetentionPass,
 } from '../../host-services/node-native-journals.js';
-import { nodeTaskPinRetentionPass } from '../../host-services/node-task-pins.js';
+import {
+  NODE_PIN_RETENTION_DEPS,
+  nodeTaskPinRetentionPass,
+} from '../../host-services/node-task-pins.js';
 import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
 import { cleanupReviewWorkspaceCaches } from '../../review-workspaces/cache-cleanup.js';
@@ -262,6 +265,15 @@ export async function runRetentionPass(
     roots?: RunRetentionRoots;
     /** Archive node-hosted journals of the runs this pass released (ADR-039 Amendment 11). */
     nodeJournals?: (released: readonly Run[], held: readonly Run[]) => Promise<void>;
+    /**
+     * Release node task pins with their runs (ADR-039 Amendment 12). `split` re-reads the runs
+     * under this pass's context, so the pin pass decides inside its own admission fence.
+     */
+    nodeTaskPins?: (
+      now: number,
+      ageMs: number,
+      split: () => Promise<RetentionSplit>,
+    ) => Promise<void>;
   },
   deps: RunRetentionDeps = RUN_RETENTION_DEPS,
 ): Promise<RunRetentionPlan> {
@@ -459,24 +471,49 @@ export async function runRetentionPass(
   }
   if (options.nodeJournals) {
     try {
-      // Read the runs again: one held since the pass began (reopened, or dispatched to resume a
-      // released session) keeps its sessions, and a run created since then is held.
-      const released: Run[] = [];
-      const held: Run[] = [];
-      const fresh = await getAllRunsWithArchived();
-      const live = getAllRuns();
-      // currentRetentionHold for every run at once: the live runs' reads are mapped one time.
-      const sources = activeSourceHolds(live, [...fresh, ...live]);
-      for (const run of fresh) {
-        const hold = runRetentionHold(run, context) ?? sources.get(run.id);
-        (hold || (await deps.holdsSlot(run)) ? held : released).push(run);
-      }
+      const { released, held } = await currentRetentionSplit(context, deps);
       await options.nodeJournals(released, held);
     } catch (error) {
       console.error(`[native-journal retention] pass failed: ${(error as Error).message}`);
     }
   }
+  if (options.nodeTaskPins) {
+    try {
+      await options.nodeTaskPins(Date.now(), context.ageMs, () =>
+        currentRetentionSplit(context, deps),
+      );
+    } catch (error) {
+      console.error(`[task-pin retention] pass failed: ${(error as Error).message}`);
+    }
+  }
   return { runs: archived, held: plan.held, paths, stores };
+}
+
+/** Every run split by the retention rule as it stands now (ADR-039 Amendments 11 and 12). */
+export interface RetentionSplit {
+  released: Run[];
+  held: Run[];
+}
+
+/**
+ * Read the runs again: one held since the pass began (reopened, or dispatched to resume a
+ * released session or task) keeps its storage, and a run created since then is held.
+ */
+export async function currentRetentionSplit(
+  context: RunRetentionContext,
+  deps: Pick<RunRetentionDeps, 'holdsSlot'> = RUN_RETENTION_DEPS,
+): Promise<RetentionSplit> {
+  const released: Run[] = [];
+  const held: Run[] = [];
+  const fresh = await getAllRunsWithArchived();
+  const live = getAllRuns();
+  // currentRetentionHold for every run at once: the live runs' reads are mapped one time.
+  const sources = activeSourceHolds(live, [...fresh, ...live]);
+  for (const run of fresh) {
+    const hold = runRetentionHold(run, context) ?? sources.get(run.id);
+    (hold || (await deps.holdsSlot(run)) ? held : released).push(run);
+  }
+  return { released, held };
 }
 
 /** The review execution caches, as `run.cleanup` and the hourly pass both clean them. */
@@ -585,8 +622,10 @@ export function startRunRetention(emit: Emit): void {
             held,
             nodeJournalRetentionDeps(journalRetentionFile(runArchiveRoot())),
           ),
+        nodeTaskPins: (now, ageMs, split) =>
+          nodeTaskPinRetentionPass(now, ageMs, { ...NODE_PIN_RETENTION_DEPS, split }),
       });
-      await nodeTaskPinRetentionPass(Date.now(), (await retentionContext([])).ageMs);
+
       await parkedWorkRetentionPass();
       if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);
     }).finally(() => {

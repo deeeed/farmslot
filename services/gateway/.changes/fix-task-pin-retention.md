@@ -1,0 +1,2 @@
+- Task pins follow their run's retention: the hourly pass releases the pins of runs `runRetentionHold()` releases, on the gateway pin root and each node's, even while the task directory still exists; held runs and parked runs keep theirs, and pins no run references keep the old rule (ADR-039 Amendment 12).
+- The worker launch preflight refuses a task whose pin was released with `TASK_PIN_RELEASED`, naming the run and the pin, without retry (ADR-039 Amendment 12).

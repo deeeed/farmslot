@@ -275,6 +275,7 @@ export function retiredTaskPinsOf(
   context: Pick<RunRetentionContext, 'now' | 'ageMs'>,
   pending: (dir: string) => boolean,
   present?: (pin: string) => Promise<boolean>,
+  releasedTaskDirs?: ReadonlySet<string>,
 ): Promise<string[]> {
   return retiredPins(
     entries,
@@ -282,21 +283,29 @@ export function retiredTaskPinsOf(
     context,
     (dir) => pending(dir) || isTaskDirectoryAdmitting(dir),
     present,
+    releasedTaskDirs,
   );
 }
 
 /**
- * A task pin serves one task directory for its lifetime. Once that directory is gone
- * the pin can no longer be used, so retention removes it after the retention age.
+ * A task pin serves one task directory for its lifetime and follows its run's retention
+ * (ADR-039 Amendment 12): it goes once its run is released, even while the task directory still
+ * exists, and a pin no run references goes once that directory is gone.
  */
 export async function retiredTaskPins(
   pinRoot: string,
   removedTaskDirs: ReadonlySet<string>,
   context: Pick<RunRetentionContext, 'now' | 'ageMs'>,
   pendingTaskDirs: ReadonlySet<string> = new Set(),
+  releasedTaskDirs: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
-  return retiredTaskPinsOf(await readTaskPins(pinRoot), removedTaskDirs, context, (dir) =>
-    pendingTaskDirs.has(dir),
+  return retiredTaskPinsOf(
+    await readTaskPins(pinRoot),
+    removedTaskDirs,
+    context,
+    (dir) => pendingTaskDirs.has(dir),
+    undefined,
+    releasedTaskDirs,
   );
 }
 
@@ -374,13 +383,20 @@ export async function planRunRetention(
     } else removable.push(run);
   }
   const owned = runOwnedPaths(removable, kept, roots);
+  const keptTaskDirs = new Set(kept.flatMap(runTaskDirectories).map((dir) => path.resolve(dir)));
   const candidates: RunRetentionPaths = {
     ...owned,
     'task-pins': await retiredTaskPins(
       roots.taskPins,
       new Set(owned['task-dirs']),
       context,
-      new Set(kept.flatMap(runTaskDirectories)),
+      keptTaskDirs,
+      new Set(
+        removable
+          .flatMap(runTaskDirectories)
+          .map((dir) => path.resolve(dir))
+          .filter((dir) => !keptTaskDirs.has(dir)),
+      ),
     ),
   };
   return { plan: await measureRetention(removable, held, candidates), removable };

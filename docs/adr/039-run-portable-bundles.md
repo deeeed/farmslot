@@ -888,3 +888,47 @@ At 50 per node an hour, macpro's backlog of about 250 released journals drains i
 5 hours after deploy, and the rest wait for their runs to settle. Pruning alone would
 leave about 230 journals (0.7 GB) and a 6 s start on macpro, so the summaries are what
 bring host start under 5 s.
+
+## Amendment 12: 2026-11-26 task pins follow their runs
+
+**Status:** Accepted, 2026-11-26.
+
+### Decision
+
+A task pin now follows its run's retention, under the same rule as Amendment 11's journals.
+Before this, a pin went only once its task directory was gone and, on an execution node, only
+once its run was archived (Amendment 7). Retention never archives a terminal run, and slot
+checkouts keep task directories, so pins of settled runs stayed forever: on 2026-11-26 mini
+held 79 pins (29 GB, about 0.4 GB each, 17 written that day) and macwork 15 (4.6 GB).
+
+Each hourly pass, after the run pass:
+
+- the runs are split by `runRetentionHold()` exactly as for journals: one helper reads them
+  again and applies the live follow-up reads and slot holds, inside the pin pass's admission
+  fence. A held run keeps the pins of every task directory it reads (its task files, its
+  review workspace's task and a park recovery's), so live runs and the latest review of an
+  open PR (held by Amendment 8) can always run again. A parked run keeps its pins whatever its
+  hold;
+- a released run's task directories, less every directory a held run reads, are released:
+  their pins go even while the directory still exists, on the gateway's own pin root and on
+  each node's. The gateway ships the release list with the existing node pin program, so no
+  protocol method or capability changes;
+- a pin no run references keeps the earlier rule and goes only once its task directory is gone,
+  so manual tasks keep their pins; and
+- each node pass still inspects at most 32 pins and removes at most 8, staged and purged under
+  the existing fence.
+
+A task whose pin was released never runs on other tooling. Verifying its execution receipt
+refuses with `TASK_PIN_RELEASED` (exit 5), naming the run when known and the pin path, and the
+worker launch preflight refuses the same way without retry, also on nodes whose runtime
+predates this amendment. Re-pinning from the receipt is not attempted: it would need every
+recorded source to still hash to its receipt value, and installs and library checkouts move
+between versions, so a fresh task pins the current tooling instead.
+
+### Rationale and consequences
+
+Pins are recreatable copies (Amendment 7), so a released run losing its pin only costs a fresh
+task if that run is ever replayed after the retention window. At 8 removals per node an hour,
+mini's 11 pins older than 7 days (about 4 GB) go within 2 hours of deploy. Afterwards each pin
+lasts about the retention window after its run settles, so a node holds about a week of pins:
+at mini's 2026-11-26 rate of about 17 pins a day, roughly 50 GB in a busy week.

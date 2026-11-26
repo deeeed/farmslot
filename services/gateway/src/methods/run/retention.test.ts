@@ -527,7 +527,10 @@ test('a retention plan lists only storage that removable runs alone own on this 
   const old = RUN_RETENTION_AGE_MS + 60_000;
   const retired = await pin(roots, 'retired', path.join(roots.taskRoots[0], 'gone'), NOW - old);
   await pin(roots, 'fresh', path.join(roots.taskRoots[0], 'gone'), NOW - 60_000);
-  await pin(roots, 'in-use', slotCopy, NOW - old);
+  // ADR-039 Amendment 12: the removable run's slot copy still exists, but its pin follows the
+  // run. A pin on a directory a live run also reads stays.
+  const released = await pin(roots, 'in-use', slotCopy, NOW - old);
+  await pin(roots, 'shared-held', shared, NOW - old);
 
   const removable: Run = {
     ...makeRun({
@@ -581,7 +584,7 @@ test('a retention plan lists only storage that removable runs alone own on this 
     path.join(bundleRoot, 'availability', 'own.json'),
   ]);
   assert.equal(plan.stores['run-bundles'].entries, 1, 'one bundle, not its three paths');
-  assert.deepEqual(plan.paths['task-pins'], [retired]);
+  assert.deepEqual(plan.paths['task-pins'].sort(), [released, retired].sort());
   assert.equal(plan.stores['task-dirs'].entries, 1);
   assert.ok(plan.stores['task-dirs'].bytes >= 4096);
 });
@@ -687,6 +690,7 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
   let slotChecks = 0;
   let created: string | undefined;
   let journals: { released: string[]; held: string[] } | undefined;
+  let pins: { ageMs: number; released: string[]; held: string[] } | undefined;
   const after = await runRetentionPass(
     {
       apply: true,
@@ -694,6 +698,15 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
       now: passNow,
       nodeJournals: async (released, held) => {
         journals = { released: released.map((run) => run.id), held: held.map((run) => run.id) };
+      },
+      // Task pins share the same split (ADR-039 Amendment 12), read again inside their fence.
+      nodeTaskPins: async (_now, ageMs, split) => {
+        const { released, held } = await split();
+        pins = {
+          ageMs,
+          released: released.map((run) => run.id),
+          held: held.map((run) => run.id),
+        };
       },
     },
     {
@@ -718,6 +731,10 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
   assert.ok(journals?.held.includes(heldAgain!));
   assert.ok(!journals?.released.includes(heldAgain!));
   assert.ok(created && journals?.held.includes(created));
+  assert.ok(pins?.released.includes(stays!));
+  assert.ok(pins?.held.includes(heldAgain!) && !pins.released.includes(heldAgain!));
+  assert.ok(pins?.held.includes(created!));
+  assert.equal(pins?.ageMs, RUN_RETENTION_AGE_MS);
   assert.equal(after.stores['task-dirs'].entries, 0);
   for (const record of originals) assert.ok(existsSync(record));
 });

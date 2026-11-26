@@ -7,11 +7,9 @@ import { execLocal, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { loadPoolConfigs } from '../fleet/state.js';
-import {
-  reclaimReviewWorkspaceStorage,
-  runNeedsExecutionStorage,
-} from '../review-workspaces/storage-use.js';
-import { getAllRunsWithArchived, hasTaskAdmissions, runTaskDirectories } from '../runs/store.js';
+import type { RetentionSplit } from '../methods/run/retention.js';
+import { reclaimReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
+import { hasTaskAdmissions, runTaskDirectories } from '../runs/store.js';
 import type { TaskPinProtection, TaskPinStage, TaskPinSweepInput } from '../runs/task-pins.cjs';
 
 import { backgroundHost } from './background/client.js';
@@ -30,26 +28,44 @@ export type NodePinRequest =
 
 export interface NodePinRetentionDeps {
   targets(): Promise<NodePinTarget[]>;
-  runs(): Promise<Run[]>;
+  /** Every run split by the retention rule, read inside the admission fence. */
+  split(): Promise<RetentionSplit>;
   execute(target: NodePinTarget, payload: NodePinRequest): Promise<unknown>;
   fence(operation: () => Promise<string[]>): Promise<string[]>;
 }
 
-/** Missing task directories do not remove the ownership held by replay or publication. */
-export function taskPinProtection(runs: Run[]): TaskPinProtection {
+/** Task directories a run reads: its own, its review workspace's and a park recovery's. */
+function pinTaskDirs(run: Run): string[] {
+  const dirs = runTaskDirectories(run).map((dir) => path.resolve(dir));
+  if (run.reviewWorkspace?.taskPath) dirs.push(path.resolve(run.reviewWorkspace.taskPath));
+  const recovery = run.park?.recoveryHandle;
+  if (recovery?.version === 1 && recovery.taskDir) dirs.push(path.resolve(recovery.taskDir));
+  return dirs;
+}
+
+/**
+ * A pin follows its run's retention (ADR-039 Amendment 12). Held runs keep their pins, so live
+ * runs and open-PR reviews always can replay; a parked run keeps its recovery's pin whatever
+ * its hold. Missing task directories do not remove the ownership held by replay or publication.
+ */
+export function taskPinProtection(split: RetentionSplit): {
+  protection: TaskPinProtection;
+  releasedTaskDirs: string[];
+} {
   const taskDirs = new Set<string>();
-  for (const run of runs) {
-    // Terminal runs can still reactivate from their original pin until explicitly archived.
-    if (run.archivedAt && !runNeedsExecutionStorage(run) && !run.park) continue;
-    for (const dir of runTaskDirectories(run)) taskDirs.add(path.resolve(dir));
-    if (run.reviewWorkspace?.taskPath) taskDirs.add(path.resolve(run.reviewWorkspace.taskPath));
-    const recovery = run.park?.recoveryHandle;
-    if (recovery?.version === 1 && recovery.taskDir) taskDirs.add(path.resolve(recovery.taskDir));
-  }
+  for (const run of split.held) for (const dir of pinTaskDirs(run)) taskDirs.add(dir);
+  for (const run of split.released)
+    if (run.park) for (const dir of pinTaskDirs(run)) taskDirs.add(dir);
+  const released = new Set<string>();
+  for (const run of split.released)
+    for (const dir of pinTaskDirs(run)) if (!taskDirs.has(dir)) released.add(dir);
   return {
-    taskDirs: [...taskDirs],
-    taskNames: [...new Set([...taskDirs].map((dir) => path.basename(dir)))],
-    pinIds: [],
+    protection: {
+      taskDirs: [...taskDirs],
+      taskNames: [...new Set([...taskDirs].map((dir) => path.basename(dir)))],
+      pinIds: [],
+    },
+    releasedTaskDirs: [...released],
   };
 }
 
@@ -78,7 +94,8 @@ async function execute(target: NodePinTarget, payload: NodePinRequest): Promise<
   return JSON.parse(result.stdout);
 }
 
-export const NODE_PIN_RETENTION_DEPS: NodePinRetentionDeps = {
+/** `split` comes from the retention pass, which owns the run context (methods/run/retention). */
+export const NODE_PIN_RETENTION_DEPS: Omit<NodePinRetentionDeps, 'split'> = {
   async targets() {
     const targets = new Map<string, NodePinTarget>();
     for (const pool of await loadPoolConfigs()) {
@@ -94,7 +111,6 @@ export const NODE_PIN_RETENTION_DEPS: NodePinRetentionDeps = {
     }
     return [...targets.values()];
   },
-  runs: getAllRunsWithArchived,
   execute,
   fence: async (operation) => (hasTaskAdmissions() ? [] : reclaimReviewWorkspaceStorage(operation)),
 };
@@ -118,15 +134,22 @@ function decodeStage(value: unknown): TaskPinStage {
 export async function nodeTaskPinRetentionPass(
   now: number,
   ageMs: number,
-  deps: NodePinRetentionDeps = NODE_PIN_RETENTION_DEPS,
+  deps: NodePinRetentionDeps,
 ): Promise<void> {
   for (const target of await deps.targets()) {
     try {
       let staged: TaskPinStage | undefined;
       await deps.fence(async () => {
-        const protection = taskPinProtection(await deps.runs());
+        const { protection, releasedTaskDirs } = taskPinProtection(await deps.split());
         staged = decodeStage(
-          await deps.execute(target, { op: 'stage', root: target.root, now, ageMs, protection }),
+          await deps.execute(target, {
+            op: 'stage',
+            root: target.root,
+            now,
+            ageMs,
+            protection,
+            releasedTaskDirs,
+          }),
         );
         return [];
       });

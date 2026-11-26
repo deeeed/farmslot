@@ -172,7 +172,7 @@ test('gateway sweep reaches node roots, stages under fence and purges outside it
   const operations: string[] = [];
   await nodeTaskPinRetentionPass(now, ageMs, {
     targets: async () => [{ machine: 'fixture-node', host: 'fixture', sshUser: '', root: f.root }],
-    runs: async () => [],
+    split: async () => ({ released: [], held: [] }),
     fence: async (operation) => {
       fenced = true;
       try {
@@ -205,7 +205,7 @@ test('an in-flight task admission excludes node staging, including taskless admi
           targets: async () => [
             { machine: 'fixture-node', host: 'fixture', sshUser: '', root: '/unused' },
           ],
-          runs: async () => [],
+          split: async () => ({ released: [], held: [] }),
           execute: async () => {
             commands++;
             return null;
@@ -225,7 +225,7 @@ test('the shipped node program removes an orphan through the real command bounda
   await nodeTaskPinRetentionPass(now, ageMs, {
     ...NODE_PIN_RETENTION_DEPS,
     targets: async () => [{ machine: 'local', host: 'localhost', sshUser: '', root: f.root }],
-    runs: async () => [],
+    split: async () => ({ released: [], held: [] }),
   });
   assert.deepEqual(await readTaskPins(f.root), []);
 });
@@ -255,7 +255,7 @@ test('authoritative run task identities protect active and publish-gated pins ac
     root: f.root,
     now,
     ageMs,
-    protection: taskPinProtection([active, gated]),
+    protection: taskPinProtection({ held: [active, gated], released: [] }).protection,
   });
   assert.deepEqual(result.removed, ['orphan']);
   assert.equal((await readTaskPins(f.root)).length, 2);
@@ -300,24 +300,112 @@ test('terminal replay waits until the node pin staging fence is released', async
 });
 
 for (const status of ['cancelled', 'done'] as const)
-  test(`${status} replayable owner retains a missing-task pin until archival`, async (t) => {
+  test(`${status} held owner keeps its pin; once released the pin goes with its task dir present`, async (t) => {
     const f = await fixture(t);
     const task = await f.pin('terminal-pin');
+    await mkdir(task, { recursive: true });
     const owner = makeRun({ status, taskFile: path.join(task, 'TASK.md') });
     const retained = await sweepTaskPins({
       root: f.root,
       now,
       ageMs,
-      protection: taskPinProtection([owner]),
+      ...taskPinProtection({ held: [owner], released: [] }),
     });
     assert.deepEqual(retained.removed, []);
     assert.equal(await readFile(path.join(f.root, 'terminal-pin/input'), 'utf8'), 'immutable');
-    owner.archivedAt = new Date(now).toISOString();
-    const archived = await sweepTaskPins({
+    // ADR-039 Amendment 12: a pin follows its run, so a released run loses it even though the
+    // task directory still exists in its checkout.
+    const released = await sweepTaskPins({
       root: f.root,
       now,
       ageMs,
-      protection: taskPinProtection([owner]),
+      ...taskPinProtection({ held: [], released: [owner] }),
     });
-    assert.deepEqual(archived.removed, ['terminal-pin']);
+    assert.deepEqual(released.removed, ['terminal-pin']);
   });
+
+test('a task directory a held run also reads is never released', async (t) => {
+  const f = await fixture(t);
+  const task = await f.pin('shared-pin');
+  await mkdir(task, { recursive: true });
+  const old = makeRun({ id: 'old', status: 'done', taskFile: path.join(task, 'TASK.md') });
+  const reopened = makeRun({ id: 'reopened', taskFile: path.join(task, 'TASK.md') });
+  const split = taskPinProtection({ held: [reopened], released: [old] });
+  assert.deepEqual(split.releasedTaskDirs, []);
+  const result = await sweepTaskPins({ root: f.root, now, ageMs, ...split });
+  assert.deepEqual(result.removed, []);
+});
+
+test('a released parked run keeps its recovery pin', async (t) => {
+  const f = await fixture(t);
+  const task = await f.pin('parked-pin');
+  await mkdir(task, { recursive: true });
+  const at = new Date(now).toISOString();
+  const parked = makeRun({
+    id: 'parked-run',
+    status: 'done',
+    taskFile: path.join(task, 'TASK.md'),
+  });
+  parked.park = {
+    version: 1,
+    operationId: 'park-op',
+    previewId: 'park-preview',
+    generation: 1,
+    machine: 'mini',
+    slotId: 'mini-slot-1',
+    mode: 'release',
+    phase: 'parked',
+    prePauseStatus: 'blocked',
+    prePauseCurrentStep: null,
+    resourceManifest: { capturedAt: at, resources: [], capabilityLeases: [] },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: at,
+    updatedAt: at,
+    runId: 'parked-run',
+  };
+  const result = await sweepTaskPins({
+    root: f.root,
+    now,
+    ageMs,
+    ...taskPinProtection({ held: [], released: [parked] }),
+  });
+  assert.deepEqual(result.removed, []);
+});
+
+test('a pin no run references keeps the old rule: kept while its task directory exists', async (t) => {
+  const f = await fixture(t);
+  const manual = await f.pin('manual-pin');
+  await mkdir(manual, { recursive: true });
+  await f.pin('gone-pin');
+  const result = await sweepTaskPins({
+    root: f.root,
+    now,
+    ageMs,
+    ...taskPinProtection({ held: [], released: [] }),
+  });
+  assert.deepEqual(result.removed, ['gone-pin']);
+  assert.equal((await readTaskPins(f.root)).length, 1);
+});
+
+test('released task directories must be absolute', async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(
+    sweepTaskPins({ root: f.root, now, ageMs, protection, releasedTaskDirs: ['relative/task'] }),
+    /absolute/,
+  );
+});
+
+test('the shipped node program releases a run-owned pin through the real command boundary', async (t) => {
+  const f = await fixture(t);
+  const task = await f.pin('released-command-pin');
+  await mkdir(task, { recursive: true });
+  const owner = makeRun({ status: 'done', taskFile: path.join(task, 'TASK.md') });
+  await nodeTaskPinRetentionPass(now, ageMs, {
+    ...NODE_PIN_RETENTION_DEPS,
+    targets: async () => [{ machine: 'local', host: 'localhost', sshUser: '', root: f.root }],
+    split: async () => ({ held: [], released: [owner] }),
+  });
+  assert.deepEqual(await readTaskPins(f.root), []);
+});

@@ -40,16 +40,26 @@ async function readTaskPins(root, names) {
   }
   return entries;
 }
-async function retiredTaskPinsOf(entries, removed, context, pending, present) {
+// A pin follows its run's retention (ADR-039 Amendment 12): a pin whose task directory belongs
+// to a released run goes even while that directory still exists. A pin no run references keeps
+// the older rule and goes only once its task directory is gone.
+async function retiredTaskPinsOf(entries, removed, context, pending, present, released) {
   const retired = [];
   for (const { pin, taskDir, writtenAt } of entries) {
     if (context.now - writtenAt < context.ageMs) continue;
     const resolved = path.resolve(taskDir);
     if (pending(resolved)) continue;
     if (present && !(await present(pin))) continue;
-    if (removed.has(resolved) || !(await exists(resolved))) retired.push(pin);
+    if (removed.has(resolved) || released?.has(resolved) || !(await exists(resolved)))
+      retired.push(pin);
   }
   return retired;
+}
+function releasedTaskDirsOf(input) {
+  const dirs = input.releasedTaskDirs ?? [];
+  if (!Array.isArray(dirs) || !dirs.every((dir) => typeof dir === 'string' && path.isAbsolute(dir)))
+    throw new Error('Released task directories must be absolute paths');
+  return new Set(dirs.map((dir) => path.resolve(dir)));
 }
 function protectedPin(entry, protection) {
   return (
@@ -104,8 +114,11 @@ async function stageTaskPins(input, hooks = {}) {
     .concat(names.filter((n) => n <= cursor))
     .slice(0, 32);
   const entries = await readTaskPins(root, ordered);
+  const released = releasedTaskDirsOf(input);
   const pending = (dir) => (hooks.protection?.() ?? input.protection).taskDirs.includes(dir);
-  const candidates = new Set(await retiredTaskPinsOf(entries, new Set(), { now, ageMs }, pending));
+  const candidates = new Set(
+    await retiredTaskPinsOf(entries, new Set(), { now, ageMs }, pending, undefined, released),
+  );
   const stage = path.join(root, '.retention-stage-' + randomUUID());
   const staged = [];
   for (const entry of entries) {
@@ -120,7 +133,7 @@ async function stageTaskPins(input, hooks = {}) {
       current.provenance !== entry.provenance ||
       current.writtenAt !== entry.writtenAt ||
       protectedPin(current, hooks.protection?.() ?? input.protection) ||
-      (await exists(current.taskDir))
+      (!released.has(path.resolve(current.taskDir)) && (await exists(current.taskDir)))
     )
       continue;
     if (!staged.length) await fs.mkdir(stage);

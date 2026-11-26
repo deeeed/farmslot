@@ -472,3 +472,28 @@ test('repin migration documents recover after the receipt swap without replacing
     'original evidence',
   );
 });
+
+test('a pin retention released refuses by name, never with a bare missing-file error', (t) => {
+  const { taskDir, input } = fixture(t);
+  const receipt = retainTaskExecution(taskDir, input);
+  // Run retention released the pin with its run (ADR-039 Amendment 12); the task dir remains.
+  fs.rmSync(receipt.pin, { recursive: true, force: true });
+  for (const [runId, prefix] of [
+    ['run-released-1', 'Run run-released-1: this'],
+    [undefined, 'This'],
+  ] as const) {
+    assert.throws(
+      () => verifyTaskExecutionProvenance(taskDir, null, runId ? { runId } : {}),
+      (error: unknown) =>
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'TASK_PIN_RELEASED' &&
+        'exitCode' in error &&
+        error.exitCode === 5 &&
+        error.message.startsWith(`${prefix} task's installation pin ${receipt.pin} was released`),
+    );
+  }
+  // Re-retaining the same task refuses the same way instead of pinning the current tooling.
+  assert.throws(() => retainTaskExecution(taskDir, input), { code: 'TASK_PIN_RELEASED' });
+  assert.equal(fs.existsSync(receipt.pin), false, 'no silent re-pin');
+});

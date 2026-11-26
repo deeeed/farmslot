@@ -270,3 +270,21 @@ test('matching runner bytes report their hash while legacy source receipt remain
   assert.equal(result.status, 'unverified');
   assert.match(result.detail, /No retained task source receipt/);
 });
+
+test('a task whose pin retention released refuses by name without retry, on any node runtime', async (t) => {
+  // The fixture's runtime verifier is a no-op, like a node runtime older than ADR-039 Amendment 12,
+  // so the refusal must come from the probe itself.
+  const { root, value } = await requiredSkillsFixture(t, { runtimeChecks: true });
+  const pin = path.join(root, 'pins', 'released-pin');
+  await writeFile(
+    path.join(value.taskDir, 'artifacts/harness-provenance.json'),
+    JSON.stringify({ bindingIdentity: null, pin }),
+  );
+  const result = await probe({ ...value, runId: 'run-released-1' });
+  assert.equal(result.status, 'mismatch');
+  assert.equal(result.retry, false);
+  assert.equal(
+    result.detail,
+    `TASK_PIN_RELEASED: Run run-released-1: this task's installation pin ${pin} was released by run retention after its run settled. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.`,
+  );
+});

@@ -136,6 +136,17 @@ export class TaskProvenanceError extends Error {
   }
 }
 
+/**
+ * Run retention released this task's pin with its run (ADR-039 Amendment 12). Its recorded
+ * tooling is gone, so the task never falls back to the current CLI: a fresh task pins anew.
+ */
+export function taskPinReleasedError(pin: string, runId?: string): TaskProvenanceError {
+  return new TaskProvenanceError(
+    'TASK_PIN_RELEASED',
+    `${runId ? `Run ${runId}: this` : 'This'} task's installation pin ${pin} was released by run retention after its run settled. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.`,
+  );
+}
+
 const receiptFile = 'artifacts/harness-provenance.json';
 const within = (root: string, file: string): boolean =>
   file === root || file.startsWith(`${root}${path.sep}`);
@@ -244,6 +255,7 @@ function isReceipt(value: unknown): value is TaskExecutionProvenance {
 export function verifyTaskExecutionProvenance(
   taskDir: string,
   expectedBindingIdentity: TaskRecipeBindingIdentity | null,
+  context: { runId?: string } = {},
 ): TaskExecutionProvenance {
   const value: unknown = JSON.parse(fs.readFileSync(path.join(taskDir, receiptFile), 'utf8'));
   if (isRecord(value) && !('bindingIdentity' in value)) {
@@ -264,6 +276,7 @@ export function verifyTaskExecutionProvenance(
       'TASK_PROVENANCE_INVALID',
       'The installation pin store must be outside the task.',
     );
+  if (!fs.existsSync(value.pin)) throw taskPinReleasedError(value.pin, context.runId);
   const pin = fs.realpathSync(value.pin);
   if (path.dirname(pin) !== fs.realpathSync(taskPinRoot()))
     throw new TaskProvenanceError(

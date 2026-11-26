@@ -283,6 +283,7 @@ export async function admitWorkerLaunch(
             protocolVersion: await packageVersion('protocol'),
             runtimeScript: await agentRuntimeScriptForSlot(input.vars, 'task-init-cli.mjs'),
             taskDir: workerTaskDir(initial, input.vars, project),
+            ...(input.runId ? { runId: input.runId } : {}),
             repoRoot: input.vars.remoteRepo,
             ...(runnerObservability ? { runnerObservability } : {}),
           });
