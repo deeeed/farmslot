@@ -424,7 +424,7 @@ test('inline plan works without an artifact and keeps selection scoped to suite 
     assert.match(verified.stdout, /Verified 1 jobs/);
   }
   // Every receipt is in, but the install the checks ran on did not validate.
-  for (const install of ['failure', 'cancelled', undefined]) {
+  for (const install of ['failure', 'cancelled', 'skipped', '', undefined]) {
     const refused = spawnSync(process.execPath, [worker, 'verify'], {
       cwd: root,
       encoding: 'utf8',

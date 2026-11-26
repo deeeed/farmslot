@@ -5,7 +5,7 @@ inputs:
     description: This job owns the repository lint cache
     default: 'false'
   reuse-validated-install:
-    description: Reuse the exact installed tree after the prepare job validates Yarn
+    description: Reuse a restored install as is; the install job validates the same tree with yarn install --immutable
     default: 'false'
 runs:
   using: composite
@@ -15,26 +15,13 @@ runs:
         node-version: '22.23.4'
     - shell: bash
       run: corepack enable
-    - id: cache-paths
-      shell: bash
-      run: |
-        cat >> "$GITHUB_OUTPUT" <<'PATHS'
-        dependencies<<CACHE_PATHS
-        ~/.yarn/berry/cache
-        ~/.yarn/berry/farmslot
-        node_modules
-        apps/*/node_modules
-        apps/command-center/ui/node_modules
-        packages/*/node_modules
-        services/*/node_modules
-        .yarn/install-state.gz
-        CACHE_PATHS
-        PATHS
+    - id: cache-keys
+      uses: ./.github/actions/ci-cache-keys
     - uses: actions/cache/restore@v4
       id: dependencies
       with:
-        path: ${{ steps.cache-paths.outputs.dependencies }}
-        key: install-v1-${{ runner.os }}-${{ runner.arch }}-node22.23.4-${{ hashFiles('yarn.lock', 'package.json', 'apps/*/package.json', 'apps/command-center/ui/package.json', 'packages/*/package.json', 'services/*/package.json', '.yarnrc.yml', 'scripts/yarn-*.cjs', 'services/gateway/scripts/fix-node-pty-spawn-helper.mjs') }}
+        path: ${{ steps.cache-keys.outputs.install-paths }}
+        key: ${{ steps.cache-keys.outputs.install-key }}
     - shell: bash
       env:
         REUSE_VALIDATED_INSTALL: ${{ inputs.reuse-validated-install }}
@@ -42,7 +29,7 @@ runs:
       run: |
         if [[ "$REUSE_VALIDATED_INSTALL" == true && "$INSTALL_CACHE_HIT" == true ]] &&
            [[ -s .yarn/install-state.gz && -s node_modules/.yarn-state.yml ]]; then
-          echo "Reusing the exact prepared Yarn install"
+          echo "Reusing the restored Yarn install; the install job validates it"
         else
           yarn install --immutable
         fi
@@ -51,7 +38,7 @@ runs:
     - if: steps.dependencies.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
-        path: ${{ steps.cache-paths.outputs.dependencies }}
+        path: ${{ steps.cache-keys.outputs.install-paths }}
         key: ${{ steps.dependencies.outputs.cache-primary-key }}
     # The PR planner needs only TypeScript; publish this install's copy so the
     # planner can start without restoring and validating the whole install.
@@ -59,7 +46,7 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: node_modules/typescript
-        key: planner-typescript-v1-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+        key: ${{ steps.cache-keys.outputs.planner-key }}
         lookup-only: true
     - if: steps.planner-typescript.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4

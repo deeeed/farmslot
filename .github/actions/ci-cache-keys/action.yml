@@ -1,0 +1,38 @@
+name: CI cache keys
+description: The install cache paths and key, and the PR planner's TypeScript key, shared by ci-setup and the PR planner
+outputs:
+  install-paths:
+    description: Paths of the restored Yarn install
+    value: ${{ steps.keys.outputs.install-paths }}
+  install-key:
+    description: Key of the restored Yarn install
+    value: ${{ steps.keys.outputs.install-key }}
+  planner-key:
+    description: Key of the planner's node_modules/typescript
+    value: ${{ steps.keys.outputs.planner-key }}
+runs:
+  using: composite
+  steps:
+    - id: keys
+      shell: bash
+      env:
+        INSTALL_KEY: install-v1-${{ runner.os }}-${{ runner.arch }}-node22.23.4-${{ hashFiles('yarn.lock', 'package.json', 'apps/*/package.json', 'apps/command-center/ui/package.json', 'packages/*/package.json', 'services/*/package.json', '.yarnrc.yml', 'scripts/yarn-*.cjs', 'services/gateway/scripts/fix-node-pty-spawn-helper.mjs') }}
+        # The hoisted TypeScript follows the lockfile, the root manifest and Yarn's settings.
+        PLANNER_KEY: planner-typescript-v1-${{ runner.os }}-${{ hashFiles('yarn.lock', 'package.json', '.yarnrc.yml') }}
+      run: |
+        {
+          echo "install-key=$INSTALL_KEY"
+          echo "planner-key=$PLANNER_KEY"
+          cat <<'PATHS'
+        install-paths<<CACHE_PATHS
+        ~/.yarn/berry/cache
+        ~/.yarn/berry/farmslot
+        node_modules
+        apps/*/node_modules
+        apps/command-center/ui/node_modules
+        packages/*/node_modules
+        services/*/node_modules
+        .yarn/install-state.gz
+        CACHE_PATHS
+        PATHS
+        } >> "$GITHUB_OUTPUT"
