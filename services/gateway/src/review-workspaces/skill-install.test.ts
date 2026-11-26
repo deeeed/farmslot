@@ -264,6 +264,38 @@ test('a skill review links its writable round folders into the read-only checkou
       rmSync(temp, { recursive: true });
     }
 
+    const receiptSwap = path.join(root, 'receipt-swap.cjs');
+    const receiptSwapSource = [
+      '    receipt_published = True',
+      "    os.rename(receipt, 'original-receipt', src_dir_fd=workspace, dst_dir_fd=workspace)",
+      '    fd = os.open(receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=workspace)',
+      "    os.write(fd, b'foreign receipt')",
+      '    os.close(fd)',
+    ].join('\n');
+    writeFileSync(
+      receiptSwap,
+      `const cp = require('node:child_process');
+      const spawn = cp.spawnSync;
+      cp.spawnSync = (program, args, options) => {
+        if (program === 'python3') {
+          args = [...args];
+          args[2] = args[2].replace('    receipt_published = True', ${JSON.stringify(receiptSwapSource)});
+        }
+        return spawn(program, args, options);
+      };`,
+    );
+    assert.throws(() => run({}, receiptSwap), /publication receipt identity changed/);
+    const marker = path.join(root, '.installed-review-skill-mms-perps-review-pr.json');
+    assert.equal(readFileSync(marker, 'utf8'), 'foreign receipt');
+    unlinkSync(marker);
+    assertNoOwnedSkillLinks();
+    assert.equal(existsSync(path.join(temp, 'tasks')), false);
+    assert.equal(
+      readdirSync(root).some((name) => name.startsWith('.review-skills-')),
+      false,
+    );
+    unlinkSync(path.join(root, 'original-receipt'));
+
     const missingPublisher = path.join(root, 'missing-publisher.cjs');
     writeFileSync(
       missingPublisher,

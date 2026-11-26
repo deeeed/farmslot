@@ -43,6 +43,15 @@ def identity(stat):
 def at(parent, name):
     return os.stat(name, dir_fd=parent, follow_symlinks=False)
 
+def rollback_receipt(receipt, receipt_identity):
+    try:
+        move(workspace, receipt, stage, '.rollback-receipt')
+    except FileNotFoundError:
+        return  # The published receipt is already gone.
+    if identity(at(stage, '.rollback-receipt')) != receipt_identity:
+        move(stage, '.rollback-receipt', workspace, receipt)
+        raise OSError('Review publication receipt identity changed')
+
 def verify_paths():
     for entry, parts, parent in moved:
         current = parent_of(parts)
@@ -80,13 +89,13 @@ try:
     os.link('.receipt.json', receipt, src_dir_fd=stage, dst_dir_fd=workspace, follow_symlinks=False)
     receipt_published = True
     verify_paths()
+    if identity(at(workspace, receipt)) != receipt_identity:
+        raise RuntimeError('Review publication receipt identity changed')
 except Exception:
     failures = []
     if receipt_published:
         try:
-            if identity(at(workspace, receipt)) != receipt_identity:
-                raise OSError('Review publication receipt identity changed')
-            os.unlink(receipt, dir_fd=workspace)
+            rollback_receipt(receipt, receipt_identity)
         except OSError as error:
             failures.append(str(error))
     for entry, parts, parent in reversed(moved):
@@ -308,8 +317,14 @@ function prepareInstaller(){
   // The publisher returns moved entries through the original directory handles.
   // If it returned foreign bytes or left a move incomplete, preserve the stage for recovery.
   try{
-   if(exists(marker)&&exists(path.join(stage,'.receipt.json'))&&sameIdentity(statIdentity(fs.lstatSync(marker,{bigint:true})),statIdentity(fs.lstatSync(path.join(stage,'.receipt.json'),{bigint:true}))))
-    throw Error('Review publication receipt remains linked');
+   const pending=path.join(stage,'.receipt.json'),returned=path.join(stage,'.rollback-receipt');
+   if(exists(pending)){
+    const identity=statIdentity(fs.lstatSync(pending,{bigint:true}));
+    if(exists(marker)&&sameIdentity(statIdentity(fs.lstatSync(marker,{bigint:true})),identity))
+     throw Error('Review publication receipt remains linked');
+    if(exists(returned)&&!sameIdentity(statIdentity(fs.lstatSync(returned,{bigint:true})),identity))
+     throw Error('Review publication rollback returned a foreign receipt');
+   }
    for(const publication of owner.publications)
     verifyPublication(path.join(publicationRoot,publication.name),publication);
   }catch(problem){
