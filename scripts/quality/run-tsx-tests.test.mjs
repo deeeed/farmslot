@@ -850,7 +850,7 @@ test('a serial file that uses module mocks runs alone, before the workers, with 
       // Throws unless the runner passes --experimental-test-module-mocks.
       "mock.module('node:os', { namedExports: { hostname: () => 'fixture-host' } });",
       "test('marked serial suite', async () => {",
-      '  await new Promise((resolve) => setTimeout(resolve, 1000));',
+      '  await new Promise((resolve) => setTimeout(resolve, 200));',
       `  writeFileSync(${JSON.stringify(done)}, '');`,
       '});',
     ].join('\n') + '\n',
