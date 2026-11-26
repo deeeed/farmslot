@@ -463,10 +463,14 @@ export async function runRetentionPass(
       // released session) keeps its sessions, and a run created since then is held.
       const released: Run[] = [];
       const held: Run[] = [];
-      for (const run of await getAllRunsWithArchived())
-        (currentRetentionHold(run, context) || (await deps.holdsSlot(run)) ? held : released).push(
-          run,
-        );
+      const fresh = await getAllRunsWithArchived();
+      const live = getAllRuns();
+      // currentRetentionHold for every run at once: the live runs' reads are mapped one time.
+      const sources = activeSourceHolds(live, [...fresh, ...live]);
+      for (const run of fresh) {
+        const hold = runRetentionHold(run, context) ?? sources.get(run.id);
+        (hold || (await deps.holdsSlot(run)) ? held : released).push(run);
+      }
       await options.nodeJournals(released, held);
     } catch (error) {
       console.error(`[native-journal retention] pass failed: ${(error as Error).message}`);

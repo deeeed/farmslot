@@ -856,8 +856,9 @@ Each hourly pass, after the run pass:
   conversation listener; any other is kept with its reason. The request never starts or
   refreshes a host, and a host without the capability is reported unavailable; and
 - the gateway records what nodes confirmed (archived, already archived, missing) in
-  `native-journals.json` under the run archive root and does not resend those while their
-  run stays released. `missing` is final: the node's one host root has neither the journal
+  `native-journals.json` under the run archive root and never resends those, even after
+  their run is held for a while (an archived id is never reused, so a confirmation cannot go
+  stale). `missing` is final: the node's one host root has neither the journal
   nor its archive. A session a node kept is asked about again after a day; sessions an
   offline, older or other-owner node cannot take are not counted toward its 50 and are
   asked about next pass. The runs are read again just before the requests, so a run held

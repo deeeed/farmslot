@@ -207,7 +207,7 @@ test('confirmed sessions are recorded and never resent; kept ones wait a day', a
   }
 });
 
-test('the record forgets sessions no released run binds and deferrals past their day', async () => {
+test('confirmations outlive a run held for a while; deferrals past their day are dropped', async () => {
   const h = harness({ macpro: ready }, (ids) =>
     ids.map((sessionId) =>
       sessionId === sid(2)
@@ -217,11 +217,18 @@ test('the record forgets sessions no released run binds and deferrals past their
   );
   try {
     await nodeJournalRetentionPass([run('a', ['1', '2'])], [], h.deps);
-    // Run a is held again: its confirmation is dropped, so once released it is asked afresh.
+    // Run a is held for a while (a GitHub outage holds runs as "PR state unknown").
     h.advance(JOURNAL_RETRY_DEFERRAL_MS);
     await nodeJournalRetentionPass([], [run('a', ['1', '2'])], h.deps);
     const record = await readJournalRetention(h.deps.file);
-    assert.deepEqual(record, { version: 1, confirmed: {}, deferred: {} });
+    assert.deepEqual(record, {
+      version: 1,
+      confirmed: { [`macpro/${sid(1)}`]: '2026-02-01T00:00:00.000Z' },
+      deferred: {},
+    });
+    // Released again, only the session never confirmed is asked about.
+    await nodeJournalRetentionPass([run('a', ['1', '2'])], [], h.deps);
+    assert.deepEqual(h.sent, [[sid(1), sid(2)], [sid(2)]]);
   } finally {
     h.done();
   }

@@ -78,8 +78,6 @@ export interface NodeJournalPlan {
   pending: Record<string, number>;
   /** Sessions not sent because their node cannot take them now, per node and reason. */
   unsendable: Record<string, Record<string, number>>;
-  /** Every session the released runs bound, for pruning the record of confirmed ones. */
-  released: Set<string>;
 }
 
 /**
@@ -101,13 +99,13 @@ export function nodeJournalBatches(
   const pending: Record<string, number> = {};
   const unsendable: Record<string, Record<string, number>> = {};
   const sent = new Map<string, number>();
-  const all = new Set<string>();
+  const seen = new Set<string>();
   for (const run of released)
     for (const ref of runNodeSessions(run)) {
       const node = ref.executionNodeId;
       const id = key(node, ref.sessionId);
-      if (all.has(id)) continue;
-      all.add(id);
+      if (seen.has(id)) continue;
+      seen.add(id);
       if (keep.has(id) || skipped.has(id)) continue;
       pending[node] = (pending[node] ?? 0) + 1;
       const reason = refusal(node, ref.ownerPrincipalId);
@@ -126,11 +124,11 @@ export function nodeJournalBatches(
       }
       batch.sessionIds.push(ref.sessionId);
     }
-  return { batches: [...batches.values()], pending, unsendable, released: all };
+  return { batches: [...batches.values()], pending, unsendable };
 }
 
 /**
- * What nodes answered. Sessions confirmed archived, already archived or missing are not resent.
+ * What nodes answered. Sessions confirmed archived, already archived or missing are never resent.
  * `missing` is final: the node's one host root has neither the journal nor its archive, so
  * asking again cannot change the answer. Sessions a node kept wait a day before they are asked
  * about again, so they cannot crowd out the rest.
@@ -188,16 +186,11 @@ export function noteJournalAnswers(
 }
 
 /**
- * Drop what no longer matters: confirmations of sessions no released run binds (a run held
- * again is asked about afresh once released) and deferrals past their day.
+ * Drop deferrals past their day. Confirmations stay: an archived session id is never reused, so a
+ * confirmation cannot go stale, and dropping them when a run is held for a while (a GitHub outage
+ * holds runs as "PR state unknown") would resend every archived session afterwards.
  */
-export function pruneJournalRetention(
-  record: JournalRetentionRecord,
-  released: ReadonlySet<string>,
-  now: number,
-): void {
-  for (const id of Object.keys(record.confirmed))
-    if (!released.has(id)) delete record.confirmed[id];
+export function pruneJournalRetention(record: JournalRetentionRecord, now: number): void {
   for (const [id, at] of Object.entries(record.deferred))
     if (now - Date.parse(at) >= JOURNAL_RETRY_DEFERRAL_MS) delete record.deferred[id];
 }

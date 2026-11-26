@@ -140,6 +140,6 @@ export async function nodeJournalRetentionPass(
       );
     }
   }
-  pruneJournalRetention(record, plan.released, now);
+  pruneJournalRetention(record, now);
   await writeJournalRetention(deps.file, record);
 }

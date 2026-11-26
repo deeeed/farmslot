@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 
-import { allEvents, setup, testRepository } from './durability.test-support.js';
+import {
+  allEvents,
+  appendLateEvent,
+  sessionRecordOf,
+  setup,
+  testRepository,
+} from './durability.test-support.js';
 import { decodeRequest } from './ipc.js';
 import { NativeSessionManager } from './manager.js';
 
@@ -143,15 +149,12 @@ test('an archived session stays archived: no late write, no reuse of its id, no 
   const manager = new NativeSessionManager(fixture.root);
   try {
     const closed = await closedSession(manager, repo);
-    const sessions: unknown = Reflect.get(manager, 'sessions');
-    const append: unknown = Reflect.get(manager, 'append');
-    assert.ok(sessions instanceof Map && typeof append === 'function');
-    const record: unknown = sessions.get(closed);
+    const record = sessionRecordOf(manager, closed);
     assert.deepEqual(manager.archiveSessions('owner', [closed]), [
       { sessionId: closed, outcome: 'archived' },
     ]);
     // A late event from its stopped adapter does not recreate the journal in startup replay.
-    append.call(manager, record, { type: 'session.closed' });
+    appendLateEvent(manager, record, 'session.closed');
     assert.equal(existsSync(join(fixture.root, `${closed}.journal`)), false);
     new NativeSessionManager(fixture.root);
     // Its reserved id is never reused for a new session.
