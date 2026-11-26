@@ -856,6 +856,10 @@ export function stateChangeHandlerCountForTests(): number {
 
 let newestFleetRead: Promise<FleetStatus> | undefined;
 let newestFleetDirty = false;
+/** The loop's capped last read is in flight: a call now cannot join it, it would miss its bytes. */
+let newestFleetLastRead = false;
+/** A fresh loop that starts when the current one ends, for calls during its last read. */
+let newestFleetAfter: Promise<FleetStatus> | undefined;
 /** Reads one shared loop makes at most; then it resolves with the last, so waiters are bounded. */
 export const NEWEST_FLEET_READS = 5;
 
@@ -866,10 +870,18 @@ export const NEWEST_FLEET_READS = 5;
  * hand listeners an older fleet after a newer one. Callers share one read loop: a call
  * while it runs asks for one more read, and the loop resolves for everyone once a read
  * is neither overtaken nor asked to repeat, or after NEWEST_FLEET_READS reads with the
- * last (newest) of them. Only this loop reads for broadcasts, so broadcasters cannot keep
- * overtaking each other.
+ * last (newest) of them. A call during that capped last read waits for a fresh loop
+ * after it. Only this loop reads for broadcasts, so broadcasters cannot keep overtaking
+ * each other.
  */
 function loadNewestFleetStatus(): Promise<FleetStatus> {
+  if (newestFleetRead && newestFleetLastRead) {
+    newestFleetAfter ??= newestFleetRead.then(() => {
+      newestFleetAfter = undefined;
+      return loadNewestFleetStatus();
+    });
+    return newestFleetAfter;
+  }
   if (newestFleetRead) {
     newestFleetDirty = true;
     return newestFleetRead;
@@ -878,6 +890,7 @@ function loadNewestFleetStatus(): Promise<FleetStatus> {
     try {
       for (let reads = 1; ; reads++) {
         newestFleetDirty = false;
+        newestFleetLastRead = reads >= NEWEST_FLEET_READS;
         // loadFleetStatus(true) takes the next version synchronously, before its first await.
         const version = fleetReadVersion + 1;
         const fleet = await loadFleetStatus(true);
@@ -886,6 +899,7 @@ function loadNewestFleetStatus(): Promise<FleetStatus> {
       }
     } finally {
       newestFleetRead = undefined;
+      newestFleetLastRead = false;
     }
   })();
   return newestFleetRead;

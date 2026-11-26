@@ -681,17 +681,27 @@ test('a broadcast read loop overtaken on every read still resolves after a bound
   await loadFleetStatus(true, true);
   const reads = statusReads;
   let rounds = 0;
-  // An overlay change during every read overtakes it, as sustained commits would.
+  let late: Promise<FleetStatus> | undefined;
+  // An overlay change during every read overtakes it, as sustained commits would. During
+  // the capped last read, which already took its bytes, a final write lands and its
+  // broadcaster asks for the fleet.
   const overtake = async () => {
     rounds++;
     overlays.setBranchOverlay('proof', `busy-${rounds}`);
-    if (rounds < 50) holdNextRead = overtake;
+    if (rounds < NEWEST_FLEET_READS) holdNextRead = overtake;
+    else {
+      await fs.writeFile(state.statusFile, JSON.stringify(rows('final')));
+      late = loadFleetStatus(true, false, { newest: true });
+    }
   };
   holdNextRead = overtake;
   try {
     const fleet = await loadFleetStatus(true, false, { newest: true });
     assert.equal(fleet.slots[0].currentRunId, 'busy');
     assert.equal(statusReads - reads, NEWEST_FLEET_READS, 'the loop stops at its read cap');
+    // The late broadcaster is not handed the capped read's older bytes.
+    assert.equal((await late!).slots[0].currentRunId, 'final');
+    assert.equal(statusReads - reads, NEWEST_FLEET_READS + 1, 'one fresh read after the cap');
     await assert.rejects(
       loadFleetStatus(true, true, { newest: true }),
       /non-strict broadcast read/,
