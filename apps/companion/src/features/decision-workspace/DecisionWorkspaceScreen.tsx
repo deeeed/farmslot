@@ -26,6 +26,7 @@ import {
   type ResourcePostureGateChoice,
   resourcePostureTransitionBaseline,
   reviewRoundBudgetLabel,
+  RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS,
   type RunDecision,
   type RunGetResult,
   type RunRecipeRunsForRunResult,
@@ -1908,10 +1909,12 @@ export default function DecisionDetailScreen({
                       try {
                         assertNativeRunReady(sourceRun.id, sourceRun);
                         assertNativeDecisionReady(decision.id);
-                        await client.request(Methods.RUN_REFRESH_PUBLISH_PACKAGE, {
-                          runId: sourceRun.id,
-                          decisionId: decision.id,
-                        });
+                        // The gateway may first wait for a worker still finishing its turn.
+                        await client.request(
+                          Methods.RUN_REFRESH_PUBLISH_PACKAGE,
+                          { runId: sourceRun.id, decisionId: decision.id },
+                          RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS,
+                        );
                       } catch (failure) {
                         if (current())
                           setError(failure instanceof Error ? failure.message : String(failure));

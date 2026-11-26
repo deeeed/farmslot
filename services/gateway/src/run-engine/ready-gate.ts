@@ -144,6 +144,10 @@ import {
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { buildGateSummary } from './gate-summary.js';
+import {
+  type OwnedWorkerIdleWaitBounds,
+  waitForOwnedWorkerIdle,
+} from './owned-worker-idle-wait.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { recordPublicationApproval } from './publication-finalization.js';
 import {
@@ -913,7 +917,7 @@ interface ReadyGatePackageDependencies {
   readReviewFixSignal?: ReviewFixSignalReader;
   readProgress?: typeof readRunProgress;
   /** Bounded wait for a busy owned worker; tests shorten it. */
-  workerIdleWait?: { pollMs: number; maxPollMs: number; timeoutMs: number };
+  workerIdleWait?: OwnedWorkerIdleWaitBounds;
   /**
    * The human-gate step's start generation. A re-present after slow work (a review plan,
    * a resumed review, a visual repair) is fenced to it, so a driver a replay superseded
@@ -922,39 +926,24 @@ interface ReadyGatePackageDependencies {
   generation?: number;
 }
 
-// A compaction or a last turn finishes in minutes; past this the operator sees why. Polls
-// back off (10 s, 20 s, 40 s, then every 60 s): each reads the worker's transcript state.
-const WORKER_IDLE_WAIT = { pollMs: 10_000, maxPollMs: 60_000, timeoutMs: 15 * 60_000 };
-
 /**
  * Waits for a worker that is making progress to go idle, so the gate builds its own
- * package instead of leaving an "unavailable" card only Retry Gate clears. A worker that
- * cannot go idle by itself (at a prompt, pane unproven) or a gate park ends the wait at
- * once with the card; a replay, pause or cancel aborts it.
+ * package instead of leaving an "unavailable" card only Retry Gate clears.
  */
-async function waitForOwnedWorkerIdle(
+async function waitForGateWorkerIdle(
   runId: string,
   generation: number,
   dependencies: ReadyGatePackageDependencies,
 ): Promise<'idle' | 'abort' | 'timeout'> {
-  const { pollMs, maxPollMs, timeoutMs } = dependencies.workerIdleWait ?? WORKER_IDLE_WAIT;
-  const readProgress = dependencies.readProgress ?? readRunProgress;
-  const deadline = Date.now() + timeoutMs;
   updateRunStep(runId, S.HUMAN_GATE, {
     detail: 'Preparing operator decision: waiting for the owned worker to be idle',
   });
-  for (let delay = pollMs; Date.now() < deadline; delay = Math.min(delay * 2, maxPollMs)) {
-    await new Promise((resolve) => setTimeout(resolve, Math.min(delay, deadline - Date.now())));
-    const before = getRun(runId);
-    if (runSupersededSince(before, generation)) return 'abort';
-    if (isGateParkInFlightOrFreed(before!)) return 'timeout';
-    const progress = await readProgress(before!);
-    // The probe awaited a remote read: an operator may have replayed or cancelled meanwhile.
-    if (runSupersededSince(getRun(runId), generation)) return 'abort';
-    if (progress.kind === 'idle') return 'idle';
-    if (progress.kind !== 'making-progress') return 'timeout';
-  }
-  return 'timeout';
+  const waited = await waitForOwnedWorkerIdle(runId, generation, {
+    readProgress: dependencies.readProgress,
+    bounds: dependencies.workerIdleWait,
+  });
+  // A park gets the gate's card; the park fence then holds the gate.
+  return waited === 'parked' ? 'timeout' : waited;
 }
 
 /** A publication the operator adopted ends this gate; its continuation is checked first. */
@@ -1021,7 +1010,7 @@ export async function executeReadyGate(
         if (error instanceof OwnedWorkerBusyError && !workerIdleWaited) {
           // Once per gate pass: a worker still busy after the bounded wait gets the card below.
           workerIdleWaited = true;
-          const waited = await waitForOwnedWorkerIdle(runId, generation, dependencies);
+          const waited = await waitForGateWorkerIdle(runId, generation, dependencies);
           if (waited === 'abort') return 'abort';
           if (waited === 'idle') {
             current = getRun(runId)!;

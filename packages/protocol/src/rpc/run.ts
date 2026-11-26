@@ -562,6 +562,16 @@ export interface RunExtendReviewBudgetResult {
   budget: import('../contracts/index.js').ReviewRoundBudget;
 }
 
+/**
+ * How long the gateway waits for an owned worker that is still making progress (a compaction,
+ * or the last turn after its completion signal) before it refreshes a publication package. The
+ * ready gate's own package build and `run.refreshPublishPackage` share it.
+ */
+export const OWNED_WORKER_IDLE_WAIT_MS = 15 * 60_000;
+
+/** A `run.refreshPublishPackage` caller outlasts the worker wait and the refresh after it. */
+export const RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS = OWNED_WORKER_IDLE_WAIT_MS + 5 * 60_000;
+
 export interface RunRefreshPublishPackageParams {
   runId: string;
   /** Authenticated person action: reload ticket scope and re-register acceptance before capture. */

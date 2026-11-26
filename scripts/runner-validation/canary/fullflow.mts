@@ -19,6 +19,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   cancelledRunSlotHold,
   isTerminalRunStatus,
+  RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS,
   runOutputCloseUnavailableReason,
   type BacklogCreateResult,
   type BacklogEnqueueResult,
@@ -458,10 +459,10 @@ export default function(pi) {
               }
               if (gate && !refreshed) {
                 const t0 = Date.now();
-                const refresh = await call<{ run: Run }>('run.refreshPublishPackage', {
-                  runId: current.id,
-                  decisionId: gate.id,
-                });
+                // The gateway waits for a worker still finishing its last turn; so does this call.
+                const refresh = await stack.connection().call<{
+                  run: Run;
+                }>('run.refreshPublishPackage', { runId: current.id, decisionId: gate.id }, { timeoutMs: RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS });
                 await writeJson(path.join(dir, 'package-refresh.json'), refresh);
                 const ready = refresh.run.decisions.find(
                   (item) => item.type === 'engine_human_gate' && !item.resolvedAt,

@@ -12,6 +12,7 @@ import {
   isValidEvidenceAttestationReason,
   Methods,
   type Run,
+  RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS,
   type RunDecision,
   type RunGetResult,
 } from '@farmslot/protocol';
@@ -464,10 +465,12 @@ export function useGateReviewController({ runId, decisionId }: GateReviewRoutePa
         setSendingActionId('refresh-package');
         try {
           assertNativeRunReady(run.id, run);
-          await client.request(Methods.RUN_REFRESH_PUBLISH_PACKAGE, {
-            runId: run.id,
-            decisionId: decision.id,
-          });
+          // The gateway may first wait for a worker still finishing its turn.
+          await client.request(
+            Methods.RUN_REFRESH_PUBLISH_PACKAGE,
+            { runId: run.id, decisionId: decision.id },
+            RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS,
+          );
         } catch (error) {
           setLoadError(error instanceof Error ? error.message : String(error));
         } finally {
