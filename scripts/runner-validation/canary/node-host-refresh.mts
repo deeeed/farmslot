@@ -10,9 +10,13 @@
 //   3. once closed: accepted, on a refreshed host (new pid, the new build).
 // host.json is never edited. Not covered: an idle worker of a finished run, which the release
 // list names, stopped by the refresh.
+//
+// The build change is written into the checkout that runs the canary, which a gateway or node
+// may also run from. So the case runs only in a disposable checkout that says so:
+// FARMSLOT_CANARY_DISPOSABLE_CHECKOUT=1, which nightly.sh sets for its own clone.
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { fixture as fakeCodex } from '../../../packages/agent-runtime/src/native/durability.test-support.js';
@@ -22,8 +26,17 @@ import { startRemoteNodeStack } from '../lib/remote-node-stack.mjs';
 import { PIPE_PROJECT, projectPacks, SEED, slotCli } from './fixtures.mjs';
 import type { CheckResult } from './outcome.mjs';
 
-/** The build change: a source file the runtime build hashes, removed before and after. */
-export const NODE_HOST_REFRESH_BUMP = 'packages/agent-runtime/src/native/zz-canary-runtime-bump.ts';
+/**
+ * The build change: a source file the runtime build hashes (a dotfile, so no build emits it).
+ * nightly.sh also removes it after its checkout, in case a killed run left it.
+ */
+export const NODE_HOST_REFRESH_BUMP = 'packages/agent-runtime/src/native/.canary-runtime-bump.ts';
+const BUMP_MARKER = '// Runtime build change for the node host refresh canary (node-host-refresh.mts).';
+
+/** Removes the build change, and only the file this case writes. */
+function removeBump(file: string): void {
+  if (existsSync(file) && readFileSync(file, 'utf8').startsWith(BUMP_MARKER)) rmSync(file);
+}
 
 export interface NodeHostRefreshOptions {
   root: string;
@@ -38,24 +51,11 @@ export interface NodeHostRefreshOptions {
 type Info = { id: string; state: string; processStopped?: boolean };
 type Launch = { name: string; launched?: string; code?: unknown; message?: string };
 
-const find = (dir: string, name: string): string[] =>
-  existsSync(dir)
-    ? readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
-        entry.isDirectory()
-          ? find(path.join(dir, entry.name), name)
-          : entry.name === name
-            ? [path.join(dir, entry.name)]
-            : [],
-      )
-    : [];
-
 export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promise<CheckResult> {
   const started = performance.now();
   const out = path.join(options.evidence, 'node-host-refresh');
   await mkdir(out, { recursive: true });
   const bump = path.join(options.root, NODE_HOST_REFRESH_BUMP);
-  // A run that died before its cleanup leaves the file; it is this case's own.
-  if (existsSync(bump)) rmSync(bump);
   const log = async (event: string, detail?: Record<string, unknown>) => {
     await appendFile(path.join(out, 'smoke.jsonl'), JSON.stringify({ event, ...detail }) + '\n');
     await options.log(`node-host-refresh: ${event}`, detail);
@@ -64,9 +64,9 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
   let cleanupPromise: Promise<string[]> | undefined;
   const cleanup = () =>
     (cleanupPromise ??= (async () => {
-      const errors = (await stopStack?.()) ?? [];
-      if (existsSync(bump)) rmSync(bump);
-      return errors;
+      // First, so the change never outlives the case, even if the stack fails to stop.
+      removeBump(bump);
+      return (await stopStack?.()) ?? [];
     })());
   options.onCleanup(cleanup);
   const check: CheckResult = {
@@ -80,6 +80,20 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
     observations: [],
     evidence: out,
   };
+  if (process.env.FARMSLOT_CANARY_DISPOSABLE_CHECKOUT !== '1') {
+    check.status = 'not-exercised';
+    check.differences.push(
+      'Writes a build change into its checkout: runs only where FARMSLOT_CANARY_DISPOSABLE_CHECKOUT=1 (nightly.sh)',
+    );
+    await writeFile(path.join(out, 'result.json'), JSON.stringify(check, null, 2));
+    return check;
+  }
+  if (existsSync(bump)) {
+    // Never this case's to remove here: nightly.sh clears its own after the checkout.
+    check.differences.push(`${NODE_HOST_REFRESH_BUMP} already exists; remove it first`);
+    await writeFile(path.join(out, 'result.json'), JSON.stringify(check, null, 2));
+    return check;
+  }
   try {
     const machine = 'refresh-node';
     const slotId = `${PIPE_PROJECT}-1`;
@@ -103,7 +117,8 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
       },
       log,
     });
-    const nodeNative = path.join(stack.fixture, 'node-home', 'native-sessions');
+    // The node's host lives at <native state>/nodes/<machine>.
+    const hostFile = path.join(stack.fixture, 'node-home', 'native-sessions', 'nodes', machine, 'host.json');
     const cwd = stack.slotRepo(slotId);
     const target = { executionNodeId: machine };
     const create = async () =>
@@ -117,17 +132,16 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
     const read = async (sessionId: string) =>
       (await stack.call<{ session: Info }>('native.session.read', { ...target, sessionId }))
         .session;
-    const hostFile = () => {
-      const [file] = find(nodeNative, 'host.json');
-      assert.ok(file, 'the node host records itself');
-      return file;
-    };
-    const host = () => {
-      const { pid, runtimeVersion, runtimeBuild } = JSON.parse(readFileSync(hostFile(), 'utf8'));
-      return { pid, runtimeVersion, runtimeBuild };
+    const host = async () => {
+      const { pid, runtimeVersion, runtimeBuild } = JSON.parse(await readFile(hostFile, 'utf8'));
+      return { pid, runtimeVersion, runtimeBuild } as {
+        pid: number;
+        runtimeVersion: string;
+        runtimeBuild: string;
+      };
     };
     const snapshot = async (name: string) => {
-      await writeFile(path.join(out, `host-${name}.json`), readFileSync(hostFile()));
+      await writeFile(path.join(out, `host-${name}.json`), await readFile(hostFile));
       return host();
     };
     const launch = async (name: string): Promise<Launch> => {
@@ -141,7 +155,7 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
 
     // A busy runner on the node's host.
     const busy = await create();
-    writeFileSync(path.join(cwd, '.manual-turns'), '');
+    await writeFile(path.join(cwd, '.manual-turns'), '');
     await stack.call('native.session.send', {
       ...target,
       sessionId: busy.id,
@@ -158,12 +172,8 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
 
     // A real build change while the node is down; the node restarts on it.
     await stack.restartNode(async () => {
-      writeFileSync(
-        bump,
-        '// Runtime build change for the node host refresh canary.\nexport {};\n',
-      );
+      await writeFile(bump, `${BUMP_MARKER}\nexport {};\n`);
     });
-    await stack.waitForNode(true);
     await poll(
       'session readable after node restart',
       async () =>
@@ -180,13 +190,14 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
     const whileBusy = await launch('while busy');
     await log('launch while busy', whileBusy);
     assert.equal(whileBusy.code, 'NATIVE_HOST_VERSION_SKEW', 'a launch while busy is refused');
-    assert.match(String(whileBusy.message), new RegExp(`Busy: ${busy.id} \\(running\\)`));
-    assert.equal(host().pid, before.pid, 'the busy host keeps running');
+    // The error carries the busy list as text only.
+    assert.ok(String(whileBusy.message).includes(`Busy: ${busy.id} (running)`), whileBusy.message);
+    assert.equal((await host()).pid, before.pid, 'the busy host keeps running');
 
     // The turn ends. A session no run binds is not on the gateway's release list.
     const ready = path.join(cwd, '.turn-ready');
     await poll('held turn waiting', async () => (existsSync(ready) ? true : undefined), 30_000);
-    writeFileSync(path.join(cwd, readFileSync(ready, 'utf8')), '');
+    await writeFile(path.join(cwd, await readFile(ready, 'utf8')), '');
     await poll(
       'busy session idle',
       async () => ((await read(busy.id)).state === 'idle' ? true : undefined),
@@ -194,11 +205,11 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
     );
     const whileIdle = await launch('while idle, not released');
     await log('launch while idle', whileIdle);
-    assert.match(
-      String(whileIdle.message),
-      new RegExp(`Busy: ${busy.id} \\(not released by the gateway\\)`),
+    assert.ok(
+      String(whileIdle.message).includes(`Busy: ${busy.id} (not released by the gateway)`),
+      whileIdle.message,
     );
-    assert.equal(host().pid, before.pid, 'the unreleased session keeps the host');
+    assert.equal((await host()).pid, before.pid, 'the unreleased session keeps the host');
 
     // Once it is closed, the next launch refreshes the host and starts.
     await stack.call('native.session.close', { ...target, sessionId: busy.id });
@@ -209,8 +220,8 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
     );
     const next = await launch('after close');
     await log('launch after close', next);
+    assert.ok(next.launched, `the launch after close starts: ${next.message ?? ''}`);
     const after = await snapshot('after');
-    assert.ok(next.launched, 'the launch after close starts');
     assert.notEqual(after.pid, before.pid, 'the host was replaced');
     assert.notEqual(after.runtimeBuild, before.runtimeBuild, 'the new host runs the new build');
     check.status = 'pass';
@@ -231,7 +242,6 @@ export async function runNodeHostRefresh(options: NodeHostRefreshOptions): Promi
       ),
     );
   } catch (error) {
-    check.status = 'fail';
     check.error = String(error);
     check.differences.push(String(error));
   } finally {

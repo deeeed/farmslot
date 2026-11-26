@@ -66,6 +66,9 @@ if ! git -C "$CHECKOUT" fetch -q origin "$REF" || ! git -C "$CHECKOUT" checkout 
 fi
 SHA="$(git -C "$CHECKOUT" rev-parse HEAD)"
 cd "$CHECKOUT" || exit 2
+# A node-host-refresh case killed mid-run leaves its build change (canary/node-host-refresh.mts).
+bump=packages/agent-runtime/src/native/.canary-runtime-bump.ts
+if [ -f "$bump" ] && head -1 "$bump" | grep -q 'node host refresh canary'; then rm -f "$bump"; fi
 # Install only when the lockfile changed since the last install.
 lock="$(shasum yarn.lock | cut -d' ' -f1)"
 if [ "$(cat node_modules/.canary-lock 2>/dev/null)" != "$lock" ]; then
@@ -82,7 +85,8 @@ if ! nice -n 10 yarn workspace @farmslot/agent-runtime build > "$OUT/build.log" 
 fi
 
 # shellcheck disable=SC2086 # ARGS is a list of flags
-CANARY_STAMP="nightly-$STAMP" TSX_TSCONFIG_PATH="$CHECKOUT/services/gateway/tsconfig.json" \
+# This clone is disposable: the node-host-refresh case may write a build change into it.
+CANARY_STAMP="nightly-$STAMP" FARMSLOT_CANARY_DISPOSABLE_CHECKOUT=1 TSX_TSCONFIG_PATH="$CHECKOUT/services/gateway/tsconfig.json" \
   nice -n 10 node --import tsx scripts/runner-validation/canary/canary.mts --profile nightly $ARGS \
   --evidence "$OUT" --results "$OUT/results.json" --status-file "$STATUS" \
   --cli-snapshots "$CANARY_HOME/cli-snapshots"
