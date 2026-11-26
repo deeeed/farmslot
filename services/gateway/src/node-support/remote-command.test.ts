@@ -562,10 +562,12 @@ test('a delivery overtaken by a support-path change while nobody waited caches n
   const counted = countedIo(node.io);
   const vars = farmVars(farm.name, 'mini-x-1');
   const cmd = `bash ~/farmslot-node/projects/${farm.name}/scripts/h.sh`;
-  const extra = `projects/${farm.name}/project.json`;
+  // A hook reference already ships the project's project.json and the hook's top-level
+  // directory (paths.ts addProjectTopLevel); a new top-level directory is a real path change.
+  const extra = `projects/${farm.name}/setup`;
 
   await pendingCommand(vars, cmd, counted.io);
-  // The project now ships its config too: a different set of support paths.
+  // The project now ships a second directory: a different set of support paths.
   farm.editConfig((config) => ({ ...config, node_support: { paths: [extra] } }));
   node.release();
   await settleNodeSupportDeliveries();
