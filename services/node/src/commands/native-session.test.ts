@@ -19,6 +19,7 @@ test('node native execution rejects other owners and conflicting execution ident
     supportsWorkerStopAttestation: true,
     supportsStructuredResults: true,
     supportsHostRefresh: true,
+    supportsSessionArchive: true,
     supportsObservations: true,
   });
   await assert.rejects(
