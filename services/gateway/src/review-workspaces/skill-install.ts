@@ -1,3 +1,38 @@
+// Node's rename replaces existing paths. Walk checkout parents with directory handles
+// and publish each pre-bound entry with the host's exclusive rename.
+const PUBLISH_REVIEW_PATHS = String.raw`
+import ctypes, errno, json, os, sys
+libc = ctypes.CDLL(None, use_errno=True)
+if sys.platform not in ('darwin', 'linux'):
+    raise RuntimeError('Exclusive review publication requires macOS or Linux')
+darwin = sys.platform == 'darwin'
+rename = libc.renameatx_np if darwin else libc.renameat2
+rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+rename.restype = ctypes.c_int
+# RENAME_EXCL on macOS and RENAME_NOREPLACE on Linux.
+exclusive = 4 if darwin else 1
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+source = os.open(sys.argv[1], flags)
+checkout = os.open(sys.argv[2], flags)
+try:
+    for name, relative in json.loads(sys.argv[3]):
+        parts = relative.split('/')
+        parent = os.dup(checkout)
+        try:
+            for part in parts[:-1]:
+                child = os.open(part, flags, dir_fd=parent)
+                os.close(parent)
+                parent = child
+            if rename(source, os.fsencode(name), parent, os.fsencode(parts[-1]), exclusive):
+                code = ctypes.get_errno()
+                raise OSError(code, errno.errorcode.get(code, os.strerror(code)), relative)
+        finally:
+            os.close(parent)
+finally:
+    os.close(checkout)
+    os.close(source)
+`;
+
 /** Runs on the execution node after the frozen skill bundle has been verified. */
 export const REVIEW_SKILL_INSTALL_SCRIPT = String.raw`
 const fs=require('node:fs'),path=require('node:path');
@@ -71,12 +106,17 @@ function aliasIdentity(file,target){
  if(!st.isSymbolicLink()||fs.readlinkSync(file)!==target)throw Error('Review skill publication destination already exists: '+file);
  return statIdentity(st);
 }
-function verifyAlias(file,owner,alias){
- if(!sameIdentity(aliasIdentity(file,path.join(owner.stage,alias.relative)),alias.identity))
+function verifyPublication(file,publication){
+ if(publication.relative==='temp'){
+  if(!sameIdentity(directoryIdentity(file),publication.identity)||!sameIdentity(fs.readdirSync(file),['tasks']))
+   throw Error('Review task parent directory identity changed');
+  file=path.join(file,'tasks');
+ }
+ if(!sameIdentity(aliasIdentity(file,publication.target),publication.linkIdentity))
   throw Error('Review skill publication link identity changed');
 }
-function retireAlias(owner,alias){
- retireOwnedPath(path.join(checkout,alias.relative),staged=>verifyAlias(staged,owner,alias));
+function retirePublication(publication){
+ retireOwnedPath(path.join(checkout,publication.relative),staged=>verifyPublication(staged,publication));
 }
 function retireSkill(owner){
  if(exists(owner.stage))retireOwnedPath(owner.stage,staged=>verifyTree(owner,staged));
@@ -91,6 +131,7 @@ function publicationPath(destination){
  }
  throw Error('Invalid review skill destination');
 }
+const PUBLISH=${JSON.stringify(PUBLISH_REVIEW_PATHS)};
 const installerSkills=input.skills.filter(skill=>skill.install);
 const installers=installerSkills.map(skill=>skill.install);
 const destinations=installers.flatMap(installCheck);
@@ -104,7 +145,10 @@ function readOwner(){
   throw Error('Invalid review skill ownership record');
  const relative=destinations.map(dir=>path.relative(checkout,dir));
  const allowed=new Set(relative.flatMap(dir=>[dir,path.dirname(dir),path.dirname(path.dirname(dir))]));
- if(!Array.isArray(owner.aliases)||!owner.aliases.every(alias=>allowed.has(alias.relative))||
+ if(!Array.isArray(owner.publications)||
+    !owner.publications.every(entry=>allowed.has(entry.relative)
+      ? entry.target===path.join(owner.stage,entry.relative)
+      : ['temp','temp/tasks'].includes(entry.relative)&&entry.target===TASK_LINK)||
     !sameIdentity(Object.keys(owner.directories??{}).sort(),[...new Set(relative)].sort()))
   throw Error('Invalid review skill ownership paths');
  return owner;
@@ -128,45 +172,73 @@ function prepareInstaller(){
  if(prior){
   verifyTree(prior);
   verifyInstalled(prior.stage);
-  for(const alias of prior.aliases)verifyAlias(path.join(checkout,alias.relative),prior,alias);
+  const hasTasks=prior.publications.some(entry=>entry.target===TASK_LINK);
+  if(hasTasks!==Boolean(input.reviewTasks))throw Error('Review task publication changed');
+  for(const publication of prior.publications)verifyPublication(path.join(checkout,publication.relative),publication);
   return;
  }
  if(input.verifyOnly)throw Error('Review skill installation missing its ownership record');
  const aliases=[...new Set(destinations.map(publicationPath))];
- verifyUntracked(aliases.map(relative=>path.join(checkout,relative)));
+ const taskRelative=input.reviewTasks&&publicationPath(path.join(checkout,'temp','tasks'));
+ verifyUntracked([...aliases,...(taskRelative?[taskRelative]:[])].map(relative=>path.join(checkout,relative)));
+
  const stage=fs.mkdtempSync(path.join(path.dirname(checkout),'.review-skills-'));
- const owner={installers,stage,identity:statIdentity(fs.lstatSync(stage,{bigint:true})),aliases:[],directories:{}};
- let publishing;
+ // Until every identity is bound, this is an unclaimed stage. Workspace cleanup owns it.
+ const owner={installers,stage,identity:directoryIdentity(stage),publications:[],directories:{}};
  try{
-  // Install into the private tree with the explicit client. No checkout link or receipt exists yet.
-  verifyTree(owner);
   for(const install of installers){
    const result=cp.spawnSync('bash',[path.join(install.source,'tools','install'),'--repo',install.repo,'--target',stage,'--source',install.source,'--include',install.include],{encoding:'utf8'});
    if(result.status!==0)throw Error('tools/install failed: '+String(result.stderr||result.stdout||result.error).slice(-2000));
   }
   verifyInstalled(stage);
-  for(const dest of destinations){
-   const relative=path.relative(checkout,dest);
-   owner.directories[relative]=directoryIdentity(path.join(stage,relative));
+ }catch(error){
+  retireSkill(owner);
+  throw error;
+ }
+ for(const dest of destinations){
+  const relative=path.relative(checkout,dest);
+  owner.directories[relative]=directoryIdentity(path.join(stage,relative));
+ }
+ const publicationRoot=path.join(stage,'.publication');
+ fs.mkdirSync(publicationRoot);
+ for(const relative of [...aliases,...(taskRelative?[taskRelative]:[])]){
+  const target=relative===taskRelative?TASK_LINK:path.join(stage,relative);
+  const name=String(owner.publications.length);
+  const source=path.join(publicationRoot,name);
+  if(relative==='temp'){
+   fs.mkdirSync(source);
+   const file=path.join(source,'tasks');
+   fs.symlinkSync(target,file,'dir');
+   owner.publications.push({name,relative,target,identity:directoryIdentity(source),linkIdentity:aliasIdentity(file,target)});
+  }else{
+   fs.symlinkSync(target,source,'dir');
+   owner.publications.push({name,relative,target,linkIdentity:aliasIdentity(source,target)});
   }
-  verifyTree(owner);
-  for(const relative of aliases){
-   const alias=path.join(checkout,relative),target=path.join(stage,relative);
-   directoryIdentity(path.dirname(alias));
-   fs.symlinkSync(target,alias,'dir'); // never replaces a destination, even after preflight
-   publishing=alias;
-   owner.aliases.push({relative,identity:aliasIdentity(alias,target)});
-   publishing=undefined;
+ }
+ try{
+  if(taskRelative){
+   const taskRoot=path.join(path.dirname(checkout),'review-tasks');
+   fs.mkdirSync(taskRoot,{recursive:true});
+   directoryIdentity(taskRoot);
+   ignoreCheckoutPaths(['/temp/tasks']);
   }
+  const entries=owner.publications.map(({name,relative})=>[name,relative]);
+  const result=cp.spawnSync('python3',['-I','-c',PUBLISH,publicationRoot,checkout,JSON.stringify(entries)],{encoding:'utf8'});
+  if(result.status!==0)throw Error('Review publication failed: '+(result.stderr?.trim()||result.error?.message||result.status));
+  for(const publication of owner.publications)verifyPublication(path.join(checkout,publication.relative),publication);
   const pending=path.join(stage,'.receipt.json');
   fs.writeFileSync(pending,JSON.stringify(owner),{flag:'wx',mode:0o600});
   fs.linkSync(pending,marker);
  }catch(error){
-  try{
-   for(const alias of [...owner.aliases].reverse())retireAlias(owner,alias);
-   if(publishing)throw Error('Link identity unavailable; staging preserved at '+stage);
-   retireSkill(owner);
-  }catch(problem){throw Error(error.message+'; install rollback: '+problem.message);}
+  // Only a successful rename removes a prepared entry from our private tree.
+  const failures=[];
+  for(const publication of [...owner.publications].reverse()){
+   if(exists(path.join(publicationRoot,publication.name)))continue;
+   try{retirePublication(publication);}
+   catch(problem){failures.push(problem.message);}
+  }
+  if(failures.length)throw Error(error.message+'; install rollback: '+failures.join(', '));
+  retireSkill(owner);
   throw error;
  }
 }
@@ -177,21 +249,10 @@ if(input.action==='cleanup'){
  const links=[],directories=[];
  const owner=readOwner();
  if(owner){
-  verifyUntracked(owner.aliases.map(alias=>path.join(checkout,alias.relative)));
-  for(const alias of owner.aliases)retireAlias(owner,alias);
+  verifyUntracked(owner.publications.map(entry=>path.join(checkout,entry.relative)));
+  for(const publication of owner.publications)retirePublication(publication);
   retireSkill(owner);
   fs.unlinkSync(marker);
- }
- if(input.skills.some(skill=>skill.install)){
-  // The round folders stay in the workspace's review-tasks; only the checkout's link goes.
-  const temp=path.join(checkout,'temp'),tasks=path.join(temp,'tasks');
-  if(exists(temp)&&fs.realpathSync(temp)===temp){
-   const taskLink=exists(tasks);
-   if(taskLink&&taskLink.isSymbolicLink()&&fs.readlinkSync(tasks)===TASK_LINK){
-    fs.unlinkSync(tasks);
-    if(fs.readdirSync(temp).length===0)fs.rmdirSync(temp);
-   }
-  }
  }
  for(const skill of input.skills.filter(skill=>!skill.install)){
   if(!/^[a-zA-Z0-9_-]+$/.test(skill.name))throw Error('Invalid review skill name');
@@ -218,6 +279,7 @@ if(input.action==='cleanup'){
  process.stdout.write(JSON.stringify({cleaned:true}));process.exit(0);
 }
 if(input.reviewTasks&&input.reviewTasks!==path.join(path.dirname(input.checkout),'review-tasks'))throw Error('Invalid review task root');
+if(input.reviewTasks&&!installerSkills.length)throw Error('Review task publication requires an installed skill');
 const installed=[];
 for(const skill of input.skills.filter(skill=>!skill.install)){
  if(!/^[a-zA-Z0-9_-]+$/.test(skill.name))throw Error('Invalid review skill name');
@@ -238,17 +300,6 @@ if(installerSkills.length){
   if(!/^[a-zA-Z0-9_-]+$/.test(skill.name))throw Error('Invalid review skill name');
  prepareInstaller();
  installed.push(...installerSkills.map(skill=>skill.name));
-}
-if(input.reviewTasks){
- const tasks=path.join(checkout,'temp','tasks');
- if(!input.verifyOnly){
-  fs.mkdirSync(path.resolve(path.dirname(tasks),TASK_LINK),{recursive:true});
-  directory(path.dirname(tasks));
-  ignoreCheckoutPaths(['/temp/tasks']);
- }
- const st=exists(tasks);
- if(st){if(!st.isSymbolicLink()||fs.readlinkSync(tasks)!==TASK_LINK)throw Error('Conflicting review task folder: '+tasks);}
- else{if(input.verifyOnly)throw Error('Review task folder link missing');fs.symlinkSync(TASK_LINK,tasks);}
 }
 process.stdout.write(JSON.stringify({installed,verified:true}));
 `;

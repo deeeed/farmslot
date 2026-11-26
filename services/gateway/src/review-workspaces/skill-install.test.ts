@@ -162,23 +162,41 @@ test('a skill review links its writable round folders into the read-only checkou
     run({ action: 'cleanup' });
     assert.equal(readFileSync(path.join(existing, 'original.txt'), 'utf8'), 'preserve this file');
     rmSync(existing, { recursive: true });
+    const temp = path.join(checkout, 'temp');
+    const taskConflict = path.join(temp, 'tasks');
+    mkdirSync(taskConflict, { recursive: true });
+    writeFileSync(path.join(taskConflict, 'owner.txt'), 'foreign task');
+    const assertNoOwnedSkillLinks = () => {
+      for (const surface of ['.agents', '.claude', '.cursor'])
+        assert.equal(existsSync(path.join(checkout, surface)), false);
+      assert.equal(
+        existsSync(path.join(root, '.installed-review-skill-mms-perps-review-pr.json')),
+        false,
+      );
+    };
+    assert.throws(() => run(), /destination already exists without an owner/);
+    run({ action: 'cleanup' });
+    assertNoOwnedSkillLinks();
+    assert.equal(readFileSync(path.join(taskConflict, 'owner.txt'), 'utf8'), 'foreign task');
+    rmSync(taskConflict, { recursive: true });
+
     const publicationRace = path.join(root, 'publication-race.cjs');
-    const foreign = path.join(checkout, '.claude');
     writeFileSync(
       publicationRace,
-      `const fs = require('node:fs');
-      const link = fs.symlinkSync;
-      fs.symlinkSync = (target, destination, type) => {
-        if (destination === ${JSON.stringify(path.join(realpathSync(checkout), '.claude'))}) {
+      `const fs = require('node:fs'), cp = require('node:child_process'), path = require('node:path');
+      const spawn = cp.spawnSync;
+      cp.spawnSync = (program, args, options) => {
+        if (program === 'python3') {
+          const destination = path.join(args[4], 'temp', 'tasks');
           fs.mkdirSync(destination);
-          fs.writeFileSync(destination + '/owner.txt', 'foreign destination');
+          fs.writeFileSync(path.join(destination, 'owner.txt'), 'foreign task');
         }
-        return link(target, destination, type);
+        return spawn(program, args, options);
       };`,
     );
     assert.throws(() => run({}, publicationRace), /EEXIST/);
-    assert.equal(readFileSync(path.join(foreign, 'owner.txt'), 'utf8'), 'foreign destination');
-    assert.equal(existsSync(existing), false, 'roll back the earlier publication');
+    assert.equal(readFileSync(path.join(taskConflict, 'owner.txt'), 'utf8'), 'foreign task');
+    assertNoOwnedSkillLinks();
     assert.equal(
       readdirSync(root).some((name) => name.startsWith('.review-skills-')),
       false,
@@ -187,7 +205,43 @@ test('a skill review links its writable round folders into the read-only checkou
       existsSync(path.join(root, '.installed-review-skill-mms-perps-review-pr.json')),
       false,
     );
-    rmSync(foreign, { recursive: true });
+    rmSync(temp, { recursive: true });
+
+    const missingPublisher = path.join(root, 'missing-publisher.cjs');
+    writeFileSync(
+      missingPublisher,
+      `const cp = require('node:child_process');
+      const spawn = cp.spawnSync;
+      cp.spawnSync = (program, args, options) => program === 'python3'
+        ? { status: null, error: new Error('spawnSync python3 ENOENT') }
+        : spawn(program, args, options);`,
+    );
+    assert.throws(() => run({}, missingPublisher), /python3 ENOENT/);
+    assertNoOwnedSkillLinks();
+    assert.equal(existsSync(path.join(temp, 'tasks')), false);
+    assert.equal(
+      readdirSync(root).some((name) => name.startsWith('.review-skills-')),
+      false,
+    );
+
+    const failIdentity = path.join(root, 'fail-identity.cjs');
+    writeFileSync(
+      failIdentity,
+      `const fs = require('node:fs'), path = require('node:path');
+      const lstat = fs.lstatSync;
+      fs.lstatSync = (file, options) => {
+        if (path.basename(file).startsWith('.review-skills-') && options?.bigint)
+          throw Error('Stage identity capture refused by fixture');
+        return lstat(file, options);
+      };`,
+    );
+    assert.throws(() => run({}, failIdentity), /Stage identity capture refused by fixture/);
+    assertNoOwnedSkillLinks();
+    const unclaimed = readdirSync(root).find((name) => name.startsWith('.review-skills-'));
+    assert.ok(unclaimed);
+    assert.equal(lstatSync(path.join(root, unclaimed)).isDirectory(), true);
+    run({ action: 'cleanup' });
+    assert.equal(existsSync(path.join(root, unclaimed)), true);
 
     run();
     run();
@@ -204,13 +258,15 @@ test('a skill review links its writable round folders into the read-only checkou
     );
     rmSync(privateInstall, { recursive: true });
     renameSync(saved, privateInstall);
+    const published = path.join(realpathSync(checkout), '.agents');
+    assert.equal(lstatSync(published).isSymbolicLink(), true);
     const swap = path.join(root, 'swap-before-retire.cjs');
     writeFileSync(
       swap,
       `const fs = require('node:fs');
       const rename = fs.renameSync;
       fs.renameSync = (from, to) => {
-        if (from === ${JSON.stringify(path.join(realpathSync(checkout), '.agents/skills/mms-perps-review-pr'))} && to.endsWith('/directory')) {
+        if (from === ${JSON.stringify(published)} && to.endsWith('/directory')) {
           const target = fs.readlinkSync(from);
           rename(from, ${JSON.stringify(saved)});
           fs.symlinkSync(target, from);
@@ -227,7 +283,7 @@ test('a skill review links its writable round folders into the read-only checkou
     assert.equal(readlinkSync(path.join(root, retained, 'directory')), readlinkSync(saved));
     assert.throws(() => run({ action: 'cleanup' }), /awaiting recovery/);
     renameSync(path.join(root, retained), path.join(root, 'retained-replacement'));
-    renameSync(saved, existing);
+    renameSync(saved, published);
     const link = path.join(checkout, 'temp/tasks');
     assert(lstatSync(link).isSymbolicLink());
     assert.equal(readlinkSync(link), '../../review-tasks');
