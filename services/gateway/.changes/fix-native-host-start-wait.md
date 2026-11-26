@@ -1,0 +1,1 @@
+- Node request timeouts are derived from the native host start timeout, so a node that waits for a starting host still answers within them.
