@@ -1,0 +1,1 @@
+- mm-harness 0.96.48 consumes the same cohort as 0.96.47 (recipe-runner 0.52.5, Recipe CLI 0.35.35, agent-runtime 0.51.2, adapter-sdk 0.31.4, adapter-web 0.19.35, adapter-rn 0.31.37, adapter-node 0.8.36, protocol 0.92.1). It resolves Node from PATH or nvm as well as asdf, and names a wrong unlock password.
