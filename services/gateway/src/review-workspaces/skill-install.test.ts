@@ -74,9 +74,17 @@ test('a skill review links its writable round folders into the read-only checkou
     path.join(source, 'tools/install'),
     [
       'target=""; while [ $# -gt 0 ]; do [ "$1" = --target ] && target="$2"; shift; done',
+      'workspace=$(dirname "$target")',
+      'test "$target" != "$workspace/source" || exit 41',
+      'test ! -e "$workspace/.installed-review-skill-mms-perps-review-pr.json" || exit 42',
+      'test ! -e "$workspace/source/.agents/skills/mms-perps-review-pr" || exit 43',
+      'test ! -e "$workspace/source/temp/tasks" || exit 44',
+      'if [ -f "$workspace/fail-installer" ]; then echo partial > "$target/partial"; echo private-install-failed >&2; exit 7; fi',
       'for dir in .agents/skills .claude/skills .cursor/rules; do mkdir -p "$target/$dir/mms-perps-review-pr/scripts"; done',
       'echo "# Installed" > "$target/.agents/skills/mms-perps-review-pr/SKILL.md"',
       'echo "" > "$target/.agents/skills/mms-perps-review-pr/scripts/review-task.mjs"',
+      'echo "# Installed" > "$target/.claude/skills/mms-perps-review-pr/SKILL.md"',
+      'echo "# Installed" > "$target/.cursor/rules/mms-perps-review-pr/RULE.md"',
     ].join('\n'),
   );
   chmodSync(path.join(source, 'tools/install'), 0o755);
@@ -116,6 +124,19 @@ test('a skill review links its writable round folders into the read-only checkou
     assert.throws(() => run(), /destination is not an owned directory/);
     assert.equal(existsSync(path.join(outside, 'rules')), false);
     unlinkSync(cursor);
+    const installerFailure = path.join(root, 'fail-installer');
+    writeFileSync(installerFailure, '');
+    assert.throws(() => run(), /private-install-failed/);
+    assert.equal(
+      readdirSync(root).some((name) => name.startsWith('.review-skills-')),
+      false,
+    );
+    assert.equal(existsSync(path.join(checkout, '.agents')), false);
+    assert.equal(
+      existsSync(path.join(root, '.installed-review-skill-mms-perps-review-pr.json')),
+      false,
+    );
+    unlinkSync(installerFailure);
     const failPublish = path.join(root, 'fail-publish.cjs');
     writeFileSync(
       failPublish,
@@ -159,7 +180,7 @@ test('a skill review links its writable round folders into the read-only checkou
     assert.equal(readFileSync(path.join(foreign, 'owner.txt'), 'utf8'), 'foreign destination');
     assert.equal(existsSync(existing), false, 'roll back the earlier publication');
     assert.equal(
-      readdirSync(checkout).some((name) => name.startsWith('.farmslot-review-skills-')),
+      readdirSync(root).some((name) => name.startsWith('.review-skills-')),
       false,
     );
     assert.equal(
@@ -190,23 +211,20 @@ test('a skill review links its writable round folders into the read-only checkou
       const rename = fs.renameSync;
       fs.renameSync = (from, to) => {
         if (from === ${JSON.stringify(path.join(realpathSync(checkout), '.agents/skills/mms-perps-review-pr'))} && to.endsWith('/directory')) {
+          const target = fs.readlinkSync(from);
           rename(from, ${JSON.stringify(saved)});
-          fs.mkdirSync(from);
-          fs.writeFileSync(from + '/replacement.txt', 'preserved during retirement');
+          fs.symlinkSync(target, from);
         }
         return rename(from, to);
       };`,
     );
     assert.throws(
       () => run({ action: 'cleanup' }, swap),
-      /publication destination already exists: .*preserved at/,
+      /publication link identity changed; preserved at/,
     );
     const retained = readdirSync(root).find((name) => name.startsWith('.review-skill-retire-'));
     assert.ok(retained);
-    assert.equal(
-      readFileSync(path.join(root, retained, 'directory/replacement.txt'), 'utf8'),
-      'preserved during retirement',
-    );
+    assert.equal(readlinkSync(path.join(root, retained, 'directory')), readlinkSync(saved));
     assert.throws(() => run({ action: 'cleanup' }), /awaiting recovery/);
     renameSync(path.join(root, retained), path.join(root, 'retained-replacement'));
     renameSync(saved, existing);

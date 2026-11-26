@@ -41,10 +41,11 @@ function verifyUntracked(paths){
  const tracked=cp.spawnSync('git',['-C',checkout,'ls-files','-z','--',...paths.map(dir=>path.relative(checkout,dir))],{encoding:'utf8'});
  if(tracked.status!==0||tracked.stdout)throw Error('Review skill installation would overwrite tracked files');
 }
+const statIdentity=st=>[String(st.dev),String(st.ino),String(st.birthtimeNs)];
 function directoryIdentity(dir){
  const st=fs.lstatSync(dir,{bigint:true});
  if(!st.isDirectory()||st.isSymbolicLink()||fs.realpathSync(dir)!==dir)throw Error('Review skill destination is not an owned directory');
- return [String(st.dev),String(st.ino),String(st.birthtimeNs)];
+ return statIdentity(st);
 }
 const sameIdentity=(left,right)=>JSON.stringify(left)===JSON.stringify(right);
 function retireOwnedPath(file,verify){
@@ -65,12 +66,17 @@ function verifyTree(owner,root=owner.stage){
   if(!within(root,dir)||!sameIdentity(directoryIdentity(dir),identity))throw Error('Review skill destination identity changed');
  }
 }
-function verifyAlias(file,target){
- const st=exists(file);
- if(!st?.isSymbolicLink()||fs.readlinkSync(file)!==target)throw Error('Review skill publication destination already exists: '+file);
+function aliasIdentity(file,target){
+ const st=fs.lstatSync(file,{bigint:true});
+ if(!st.isSymbolicLink()||fs.readlinkSync(file)!==target)throw Error('Review skill publication destination already exists: '+file);
+ return statIdentity(st);
 }
-function retireAlias(owner,relative){
- retireOwnedPath(path.join(checkout,relative),staged=>verifyAlias(staged,path.join(owner.stage,relative)));
+function verifyAlias(file,owner,alias){
+ if(!sameIdentity(aliasIdentity(file,path.join(owner.stage,alias.relative)),alias.identity))
+  throw Error('Review skill publication link identity changed');
+}
+function retireAlias(owner,alias){
+ retireOwnedPath(path.join(checkout,alias.relative),staged=>verifyAlias(staged,owner,alias));
 }
 function retireSkill(owner){
  if(exists(owner.stage))retireOwnedPath(owner.stage,staged=>verifyTree(owner,staged));
@@ -94,23 +100,26 @@ function readOwner(){
  if(!state)return undefined;
  if(!state.isFile())throw Error('Invalid review skill ownership record');
  const owner=JSON.parse(fs.readFileSync(marker,'utf8'));
- if(!sameIdentity(owner.installers,installers)||path.dirname(owner.stage)!==checkout||!path.basename(owner.stage).startsWith('.farmslot-review-skills-'))
+ if(!sameIdentity(owner.installers,installers)||path.dirname(owner.stage)!==path.dirname(checkout)||!path.basename(owner.stage).startsWith('.review-skills-'))
   throw Error('Invalid review skill ownership record');
  const relative=destinations.map(dir=>path.relative(checkout,dir));
  const allowed=new Set(relative.flatMap(dir=>[dir,path.dirname(dir),path.dirname(path.dirname(dir))]));
- if(!Array.isArray(owner.aliases)||!owner.aliases.every(alias=>allowed.has(alias))||
+ if(!Array.isArray(owner.aliases)||!owner.aliases.every(alias=>allowed.has(alias.relative))||
     !sameIdentity(Object.keys(owner.directories??{}).sort(),[...new Set(relative)].sort()))
   throw Error('Invalid review skill ownership paths');
  return owner;
 }
-function publishAliases(owner,published,resume){
- for(const relative of owner.aliases){
-  const alias=path.join(checkout,relative),target=path.join(owner.stage,relative);
-  directoryIdentity(path.dirname(alias));
-  if(resume&&exists(alias))verifyAlias(alias,target);
-  else{
-   fs.symlinkSync(target,alias,'dir'); // exclusive, including when a destination appears after the check
-   published.push(relative);
+function stagedInstallPaths(stage,install){
+ return installCheck(install).map(dir=>path.join(stage,path.relative(checkout,dir)));
+}
+function verifyInstalled(stage){
+ for(const install of installers){
+  const [agents,claude,cursor]=stagedInstallPaths(stage,install);
+  const cursorRule=['RULE.md',install.installedName+'.mdc'].map(name=>path.join(cursor,name)).find(file=>exists(file));
+  for(const file of [path.join(agents,'SKILL.md'),path.join(agents,'scripts','review-task.mjs'),path.join(claude,'SKILL.md'),cursorRule]){
+   const st=file&&exists(file);
+   if(!st?.isFile()||!st.size||fs.realpathSync(file)!==file||!within(stage,file))
+    throw Error('Review skill installation missing required staged output: '+(file??cursor));
   }
  }
 }
@@ -118,47 +127,45 @@ function prepareInstaller(){
  const prior=readOwner();
  if(prior){
   verifyTree(prior);
-  for(const relative of prior.aliases)if(exists(path.join(checkout,relative)))
-   verifyAlias(path.join(checkout,relative),path.join(prior.stage,relative));
-  verifyUntracked(prior.aliases.map(relative=>path.join(checkout,relative)));
-  if(input.verifyOnly){
-   for(const relative of prior.aliases)verifyAlias(path.join(checkout,relative),path.join(prior.stage,relative));
-  }else{
-   const published=[];
-   try{publishAliases(prior,published,true);}
-   catch(error){
-    for(const relative of published.reverse())retireAlias(prior,relative);
-    throw error;
-   }
-  }
-  return prior;
+  verifyInstalled(prior.stage);
+  for(const alias of prior.aliases)verifyAlias(path.join(checkout,alias.relative),prior,alias);
+  return;
  }
  if(input.verifyOnly)throw Error('Review skill installation missing its ownership record');
  const aliases=[...new Set(destinations.map(publicationPath))];
  verifyUntracked(aliases.map(relative=>path.join(checkout,relative)));
- ignoreCheckoutPaths(['/.farmslot-review-skills-*/']);
- const stage=fs.mkdtempSync(path.join(checkout,'.farmslot-review-skills-'));
- const owner={installers,stage,identity:directoryIdentity(stage),aliases,directories:{}};
- const published=[];
- let claimed=false;
+ const stage=fs.mkdtempSync(path.join(path.dirname(checkout),'.review-skills-'));
+ const owner={installers,stage,identity:statIdentity(fs.lstatSync(stage,{bigint:true})),aliases:[],directories:{}};
+ let publishing;
  try{
+  // Install into the private tree with the explicit client. No checkout link or receipt exists yet.
+  verifyTree(owner);
+  for(const install of installers){
+   const result=cp.spawnSync('bash',[path.join(install.source,'tools','install'),'--repo',install.repo,'--target',stage,'--source',install.source,'--include',install.include],{encoding:'utf8'});
+   if(result.status!==0)throw Error('tools/install failed: '+String(result.stderr||result.stdout||result.error).slice(-2000));
+  }
+  verifyInstalled(stage);
   for(const dest of destinations){
-   const relative=path.relative(checkout,dest),privateDir=path.join(stage,relative);
-   fs.mkdirSync(privateDir,{recursive:true});
-   owner.directories[relative]=directoryIdentity(privateDir);
+   const relative=path.relative(checkout,dest);
+   owner.directories[relative]=directoryIdentity(path.join(stage,relative));
+  }
+  verifyTree(owner);
+  for(const relative of aliases){
+   const alias=path.join(checkout,relative),target=path.join(stage,relative);
+   directoryIdentity(path.dirname(alias));
+   fs.symlinkSync(target,alias,'dir'); // never replaces a destination, even after preflight
+   publishing=alias;
+   owner.aliases.push({relative,identity:aliasIdentity(alias,target)});
+   publishing=undefined;
   }
   const pending=path.join(stage,'.receipt.json');
   fs.writeFileSync(pending,JSON.stringify(owner),{flag:'wx',mode:0o600});
   fs.linkSync(pending,marker);
-  claimed=true;
-  fs.unlinkSync(pending);
-  publishAliases(owner,published,false);
-  return owner;
  }catch(error){
   try{
-   for(const relative of published.reverse())retireAlias(owner,relative);
+   for(const alias of [...owner.aliases].reverse())retireAlias(owner,alias);
+   if(publishing)throw Error('Link identity unavailable; staging preserved at '+stage);
    retireSkill(owner);
-   if(claimed)fs.unlinkSync(marker);
   }catch(problem){throw Error(error.message+'; install rollback: '+problem.message);}
   throw error;
  }
@@ -170,8 +177,8 @@ if(input.action==='cleanup'){
  const links=[],directories=[];
  const owner=readOwner();
  if(owner){
-  verifyUntracked(owner.aliases.map(relative=>path.join(checkout,relative)));
-  for(const relative of owner.aliases)retireAlias(owner,relative);
+  verifyUntracked(owner.aliases.map(alias=>path.join(checkout,alias.relative)));
+  for(const alias of owner.aliases)retireAlias(owner,alias);
   retireSkill(owner);
   fs.unlinkSync(marker);
  }
@@ -210,18 +217,7 @@ if(input.action==='cleanup'){
  }
  process.stdout.write(JSON.stringify({cleaned:true}));process.exit(0);
 }
-if(input.reviewTasks){
- const tasks=path.join(checkout,'temp','tasks');
- if(input.reviewTasks!==path.join(path.dirname(input.checkout),'review-tasks'))throw Error('Invalid review task root');
- if(!input.verifyOnly){
-  fs.mkdirSync(path.resolve(path.dirname(tasks),TASK_LINK),{recursive:true});
-  directory(path.dirname(tasks));
-  ignoreCheckoutPaths(['/temp/tasks']);
- }
- const st=exists(tasks);
- if(st){if(!st.isSymbolicLink()||fs.readlinkSync(tasks)!==TASK_LINK)throw Error('Conflicting review task folder: '+tasks);}
- else{if(input.verifyOnly)throw Error('Review task folder link missing');fs.symlinkSync(TASK_LINK,tasks);}
-}
+if(input.reviewTasks&&input.reviewTasks!==path.join(path.dirname(input.checkout),'review-tasks'))throw Error('Invalid review task root');
 const installed=[];
 for(const skill of input.skills.filter(skill=>!skill.install)){
  if(!/^[a-zA-Z0-9_-]+$/.test(skill.name))throw Error('Invalid review skill name');
@@ -238,29 +234,21 @@ for(const skill of input.skills.filter(skill=>!skill.install)){
  installed.push(skill.name);
 }
 if(installerSkills.length){
- const owner=prepareInstaller();
- for(const skill of installerSkills){
+ for(const skill of installerSkills)
   if(!/^[a-zA-Z0-9_-]+$/.test(skill.name))throw Error('Invalid review skill name');
-  const [agents]=installCheck(skill.install);
-  if(!input.verifyOnly){
-   for(const relative of Object.keys(owner.directories)){
-    const rejectLinks=dir=>{
-     for(const entry of fs.readdirSync(dir,{withFileTypes:true})){
-      if(entry.isSymbolicLink())throw Error('Review skill destination contains a symbolic link');
-      if(entry.isDirectory())rejectLinks(path.join(dir,entry.name));
-     }
-    };
-    rejectLinks(path.join(owner.stage,relative));
-   }
-   const run=cp.spawnSync('bash',[path.join(skill.install.source,'tools','install'),'--repo',skill.install.repo,'--target',checkout,'--source',skill.install.source,'--include',skill.install.include],{encoding:'utf8'});
-   if(run.status!==0)throw Error('tools/install failed: '+String(run.stderr||run.stdout).slice(-2000));
-   verifyTree(owner);
-   for(const relative of owner.aliases)verifyAlias(path.join(checkout,relative),path.join(owner.stage,relative));
-  }
-  for(const file of [path.join(agents,'SKILL.md'),path.join(agents,'scripts','review-task.mjs')])
-   if(!exists(file)||!within(owner.stage,fs.realpathSync(file)))throw Error('Review skill installation missing: '+path.relative(checkout,file));
-  installed.push(skill.name);
+ prepareInstaller();
+ installed.push(...installerSkills.map(skill=>skill.name));
+}
+if(input.reviewTasks){
+ const tasks=path.join(checkout,'temp','tasks');
+ if(!input.verifyOnly){
+  fs.mkdirSync(path.resolve(path.dirname(tasks),TASK_LINK),{recursive:true});
+  directory(path.dirname(tasks));
+  ignoreCheckoutPaths(['/temp/tasks']);
  }
+ const st=exists(tasks);
+ if(st){if(!st.isSymbolicLink()||fs.readlinkSync(tasks)!==TASK_LINK)throw Error('Conflicting review task folder: '+tasks);}
+ else{if(input.verifyOnly)throw Error('Review task folder link missing');fs.symlinkSync(TASK_LINK,tasks);}
 }
 process.stdout.write(JSON.stringify({installed,verified:true}));
 `;
