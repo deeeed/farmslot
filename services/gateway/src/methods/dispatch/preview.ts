@@ -36,6 +36,7 @@ import {
   resolveReviewWorkspacePlatform,
 } from '../../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../../review-workspaces/direct-defaults.js';
+import { configuresReviewSkill } from '../../review-workspaces/skills.js';
 import { detectProfileFit, FARMSLOT_PROJECT } from '../../run-engine/profile-fit-gate.js';
 import {
   slotCapabilityBlocker,
@@ -1125,15 +1126,16 @@ async function previewDispatch(
           resolveStaticReviewOwner('live').ownerId,
         ));
       const templateId = admission.project.staticReview!.templateId;
-      const selected = templateId
-        ? await resolveConfiguredExecutionTemplateForSlot(await loadProjectVars(params.project), {
-            flow: 'review-pr',
-            platform: await resolveReviewWorkspacePlatform(admission.pool, params.project),
-            runMode: params.mode ?? 'autonomous',
-            explicitDomain: params.domain,
-            explicitId: templateId,
-          })
-        : undefined;
+      const selected =
+        templateId && !configuresReviewSkill(admission.project.staticReview?.support, params.domain)
+          ? await resolveConfiguredExecutionTemplateForSlot(await loadProjectVars(params.project), {
+              flow: 'review-pr',
+              platform: await resolveReviewWorkspacePlatform(admission.pool, params.project),
+              runMode: params.mode ?? 'autonomous',
+              explicitDomain: params.domain,
+              explicitId: templateId,
+            })
+          : undefined;
       return {
         preview: {
           slotId: null,

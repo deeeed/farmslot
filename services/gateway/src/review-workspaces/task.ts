@@ -52,7 +52,6 @@ import {
   ORCHESTRATOR_LOCALITY,
   slotCopyDir,
   slotCopyFile,
-  slotDeletePath,
   slotFileExists,
   type SlotLocality,
   slotMkdir,
@@ -111,6 +110,7 @@ import {
 } from './coverage.js';
 import { resolveReviewWorkspacePool } from './pool.js';
 import { REVIEW_TASK_RUNTIME_DIR, reviewSkillFor, reviewTaskRoot } from './skills.js';
+import { executeWorkspaceReviewTaskStart } from './workspace.js';
 
 const exec = promisify(execFile);
 const SUBJECT = 'inputs/review-subject.json';
@@ -153,6 +153,7 @@ type Dependencies = {
   snapshotRoot: () => string;
   readCommentDiff?: typeof readReviewCommentDiff;
   recordReviewTask?: (runId: string, round: ReviewTaskRound) => Promise<void>;
+  startSkillTask?: typeof executeWorkspaceReviewTaskStart;
 };
 const defaults: Dependencies = {
   getRun,
@@ -407,6 +408,7 @@ async function startReviewTask(
   skill: NonNullable<ReturnType<typeof reviewSkillFor>>,
   io: SlotLocality,
   assertCurrent: () => void,
+  runSkillTask: typeof executeWorkspaceReviewTaskStart,
 ): Promise<ReviewTaskRound> {
   const workspace = run.reviewWorkspace;
   const pr = reviewPRIdentity(run)?.prNumber;
@@ -431,22 +433,16 @@ async function startReviewTask(
     String(pr),
     '"$@"',
   ].join(' ');
-  assertCurrent();
-  const result =
-    workspace.executionNodeId === 'local'
-      ? await readLocalCommand(command, {
-          cwd: workspace.checkoutPath,
-          timeout: 120_000,
-          maxBuffer: 1024 * 1024,
-        })
-      : await execNativeNodeArgv(
-          run.nativeOwnerPrincipalId!,
-          workspace.machine,
-          ['bash', '-c', command],
-          120_000,
-        );
-  if (result.exitCode !== 0)
-    throw new Error(`Review skill could not start its round: ${result.stderr || result.stdout}`);
+  const result = await runSkillTask(
+    run,
+    subject,
+    {
+      pr,
+      command,
+      boundFolder: workspace.reviewTask?.folder,
+    },
+    assertCurrent,
+  );
   const relative = /^folder: temp\/tasks\/(review\/[A-Za-z0-9_.-]+\/r[1-9]\d*)$/m.exec(
     result.stdout,
   )?.[1];
@@ -468,11 +464,6 @@ async function startReviewTask(
   )
     throw new Error('Review skill round does not describe the frozen head');
   // Without mm-harness the round is a plain file: no marks and no SIGNAL.json to accept.
-  if (record.marks === false && !workspace.reviewTask) {
-    assertCurrent();
-    // The fallback has never been dispatched. Remove it so the skill can initialize marks on replay.
-    await slotDeletePath(io, path.posix.join(root, relative));
-  }
   if (record.marks !== true)
     throw new Error(
       `Review skill round has no marked checklist: ${result.stderr.trim() || 'mm-harness was unavailable'}`,
@@ -532,7 +523,14 @@ async function materializeSkillReviewBundle(
     )
       throw new Error('Review workspace ownership changed during skill start');
   };
-  const round = await startReviewTask(run, subject, skill, io, assertCurrent);
+  const round = await startReviewTask(
+    run,
+    subject,
+    skill,
+    io,
+    assertCurrent,
+    deps.startSkillTask ?? executeWorkspaceReviewTaskStart,
+  );
   assertCurrent();
   if (!run.reviewWorkspace.reviewTask)
     await (deps.recordReviewTask ?? recordReviewTask)(run.id, round);

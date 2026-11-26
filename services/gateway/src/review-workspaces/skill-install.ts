@@ -47,10 +47,27 @@ function verifyInstallDestinations(destinations){
  const tracked=require('node:child_process').spawnSync('git',['-C',checkout,'ls-files','-z','--',...destinations.map(dir=>path.relative(checkout,dir))],{encoding:'utf8'});
  if(tracked.status!==0||tracked.stdout)throw Error('Review skill installation would overwrite tracked files');
 }
+function installedOwner(install,destinations,create){
+ const marker=path.join(path.dirname(checkout),'.installed-review-skill-'+install.installedName+'.json');
+ const state=exists(marker);
+ if(state){
+  if(!state.isFile()||state.isSymbolicLink())throw Error('Invalid review skill ownership record');
+  const owner=JSON.parse(fs.readFileSync(marker,'utf8'));
+  if(JSON.stringify(owner.install)!==JSON.stringify(install))throw Error('Review skill installation belongs to a different source');
+  return {marker,ownsCursorRules:owner.ownsCursorRules===true};
+ }
+ if(!create)return undefined;
+ if(destinations.some(dir=>exists(dir)))throw Error('Review skill destination already exists without an owner');
+ const ownsCursorRules=!exists(path.join(checkout,'.cursor','rules'));
+ fs.writeFileSync(marker,JSON.stringify({install,ownsCursorRules}),{flag:'wx',mode:0o600});
+ return {marker,ownsCursorRules};
+}
 if(input.action==='cleanup'){
  const links=[],directories=[];
  for(const skill of input.skills.filter(skill=>skill.install)){
   const destinations=installCheck(skill.install);
+  const owner=installedOwner(skill.install,destinations,false);
+  if(!owner)continue;
   verifyInstallDestinations(destinations);
   for(const dir of destinations){
    const st=exists(dir);
@@ -58,10 +75,11 @@ if(input.action==='cleanup'){
    if(st.isSymbolicLink()||!st.isDirectory()||!within(checkout,fs.realpathSync(dir)))throw Error('Installed review skill changed; refusing cleanup');
    fs.rmSync(dir,{recursive:true});
   }
+  const rules=path.join(checkout,'.cursor','rules'),st=exists(rules);
+  if(owner.ownsCursorRules&&st?.isDirectory()&&fs.readdirSync(rules).length===0)fs.rmdirSync(rules);
+  fs.unlinkSync(owner.marker);
  }
  if(input.skills.some(skill=>skill.install)){
-  const rules=path.join(checkout,'.cursor','rules'),st=exists(rules);
-  if(st?.isDirectory()&&fs.readdirSync(rules).length===0)fs.rmdirSync(rules);
   // The round folders stay in the workspace's review-tasks; only the checkout's link goes.
   const temp=path.join(checkout,'temp'),tasks=path.join(temp,'tasks');
   if(exists(temp)&&fs.realpathSync(temp)===temp){
@@ -118,9 +136,11 @@ for(const skill of input.skills){
   const destinations=installCheck(skill.install),[agents]=destinations;
   if(!input.verifyOnly){
    verifyInstallDestinations(destinations);
+   installedOwner(skill.install,destinations,true);
    const run=require('node:child_process').spawnSync('bash',[path.join(skill.install.source,'tools','install'),'--repo',skill.install.repo,'--target',checkout,'--source',skill.install.source,'--include',skill.install.include],{encoding:'utf8'});
    if(run.status!==0)throw Error('tools/install failed: '+String(run.stderr||run.stdout).slice(-2000));
   }
+  else if(!installedOwner(skill.install,destinations,false))throw Error('Review skill installation missing its ownership record');
   for(const file of [path.join(agents,'SKILL.md'),path.join(agents,'scripts','review-task.mjs')])
    if(!exists(file)||!within(checkout,fs.realpathSync(file)))throw Error('Review skill installation missing: '+path.relative(checkout,file));
   installed.push(skill.name);

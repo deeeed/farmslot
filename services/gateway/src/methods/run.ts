@@ -116,6 +116,7 @@ import {
   type ReviewWorkspaceAdmission,
 } from '../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../review-workspaces/direct-defaults.js';
+import { configuresReviewSkill } from '../review-workspaces/skills.js';
 import { useReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
 import {
   assertReadyGatePackageInputsCurrent,
@@ -659,8 +660,10 @@ export async function planRunCreation(
     );
   }
   let executionTemplateSnapshot: Run['executionTemplate'];
-  // A review in its skill's domain without a configured template runs the skill alone.
-  if (workspaceAdmission && params.executionTemplateId) {
+  if (
+    workspaceAdmission &&
+    !configuresReviewSkill(workspaceAdmission.project.staticReview?.support, params.domain)
+  ) {
     executionTemplateSnapshot = await resolveWorkspaceReviewTemplate({
       project: params.project,
       pool: workspaceAdmission.pool,

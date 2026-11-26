@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -12,6 +14,7 @@ import {
   readReviewWorkspaceSignal,
 } from './task.js';
 import { checklist, withReviewWorkspaceTaskFixture } from './task-fixture.test-support.js';
+import { type executeWorkspaceReviewTaskStart, REVIEW_WORKSPACE_SCRIPT } from './workspace.js';
 
 type Fixture = Parameters<Parameters<typeof withReviewWorkspaceTaskFixture>[0]>[0];
 
@@ -36,13 +39,38 @@ console.log('Started cold round r1: first round\\nfolder: ' + dir);
 
 /** A perps-domain review of a project whose support installs the review skill. */
 async function skillReview(f: Fixture) {
-  const checkout = f.run.reviewWorkspace!.checkoutPath;
+  const workspace = f.run.reviewWorkspace!;
+  const root = path.join(f.root, 'workspaces');
+  const workspaceDir = path.join(root, 'runs', workspace.workspaceId);
+  const checkout = path.join(workspaceDir, 'source');
+  workspace.checkoutPath = checkout;
   const scripts = path.join(checkout, '.agents/skills', SKILL, 'scripts');
   await mkdir(scripts, { recursive: true });
   await writeFile(path.join(scripts, 'review-task.mjs'), START);
-  await mkdir(path.join(f.root, 'review-tasks'));
+  await mkdir(path.join(workspaceDir, 'review-tasks'));
   await mkdir(path.join(checkout, 'temp'));
   await symlink('../../review-tasks', path.join(checkout, 'temp/tasks'));
+  const identity = {
+    runId: f.run.id,
+    workspaceId: workspace.workspaceId,
+    owner: f.run.nativeOwnerPrincipalId,
+    project: f.run.project,
+    machine: workspace.machine,
+    executionNodeId: workspace.executionNodeId,
+    repositoryUrl: f.subject.repositoryUrl,
+    headSha: f.subject.headSha,
+    baseSha: f.subject.baseSha,
+  };
+  await writeFile(path.join(workspaceDir, 'identity.json'), JSON.stringify(identity));
+  await writeFile(path.join(workspaceDir, 'allocation.json'), JSON.stringify({ state: 'ready' }));
+  const cacheIdentity = JSON.stringify({
+    owner: identity.owner,
+    project: identity.project,
+    repositoryUrl: identity.repositoryUrl,
+  });
+  const cacheKey = createHash('sha256').update(cacheIdentity).digest('hex');
+  await mkdir(path.join(root, 'repositories'));
+  await writeFile(path.join(root, 'repositories', cacheKey + '.json'), cacheIdentity);
   f.run.domain = 'perps';
   f.run.reviewContext = { freshChain: true, reviewLineages: [null] };
   f.run.reviewWorkspace!.support = {
@@ -63,9 +91,32 @@ async function skillReview(f: Fixture) {
     ],
     environment: {},
   };
+  let generation = 0;
   const deps = {
     ...f.deps,
     readCommentDiff: async () => '@@ -2,1 +2,2 @@\n unchanged\n+added\n',
+    startSkillTask: (async (_run, _subject, start, assertCurrent) => {
+      await assertCurrent();
+      const argv = [
+        '-e',
+        REVIEW_WORKSPACE_SCRIPT,
+        JSON.stringify({
+          root,
+          identity,
+          generation,
+          action: 'start-review-task',
+          taskPath: f.task,
+          reviewTaskStart: start,
+        }),
+      ];
+      const result = spawnSync(process.execPath, argv, { encoding: 'utf8' });
+      if (result.error) throw result.error;
+      const output = JSON.parse(result.stdout);
+      if (result.status !== 0) throw Error(output.error?.message || result.stderr);
+      assert.equal(output.state, 'review-task');
+      await assertCurrent();
+      return { stdout: String(output.stdout), stderr: String(output.stderr) };
+    }) satisfies typeof executeWorkspaceReviewTaskStart,
     recordReviewTask: async (
       _runId: string,
       round: NonNullable<NonNullable<Fixture['run']['reviewWorkspace']>['reviewTask']>,
@@ -73,13 +124,23 @@ async function skillReview(f: Fixture) {
       f.run.reviewWorkspace!.reviewTask = round;
     },
   };
-  const folder = path.join(f.root, 'review-tasks/review/pr-1/r1');
+  const folder = path.join(workspaceDir, 'review-tasks/review/pr-1/r1');
+  const callsFile = path.join(workspaceDir, 'start-calls.log');
   const calls = async () =>
-    (await readFile(path.join(f.root, 'start-calls.log'), 'utf8'))
+    (await readFile(callsFile, 'utf8'))
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as string[]);
-  return { deps, folder, calls };
+  return {
+    deps,
+    folder,
+    calls,
+    callsFile,
+    workspaceDir,
+    setGeneration: (value: number) => {
+      generation = value;
+    },
+  };
 }
 
 /** The reviewer was accepted now; marks before this belong to the gateway's start. */
@@ -198,24 +259,19 @@ test('a skill review starts its round in the checkout and gives the reviewer one
     await rm(path.join(f.root, 'gateway-snapshots', f.run.id, 'snapshot.json'));
     const recorded = structuredClone(f.run.reviewWorkspace!.reviewTask);
     await materializeReviewWorkspaceTask(f.run.id, f.subject, deps);
-    assert.deepEqual((await calls())[2], [
-      'start',
-      `${f.subject.contributionBaseSha}..${f.subject.headSha}`,
-      '--pr',
-      '1',
-    ]);
+    assert.equal((await calls()).length, 2);
     assert.deepEqual(f.run.reviewWorkspace!.reviewTask, recorded);
   });
 });
 
 test('a review outside the skill domain keeps the static template path', async () => {
   await withReviewWorkspaceTaskFixture(async (f) => {
-    const { deps } = await skillReview(f);
+    const { deps, callsFile } = await skillReview(f);
     f.run.domain = 'swaps';
     await materializeReviewWorkspaceTask(f.run.id, f.subject, deps);
     assert.equal(f.run.reviewWorkspace!.reviewTask, undefined);
     assert.equal(await readFile(path.join(f.task, 'CHECKLIST.md'), 'utf8'), checklist);
-    await assert.rejects(readFile(path.join(f.root, 'start-calls.log')), { code: 'ENOENT' });
+    await assert.rejects(readFile(callsFile), { code: 'ENOENT' });
     f.run.executionTemplate = undefined;
     await assert.rejects(
       materializeReviewWorkspaceTask(f.run.id, f.subject, deps),
@@ -226,8 +282,8 @@ test('a review outside the skill domain keeps the static template path', async (
 
 test('an unmarked fallback can replay after the harness returns', async () => {
   await withReviewWorkspaceTaskFixture(async (f) => {
-    const { deps, folder } = await skillReview(f);
-    const unavailable = path.join(f.root, 'harness-unavailable');
+    const { deps, folder, workspaceDir } = await skillReview(f);
+    const unavailable = path.join(workspaceDir, 'harness-unavailable');
     await writeFile(unavailable, '');
     await assert.rejects(
       materializeReviewWorkspaceTask(f.run.id, f.subject, deps),
@@ -237,6 +293,33 @@ test('an unmarked fallback can replay after the harness returns', async () => {
     await rm(unavailable);
     await materializeReviewWorkspaceTask(f.run.id, f.subject, deps);
     assert.equal(f.run.reviewWorkspace!.reviewTask?.folder, folder);
+  });
+});
+
+test('a replay generation replaces an unpublished round and fences the older start', async () => {
+  await withReviewWorkspaceTaskFixture(async (f) => {
+    const { deps, folder, setGeneration } = await skillReview(f);
+    await assert.rejects(
+      materializeReviewWorkspaceTask(f.run.id, f.subject, {
+        ...deps,
+        recordReviewTask: async () => {
+          throw Error('Stopped before binding');
+        },
+      }),
+      /Stopped before binding/,
+    );
+    const oldRecord = await readFile(path.join(folder, 'review.json'), 'utf8');
+    setGeneration(1);
+    await materializeReviewWorkspaceTask(f.run.id, f.subject, deps);
+    const currentRecord = await readFile(path.join(folder, 'review.json'), 'utf8');
+    assert.notEqual(currentRecord, oldRecord);
+    await rm(path.join(f.root, 'gateway-snapshots', f.run.id, 'snapshot.json'));
+    setGeneration(0);
+    await assert.rejects(
+      materializeReviewWorkspaceTask(f.run.id, f.subject, deps),
+      /generation was superseded/,
+    );
+    assert.equal(await readFile(path.join(folder, 'review.json'), 'utf8'), currentRecord);
   });
 });
 

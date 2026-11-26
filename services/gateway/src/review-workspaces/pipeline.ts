@@ -923,7 +923,11 @@ async function executeOwnedReviewWorkspaceStep(
       await preflightReviewWorkspaceAccount(run, check);
       await ensureReviewWorkspaceSupport(runId, check);
       check();
-      const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
+      const subject = run.reviewWorkspaceSubject;
+      const task = await waitForWorkspaceOperation(
+        () => materializeReviewWorkspaceTask(runId, subject),
+        check,
+      );
       check();
       const qualifiedContext =
         task.interdiff && run.repeatReviewContext
@@ -1030,7 +1034,11 @@ async function executeOwnedReviewWorkspaceStep(
       }
       await ensureReviewWorkspaceSupport(runId, check);
       check();
-      const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
+      const subject = run.reviewWorkspaceSubject;
+      const task = await waitForWorkspaceOperation(
+        () => materializeReviewWorkspaceTask(runId, subject),
+        check,
+      );
       const project = await loadProjectVars(run.project);
       check();
       const config = resolveMonitorConfig(project.projectJson.monitoring, run.project, 'review-pr');

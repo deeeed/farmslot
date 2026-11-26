@@ -108,6 +108,13 @@ test('a skill review links its writable round folders into the read-only checkou
     assert.throws(() => run(), /destination parent is not an owned directory/);
     assert.equal(existsSync(path.join(outside, 'rules')), false);
     unlinkSync(cursor);
+    const existing = path.join(checkout, '.agents/skills/mms-perps-review-pr');
+    mkdirSync(existing, { recursive: true });
+    writeFileSync(path.join(existing, 'original.txt'), 'preserve this file');
+    assert.throws(() => run(), /destination already exists without an owner/);
+    run({ action: 'cleanup' });
+    assert.equal(readFileSync(path.join(existing, 'original.txt'), 'utf8'), 'preserve this file');
+    rmSync(existing, { recursive: true });
     run();
     run();
     run({ verifyOnly: true });
