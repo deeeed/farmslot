@@ -493,7 +493,11 @@ test('a pin retention released refuses by name, never with a bare missing-file e
         error.message.startsWith(`${prefix} task's installation pin ${receipt.pin} was released`),
     );
   }
-  // Re-retaining the same task refuses the same way instead of pinning the current tooling.
-  assert.throws(() => retainTaskExecution(taskDir, input), { code: 'TASK_PIN_RELEASED' });
+  // Re-retaining the same task (a replay's task init) refuses the same way, naming its run,
+  // instead of pinning the current tooling.
+  assert.throws(() => retainTaskExecution(taskDir, input, [], { runId: 'run-released-1' }), {
+    code: 'TASK_PIN_RELEASED',
+    message: /^Run run-released-1: this task's installation pin /,
+  });
   assert.equal(fs.existsSync(receipt.pin), false, 'no silent re-pin');
 });

@@ -925,10 +925,43 @@ predates this amendment. Re-pinning from the receipt is not attempted: it would 
 recorded source to still hash to its receipt value, and installs and library checkouts move
 between versions, so a fresh task pins the current tooling instead.
 
+Pins also share their bytes. Each task pin is a full private copy of the CLI and task inputs,
+about 0.4 GB, and successive CLI builds differ in a few MB, yet nothing was shared on disk. Each
+node pass now links at most 8 not-yet-shared pins into a content store at
+`<pin root>/.content/sha256/<aa>/<sha256>-<exec bits>`, on the pins' own volume:
+
+- every regular file under a pin except its `provenance.json` becomes a hard link to the one
+  entry for its content and exec bits, and every linked file is read-only (`0444` plus its exec
+  bits). Pin digests hash content and exec bits only, so no receipt changes;
+- an existing entry is linked to a temporary name under `.content/tmp`, its bytes are hashed on
+  that inode, and only then is the link renamed over the pin's file. A damaged entry is moved to
+  `.content/quarantine` and the file keeps a private read-only copy. A file whose hard link is
+  refused (EXDEV, EPERM) also keeps a private read-only copy, and the gateway logs both;
+- the pin's whole tree (paths, kinds, exec bits, sizes and bytes) is fingerprinted before and
+  recomputed after; a pin whose fingerprint changed is logged and not recorded as shared, and
+  `.content/migrated` lists the pins already shared;
+- the filesystem link count is the reference count. Inside the fence, before staging, an entry
+  with one link (only the store's) whose last link change is over an hour old is removed. link
+  and unlink keep the count exact through any crash, and a creator that loses the entry to the
+  sweep inserts its own copy instead, so a removal never takes bytes a pin still links; and
+- the pin scan skips every dot-name, so `.content` never counts toward the 32 pins inspected.
+
+New pins are written private as before and shared by the next pass, within about an hour; the
+task producer does not link at creation, so there is one store writer per node. Deleting a pin
+removes only its own links: every other pin and the store keep the inode.
+
+A write into a shared file fails with EACCES. The owning user can still chmod and write, which
+would change the one shared inode; every pin sharing it then fails its launch re-verify
+(`TASK_INPUT_CHANGED` or `TASK_EXECUTABLE_CHANGED`) instead of running changed bytes. Workers run
+as that user, so this is detection, not prevention.
+
 ### Rationale and consequences
 
 Pins are recreatable copies (Amendment 7), so a released run losing its pin only costs a fresh
 task if that run is ever replayed after the retention window. At 8 removals per node an hour,
 mini's 11 pins older than 7 days (about 4 GB) go within 2 hours of deploy. Afterwards each pin
-lasts about the retention window after its run settles, so a node holds about a week of pins:
-at mini's 2026-11-26 rate of about 17 pins a day, roughly 50 GB in a busy week.
+lasts about the retention window after its run settles, so a node holds about a week of pins.
+Measured 2026-11-26, sharing per file cuts what those pins hold by about five times: six pins
+with six different CLI builds held 1.20 GB of CLI files and need 0.21 GB shared, and their inputs
+0.45 GB and 0.09 GB. The existing backlog shares at 8 pins per node an hour: mini's 79 pins in
+about 10 hours, macpro's 305 (118 GB) in about 38.

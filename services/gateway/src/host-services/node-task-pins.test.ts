@@ -165,7 +165,7 @@ test('the existing retention predicate still keeps admission and pending task di
 });
 
 test('gateway sweep reaches node roots, stages under fence and purges outside it', async (t) => {
-  const { stageTaskPins, purgeTaskPins } = await import('../runs/task-pins.cjs');
+  const { stageTaskPins, purgeTaskPins, shareTaskPins } = await import('../runs/task-pins.cjs');
   const f = await fixture(t);
   await f.pin('remote-orphan');
   let fenced = false;
@@ -189,10 +189,11 @@ test('gateway sweep reaches node roots, stages under fence and purges outside it
         return stageTaskPins({ root: f.root, now, ageMs, protection });
       }
       assert.equal(fenced, false);
+      if (payload.op === 'share') return shareTaskPins(payload);
       return purgeTaskPins(f.root, payload.result);
     },
   });
-  assert.deepEqual(operations, ['stage', 'purge']);
+  assert.deepEqual(operations, ['stage', 'purge', 'share']);
   assert.deepEqual(await readTaskPins(f.root), []);
 });
 

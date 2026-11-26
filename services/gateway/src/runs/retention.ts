@@ -1,4 +1,4 @@
-import { lstat, readdir } from 'node:fs/promises';
+import { lstat, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Run } from '@farmslot/protocol';
@@ -299,13 +299,19 @@ export async function retiredTaskPins(
   pendingTaskDirs: ReadonlySet<string> = new Set(),
   releasedTaskDirs: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
+  // A pin records its task directory's real path; a run may record it through a symlink.
+  const released = new Set(releasedTaskDirs);
+  for (const dir of releasedTaskDirs) {
+    const real = await realpath(dir).catch(() => undefined);
+    if (real) released.add(real);
+  }
   return retiredTaskPinsOf(
     await readTaskPins(pinRoot),
     removedTaskDirs,
     context,
     (dir) => pendingTaskDirs.has(dir),
     undefined,
-    releasedTaskDirs,
+    released,
   );
 }
 

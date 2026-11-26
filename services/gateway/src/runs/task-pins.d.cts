@@ -21,6 +21,23 @@ export interface TaskPinStage {
   inspected: number;
   staged: string[];
   stage: string | null;
+  /** Shared-store entries no pin linked any more, removed in this stage. */
+  swept?: number;
+}
+export interface TaskPinShareInput {
+  root: string;
+  limit?: number;
+}
+export interface TaskPinShareResult {
+  /** Pins now linked into the shared store, every byte re-verified. */
+  pins: string[];
+  /** Pins whose recomputed fingerprint differed; left unrecorded, logged by the gateway. */
+  unverified: string[];
+  shared: number;
+  inserted: number;
+  /** Files kept as private read-only copies, by reason (EXDEV, EPERM, mismatch, ...). */
+  private: Record<string, number>;
+  savedBytes: number;
 }
 export interface TaskPinSweepResult {
   inspected: number;
@@ -30,6 +47,11 @@ export interface TaskPinSweepHooks {
   beforeStage?: (entry: TaskPinEntry) => Promise<void>;
   afterStage?: (stage: TaskPinStage) => void | Promise<void>;
   protection?: () => TaskPinProtection;
+  beforeSweep?: (entry: string) => Promise<void>;
+}
+export interface TaskPinShareHooks {
+  beforeLink?: (entry: string) => Promise<void>;
+  link?: (existing: string, created: string) => Promise<void>;
 }
 export function readTaskPins(root: string, names?: string[]): Promise<TaskPinEntry[]>;
 export function retiredTaskPinsOf(
@@ -49,3 +71,12 @@ export function sweepTaskPins(
   input: TaskPinSweepInput,
   hooks?: TaskPinSweepHooks,
 ): Promise<TaskPinSweepResult>;
+export function sweepContentStore(
+  root: string,
+  now: number,
+  hooks?: TaskPinSweepHooks,
+): Promise<number>;
+export function shareTaskPins(
+  input: TaskPinShareInput,
+  hooks?: TaskPinShareHooks,
+): Promise<TaskPinShareResult>;

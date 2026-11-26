@@ -382,6 +382,7 @@ export function retainTaskExecution(
   taskDir: string,
   input: TaskExecutionInput,
   additionalInputs: readonly string[] = [],
+  context: { runId?: string } = {},
 ): TaskExecutionProvenance {
   const receiptPath = path.join(taskDir, receiptFile);
   if (fs.existsSync(receiptPath)) {
@@ -393,6 +394,7 @@ export function retainTaskExecution(
       isRecord(recorded) && isBindingIdentity(recorded.bindingIdentity)
         ? recorded.bindingIdentity
         : null,
+      context,
     );
     const expected = pinnedSelection(input, receipt.retainedInputs, (pinned) => pinned);
     if (!isDeepStrictEqual(receipt.bindingIdentity, expected.bindingIdentity))

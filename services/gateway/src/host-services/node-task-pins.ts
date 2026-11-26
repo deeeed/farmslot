@@ -10,7 +10,13 @@ import { loadPoolConfigs } from '../fleet/state.js';
 import type { RetentionSplit } from '../methods/run/retention.js';
 import { reclaimReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
 import { hasTaskAdmissions, runTaskDirectories } from '../runs/store.js';
-import type { TaskPinProtection, TaskPinStage, TaskPinSweepInput } from '../runs/task-pins.cjs';
+import type {
+  TaskPinProtection,
+  TaskPinShareInput,
+  TaskPinShareResult,
+  TaskPinStage,
+  TaskPinSweepInput,
+} from '../runs/task-pins.cjs';
 
 import { backgroundHost } from './background/client.js';
 import { BACKGROUND_OPERATIONS } from './background/protocol.js';
@@ -24,7 +30,11 @@ export interface NodePinTarget {
 }
 export type NodePinRequest =
   | ({ op: 'stage' } & TaskPinSweepInput)
-  | { op: 'purge'; root: string; result: TaskPinStage };
+  | { op: 'purge'; root: string; result: TaskPinStage }
+  | ({ op: 'share' } & TaskPinShareInput);
+
+/** Pins one pass links into the shared store per node (ADR-039 Amendment 12). */
+export const TASK_PIN_SHARE_LIMIT = 8;
 
 export interface NodePinRetentionDeps {
   targets(): Promise<NodePinTarget[]>;
@@ -72,7 +82,7 @@ export function taskPinProtection(split: RetentionSplit): {
 let program: Promise<string> | undefined;
 async function execute(target: NodePinTarget, payload: NodePinRequest): Promise<unknown> {
   program ??= readFile(new URL('../runs/task-pins.cjs', import.meta.url), 'utf8');
-  const source = `${await program}\nconst input = JSON.parse(process.argv[1]);\n(input.op === 'stage' ? stageTaskPins(input) : purgeTaskPins(input.root,input.result)).then(value => process.stdout.write(JSON.stringify(value))).catch(error => { console.error(error.message); process.exitCode=1; });`;
+  const source = `${await program}\nconst input = JSON.parse(process.argv[1]);\n(input.op === 'stage' ? stageTaskPins(input) : input.op === 'share' ? shareTaskPins(input) : purgeTaskPins(input.root,input.result)).then(value => process.stdout.write(JSON.stringify(value))).catch(error => { console.error(error.message); process.exitCode=1; });`;
   const nodeCommand = `node -e ${shellQuote(source)} ${shellQuote(JSON.stringify(payload))}`;
   const local = isLocal(target.host, target.machine);
   const command = local
@@ -81,7 +91,8 @@ async function execute(target: NodePinTarget, payload: NodePinRequest): Promise<
   const params = {
     command,
     cwd: process.cwd(),
-    timeout: payload.op === 'purge' ? 120_000 : 30_000,
+    // Sharing hashes up to TASK_PIN_SHARE_LIMIT whole pins, about 3 GB on a busy node.
+    timeout: payload.op === 'share' ? 900_000 : payload.op === 'purge' ? 120_000 : 30_000,
     maxBuffer: 1024 * 1024,
   };
   const result = backgroundHost.active()
@@ -124,10 +135,49 @@ function decodeStage(value: unknown): TaskPinStage {
     !(value.stage === null || typeof value.stage === 'string') ||
     !Array.isArray(value.staged) ||
     value.staged.length > 8 ||
-    !value.staged.every((id): id is string => typeof id === 'string')
+    !value.staged.every((id): id is string => typeof id === 'string') ||
+    !(
+      value.swept === undefined ||
+      (typeof value.swept === 'number' && Number.isInteger(value.swept) && value.swept >= 0)
+    )
   )
     throw new Error('Invalid node task-pin staging receipt');
-  return { inspected: value.inspected, stage: value.stage, staged: value.staged };
+  return {
+    inspected: value.inspected,
+    stage: value.stage,
+    staged: value.staged,
+    ...(typeof value.swept === 'number' ? { swept: value.swept } : {}),
+  };
+}
+
+function decodeShare(value: unknown): TaskPinShareResult {
+  const ids = (list: unknown): list is string[] =>
+    Array.isArray(list) &&
+    list.length <= TASK_PIN_SHARE_LIMIT &&
+    list.every((id) => typeof id === 'string');
+  const count = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+  if (
+    !isRecord(value) ||
+    !ids(value.pins) ||
+    !ids(value.unverified) ||
+    !count(value.shared) ||
+    !count(value.inserted) ||
+    !count(value.savedBytes) ||
+    !isRecord(value.private) ||
+    !Object.values(value.private).every(count)
+  )
+    throw new Error('Invalid node task-pin share receipt');
+  const privateFiles: Record<string, number> = {};
+  for (const [reason, files] of Object.entries(value.private))
+    if (count(files)) privateFiles[reason] = files;
+  return {
+    pins: value.pins,
+    unverified: value.unverified,
+    shared: value.shared,
+    inserted: value.inserted,
+    savedBytes: value.savedBytes,
+    private: privateFiles,
+  };
 }
 
 /** One bounded node batch per existing hourly retention tick. Purge never holds admission. */
@@ -162,8 +212,26 @@ export async function nodeTaskPinRetentionPass(
       )
         throw new Error('Invalid node task-pin purge receipt');
       console.log(
-        `[task-pin retention] ${target.machine} inspected=${staged.inspected} removed=${JSON.stringify(result.removed)}`,
+        `[task-pin retention] ${target.machine} inspected=${staged.inspected} removed=${JSON.stringify(result.removed)} store-swept=${staged.swept ?? 0}`,
       );
+      // Outside the fence: linking never removes anything a task could still be admitted to read.
+      const shared = decodeShare(
+        await deps.execute(target, { op: 'share', root: target.root, limit: TASK_PIN_SHARE_LIMIT }),
+      );
+      if (shared.pins.length || shared.unverified.length)
+        console.log(
+          `[task-pin store] ${target.machine} pins=${JSON.stringify(shared.pins)} shared=${shared.shared} new=${shared.inserted} saved=${(shared.savedBytes / 2 ** 20).toFixed(0)}MB`,
+        );
+      for (const [reason, files] of Object.entries(shared.private))
+        console.warn(
+          reason === 'mismatch'
+            ? `[task-pin store] ${target.machine} ${files} file(s) kept private: their store entry failed re-verification and was quarantined`
+            : `[task-pin store] ${target.machine} ${files} file(s) kept as private read-only copies: hard link unavailable (${reason})`,
+        );
+      if (shared.unverified.length)
+        console.error(
+          `[task-pin store] ${target.machine} pins ${JSON.stringify(shared.unverified)} changed while sharing; left unrecorded for the next pass`,
+        );
     } catch (error) {
       // A failed node retains its remaining or staged pins; healthy nodes still get their turn.
       console.error(

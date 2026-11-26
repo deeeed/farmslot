@@ -385,7 +385,12 @@ export async function taskInit(spec: TaskInitSpec): Promise<TaskInitResult> {
   if (frozenRequiredSkills) handoffMetadata.requiredSkills = frozenRequiredSkills;
 
   const executionProvenance = spec.execution
-    ? retainTaskExecution(spec.taskDir, spec.execution, [templateRoot])
+    ? retainTaskExecution(
+        spec.taskDir,
+        spec.execution,
+        [templateRoot],
+        spec.handoff.attemptId ? { runId: spec.handoff.attemptId } : {},
+      )
     : undefined;
   const written = await writeTaskDir({
     taskDir: spec.taskDir,
