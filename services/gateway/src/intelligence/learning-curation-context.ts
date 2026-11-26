@@ -1,7 +1,13 @@
 import { readdir, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { isRecord, type KnowledgeDestination, type Run } from '@farmslot/protocol';
+import {
+  isRecord,
+  type KnowledgeDestination,
+  type LearningRuleResult,
+  learningSectionAnchor,
+  type Run,
+} from '@farmslot/protocol';
 import { reviewHistoryArtifactPaths, reviewHistoryView } from '@farmslot/review-dispatch';
 import {
   currentProjectSources,
@@ -20,6 +26,44 @@ const MAX_DOCUMENT_CHARS = 16_000;
 // Immutable bundle data is reused across human requests; never cache mutable staging.
 const retainedDocuments = new Map<string, Promise<LearningDocument[]>>();
 
+/** A run artifact from its retained bundle, or from its task directory before capture. */
+async function runArtifactText(run: Run, file: string): Promise<string | undefined> {
+  if (run.artifactBundle || run.output?.artifactBundle)
+    return readOptionalRetainedRunText(run, file);
+  if (!run.taskFile) return undefined;
+  try {
+    return await readFile(path.join(path.dirname(run.taskFile), file), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return undefined;
+  }
+}
+
+/**
+ * The review rows of a run (`artifacts/review-coverage.json`): each rule family's
+ * PASS or FINDING. A row names its family by the pack's id, or by its heading's
+ * anchor when the review ran without a pack.
+ */
+export async function reviewRowsForRun(run: Run): Promise<LearningRuleResult[]> {
+  const text = await runArtifactText(run, 'artifacts/review-coverage.json');
+  if (!text?.trim()) return [];
+  const index: unknown = JSON.parse(text);
+  if (!isRecord(index) || !Array.isArray(index.rows)) return [];
+  return index.rows.flatMap((row): LearningRuleResult[] => {
+    if (!isRecord(row) || !isRecord(row.definition) || !isRecord(row.value)) return [];
+    const { definition, value } = row;
+    if (definition.kind !== 'criterion') return [];
+    if (value.outcome !== 'PASS' && value.outcome !== 'FINDING') return [];
+    const family =
+      typeof definition.family === 'string' && definition.family
+        ? definition.family
+        : typeof definition.label === 'string'
+          ? learningSectionAnchor(definition.label)
+          : '';
+    return family ? [{ runId: run.id, family, outcome: value.outcome }] : [];
+  });
+}
+
 async function evidenceForRun(run: Run): Promise<LearningDocument[]> {
   const reviewerPaths = new Set(reviewHistoryArtifactPaths(run));
   const paths = [
@@ -35,16 +79,7 @@ async function evidenceForRun(run: Run): Promise<LearningDocument[]> {
   const read = async (): Promise<LearningDocument[]> => {
     const documents: LearningDocument[] = [];
     for (const file of paths) {
-      let text: string | undefined;
-      if (run.artifactBundle || run.output?.artifactBundle) {
-        text = await readOptionalRetainedRunText(run, file);
-      } else if (run.taskFile) {
-        try {
-          text = await readFile(path.join(path.dirname(run.taskFile), file), 'utf8');
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        }
-      }
+      const text = await runArtifactText(run, file);
       if (text?.trim()) {
         let confirms: LearningDocument['confirms'];
         if (file.endsWith('.json')) {
@@ -187,7 +222,18 @@ export async function loadLearningCurationContext(
       );
     for (const run of candidates) {
       if (size > MAX_PACKET_CHARS - MAX_DOCUMENT_CHARS) break;
-      const documents = [...(await evidenceForRun(run))];
+      let documents: LearningDocument[];
+      try {
+        documents = [...(await evidenceForRun(run))];
+      } catch (error) {
+        // An older run whose bundle retention pruned is missing evidence, not a reason to
+        // curate nothing; the source run's own evidence stays required.
+        if (run.id === runId) throw error;
+        console.warn(
+          `[learning-curation] Evidence of run ${run.id} unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        continue;
+      }
       const history = reviewHistoryView(
         run,
         Object.fromEntries(documents.map((d) => [d.path, { content: d.text }])),
@@ -217,6 +263,21 @@ export async function loadLearningCurationContext(
         size += document.text.length;
       }
     }
+    // The review rows of the lesson's run and its family decide a v1 lesson's kind.
+    const sourceRun = all.find((run) => run.id === runId);
+    const results: LearningRuleResult[] = [];
+    for (const run of sourceRun
+      ? all.filter((run) => (run.familyId ?? run.id) === (sourceRun.familyId ?? sourceRun.id))
+      : []) {
+      try {
+        results.push(...(await reviewRowsForRun(run)));
+      } catch (error) {
+        console.warn(
+          `[learning-curation] Review rows of run ${run.id} unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (results.length) context.results = results;
     return context;
   } catch (error) {
     return {

@@ -1,0 +1,4 @@
+- Learning curation matches each outcome to its lesson by id, so a reply that adds, splits or repeats entries no longer drops the whole batch, and reads the reply's first JSON array.
+- `- None` and "Nothing new." are no longer curated as lessons.
+- A run whose evidence cannot be read (a pruned bundle) is skipped instead of making the curation context unavailable.
+- Learnings v1 lessons route by kind. One that only its own run confirms is recorded unconfirmed; a cited rule that recorded a FINDING drops it; the family file and section, or the client file for a new rule, is the target; a kept lesson records its validated `ReviewRuleProposal`. The source run's own review no longer confirms any lesson.

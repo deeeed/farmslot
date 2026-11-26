@@ -13,7 +13,11 @@ import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import { feedbackLedgerPath, readFeedbackLedger } from './feedback-ledger.js';
 import { setLearningEvaluatorForTest } from './learning-curation.js';
-import { installCurationFixture, keptCuration } from './learning-curation.test-support.js';
+import {
+  curationFixture,
+  installCurationFixture,
+  keptCuration,
+} from './learning-curation.test-support.js';
 import { setLearningContextLoaderForTest } from './learning-curation-context.js';
 import {
   __setAntipatternDrafterForTest,
@@ -22,6 +26,7 @@ import {
   classifyLearningsEntries,
   emitLearningsDraftDecision,
   knowledgeDestinationFromConfig,
+  learningEntryKey,
   recordLearningsDraftLanded,
   routeLearnings,
   splitLearningsEntries,
@@ -484,6 +489,18 @@ test('a stale inbox lock from a crashed holder is taken over instead of blocking
   assert.equal(receipt.status, 'appended');
 });
 
+test('"- None" and "Nothing new." are not lessons', () => {
+  for (const blob of ['- None\n', '# Learnings\n\n- None.\n', 'Nothing new.\n', '* nothing new\n'])
+    assert.deepEqual(splitLearningsEntries(blob), [], blob);
+  assert.deepEqual(
+    splitLearningsEntries(
+      '## Earlier reviewer round (run abc)\n- None\n\n## Delta\n- real lesson\n',
+    ).map((entry) => entry.text),
+    ['- real lesson'],
+  );
+  assert.equal(splitLearningsEntries('- None of the retries recovered the slot\n').length, 1);
+});
+
 test('CRLF blobs and asterisk bullets split cleanly', () => {
   const entries = splitLearningsEntries('- unix bullet\r\n  continued\r\n\r\n* star bullet\r\n');
   assert.equal(entries.length, 2);
@@ -591,9 +608,9 @@ for (const failure of ['transport', 'malformed'] as const)
     setLearningEvaluatorForTest(async (entries, context) => {
       if (++calls === 1) {
         if (failure === 'transport') throw new Error('503 cooling down');
-        return entries.map(() => ({ outcome: 'keep' }));
+        return entries.map(({ id }) => ({ id, outcome: 'keep' }));
       }
-      return entries.map(() => keptCuration(context));
+      return entries.map(({ id }) => ({ id, ...keptCuration(context) }));
     });
     const first = await routeLearnings(TEST_PROJECT, '- Confirmed recurring order failure', {
       runId: 'retry-run',
@@ -614,3 +631,169 @@ for (const failure of ['transport', 'malformed'] as const)
     assert.equal(receipts[0]?.retryable, true);
     assert.equal(receipts[1]?.outcome, 'keep');
   });
+
+// ADR-026 Amendment 4: a v1 file routes by its kinds, and a lesson is decided by the run's
+// records before the model sees it.
+test('a checked (v1) lesson is gated by its own run, its rule results and its target', async (t) => {
+  setupProject({ repoKey: 'testrepo' });
+  const root = mkdtempSync(path.join(tmpdir(), 'learnings-v1-'));
+  const previous = process.env.FARMSLOT_FEEDBACK_LEDGER;
+  process.env.FARMSLOT_FEEDBACK_LEDGER = path.join(root, 'ledger.json');
+  __setLearningsClassifierForTest(async () => {
+    throw new Error('a v1 file never reaches the classifier');
+  });
+  __setAntipatternDrafterForTest(async (entries) =>
+    entries.map((_entry, index) => ({
+      id: `checked-lesson-${index + 1}`,
+      symptom: 'A placeholder reached a validator',
+      cause: 'The hook returned a display string',
+      action: 'Keep missing values undefined',
+    })),
+  );
+  const evaluated: string[] = [];
+  setLearningEvaluatorForTest(async (entries, context) => {
+    evaluated.push(...entries.map(({ text }) => text.split('\n')[0]!));
+    return entries.map(({ id }) => ({ id, ...keptCuration(context) }));
+  });
+  t.after(() => {
+    if (previous === undefined) delete process.env.FARMSLOT_FEEDBACK_LEDGER;
+    else process.env.FARMSLOT_FEEDBACK_LEDGER = previous;
+    __setLearningsClassifierForTest(null);
+    __setAntipatternDrafterForTest(null);
+    teardownProject();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const runId = 'source-run-0001';
+  const context = {
+    ...curationFixture(runId),
+    library: [
+      {
+        runId: '',
+        path: 'review/antipatterns.md',
+        text: '# Shared\n\n## Missing numeric data stays undefined\nRule.\n\n## Protocol Abstraction\nRule.',
+      },
+      {
+        runId: '',
+        path: 'review/antipatterns.mobile.md',
+        text: '# Mobile\n\n## Mobile Test Layers\nRule.',
+      },
+      { runId: '', path: 'review/requirements.md', text: '# Requirements\n\n## Order Size\nRule.' },
+    ],
+    results: [
+      { runId: 'review-run-1', family: 'protocol-abstraction', outcome: 'FINDING' as const },
+      {
+        runId: 'review-run-1',
+        family: 'missing-numeric-data-stays-undefined',
+        outcome: 'PASS' as const,
+      },
+    ],
+  };
+  const outside = 'confirmation: run 9e1d0c2b-other artifacts/review-ledger.md:4';
+  const learnings = [
+    '# Learnings v1',
+    '',
+    '- edit: Only this review says so.',
+    '  evidence: metamask-mobile app/a.ts:3',
+    '  family: antipatterns.md#missing-numeric-data-stays-undefined',
+    `  confirmation: run ${runId} artifacts/review.md:9`,
+    '- edit: The rule already caught it.',
+    '  evidence: metamask-mobile app/b.ts:3',
+    '  family: antipatterns.md#protocol-abstraction',
+    `  ${outside}`,
+    '- retire: The rule passed while a later run found the problem.',
+    '  evidence: metamask-mobile app/c.ts:3',
+    '  family: antipatterns.md#missing-numeric-data-stays-undefined',
+    `  ${outside}`,
+    '- add: No rule checks this mobile test layer.',
+    '  evidence: metamask-mobile app/d.test.ts:7',
+    '  examined: antipatterns.mobile.md#mobile-test-layers',
+    `  ${outside}`,
+    '- edit: A requirement is not a rule.',
+    '  evidence: metamask-mobile app/e.ts:3',
+    '  family: requirements.md#order-size',
+    `  ${outside}`,
+    '- recipe-broken: The close selector moved.',
+    '  recipe: perps/close.json#tap-close',
+    '  failed: artifacts/recipe-runs/1/trace.json:4',
+    '- workflow: The template names a stale flag.',
+    '- edit: A malformed entry.',
+    '  evidence: app/f.ts:1',
+    '',
+  ].join('\n');
+  const routed = await routeLearnings(TEST_PROJECT, learnings, { runId, context });
+
+  assert.deepEqual(evaluated, [
+    '- retire: The rule passed while a later run found the problem.',
+    '- add: No rule checks this mobile test layer.',
+  ]);
+  assert.equal(routed.systemContent, '- workflow: The template names a stale flag.');
+  assert.deepEqual(
+    routed.drafts.map((draft) => ({
+      path: draft.targetPath,
+      section: draft.targetSection,
+      kind: draft.proposal?.kind,
+      family: draft.proposal?.family,
+      examined: draft.proposal?.bar?.examined,
+      delta: draft.proposal?.netRuleDelta,
+    })),
+    [
+      {
+        path: 'review/antipatterns.md',
+        section: 'missing-numeric-data-stays-undefined',
+        kind: 'edit',
+        family: 'missing-numeric-data-stays-undefined',
+        examined: ['missing-numeric-data-stays-undefined'],
+        delta: 0,
+      },
+      {
+        path: 'review/antipatterns.mobile.md',
+        section: undefined,
+        kind: 'add',
+        family: undefined,
+        examined: ['mobile-test-layers'],
+        delta: 1,
+      },
+    ],
+  );
+  assert.deepEqual(
+    routed.holds.map((hold) => [hold.entry.split('\n')[0], hold.reason.split(';')[0]]),
+    [
+      [
+        '- recipe-broken: The close selector moved.',
+        'A recipe lesson goes to the recipe library owner, not the review rules',
+      ],
+      [
+        '- edit: A malformed entry.',
+        'Learnings v1: line 28: evidence must be "<repo> <path>:<line>", comma-separated',
+      ],
+      ['- edit: A requirement is not a rule.', 'requirements.md#order-size is a requirement'],
+    ],
+  );
+  const receipts = (await readFeedbackLedger()).curations ?? [];
+  const receipt = (line: string) =>
+    receipts.find((row) => row.sourceKey === learningKeyFor(learnings, line));
+  assert.deepEqual(
+    [
+      receipt('- edit: Only this review says so.')?.outcome,
+      receipt('- edit: Only this review says so.')?.unconfirmed,
+    ],
+    ['drop', true],
+  );
+  assert.match(
+    receipt('- edit: The rule already caught it.')?.reason ?? '',
+    /antipatterns\.md#protocol-abstraction recorded a FINDING in run review-run-1: the rule worked/,
+  );
+  assert.equal(receipt('- add: No rule checks this mobile test layer.')?.proposal?.kind, 'add');
+});
+
+/** The ledger key of the v1 entry that starts with `line`. */
+function learningKeyFor(learnings: string, line: string): string {
+  const lines = learnings.split('\n');
+  const start = lines.indexOf(line);
+  const body = [line];
+  for (const next of lines.slice(start + 1)) {
+    if (!next.startsWith('  ')) break;
+    body.push(next);
+  }
+  return learningEntryKey(body.join('\n'));
+}

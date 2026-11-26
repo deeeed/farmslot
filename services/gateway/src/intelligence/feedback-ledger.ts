@@ -6,7 +6,7 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
-import type { FeedbackConsumption } from '@farmslot/protocol';
+import type { FeedbackConsumption, ReviewRuleProposal } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
@@ -37,6 +37,10 @@ export interface LearningCurationReceipt {
   citations: LearningCitation[];
   instruction?: string;
   retryable?: boolean;
+  /** A drop that only its own run confirms: recorded and never promoted. */
+  unconfirmed?: true;
+  /** The review rule proposal a kept v1 lesson became. */
+  proposal?: ReviewRuleProposal;
   recordedAt: string;
 }
 

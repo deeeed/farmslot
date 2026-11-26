@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   curateLearningEntries,
+  firstJsonArray,
   setLearningEvaluatorForTest,
   validateCuration,
 } from './learning-curation.js';
@@ -37,6 +38,27 @@ test('unverified locations, self-confirmation and one-family repeats fail closed
     evidence: context.evidence.map(({ confirms: _confirms, ...d }) => d),
   };
   assert.equal(validateCuration(keptCuration(workerOnly), workerOnly).outcome, 'drop');
+});
+
+test("a run's own review never confirms its lesson; an accepted PR comment fix does", () => {
+  const source = context.evidence[0]!;
+  const ownReview = {
+    ...keptCuration(context),
+    confirmation: [
+      { runId: source.runId, path: source.path, line: 2, quote: source.text.split('\n')[1] },
+    ],
+  };
+  assert.deepEqual(
+    [validateCuration(ownReview, context).outcome, validateCuration(ownReview, context).reason],
+    ['drop', 'Only the source run confirms the learning'],
+  );
+  const acceptedFix = {
+    ...context,
+    evidence: context.evidence.map((d, index) =>
+      index === 0 ? { ...d, confirms: 'accepted-fix' as const } : d,
+    ),
+  };
+  assert.equal(validateCuration(ownReview, acceptedFix).outcome, 'keep');
 });
 
 test('a single task requires a concrete money/order blocker, and covered checks drop', () => {
@@ -93,4 +115,57 @@ test('unavailable evidence, malformed provider output and exceptions produce one
   const result = (await curateLearningEntries(['claim'], context))[0]!;
   assert.equal(result.outcome, 'drop');
   assert.equal(result.reason.includes('\n'), false);
+});
+
+// Run 6ae37c17 (2026-11-10): the model returned 6 outcomes for 5 lessons and the batch
+// dropped all of them. Outcomes are matched by id, so a confused reply costs only the
+// lessons it confuses.
+test('each lesson gets exactly one outcome when the reply adds, repeats or omits entries', async (t) => {
+  t.after(() => setLearningEvaluatorForTest());
+  const kept = keptCuration(context);
+  const sent: string[] = [];
+  setLearningEvaluatorForTest(async (entries) => {
+    sent.push(...entries.map(({ id }) => id));
+    return [
+      { id: 'L9', outcome: 'drop', reason: 'An entry nobody sent' },
+      { id: 'L1', ...kept },
+      { id: 'L2', outcome: 'drop', reason: 'First answer' },
+      { id: 'L2', outcome: 'drop', reason: 'Second answer' },
+    ];
+  });
+  const result = await curateLearningEntries(['first', 'second', 'third'], context);
+  assert.deepEqual(sent, ['L1', 'L2', 'L3']);
+  assert.deepEqual(
+    result.map(({ outcome, reason, retryable }) => ({ outcome, reason, retryable })),
+    [
+      { outcome: 'keep', reason: kept.reason, retryable: undefined },
+      {
+        outcome: 'drop',
+        reason: 'Curation returned 2 outcomes for this learning',
+        retryable: true,
+      },
+      {
+        outcome: 'drop',
+        reason: 'Curation returned no outcome for this learning',
+        retryable: true,
+      },
+    ],
+  );
+  setLearningEvaluatorForTest(async () => ({ results: [] }));
+  assert.deepEqual(
+    (await curateLearningEntries(['first', 'second'], context)).map((row) => row.reason),
+    ['Curation reply is not a list of outcomes', 'Curation reply is not a list of outcomes'],
+  );
+});
+
+test('the reply is read from its first complete JSON array', () => {
+  const rows = [{ id: 'L1', outcome: 'drop', reason: 'quote "a]b" and [c' }];
+  for (const text of [
+    JSON.stringify(rows),
+    `\`\`\`json\n${JSON.stringify(rows)}\n\`\`\``,
+    `Here are the outcomes:\n${JSON.stringify(rows)}\nNote: [L1] was a setup tip.`,
+    `[not json] ${JSON.stringify(rows)}`,
+  ])
+    assert.deepEqual(firstJsonArray(text), rows);
+  assert.throws(() => firstJsonArray('no outcomes'), /no JSON array/);
 });

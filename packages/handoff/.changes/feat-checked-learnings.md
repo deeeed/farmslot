@@ -1,0 +1,1 @@
+- The default task template asks for `learnings.md` in the learnings v1 format.
