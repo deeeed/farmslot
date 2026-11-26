@@ -1,0 +1,1 @@
+- The worker push budget test leaves the timeout case 3000 ms for shell, node and git startup before its pre-push hook, so it no longer fails on a loaded host.
