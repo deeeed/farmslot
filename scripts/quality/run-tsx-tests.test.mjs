@@ -39,6 +39,7 @@ import {
   tmpdirLeakFailure,
   verifyAssignment,
   watchSharedPool,
+  workerLanes,
   WORKERS_ENV,
 } from './run-tsx-tests.mjs';
 
@@ -752,6 +753,88 @@ test('module-mock files run one per process and never under --test', () => {
     testCommand('/repo/src/b.test.ts', { cwd: '/repo', tsconfig: 'tsconfig.json' }),
     ['exec', 'node', '--import', 'tsx', 'src/b.test.ts'],
   );
+});
+
+test('module-mock files share the parallel workers, filling them from the last one', () => {
+  const files = [
+    'src/a.test.ts',
+    'src/b.test.ts',
+    'src/m1.test.ts',
+    'src/m2.test.ts',
+    'src/m3.test.ts',
+  ];
+  const partition = partitionTests(files, {
+    workers: 2,
+    classify: (file) => (file.includes('/m') ? 'module-mock' : 'parallel'),
+  });
+  // Parallel files fill from the first worker, module-mock files from the last.
+  assert.deepEqual(workerLanes(partition), [
+    [
+      { file: 'src/m2.test.ts', moduleMock: true },
+      { file: 'src/a.test.ts', moduleMock: false },
+    ],
+    [
+      { file: 'src/m1.test.ts', moduleMock: true },
+      { file: 'src/m3.test.ts', moduleMock: true },
+      { file: 'src/b.test.ts', moduleMock: false },
+    ],
+  ]);
+  assert.deepEqual(
+    assignments(partition)
+      .filter((entry) => entry.lane === 'module-mock')
+      .map((entry) => [entry.file, entry.worker]),
+    [
+      ['src/m1.test.ts', 1],
+      ['src/m2.test.ts', 0],
+      ['src/m3.test.ts', 1],
+    ],
+  );
+  // --node-test files keep their own one-at-a-time lane, off the workers.
+  const nodeTest = partitionTests(files, {
+    workers: 2,
+    nodeTest: true,
+    classify: () => 'parallel',
+  });
+  assert.deepEqual(workerLanes(nodeTest), [[], []]);
+  assert.ok(assignments(nodeTest).every((entry) => entry.worker === null));
+});
+
+test('a module-mock file runs at the same time as a parallel file', () => {
+  const fixtureDir = path.join(REPO_ROOT, 'temp', `tsx-runner-mm-overlap-${process.pid}`);
+  const meet = path.join(fixtureDir, 'meet');
+  mkdirSync(meet, { recursive: true });
+  // Each file marks that it started, then waits for the other's mark. Both pass only
+  // if they overlap; a module-mock file run on its own first never sees the other.
+  const file = (self, other, mocks) =>
+    [
+      "import { existsSync, writeFileSync } from 'node:fs';",
+      "import { mock, test } from 'node:test';",
+      ...(mocks
+        ? ["mock.module('node:os', { namedExports: { hostname: () => 'fixture-host' } });"]
+        : []),
+      `test('${self} overlaps ${other}', async () => {`,
+      `  writeFileSync(${JSON.stringify(path.join(meet, self))}, '');`,
+      '  const until = Date.now() + 4000;',
+      `  while (!existsSync(${JSON.stringify(path.join(meet, other))})) {`,
+      `    if (Date.now() > until) throw new Error('${self} never overlapped ${other}');`,
+      '    await new Promise((resolve) => setTimeout(resolve, 20));',
+      '  }',
+      '});',
+    ].join('\n') + '\n';
+  writeFileSync(path.join(fixtureDir, 'mm.test.ts'), file('mm', 'plain', true));
+  writeFileSync(path.join(fixtureDir, 'plain.test.ts'), file('plain', 'mm', false));
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', REPO_ROOT, '--workers', '2', path.relative(REPO_ROOT, fixtureDir)],
+      { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 },
+    );
+    const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    assert.match(out, /module_mock=1 serial=0 parallel=1/, out);
+    assert.equal(result.status, 0, out);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
 });
 
 test('a module-mock file that fails cannot present as green', () => {

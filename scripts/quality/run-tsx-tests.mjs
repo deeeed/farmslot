@@ -247,13 +247,48 @@ export function partitionTests(tests, { workers = 1, classify, nodeTest = false 
     parallel[index % laneCount].push(file);
   });
 
-  return { moduleMock, serial, parallel };
+  // Each module-mock file runs in its own process, so its mocks cannot reach another
+  // file: it shares the parallel workers. `--node-test` files keep their own lane.
+  return { moduleMock, serial, parallel, moduleMockParallel: !nodeTest };
+}
+
+/**
+ * The worker that runs the module-mock file at `index`. Parallel files fill the
+ * workers from the first one, so module-mock files fill them from the last: the
+ * counts stay even, and a lone module-mock file does not queue behind a parallel one.
+ */
+export function moduleMockWorker(index, workers) {
+  return workers - 1 - (index % workers);
+}
+
+/**
+ * The files each parallel worker runs, in order: its share of the module-mock files
+ * (run with the module-mock flag), then its parallel bucket. Without
+ * `moduleMockParallel` the module-mock files are not here; they run on their own
+ * before the serial lane.
+ */
+export function workerLanes(partition) {
+  const workers = partition.parallel.length;
+  return partition.parallel.map((files, worker) => [
+    ...(partition.moduleMockParallel
+      ? partition.moduleMock
+          .filter((_file, index) => moduleMockWorker(index, workers) === worker)
+          .map((file) => ({ file, moduleMock: true }))
+      : []),
+    ...files.map((file) => ({ file, moduleMock: false })),
+  ]);
 }
 
 /** Flat {file, lane, worker} view used for reporting and assignment checks. */
 export function assignments(partition) {
   const entries = [
-    ...partition.moduleMock.map((file) => ({ file, lane: 'module-mock', worker: null })),
+    ...partition.moduleMock.map((file, index) => ({
+      file,
+      lane: 'module-mock',
+      worker: partition.moduleMockParallel
+        ? moduleMockWorker(index, partition.parallel.length)
+        : null,
+    })),
     ...partition.serial.map((file) => ({ file, lane: 'serial', worker: null })),
     ...partition.parallel.flatMap((lane, worker) =>
       lane.map((file) => ({ file, lane: 'parallel', worker })),
@@ -694,9 +729,10 @@ async function runOne(file, context) {
 
 async function runLaneSequentially(files, context) {
   const records = [];
-  for (const file of files) {
+  for (const entry of files) {
     if (interrupted) break;
-    records.push(await runOne(file, context));
+    const { file, moduleMock = false } = typeof entry === 'string' ? { file: entry } : entry;
+    records.push(await runOne(file, moduleMock ? { ...context, moduleMock } : context));
   }
   return records;
 }
@@ -902,7 +938,7 @@ async function main() {
 
   // Buffer per-file output only when lanes can actually interleave; a single
   // active lane keeps the historical live-streaming behaviour.
-  const activeLanes = partition.parallel.filter((lane) => lane.length > 0);
+  const activeLanes = workerLanes(partition).filter((lane) => lane.length > 0);
   const buffered = activeLanes.length > 1;
   const context = {
     cwd,
@@ -918,12 +954,14 @@ async function main() {
   const records = [];
   const sharedPool = watchSharedPool();
 
-  // One process per file, sequentially: module mocks are process-global, and a
-  // shared process is what let `--test` skip the whole batch silently.
-  records.push(
-    ...(await runLaneSequentially(partition.moduleMock, { ...context, moduleMock: true })),
-  );
+  // `--node-test` files run one process per file, one at a time; a shared process is
+  // what let `--test` skip a whole batch silently. Module-mock files are on the workers.
+  if (!partition.moduleMockParallel)
+    records.push(
+      ...(await runLaneSequentially(partition.moduleMock, { ...context, moduleMock: true })),
+    );
 
+  // Serial files run alone, before the workers start.
   records.push(...(await runLaneSequentially(partition.serial, context)));
   const parallelRecords = await Promise.all(
     activeLanes.map((lane) => runLaneSequentially(lane, { ...context, buffered })),
