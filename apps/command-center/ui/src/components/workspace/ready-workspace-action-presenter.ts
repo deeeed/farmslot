@@ -14,6 +14,7 @@ import {
   evidenceAttestationAvailable,
   Methods,
   publicationApprovalReasonFields,
+  RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS,
   withArtifactBundleDigest,
 } from '@farmslot/protocol';
 import {
@@ -1259,7 +1260,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
           selectedEvidenceKeys: this._selectedEvidenceKeysForSubmit(payload),
           publicationTarget: this._publicationTarget,
         },
-        transferBoundRequestOptions(this.runId),
+        // The gateway may first wait for a worker still finishing its turn.
+        {
+          ...transferBoundRequestOptions(this.runId),
+          timeout: RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS,
+        },
       );
       if (!command.current()) return;
       // The reply reports the command, while notifications refresh the canonical gate.

@@ -212,6 +212,9 @@ function verify() {
   verifyReceipts(plan, receipts);
   if (process.env.CI_MATRIX_RESULT !== 'success')
     throw new Error(`CI matrix result: ${process.env.CI_MATRIX_RESULT}`);
+  // The checks run on the restored install while it is validated in parallel.
+  if (process.env.CI_INSTALL_RESULT !== 'success')
+    throw new Error(`Install validation result: ${process.env.CI_INSTALL_RESULT}`);
   const text = `${plan.replayPr ? `Replay of PR #${plan.replayPr} at this checkout. This is not PR push acceptance. ` : ''}Verified ${plan.jobs.length} jobs, ${plan.selected.length} selected test files.\n`;
   console.log(text);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);

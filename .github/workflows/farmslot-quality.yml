@@ -30,7 +30,29 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/ci-setup
+      # Planning reads only TypeScript from node_modules. The full install is
+      # restored and validated by the install job, in parallel with the checks.
+      # When the install itself is not cached, set it up here once, as before,
+      # so the checks restore it instead of each installing from the registry.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.23.4'
+      - id: cache-keys
+        uses: ./.github/actions/ci-cache-keys
+      - id: install-cached
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.cache-keys.outputs.install-paths }}
+          key: ${{ steps.cache-keys.outputs.install-key }}
+          lookup-only: true
+      - id: planner-typescript
+        if: steps.install-cached.outputs.cache-hit == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: node_modules/typescript
+          key: ${{ steps.cache-keys.outputs.planner-key }}
+      - if: steps.planner-typescript.outputs.cache-hit != 'true'
+        uses: ./.github/actions/ci-setup
       - name: Plan dependency-affected tests and checks
         id: plan
         env:
@@ -41,6 +63,14 @@ jobs:
           name: pr-ci-plan
           include-hidden-files: true
           path: .cache/pr-ci/plan.json
+
+  install:
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Validate replay install' || 'Validate install' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/ci-setup
 
   checks:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Replay checks' || 'PR checks' }} (${{ matrix.id }})
@@ -80,7 +110,7 @@ jobs:
   quality:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Replay results' || 'PR quality gates' }}
     if: always()
-    needs: [prepare, checks]
+    needs: [prepare, install, checks]
     runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
@@ -104,6 +134,7 @@ jobs:
       - name: Require every selected check and test receipt
         env:
           CI_MATRIX_RESULT: ${{ needs.checks.result }}
+          CI_INSTALL_RESULT: ${{ needs.install.result }}
           CI_INLINE_PR_PLAN: ${{ needs.prepare.outputs.inline_plan }}
         run: |
           node --version

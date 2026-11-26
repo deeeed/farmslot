@@ -42,6 +42,7 @@ test('finishing an interactive run broadcasts Done instead of notifying only the
       reason: 'Development done; CI deferred until dependency release',
     },
     {
+      callerConnected: () => true,
       emit: (event) => callerEvents.push(event),
       broadcast: (frame) => broadcasts.push(frame),
     },
@@ -68,6 +69,7 @@ test('metadata edits also broadcast the authoritative run to other clients', asy
     Methods.RUN_TAGS_SET,
     { runId: run.id, tags: ['deferred-ci'] },
     {
+      callerConnected: () => true,
       emit: (event) => callerEvents.push(event),
       broadcast: (frame) => broadcasts.push(frame),
     },
@@ -89,7 +91,11 @@ test('source-selected run creation refuses missing or revoked source authority b
     ticketOrPr: 'DEV-SOURCE-AUTH',
     sourceSelections: [{ sourceId: 'pack', selection: 'main' }],
   };
-  const context = { emit: () => undefined, broadcast: () => undefined };
+  const context = {
+    callerConnected: () => true,
+    emit: () => undefined,
+    broadcast: () => undefined,
+  };
   await assert.rejects(
     routeRunMethod(Methods.RUN_CREATE, params, context),
     /authenticated routing/,
@@ -128,6 +134,7 @@ test('linked-ticket metadata persists and broadcasts without changing frozen inp
   const before = structuredClone(getRun(run.id)!);
   const broadcasts: EventFrame[] = [];
   const context = {
+    callerConnected: () => true,
     emit: () => assert.fail('metadata must broadcast'),
     broadcast: (frame: EventFrame) => broadcasts.push(frame),
   };

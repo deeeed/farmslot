@@ -103,6 +103,7 @@ test('run.create rejects a missing description before ticket admission, registra
         ticketData: missing,
       },
       {
+        callerConnected: () => true,
         emit: (_event, payload) => events.push(payload),
         broadcast: (frame) => events.push(frame),
       },

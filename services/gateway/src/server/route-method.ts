@@ -867,6 +867,7 @@ async function routeAuthorizedMethod(
       authorizeGatewayMethod(authRuntime, attestationSession, traceMethod),
     broadcast,
     emit,
+    callerConnected: () => isActiveClient(state),
     authorizeEvidenceAttestation: (action) =>
       authorizeEvidenceAttestation(authRuntime, attestationSession, action),
     authorizeVisualClaimReview: (kind, policy) =>
