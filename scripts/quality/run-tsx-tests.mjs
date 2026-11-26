@@ -437,8 +437,11 @@ export function openTmuxSandbox(uid = process.getuid?.() ?? 0) {
   return dir;
 }
 
-function childEnvironment(tmuxDir) {
-  const env = tmuxSandboxEnvironment({ ...process.env, NODE_TEST_CONTEXT: '1' }, tmuxDir);
+/** The environment every test file starts from; runOne adds its own tmux sandbox. */
+function childEnvironment() {
+  const env = { ...process.env, NODE_TEST_CONTEXT: '1' };
+  delete env.TMUX;
+  delete env.TMUX_PANE;
   for (const key of GIT_LOCATION_ENV) delete env[key];
   delete env.FARMSLOT_CI_TEST_SELECTION;
   delete env.FARMSLOT_QUALITY_TIMINGS_DIR;
@@ -447,6 +450,9 @@ function childEnvironment(tmuxDir) {
 
 /** Test processes still running, so an interrupted run can stop them first. */
 const activeChildren = new Set();
+
+/** Per-file tmux sandboxes not yet closed, by directory, so the run's exit closes any left. */
+const openSandboxes = new Map();
 
 /** Set when a signal interrupts the run: no further test file starts. */
 let interrupted = false;
@@ -713,6 +719,7 @@ async function runOne(file, context) {
     },
     openTmuxSandbox(),
   );
+  openSandboxes.set(env.TMUX_TMPDIR, env);
   let result;
   let leaked = [];
   let tmuxFailure;
@@ -732,6 +739,8 @@ async function runOne(file, context) {
       closeTmuxSandbox(env);
     } catch (error) {
       tmuxFailure = error.message;
+    } finally {
+      openSandboxes.delete(env.TMUX_TMPDIR);
     }
   }
   const label = `${basename(context.cwd)}/${relative(context.cwd, file)}`;
@@ -939,11 +948,15 @@ async function main() {
   };
   const closeSandbox = () => {
     cleanupStep(() => rmSync(runRoot, { recursive: true, force: true }));
-    if (env) cleanupStep(() => closeTmuxSandbox(env));
+    // A file that outlived an interrupt's stop deadline never reached its own close.
+    for (const [dir, sandbox] of openSandboxes) {
+      openSandboxes.delete(dir);
+      cleanupStep(() => closeTmuxSandbox(sandbox));
+    }
   };
   process.once('exit', closeSandbox);
   // An interrupted run stops its test processes, removes its directories and
-  // ends its tmux server, then dies by the same signal. A second signal during
+  // ends the tmux servers of files still open, then dies by the same signal. A second signal during
   // that shutdown gets the default action: the operator's override, which
   // skips the cleanup.
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
@@ -961,7 +974,7 @@ async function main() {
         });
     });
   }
-  env = childEnvironment(openTmuxSandbox());
+  env = childEnvironment();
   const toLabel = (file) => relative(cwd, file);
 
   // Reject a bad partition before spending minutes running tests: a lost file
