@@ -1,0 +1,1 @@
+- A WebP still worker error that is not an `Error` is wrapped in one before it rejects the pending encodes, so the module type-checks against @types/node 22 and 24+.

@@ -1,0 +1,1 @@
+- Fleet status keeps a slot's branch and commit while its node support bundle is still being delivered: hooks that wait for the bundle run in their own probe batch, and a delivery that finishes after every waiter gave up is remembered for the next command.
