@@ -932,8 +932,7 @@ async function main() {
   });
 
   // Every file's state and private TMPDIR live here; removed when the run ends,
-  // interrupted or not. Created and registered before the tmux sandbox, so a
-  // failure opening that cannot leave it behind.
+  // interrupted or not, together with any per-file tmux sandbox still open.
   const runRoot = mkdtempSync(join(tmpdir(), 'fst-'));
   let env;
   // Each cleanup reports its own failure: one cannot skip the other.
