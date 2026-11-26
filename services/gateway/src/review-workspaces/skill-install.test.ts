@@ -113,7 +113,7 @@ test('a skill review links its writable round folders into the read-only checkou
     const cursor = path.join(checkout, '.cursor');
     mkdirSync(outside);
     symlinkSync(outside, cursor);
-    assert.throws(() => run(), /destination parent is not an owned directory/);
+    assert.throws(() => run(), /destination is not an owned directory/);
     assert.equal(existsSync(path.join(outside, 'rules')), false);
     unlinkSync(cursor);
     const failPublish = path.join(root, 'fail-publish.cjs');
@@ -141,28 +141,55 @@ test('a skill review links its writable round folders into the read-only checkou
     run({ action: 'cleanup' });
     assert.equal(readFileSync(path.join(existing, 'original.txt'), 'utf8'), 'preserve this file');
     rmSync(existing, { recursive: true });
+    const publicationRace = path.join(root, 'publication-race.cjs');
+    const foreign = path.join(checkout, '.claude');
+    writeFileSync(
+      publicationRace,
+      `const fs = require('node:fs');
+      const link = fs.symlinkSync;
+      fs.symlinkSync = (target, destination, type) => {
+        if (destination === ${JSON.stringify(path.join(realpathSync(checkout), '.claude'))}) {
+          fs.mkdirSync(destination);
+          fs.writeFileSync(destination + '/owner.txt', 'foreign destination');
+        }
+        return link(target, destination, type);
+      };`,
+    );
+    assert.throws(() => run({}, publicationRace), /EEXIST/);
+    assert.equal(readFileSync(path.join(foreign, 'owner.txt'), 'utf8'), 'foreign destination');
+    assert.equal(existsSync(existing), false, 'roll back the earlier publication');
+    assert.equal(
+      readdirSync(checkout).some((name) => name.startsWith('.farmslot-review-skills-')),
+      false,
+    );
+    assert.equal(
+      existsSync(path.join(root, '.installed-review-skill-mms-perps-review-pr.json')),
+      false,
+    );
+    rmSync(foreign, { recursive: true });
+
     run();
     run();
     run({ verifyOnly: true });
     const saved = path.join(root, 'saved-install');
-    renameSync(existing, saved);
-    mkdirSync(existing);
-    writeFileSync(path.join(existing, 'replacement.txt'), 'preserve the replacement');
+    const privateInstall = realpathSync(existing);
+    renameSync(privateInstall, saved);
+    mkdirSync(privateInstall);
+    writeFileSync(path.join(privateInstall, 'replacement.txt'), 'preserve the replacement');
     assert.throws(() => run({ verifyOnly: true }), /destination identity changed/);
-    assert.throws(() => run({ action: 'cleanup' }), /destination identity changed/);
     assert.equal(
-      readFileSync(path.join(existing, 'replacement.txt'), 'utf8'),
+      readFileSync(path.join(privateInstall, 'replacement.txt'), 'utf8'),
       'preserve the replacement',
     );
-    rmSync(existing, { recursive: true });
-    renameSync(saved, existing);
+    rmSync(privateInstall, { recursive: true });
+    renameSync(saved, privateInstall);
     const swap = path.join(root, 'swap-before-retire.cjs');
     writeFileSync(
       swap,
       `const fs = require('node:fs');
       const rename = fs.renameSync;
       fs.renameSync = (from, to) => {
-        if (from === ${JSON.stringify(realpathSync(existing))} && to.endsWith('/directory')) {
+        if (from === ${JSON.stringify(path.join(realpathSync(checkout), '.agents/skills/mms-perps-review-pr'))} && to.endsWith('/directory')) {
           rename(from, ${JSON.stringify(saved)});
           fs.mkdirSync(from);
           fs.writeFileSync(from + '/replacement.txt', 'preserved during retirement');
@@ -170,7 +197,10 @@ test('a skill review links its writable round folders into the read-only checkou
         return rename(from, to);
       };`,
     );
-    assert.throws(() => run({ action: 'cleanup' }, swap), /identity changed; preserved at/);
+    assert.throws(
+      () => run({ action: 'cleanup' }, swap),
+      /publication destination already exists: .*preserved at/,
+    );
     const retained = readdirSync(root).find((name) => name.startsWith('.review-skill-retire-'));
     assert.ok(retained);
     assert.equal(
