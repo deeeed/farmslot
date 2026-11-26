@@ -319,7 +319,9 @@ export async function executeFinalizeStep(
       // ci-watch never watches an artifact-only run (no PR); its skip defers the release.
       await markRunSlotHeld(current.slotId, current.id, 'ci-watch');
     }
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+    broadcastFn(Events.FLEET_UPDATED, {
+      fleet: await loadFleetStatus(true, false, { newest: true }),
+    });
   } catch (err) {
     // Finalize continues so run completion is not lost, but slot lifecycle
     // drift is operator-actionable and must be logged.
