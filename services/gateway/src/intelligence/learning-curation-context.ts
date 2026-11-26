@@ -45,6 +45,19 @@ async function runArtifactText(run: Run, file: string): Promise<string | undefin
  * anchor when the review ran without a pack.
  */
 export async function reviewRowsForRun(run: Run): Promise<LearningRuleResult[]> {
+  if (run.reviewWorkspace?.reviewTask) {
+    // A review skill's round (ADR-058 Amendment 4): its ledger has one `## <n>. <title>`
+    // section per row with its `Outcome:`. The skill's finish refused gaps already.
+    const ledger = await runArtifactText(run, 'artifacts/review-ledger.md');
+    return (ledger ?? '').split(/^## (?=\d+\. )/m).flatMap((section): LearningRuleResult[] => {
+      const title = /^\d+\. (.+)/.exec(section)?.[1]?.trim();
+      const outcome = /^Outcome: *(PASS|FINDING)\b/m.exec(section)?.[1];
+      const family = title ? learningSectionAnchor(title) : '';
+      return family && (outcome === 'PASS' || outcome === 'FINDING')
+        ? [{ runId: run.id, family, outcome }]
+        : [];
+    });
+  }
   const text = await runArtifactText(run, 'artifacts/review-coverage.json');
   if (!text?.trim()) return [];
   const index: unknown = JSON.parse(text);

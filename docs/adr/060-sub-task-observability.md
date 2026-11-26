@@ -89,3 +89,8 @@ defines the cutover and its separate implementation/publication status.
 The source cutover is tracked by [#1044](https://github.com/deeeed/farmslot/pull/1044),
 pending review and merge. This records implementation separately from package
 publication and adopter rollout.
+
+## Skill-backed review checklists (2026-11-26)
+
+[ADR-058 Amendment 4](058-static-review-and-farm-owned-qa.md#amendment-4-one-checklist-for-skill-backed-reviews-2026-11-26)
+uses the review skill's generated checklist as the task's progress source. That flow registers no child checklist. Other flows can still use sub-task checklists.

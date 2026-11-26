@@ -83,7 +83,7 @@ process.on('message', async (message) => {
   released = true;
   try {
     // The shell cannot execute Git until its identity is durable. EOF fails closed.
-    const git = spawn('bash', ['-c', 'IFS= read -r gate || exit 75; exec "$@"', 'workspace-git', 'git', ...request.args], {
+    const git = spawn('bash', ['-c', 'IFS= read -r gate || exit 75; exec "$@"', 'workspace-command', request.executable, ...request.args], {
       env:request.environment, stdio:['pipe','inherit','inherit'],
     });
     const completion = new Promise((resolve, reject) => {git.once('error', reject); git.once('exit', (code, signal) => resolve({code,signal}));});
@@ -148,7 +148,7 @@ function marker(file, expected, allowCreate) {
 }
 const cancellationPath = workspace && path.join(workspace, 'cancel.json');
 function assertWorkspaceOperationCurrent() {
-  if (input.action !== 'allocate' && (input.action !== 'cleanup' || input.allowCancelled)) return;
+  if (!['allocate','start-review-task'].includes(input.action) && (input.action !== 'cleanup' || input.allowCancelled)) return;
   const cancelled = read(cancellationPath);
   if (cancelled) {
     if (input.action === 'allocate' && input.previousIdentity && same(cancelled,input.previousIdentity)) return;
@@ -278,7 +278,7 @@ function claim(key = cacheKey) {
     return previousPath;
   }
 }
-async function git(args, phase = 'inspect') {
+async function runOwnedCommand(args, phase = 'inspect', executable = 'git') {
   assertWorkspaceOperationCurrent();
   if (phase === 'inspect') {
     // These fixed local queries cannot fetch, mutate refs or refresh the index.
@@ -289,7 +289,8 @@ async function git(args, phase = 'inspect') {
   const command = path.join(operationPath, 'commands', crypto.randomUUID());
   directory(command);
   write(path.join(command, 'request.json'), {phase, args, lockBaseline:lockFiles()});
-  const child = spawn(process.execPath, ['-e', GIT_SUPERVISOR_SCRIPT, JSON.stringify({directory:command, args:['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false','-c','protocol.ext.allow=never',...args], environment})], {detached:true, stdio:['ignore','pipe','pipe','ipc']});
+  const commandArgs=executable==='git'?['-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false','-c','gc.auto=0','-c','maintenance.auto=false','-c','protocol.ext.allow=never',...args]:args;
+  const child = spawn(process.execPath, ['-e', GIT_SUPERVISOR_SCRIPT, JSON.stringify({directory:command, executable, args:commandArgs, environment})], {detached:true, stdio:['ignore','pipe','pipe','ipc']});
   let stdout = '', stderr = '';
   let cancellationTimer;
   let commandCancelled = false;
@@ -320,7 +321,63 @@ async function git(args, phase = 'inspect') {
   const supervisor = read(path.join(command, 'supervisor.json'));
   if (supervisor) await stopGroup(supervisor, read(path.join(command, 'git.json')));
   if (result !== 0) throw new Error(stderr || 'Git command failed');
-  return stdout.trim();
+  return {stdout:stdout.trim(),stderr};
+}
+const git=async(args,phase='inspect')=>{
+ if(phase==='inspect')return runOwnedCommand(args,phase);
+ return (await runOwnedCommand(args,phase)).stdout;
+};
+async function startReviewTask(){
+ const request=input.reviewTaskStart;
+ if(!request||!Number.isSafeInteger(request.pr)||request.pr<1||typeof request.command!=='string'||!Number.isSafeInteger(input.generation)||input.generation<0||!/^[A-Za-z0-9_-]+$/.test(identity.runId))
+  throw Error('Invalid review task start identity');
+ marker(path.join(workspace,'identity.json'),identity,false);
+ if(read(path.join(workspace,'allocation.json'))?.state!=='ready')throw Error('Review workspace is not ready');
+ const taskRoot=path.join(workspace,'review-tasks');
+ directory(taskRoot);
+ if(fs.realpathSync(path.join(checkout,'temp','tasks'))!==fs.realpathSync(taskRoot))throw Error('Review task folder link changed');
+ const prRoot=path.join(taskRoot,'review','pr-'+request.pr);
+ directory(prRoot);
+ const receipt=path.join(workspace,'.review-task-start-'+identity.runId+'.json');
+ const previous=read(receipt);
+ const list=()=>fs.readdirSync(prRoot).filter(name=>/^r[1-9]\d*$/.test(name));
+ if(previous&&previous.generation>input.generation)throw Error('Review task start generation was superseded');
+ const roundPath=(name)=>path.join(prRoot,name);
+ const remove=(name)=>{
+  const dir=roundPath(name);
+  if(fs.lstatSync(dir).isSymbolicLink())throw Error('Review skill round changed to a symbolic link');
+  fs.rmSync(dir,{recursive:true});
+ };
+ if(request.boundFolder){
+  const name=path.basename(request.boundFolder);
+  if(!list().includes(name)||roundPath(name)!==request.boundFolder)
+   throw Error('Recorded review skill round is unavailable');
+  directory(request.boundFolder);
+  assertWorkspaceOperationCurrent();
+  write(receipt,{generation:input.generation,baseline:list()});
+  return {stdout:'folder: '+path.posix.join('temp/tasks','review','pr-'+request.pr,name),stderr:''};
+ }
+ if(previous&&previous.generation<input.generation){
+  // The gateway has no bound round for this run. Discard only new rounds left by its older start.
+  const baseline=new Set(previous.baseline);
+  assertWorkspaceOperationCurrent();
+  for(const name of list())if(!baseline.has(name))remove(name);
+ }
+ const baseline=previous?.generation===input.generation?previous.baseline:list();
+ assertWorkspaceOperationCurrent();
+ write(receipt,{generation:input.generation,baseline});
+ const result=await runOwnedCommand(['-c',request.command],'start-review-task','bash');
+ assertWorkspaceOperationCurrent();
+ const prefix='folder: temp/tasks/review/pr-'+request.pr+'/';
+ const name=result.stdout.split('\n').find(line=>line.startsWith(prefix))?.slice(prefix.length);
+ if(!/^r[1-9]\d*$/.test(name??'')||!list().includes(name))throw Error('Review skill did not report its round folder');
+ directory(roundPath(name));
+ const record=read(path.join(roundPath(name),'review.json'));
+ if(record?.marks===false){
+  if(!baseline.includes(name))remove(name);
+  throw Error('Review skill round has no marked checklist: '+(result.stderr.trim()||'mm-harness was unavailable'));
+ }
+ return result;
 }
 function physicalHeadsFor(expected) {
   const allocation=read(path.join(workspace,'allocation.json'));
@@ -425,6 +482,15 @@ function finishCleanup() {
     process.stdout.write(JSON.stringify({state:'purged'}));return;
   }
   assertWorkspaceOperationCurrent();
+  if(input.action==='start-review-task'){
+    const previousPath=claim();
+    await recover(previousPath);
+    assertWorkspaceOperationCurrent();
+    const output=await startReviewTask();
+    write(path.join(operationPath,'state.json'),{state:'complete'});
+    process.stdout.write(JSON.stringify({state:'review-task',...output}));
+    return;
+  }
   // Use the same durable claim protocol for owner storage and repository operations.
   // A different gateway cannot allocate between reclamation's checks and retirement.
   const previousStoragePath = claim('storage');

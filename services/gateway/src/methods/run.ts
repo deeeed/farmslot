@@ -116,6 +116,7 @@ import {
   type ReviewWorkspaceAdmission,
 } from '../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../review-workspaces/direct-defaults.js';
+import { configuresReviewSkill } from '../review-workspaces/skills.js';
 import { useReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
 import {
   assertReadyGatePackageInputsCurrent,
@@ -623,6 +624,7 @@ export async function planRunCreation(
           effort: params.effort,
           transport: params.transport,
           nativeProfile: params.nativeProfile,
+          domain: params.domain,
         },
         reviewOwner().ownerId,
         options.replanningRunId,
@@ -658,7 +660,10 @@ export async function planRunCreation(
     );
   }
   let executionTemplateSnapshot: Run['executionTemplate'];
-  if (workspaceAdmission) {
+  if (
+    workspaceAdmission &&
+    !configuresReviewSkill(workspaceAdmission.project.staticReview?.support, params.domain)
+  ) {
     executionTemplateSnapshot = await resolveWorkspaceReviewTemplate({
       project: params.project,
       pool: workspaceAdmission.pool,
@@ -885,6 +890,7 @@ export async function planRunCreation(
         effort: params.effort,
         transport: params.transport,
         nativeProfile: params.nativeProfile,
+        domain: params.domain,
       },
       reviewOwner().ownerId,
       options.replanningRunId,

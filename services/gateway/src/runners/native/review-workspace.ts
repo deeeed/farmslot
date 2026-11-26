@@ -42,6 +42,7 @@ import {
 import {
   reviewWorkspaceCommandEnvOptions,
   reviewWorkspaceReadOnlyRoots,
+  reviewWorkspaceWritableRoots,
 } from '../../review-workspaces/skills.js';
 import { getRun, persistRunNow, updateRun } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
@@ -113,7 +114,7 @@ export function assertReviewWorkspaceRun(run: Run | null | undefined): asserts r
     throw new Error('Static review workspace placement changed');
   validateNativeWorkerFilesystemPolicy({
     readOnlyRoots: reviewWorkspaceReadOnlyRoots(workspace),
-    writableRoots: [workspace.taskPath, workspace.artifactPath],
+    writableRoots: reviewWorkspaceWritableRoots({ domain: run.domain, reviewWorkspace: workspace }),
   });
   if (
     run.nativeProfile &&
@@ -345,6 +346,10 @@ export async function launchReviewWorkspaceWorker(input: {
       ]),
     ];
   }
+  if (workspace.reviewTask) {
+    environment.set.FARMSLOT_SIGNAL_ATTEMPT_ID = workspace.reviewTask.attemptId;
+    environment.unset = environment.unset.filter((name) => name !== 'FARMSLOT_SIGNAL_ATTEMPT_ID');
+  }
   // As for a dispatched worker, only the machine's configured path overrides the adapter's executable.
   const executable =
     input.executable ?? machineRunnerPath(runner, await loadMachinePool(workspace.machine));
@@ -359,7 +364,7 @@ export async function launchReviewWorkspaceWorker(input: {
     effort,
     filesystemPolicy: {
       readOnlyRoots: reviewWorkspaceReadOnlyRoots(workspace),
-      writableRoots: [workspace.taskPath, workspace.artifactPath],
+      writableRoots: reviewWorkspaceWritableRoots(run),
     },
   };
   const digest = nativeWorkerLaunchDigest(launch);

@@ -205,3 +205,21 @@ One configurable policy governs verdicts in external and paired reviews. The gat
 ### Consequences and public surface
 
 Projects may change `approvalPolicy` without restarting the gateway. `@farmslot/protocol` owns its defaults, validation, recommendation and instruction renderer; the gateway and shared review instructions consume them. Harnesses inherit this policy. Existing review and refresh commands remain unchanged. Contradictory results require correction before publication.
+
+## Amendment 4: One checklist for skill-backed reviews (2026-11-26)
+
+**Status:** Accepted (2026-11-26).
+
+### Decision and rationale
+
+A farm can select an installed review skill for reviews in that skill's domain. The gateway freezes the source and installer, installs the skill as an engineer would, and starts it against the frozen base and head. The skill produces the same checklist, marks, ledger and verdict it produces for a hand-launched review. The gateway uses that round for progress and result acceptance. Other reviews use the farm's configured static template.
+
+The checkout remains read-only. The skill's `temp/tasks` resolves to a writable sibling directory in the retained workspace. The skill owns cold and warm round contents. Farmslot still owns admission, reviewer session continuity, budgets and publication. The skill verdict replaces the Amendment 3 approval policy for skill-backed rounds.
+
+### Consequences
+
+One checklist feeds both the gateway and the harness watcher. The installed skill owns the format of the artifacts that the gateway reads, so changes to that format require a coordinated update. Mark times record when the reviewer checked off each row. A reviewer may work through multiple rows before marking them.
+
+### Public surface
+
+`@farmslot/slot-config` reads the optional `static_review.support.skills[].install.repo` setting. `@farmslot/protocol` owns the additive workspace round and review-result metadata, versioned with its existing contracts. Existing dispatch and progress calls consume those fields. Harnesses use the existing `status --watch` and the skill's existing `start` and `finish` commands. See the [skill-backed result contract](../reference/review-curation-and-results.md#skill-backed-review-rounds).

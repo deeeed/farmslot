@@ -36,6 +36,7 @@ import {
   inspectReviewWorkspaceTarget,
 } from '../../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../../review-workspaces/direct-defaults.js';
+import { configuresReviewSkill } from '../../review-workspaces/skills.js';
 import { resolveStaticReviewOwner } from '../../security/native-worker-owner.js';
 import { currentSessionOriginator, workAuthorshipNotice } from '../../security/work-originator.js';
 import { captureRunCreationRequest } from '../../sources/creation-request.js';
@@ -145,6 +146,7 @@ export async function dispatchQueueAdd(
           effort: params.effort,
           transport: params.transport,
           nativeProfile: params.nativeProfile,
+          domain: params.domain,
         },
         staticReviewOwner?.ownerId ?? resolveStaticReviewOwner('live').ownerId,
       )))
@@ -177,7 +179,10 @@ export async function dispatchQueueAdd(
     };
   }
   let executionTemplate: import('@farmslot/protocol').ExecutionTemplateReference | undefined;
-  if (configuredCatalog) {
+  if (
+    configuredCatalog &&
+    !configuresReviewSkill(workspaceAdmission?.project.staticReview?.support, params.domain)
+  ) {
     // A pool candidate supplies template context without becoming an explicit slot pin.
     const templateSlotId =
       params.slotId ?? (params.flowType === 'qa' ? params.allowedSlots?.[0] : undefined);

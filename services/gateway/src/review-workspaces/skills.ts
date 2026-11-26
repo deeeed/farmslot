@@ -42,6 +42,8 @@ interface SourceManifest {
   sourceRevision?: string;
   sourceDirty?: boolean;
   packages?: Array<{ path: string; name: string; version: string }>;
+  /** ADR-058 Amendment 4: installed by the frozen repository's own `tools/install`. */
+  install?: { repo: string; include: string; installedName: string };
 }
 export interface FrozenReviewWorkspaceSupport {
   manifest: {
@@ -249,9 +251,13 @@ export async function collectReviewWorkspaceSupport(
       const source = resolution.sources.find(
         (source) => source.id === `${definition.kind}:${definition.name}`,
       )!;
+      const install =
+        definition.kind === 'skill' && 'install' in definition ? definition.install : undefined;
       const destination =
         definition.kind === 'skill'
-          ? `skills/${definition.name}`
+          ? install
+            ? `skill-sources/${definition.name}`
+            : `skills/${definition.name}`
           : definition.kind === 'library'
             ? `libraries/${definition.name}`
             : 'runtime/package';
@@ -272,6 +278,33 @@ export async function collectReviewWorkspaceSupport(
         entryPath = `${destination}/${definition.entry}`;
         identity.entry = entryPath;
         identity.sourceEntry = definition.entry;
+      }
+      if (install && definition.kind === 'skill') {
+        // The installer walks a skills repository: freeze its tools/ and this one skill, laid
+        // out as the repository lays them out, so tools/install installs only this skill.
+        const subpath = definition.subpath!;
+        const [, domain, , skill] = subpath.split('/');
+        const skillFiles = await collectSupportFiles(source.root, `${destination}/${subpath}`);
+        const tools = await collectSupportFiles(
+          reviewSkillInstallerDirectory(source.root, subpath),
+          `${destination}/tools`,
+        );
+        if (
+          !skillFiles.length ||
+          !tools.some((file) => file.relativePath.endsWith('/tools/install'))
+        )
+          throw new Error(
+            `Review skill ${definition.name} needs tools/install and its skill files`,
+          );
+        files.push(...skillFiles, ...tools);
+        identity.entry = `${destination}/${subpath}/${definition.entry}`;
+        identity.install = {
+          repo: install.repo,
+          include: `${domain}/${skill}`,
+          installedName: `mms-${skill}`,
+        };
+        sources.push(identity);
+        continue;
       }
       if (definition.kind === 'runtime') {
         if (!/\.(?:js|mjs|cjs)$/.test(definition.entry))
@@ -347,14 +380,76 @@ export function reviewWorkspaceCommandEnvOptions(
   return {
     domain,
     overrides: support
-      ? Object.fromEntries(
-          Object.entries(support.environment).map(([name, value]) => [
-            name,
-            bindReviewWorkspaceSupportValue(value, support),
-          ]),
-        )
+      ? {
+          ...Object.fromEntries(
+            Object.entries(support.environment).map(([name, value]) => [
+              name,
+              bindReviewWorkspaceSupportValue(value, support),
+            ]),
+          ),
+          ...(workspace.reviewTask ? { RECIPE_RUNTIME_DIR: REVIEW_TASK_RUNTIME_DIR } : {}),
+        }
       : undefined,
   };
+}
+
+// The harness requires a checkout-relative journal directory. This resolves into the writable rounds.
+export const REVIEW_TASK_RUNTIME_DIR = 'temp/tasks/.runtime';
+
+/** The configured skill lives at domains/<domain>/skills/<skill> in its repository. */
+export function reviewSkillInstallerDirectory(skillRoot: string, subpath: string): string {
+  return path.resolve(skillRoot, ...subpath.split('/').map(() => '..'), 'tools');
+}
+
+type InstalledReviewSkill = ReviewWorkspaceSupportBinding['skills'][number] & {
+  install: NonNullable<ReviewWorkspaceSupportBinding['skills'][number]['install']>;
+};
+
+/**
+ * ADR-058 Amendment 4: the installed review skill whose round folder is this run's review.
+ * Only a run in the skill's own domain (`<domain>/<skill>`) uses it; any other review of
+ * the project keeps the configured static template.
+ */
+export function reviewSkillFor(
+  run: Pick<Run, 'domain' | 'reviewWorkspace'>,
+): InstalledReviewSkill | undefined {
+  return run.reviewWorkspace?.support?.skills.find(
+    (skill): skill is InstalledReviewSkill =>
+      Boolean(run.domain) && skill.install?.include.split('/')[0] === run.domain,
+  );
+}
+
+/** The same choice from configuration, before a support binding exists (admission). */
+export function configuresReviewSkill(
+  support: ReviewWorkspaceSupportConfig | undefined,
+  domain: string | null | undefined,
+): boolean {
+  return Boolean(
+    domain &&
+    support?.skills?.some((skill) => skill.install && skill.subpath?.split('/')[1] === domain),
+  );
+}
+
+/**
+ * The writable home of a skill review's round folders: `runs/<workspaceId>/review-tasks`, a
+ * sibling of the read-only checkout that `<checkout>/temp/tasks` links to.
+ */
+export function reviewTaskRoot(
+  workspace: Pick<NonNullable<Run['reviewWorkspace']>, 'checkoutPath'>,
+) {
+  return path.posix.join(path.posix.dirname(workspace.checkoutPath), 'review-tasks');
+}
+
+/** The reviewer's writable roots. The task stays first: the sandbox puts its temp dir there. */
+export function reviewWorkspaceWritableRoots(
+  run: Pick<Run, 'domain'> & { reviewWorkspace: NonNullable<Run['reviewWorkspace']> },
+): string[] {
+  const workspace = run.reviewWorkspace;
+  return [
+    workspace.taskPath,
+    workspace.artifactPath,
+    ...(reviewSkillFor(run) ? [reviewTaskRoot(workspace)] : []),
+  ];
 }
 
 /** Both launch transports grant the same frozen source and reference inputs. */

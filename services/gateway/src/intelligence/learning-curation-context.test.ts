@@ -14,7 +14,9 @@ Object.assign(process.env, {
 });
 const { createRun, getRun, updateRun, deleteRun } = await import('../runs/store.js');
 const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
-const { loadLearningCurationContext } = await import('./learning-curation-context.js');
+const { loadLearningCurationContext, reviewRowsForRun } =
+  await import('./learning-curation-context.js');
+const { makeRun } = await import('../methods/run/test-fixtures.js');
 const { invalidateProjectVarsCache } = await import('@farmslot/slot-config');
 
 test('curation reads configured shared/overlay rules and retained evidence after staging cleanup', async (t) => {
@@ -183,4 +185,55 @@ test('curation reads configured shared/overlay rules and retained evidence after
     run.id,
   );
   assert.match(missing.unavailable ?? '', /no configured readable library source/);
+});
+
+test('a review skill round gives its ledger rows to the lesson kind check', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'skill-round-'));
+  t.after(() => rm(task, { recursive: true, force: true }));
+  await mkdir(path.join(task, 'artifacts'));
+  await writeFile(
+    path.join(task, 'artifacts/review-ledger.md'),
+    [
+      '# Review ledger',
+      '',
+      '## 1. Read the exact diff',
+      '',
+      'Outcome: PASS every changed file read.',
+      '',
+      '## 2. Order guards hold',
+      '',
+      'Outcome: FINDING',
+      '1. src/order.ts:4 skips the guard.',
+      '',
+      '## 3. Extension parity',
+      '',
+      'Outcome: NOT_APPLICABLE no extension code.',
+      '',
+    ].join('\n'),
+  );
+  const run = {
+    ...makeRun({ id: 'skill-round', flowType: 'review-pr', slotId: null }),
+    taskFile: path.join(task, 'TASK.md'),
+    reviewWorkspace: {
+      workspaceId: 'w',
+      machine: 'node',
+      executionNodeId: 'node',
+      checkoutPath: '/w/source',
+      taskPath: '/w/task',
+      artifactPath: '/w/task/artifacts',
+      reviewTask: {
+        folder: '/w/review-tasks/review/pr-1/r1',
+        round: 1,
+        mode: 'cold' as const,
+        headSha: 'a'.repeat(40),
+        revision: 'rev',
+        startedAt: new Date().toISOString(),
+        attemptId: 'skill-attempt',
+      },
+    },
+  };
+  assert.deepEqual(await reviewRowsForRun(run), [
+    { runId: 'skill-round', family: 'read-the-exact-diff', outcome: 'PASS' },
+    { runId: 'skill-round', family: 'order-guards-hold', outcome: 'FINDING' },
+  ]);
 });

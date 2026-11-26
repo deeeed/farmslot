@@ -41,6 +41,7 @@ import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-te
 
 import { resolveReviewWorkspacePool } from './pool.js';
 import { retainedWorkspaceIsIdle } from './retention-policy.js';
+import { configuresReviewSkill } from './skills.js';
 
 export interface ReviewWorkspaceAdmissionInput {
   project: string;
@@ -50,6 +51,8 @@ export interface ReviewWorkspaceAdmissionInput {
   effort?: string;
   transport?: WorkerTransport;
   nativeProfile?: NativeProfileReference;
+  /** The review's domain: one in a review skill's domain needs no static template. */
+  domain?: string | null;
 }
 
 export interface ReviewWorkspaceAdmission {
@@ -127,6 +130,7 @@ export async function admitReviewWorkspaceFollowup(
       effort: run.effort,
       transport: run.transport,
       nativeProfile: run.nativeProfile,
+      domain: run.domain,
     },
     run.nativeOwnerPrincipalId,
     runId,
@@ -328,7 +332,14 @@ export async function inspectReviewWorkspaceTarget(
 ): Promise<ReviewWorkspaceAdmission> {
   const [pools, project] = await Promise.all([loadPoolConfigs(), loadProjectConfig(input.project)]);
   const pool = resolveReviewWorkspacePool(pools, input.machine, input.project);
-  if (!project?.repoUrl || !project.staticReview?.templateId || !project.executionTemplates) {
+  if (
+    !project?.repoUrl ||
+    !(
+      project.staticReview?.templateId ||
+      configuresReviewSkill(project.staticReview?.support, input.domain)
+    ) ||
+    !project.executionTemplates
+  ) {
     throw new GatewayMethodError(
       'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
       'Configure the project repository and canonical static-review template',
