@@ -4,7 +4,7 @@ import path from 'node:path';
 import { NATIVE_SESSION_ARCHIVE_LIMIT, type Run } from '@farmslot/protocol';
 
 /**
- * ADR-039 Amendment 10: a node-hosted native session's journal follows its run. Sessions of runs
+ * ADR-039 Amendment 11: a node-hosted native session's journal follows its run. Sessions of runs
  * retention released are archived on their node, out of host startup replay, unless a run that
  * retention holds still references them. A session no run references is never touched.
  */

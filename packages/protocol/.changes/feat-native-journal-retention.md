@@ -1,0 +1,1 @@
+- `NativeExecutionNodeDeclaration.supportsSessionArchive`, and `NATIVE_SESSION_ARCHIVE`, `NATIVE_SESSION_ARCHIVE_LIMIT` and `NativeSessionArchiveReceipt` for run retention's node archive request (ADR-039 Amendment 11).

@@ -827,3 +827,53 @@ export, marked `export-table`.
   `farmslot runs bundle retain <runId>` also retries sessions still recorded
   `missing`.
 - `traces.enabled` in `project.json` (default `true`).
+
+## Amendment 11: 2026-11-26 node-hosted native journals follow their runs
+
+**Status:** Accepted, 2026-11-26.
+
+### Decision
+
+A native session's journal on an execution node now follows its run. Before this, the run
+pass only took native state under the gateway's own root (`executionNodeId: 'local'`), so
+node hosts kept every journal forever and replayed all of them on every host start: on
+2026-11-26 macpro held 477 journals (1.5 GB, back to 2026-09-24) and its host took 16 s to
+become ready, past the node's start wait.
+
+Each hourly pass, after the run pass:
+
+- the sessions to archive are those bound by the agent contexts (`nativeSession` and
+  `nativeSessionHistory`, node-hosted only) of every settled run that `runRetentionHold()`
+  releases, whether or not its storage is already archived, less every session a held run
+  names anywhere in its record. Open-PR runs are held by Amendment 8, so the latest review
+  of an open PR keeps its sessions. A session no run references is never touched;
+- at most 50 per node go to the node in one `native.session.archive` request, inside the
+  gateway's `native.session` envelope, only to a connected node that declares
+  `supportsSessionArchive`. It is not a public gateway method;
+- the node hands them to its running host, which moves each journal to `archive/` beside
+  its `sessions/` directory, out of startup replay. It archives only a closed or failed
+  session whose process is confirmed stopped, with no pending request, open input or
+  conversation listener; any other is kept with its reason. The request never starts or
+  refreshes a host, and a host without the capability is reported unavailable; and
+- the gateway records what nodes confirmed (archived, already archived, missing) in
+  `native-journals.json` under the run archive root and never resends those. A session a
+  node kept is asked about again after a day; an offline or older node is asked again
+  next pass.
+
+A host also stops replaying settled sessions it does not need: after a start replays a
+closed or failed session whose process is confirmed stopped and nothing is pending, it
+records that session's identity in `sessions/summaries/`. Later starts load the summary
+instead of the journal while the journal is unchanged, and replay the journal the first
+time something reads that session.
+
+### Rationale and consequences
+
+Archiving rather than deleting keeps a released run's conversation restorable: run
+bundles do not capture native journals. The archive is not pruned yet; at about 3 MB a
+journal it grows with each released run, and its own retention is a later decision.
+Standalone native sessions, which no run references, are out of scope.
+
+At 50 per node an hour, macpro's backlog of about 250 released journals drains in about
+5 hours after deploy, and the rest wait for their runs to settle. Pruning alone would
+leave about 230 journals (0.7 GB) and a 6 s start on macpro, so the summaries are what
+bring host start under 5 s.

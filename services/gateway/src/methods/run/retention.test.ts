@@ -681,8 +681,21 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
       assert.ok(entry.completedAt);
     }
   }
-  const after = await runRetentionPass({ apply: true, roots, now: passNow }, privateDeps);
+  // Node journals follow every released run, including runs whose storage is already archived.
+  const journalRuns: string[] = [];
+  const after = await runRetentionPass(
+    {
+      apply: true,
+      roots,
+      now: passNow,
+      nodeJournals: async (released) => {
+        journalRuns.push(...released.map((run) => run.id));
+      },
+    },
+    privateDeps,
+  );
   assert.deepEqual(after.runs, [], 'a repeat pass never destroys or duplicates archived storage');
+  for (const id of runIds) assert.ok(journalRuns.includes(id));
   assert.equal(after.stores['task-dirs'].entries, 0);
   for (const record of originals) assert.ok(existsSync(record));
 });

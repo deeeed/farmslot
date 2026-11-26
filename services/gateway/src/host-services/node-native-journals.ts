@@ -76,7 +76,7 @@ function decodeReceipts(value: unknown, sent: readonly string[]): NativeSessionA
 }
 
 /**
- * One bounded batch per node per hourly retention pass (ADR-039 Amendment 10). A node that is
+ * One bounded batch per node per hourly retention pass (ADR-039 Amendment 11). A node that is
  * offline, or whose node or host lacks the capability, is skipped and asked again next pass.
  */
 export async function nodeJournalRetentionPass(

@@ -260,7 +260,7 @@ export async function runRetentionPass(
     emit?: Emit;
     now?: number;
     roots?: RunRetentionRoots;
-    /** Archive node-hosted journals of the runs this pass released (ADR-039 Amendment 10). */
+    /** Archive node-hosted journals of the runs this pass released (ADR-039 Amendment 11). */
     nodeJournals?: (released: readonly Run[], held: readonly Run[]) => Promise<void>;
   },
   deps: RunRetentionDeps = RUN_RETENTION_DEPS,

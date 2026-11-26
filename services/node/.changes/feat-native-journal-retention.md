@@ -1,0 +1,1 @@
+- Nodes declare `supportsSessionArchive` and route run retention's `native.session.archive` request to a running host, never starting one for it.
