@@ -1,0 +1,1 @@
+- A node whose native host is not ready at startup registers with a warning naming host.log instead of exiting.
