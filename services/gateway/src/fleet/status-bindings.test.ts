@@ -48,7 +48,7 @@ mock.module('node:fs/promises', {
   },
 });
 const state = await import('../core/state.js');
-const { getCachedFleet, loadFleetStatus, onStateChange, startFileWatcher } =
+const { getCachedFleet, loadFleetStatus, NEWEST_FLEET_READS, onStateChange, startFileWatcher } =
   await import('./state.js');
 const overlays = await import('./state.js');
 const resources = await import('./resource-manager.js');
@@ -673,6 +673,32 @@ test('broadcast reads share one loop, and a call during it gets the newer fleet'
   } finally {
     holdNextRead = undefined;
     hold.release();
+  }
+});
+
+test('a broadcast read loop overtaken on every read still resolves after a bounded number', async () => {
+  await fs.writeFile(state.statusFile, JSON.stringify(rows('busy')));
+  await loadFleetStatus(true, true);
+  const reads = statusReads;
+  let rounds = 0;
+  // An overlay change during every read overtakes it, as sustained commits would.
+  const overtake = async () => {
+    rounds++;
+    overlays.setBranchOverlay('proof', `busy-${rounds}`);
+    if (rounds < 50) holdNextRead = overtake;
+  };
+  holdNextRead = overtake;
+  try {
+    const fleet = await loadFleetStatus(true, false, { newest: true });
+    assert.equal(fleet.slots[0].currentRunId, 'busy');
+    assert.equal(statusReads - reads, NEWEST_FLEET_READS, 'the loop stops at its read cap');
+    await assert.rejects(
+      loadFleetStatus(true, true, { newest: true }),
+      /non-strict broadcast read/,
+    );
+  } finally {
+    holdNextRead = undefined;
+    overlays.clearBranchOverlay('proof');
   }
 });
 

@@ -738,15 +738,22 @@ export function markGhostSlots(fleet: FleetStatus, liveIds: ReadonlySet<string>)
 // ─── Public API ───
 
 /**
- * The fleet from the status file and pools. `newest` is for a fleet about to be broadcast:
- * it joins the shared read loop and resolves with the newest read (see loadNewestFleetStatus).
+ * `newest`: a fleet about to be broadcast. It joins the shared read loop and resolves with
+ * the newest read (see loadNewestFleetStatus); such reads are always fresh and non-strict.
+ * An option rather than its own export, so the many module mocks of this file keep working.
  */
+export type FleetReadOptions = { newest?: boolean };
+
+/** The fleet from the status file and pools. */
 export async function loadFleetStatus(
   forceRefresh = false,
   strictRead = false,
-  options: { newest?: boolean } = {},
+  options: FleetReadOptions = {},
 ): Promise<FleetStatus> {
-  if (options.newest) return loadNewestFleetStatus();
+  if (options.newest) {
+    if (strictRead) throw new Error('A newest fleet read is a non-strict broadcast read');
+    return loadNewestFleetStatus();
+  }
   if (cachedFleet && !forceRefresh) return getCachedFleet()!;
   const version = ++fleetReadVersion;
   let next: FleetStatus;
@@ -849,6 +856,8 @@ export function stateChangeHandlerCountForTests(): number {
 
 let newestFleetRead: Promise<FleetStatus> | undefined;
 let newestFleetDirty = false;
+/** Reads one shared loop makes at most; then it resolves with the last, so waiters are bounded. */
+export const NEWEST_FLEET_READS = 5;
 
 /**
  * The fleet to broadcast: what the newest read sees. A read overtaken by a newer read, a
@@ -856,8 +865,9 @@ let newestFleetDirty = false;
  * newer one (readers tag that snapshot with its older revisions), so broadcasting it can
  * hand listeners an older fleet after a newer one. Callers share one read loop: a call
  * while it runs asks for one more read, and the loop resolves for everyone once a read
- * is neither overtaken nor asked to repeat. Only this loop reads for broadcasts, so
- * broadcasters cannot keep overtaking each other.
+ * is neither overtaken nor asked to repeat, or after NEWEST_FLEET_READS reads with the
+ * last (newest) of them. Only this loop reads for broadcasts, so broadcasters cannot keep
+ * overtaking each other.
  */
 function loadNewestFleetStatus(): Promise<FleetStatus> {
   if (newestFleetRead) {
@@ -866,12 +876,13 @@ function loadNewestFleetStatus(): Promise<FleetStatus> {
   }
   newestFleetRead = (async () => {
     try {
-      for (;;) {
+      for (let reads = 1; ; reads++) {
         newestFleetDirty = false;
         // loadFleetStatus(true) takes the next version synchronously, before its first await.
         const version = fleetReadVersion + 1;
         const fleet = await loadFleetStatus(true);
-        if (version === fleetReadVersion && !newestFleetDirty) return fleet;
+        const current = version === fleetReadVersion && !newestFleetDirty;
+        if (current || reads >= NEWEST_FLEET_READS) return fleet;
       }
     } finally {
       newestFleetRead = undefined;
