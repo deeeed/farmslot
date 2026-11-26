@@ -42,6 +42,7 @@ import {
   diskBytes,
   exists,
   planRunRetention,
+  readTaskPinPathNow,
   readTaskPins,
   RetentionPathOwners,
   retentionStoreAction,
@@ -53,6 +54,8 @@ import {
   type RunRetentionPlan,
   type RunRetentionRoots,
   type RunRetentionStore,
+  type TaskPinPathResolution,
+  UNRESOLVED_TASK_PIN_PATH,
   withRealPaths,
 } from '../../runs/retention.js';
 import {
@@ -242,6 +245,29 @@ function currentRetentionHold(
   return inherited(run) ? 'inherited by an unsettled follow-up' : reviewPriors.get(run.id);
 }
 
+function activePinPathsAtStage(
+  live: readonly Run[],
+  activeAtIndex: ReadonlyMap<string, ReadonlySet<string>>,
+  realPaths: ReadonlyMap<string, TaskPinPathResolution>,
+): Set<string> | undefined {
+  const paths = new Set<string>();
+  const fresh = new Map<string, TaskPinPathResolution>();
+  for (const run of live) {
+    if (runIsSettled(run)) continue;
+    for (const dir of pinTaskDirs(run)) {
+      let real = activeAtIndex.get(run.id)?.has(dir) ? realPaths.get(dir) : undefined;
+      if (typeof real !== 'string') {
+        if (!fresh.has(dir)) fresh.set(dir, readTaskPinPathNow(dir));
+        real = fresh.get(dir);
+      }
+      if (real === UNRESOLVED_TASK_PIN_PATH) return undefined;
+      paths.add(dir);
+      if (real) paths.add(real);
+    }
+  }
+  return paths;
+}
+
 export async function runHoldsSlot(run: Run): Promise<boolean> {
   return Boolean(run.slotId) && ownsRunSlotCleanup(await readSlotRow(run.slotId!), run.id);
 }
@@ -364,13 +390,17 @@ export async function runRetentionPass(
   const taskPins = removable.length ? await readTaskPins(roots.taskPins) : [];
   // ADR-039 Amendment 12: the task dirs held runs' pins serve, resolved once per pass. Held runs
   // are bounded (live, in the window, on open PRs); each directory resolves once via the cache.
-  const realPaths = new Map<string, string | null>();
+  const realPaths = new Map<string, TaskPinPathResolution>();
   // Which runs name each task dir, so the stage re-check can re-read their holds: a settled run
   // that gains a hold during the pass keeps the pins of every dir it reads.
   const dirRuns = new Map<string, Set<string>>();
+  const unresolvedOwners = new Set<string>();
+  const activeAtIndex = new Map<string, Set<string>>();
   if (taskPins.length) {
     for (const other of runs) {
-      for (const dir of pinTaskDirs(other)) {
+      const dirs = pinTaskDirs(other);
+      if (!runIsSettled(other)) activeAtIndex.set(other.id, new Set(dirs));
+      for (const dir of dirs) {
         const ids = dirRuns.get(dir);
         if (ids) ids.add(other.id);
         else dirRuns.set(dir, new Set([other.id]));
@@ -381,8 +411,12 @@ export async function runRetentionPass(
     // The pin stores its canonical path. Match aliases before taking any staging turn.
     for (const dir of recordedDirs) {
       const canonical = realPaths.get(dir);
-      if (!canonical || canonical === dir) continue;
       const ids = dirRuns.get(dir)!;
+      if (canonical === UNRESOLVED_TASK_PIN_PATH) {
+        for (const id of ids) unresolvedOwners.add(id);
+        continue;
+      }
+      if (!canonical || canonical === dir) continue;
       const combined = dirRuns.get(canonical);
       if (combined) for (const id of ids) combined.add(id);
       else dirRuns.set(canonical, new Set(ids));
@@ -435,21 +469,25 @@ export async function runRetentionPass(
           ).keptDirs,
           realPaths,
         );
-        const keptPinDirs = new Set([...heldPinDirs, ...activeDirs]);
-        const keepsPin = (dir: string) => pending(dir) || keptPinDirs.has(dir);
-        const releasedPins = new Set(
-          [...(await withRealPaths(taskPinRelease([], [run]).releasedDirs, realPaths))].filter(
-            (dir) => !keepsPin(dir),
-          ),
-        );
-        const pins = await retiredTaskPinsOf(
-          taskPins,
-          new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
-          context,
-          keepsPin,
-          exists,
-          releasedPins,
-        );
+        const keptPinDirs = new Set([...heldPinDirs.paths, ...activeDirs.paths]);
+        const keepsPin = (dir: string) =>
+          pending(dir) || keptPinDirs.has(dir) || realPaths.get(dir) === UNRESOLVED_TASK_PIN_PATH;
+        const released = await withRealPaths(taskPinRelease([], [run]).releasedDirs, realPaths);
+        const releasedPins = new Set([...released.paths].filter((dir) => !keepsPin(dir)));
+        // Unknown held ownership prevents pin deletion only. Other storage is still appraisable.
+        const pins =
+          heldPinDirs.unresolved || activeDirs.unresolved
+            ? []
+            : await retiredTaskPinsOf(
+                taskPins,
+                new Set(
+                  files.filter((file) => file.store === 'task-dirs').map((file) => file.source),
+                ),
+                context,
+                keepsPin,
+                exists,
+                releasedPins,
+              );
         for (const source of pins)
           files.push({ source, store: 'task-pins', bytes: await diskBytes(source) });
         const deleteFiles: StorageDeletion[] = files.flatMap((file) =>
@@ -488,6 +526,18 @@ export async function runRetentionPass(
             const liveNow = getAllRuns();
             const sources = indexActiveSources(liveNow);
             if (currentRetentionHold(latest, context, sources)) return false;
+            let activePaths: Set<string> | undefined;
+            if (pins.length) {
+              for (const id of unresolvedOwners) {
+                const other = getCachedRunWithArchived(id);
+                if (other && (other.park || currentRetentionHold(other, context, sources)))
+                  return false;
+              }
+              // An owner admitted during this turn may have a path absent from the pass index,
+              // or the cache may predate its symlink. Refresh it before the synchronous renames.
+              activePaths = activePinPathsAtStage(liveNow, activeAtIndex, realPaths);
+              if (!activePaths) return false;
+            }
             const current = owners.view([...liveAtStart, ...liveNow].filter(keeps), keeps);
             const eligible = current.owned(run);
             // Several pins can serve one directory. The fence makes one owner's hold read per
@@ -502,7 +552,12 @@ export async function runRetentionPass(
                 if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
                 const dir = path.resolve(taskDir);
                 if (!checkedPinDirs.has(dir)) {
-                  if (current.keepsTaskDirectory(dir) || keptPinDirs.has(dir)) return false;
+                  if (
+                    current.keepsTaskDirectory(dir) ||
+                    keptPinDirs.has(dir) ||
+                    activePaths?.has(dir)
+                  )
+                    return false;
                   for (const id of dirRuns.get(dir) ?? []) {
                     if (id === run.id) continue;
                     const other = getCachedRunWithArchived(id);

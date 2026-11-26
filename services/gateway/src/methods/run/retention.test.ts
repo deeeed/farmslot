@@ -1638,22 +1638,141 @@ test('the hourly turn runs the shared-store pass after the run pass fails', asyn
   assert.equal(shared, 1);
 });
 
+function onPinDeletionIntent(
+  t: test.TestContext,
+  f: Awaited<ReturnType<typeof recreatableRun>>,
+  pinPath: string,
+  effect: () => void | Promise<void>,
+): void {
+  const manifest = storageArchiveManifest(f.roots.archiveRoot, f.run.id);
+  const original = fsPromises.rename;
+  let fired = false;
+  t.mock.method(fsPromises, 'rename', async (...args: Parameters<typeof fsPromises.rename>) => {
+    await original(...args);
+    if (args[1] !== manifest || fired) return;
+    const { entries } = await f.manifest();
+    if (
+      entries.some(
+        (entry: { source: string; state: string }) =>
+          entry.source === pinPath && entry.state === 'deleting',
+      )
+    ) {
+      fired = true;
+      await effect();
+    }
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+}
+
+async function pinInSlot(f: Awaited<ReturnType<typeof recreatableRun>>) {
+  const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', 'temp', 'tasks', f.run.id);
+  await file(path.join(slotTask, 'TASK.md'));
+  const task = await realpath(slotTask);
+  updateRun(f.run.id, { activeTaskFile: path.join(task, 'TASK.md') });
+  await persistRunNow(f.run);
+  const slotPin = await pin(f.roots, `${f.run.id}-slot`, task, NOW - RUN_RETENTION_AGE_MS - 60_000);
+  return { task, slotPin };
+}
+
+for (const kept of [false, true])
+  test(`an unresolved ${kept ? 'held' : 'released'} historical task path leaves independent retention running`, async (t) => {
+    const f = await recreatableRun(t);
+    const parent = path.join(f.roots.taskRoots[0], 'old-file');
+    await file(parent);
+    const broken = path.join(parent, 'task');
+    await assert.rejects(realpath(broken), { code: 'ENOTDIR' });
+    const old = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: 'RETENTION-OLD-BROKEN-PATH',
+    });
+    updateRun(old.id, {
+      status: 'done',
+      completedAt: settled,
+      ...(kept ? { tags: ['keep'] } : {}),
+      taskFile: path.join(broken, 'TASK.md'),
+      reviewWorkspace: { ...workspace(parent, 'mini'), taskPath: broken },
+    });
+    await persistRunNow(old);
+    assert.equal(await archiveRun(old.id), true);
+    let journals = 0;
+    let pins = 0;
+    const result = await runRetentionPass(
+      {
+        ...f.options,
+        nodeJournals: async () => {
+          journals++;
+        },
+        nodeTaskPins: async () => {
+          pins++;
+        },
+      },
+      privateDeps,
+    );
+    assert.ok(result.paths['task-dirs'].includes(f.task));
+    assert.equal(
+      existsSync(f.taskPin),
+      kept,
+      'only unresolved held ownership protects unrelated pins',
+    );
+    assert.equal(journals, 1);
+    assert.equal(pins, 1);
+  });
+
+test('a newly admitted owner protects a pin through an alias that was missing at planning', async (t) => {
+  const f = await recreatableRun(t);
+  const { task, slotPin } = await pinInSlot(f);
+  const alias = path.join(path.dirname(f.roots.taskPins), 'late-task-alias');
+  const old = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'RETENTION-EARLY-MISSING-PATH',
+  });
+  updateRun(old.id, {
+    status: 'done',
+    completedAt: settled,
+    reviewWorkspace: { ...workspace(path.dirname(alias), 'mini'), taskPath: alias },
+  });
+  await persistRunNow(old);
+  await assert.rejects(realpath(alias), { code: 'ENOENT' });
+  let admitted = false;
+  onPinDeletionIntent(t, f, slotPin, async () => {
+    const taskFile = path.join(alias, 'TASK.md');
+    await symlink(task, alias);
+    await withTaskAdmission(taskFile, async () => {
+      const owner = createRun({
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        mode: 'autonomous',
+        ticketOrPr: 'RETENTION-LATE-ADMISSION',
+      });
+      updateRun(owner.id, { status: 'monitoring', taskFile });
+      await persistRunNow(owner);
+    });
+    admitted = true;
+  });
+  await runRetentionPass(f.options, privateDeps);
+  assert.ok(admitted, 'the owner was admitted after the pin was selected');
+  assert.ok(existsSync(slotPin), 'the newly admitted owner keeps the pin');
+  const { entries } = await f.manifest();
+  assert.equal(
+    entries.find((entry: { source: string }) => entry.source === slotPin)?.state,
+    'kept',
+  );
+});
+
 for (const form of ['canonical path', 'symlink alias'] as const)
   test(`a review owner using its ${form} can keep a pin at staging`, async (t) => {
     const f = await recreatableRun(t);
-    const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', 'temp', 'tasks', f.run.id);
-    await file(path.join(slotTask, 'TASK.md'));
-    const canonicalTask = await realpath(slotTask);
+    const { task: canonicalTask, slotPin } = await pinInSlot(f);
     const alias = path.join(path.dirname(f.roots.taskPins), 'review-task-alias');
     await symlink(canonicalTask, alias);
-    updateRun(f.run.id, { activeTaskFile: path.join(canonicalTask, 'TASK.md') });
-    await persistRunNow(f.run);
-    const slotPin = await pin(
-      f.roots,
-      `${f.run.id}-slot`,
-      canonicalTask,
-      NOW - RUN_RETENTION_AGE_MS - 60_000,
-    );
     const reviewer = createRun({
       flowType: 'fix-bug',
       project: 'farmslot-farm',
@@ -1665,31 +1784,13 @@ for (const form of ['canonical path', 'symlink alias'] as const)
     updateRun(reviewer.id, {
       status: 'done',
       completedAt: settled,
-      reviewWorkspace: { ...workspace(path.dirname(slotTask)), taskPath },
+      reviewWorkspace: { ...workspace(path.dirname(canonicalTask)), taskPath },
     });
     await persistRunNow(reviewer);
-    const manifest = storageArchiveManifest(f.roots.archiveRoot, f.run.id);
     let tagged = false;
-    const original = fsPromises.rename;
-    t.mock.method(fsPromises, 'rename', async (...args: Parameters<typeof fsPromises.rename>) => {
-      await original(...args);
-      if (args[1] !== manifest || tagged) return;
-      const contents = await f.manifest();
-      // Wait until the deletion intent is written. Planning and selection already allowed it.
-      if (
-        contents.entries.some(
-          (entry: { source: string; state: string }) =>
-            entry.source === slotPin && entry.state === 'deleting',
-        )
-      ) {
-        tagged = true;
-        updateRun(reviewer.id, { tags: ['keep'] });
-      }
-    });
-    syncBuiltinESMExports();
-    t.after(() => {
-      t.mock.restoreAll();
-      syncBuiltinESMExports();
+    onPinDeletionIntent(t, f, slotPin, () => {
+      tagged = true;
+      updateRun(reviewer.id, { tags: ['keep'] });
     });
     await runRetentionPass(f.options, privateDeps);
     assert.ok(tagged, 'the pin was selected for deletion before the keep arrived');

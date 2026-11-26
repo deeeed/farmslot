@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -301,22 +302,49 @@ export async function retiredTaskPins(
   releasedTaskDirs: ReadonlySet<string> = new Set(),
 ): Promise<string[]> {
   const entries = await readTaskPins(pinRoot);
+  if (!entries.length) return [];
   // Released dirs grow with run history; only those that could name one of these pins are
   // resolved, and dropping one only keeps a pin longer. Kept dirs are bounded by held runs and
   // are all resolved, so no symlinked form of a held dir is ever missed.
   const keys = new Set(entries.map((entry) => taskDirKey(entry.taskDir)));
-  const pending = await withRealPaths(pendingTaskDirs);
+  const realPaths = new Map<string, TaskPinPathResolution>();
+  const pending = await withRealPaths(pendingTaskDirs, realPaths);
+  // A held directory that cannot be resolved could alias any pin on this gateway.
+  if (pending.unresolved) return [];
   const released = await withRealPaths(
     [...releasedTaskDirs].filter((dir) => keys.has(taskDirKey(dir))),
+    realPaths,
   );
   return retiredTaskPinsOf(
     entries,
     removedTaskDirs,
     context,
-    (dir) => pending.has(dir),
+    (dir) => pending.paths.has(dir) || realPaths.get(dir) === UNRESOLVED_TASK_PIN_PATH,
     undefined,
-    released,
+    released.paths,
   );
+}
+
+export const UNRESOLVED_TASK_PIN_PATH = Symbol('unresolved task pin path');
+export type TaskPinPathResolution = string | null | typeof UNRESOLVED_TASK_PIN_PATH;
+
+function hasPathErrorCode(error: unknown): error is Error & { code: string } {
+  return error instanceof Error && 'code' in error && typeof error.code === 'string';
+}
+
+function failedTaskPinPath(error: unknown): TaskPinPathResolution {
+  if (!hasPathErrorCode(error)) throw error;
+  // A missing alias has no target now. Other filesystem errors leave its target unknown.
+  return error.code === 'ENOENT' ? null : UNRESOLVED_TASK_PIN_PATH;
+}
+
+/** Read a live owner's path in the same turn as the staging decision. */
+export function readTaskPinPathNow(dir: string): TaskPinPathResolution {
+  try {
+    return realpathSync.native(dir);
+  } catch (error) {
+    return failedTaskPinPath(error);
+  }
 }
 
 /**
@@ -325,25 +353,28 @@ export async function retiredTaskPins(
  */
 export async function withRealPaths(
   dirs: Iterable<string>,
-  cache = new Map<string, string | null>(),
-): Promise<Set<string>> {
-  const all = new Set<string>();
+  cache: Map<string, TaskPinPathResolution>,
+): Promise<{ paths: Set<string>; unresolved: boolean }> {
+  const paths = new Set<string>();
+  let unresolved = false;
   for (const dir of dirs) {
     const resolved = path.resolve(dir);
-    all.add(resolved);
     if (!cache.has(resolved)) {
       try {
         cache.set(resolved, await realpath(resolved));
       } catch (error) {
-        // A directory that no longer exists has no other form to match.
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        cache.set(resolved, null);
+        cache.set(resolved, failedTaskPinPath(error));
       }
     }
     const real = cache.get(resolved);
-    if (real) all.add(real);
+    if (real === UNRESOLVED_TASK_PIN_PATH) {
+      unresolved = true;
+      continue;
+    }
+    paths.add(resolved);
+    if (real) paths.add(real);
   }
-  return all;
+  return { paths, unresolved };
 }
 
 /** Whether `file` exists, without following a final symlink. */
@@ -388,9 +419,14 @@ export async function measureRetention(
     const present: string[] = [];
     let bytes = 0;
     for (const file of files) {
-      if (!(await exists(file))) continue;
-      present.push(file);
-      bytes += await diskBytes(file);
+      try {
+        if (!(await exists(file))) continue;
+        bytes += await diskBytes(file);
+        present.push(file);
+      } catch (error) {
+        // Historical task paths can be stale or inaccessible. Do not count them as reclaimable.
+        if (store !== 'task-dirs' || !hasPathErrorCode(error)) throw error;
+      }
     }
     paths[store] = present;
     stores[store] = {
