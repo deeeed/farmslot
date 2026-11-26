@@ -14,7 +14,11 @@ import {
   NATIVE_WORKER_STEER,
   NATIVE_WORKER_TRANSFER,
 } from '@farmslot/agent-runtime/native';
-import { NATIVE_NODE_ADMISSION_TIMEOUT_MS } from '@farmslot/agent-runtime/native/host-runtime';
+import {
+  NATIVE_HOST_START_TIMEOUT_MS,
+  NATIVE_NODE_ADMISSION_TIMEOUT_MS,
+  NATIVE_NODE_REQUEST_MARGIN_MS,
+} from '@farmslot/agent-runtime/native/host-runtime';
 import { NATIVE_HOST_VERSION_SKEW } from '@farmslot/agent-runtime/native/host-unavailable';
 import {
   NATIVE_PROFILE_METHODS,
@@ -79,14 +83,15 @@ const NODE_WORK_METHODS: readonly string[] = [
 ];
 
 /**
- * How long the gateway waits for a node's answer. On a node that refreshes its host, a launch
- * or message may wait for that refresh first: up to 6 idle runners stopped, then a host start.
+ * How long the gateway waits for a node's answer. Any request may first wait for a host that is
+ * starting, up to the client's start timeout. On a node that refreshes its host, a launch or
+ * message may wait for that refresh first: up to 6 idle runners stopped, then a host start.
  */
 export function nativeNodeSessionTimeout(method: string, refreshesHost: boolean): number {
   if (method === NATIVE_WORKER_COMPACT) return 185_000;
   return refreshesHost && NODE_WORK_METHODS.includes(method)
     ? NATIVE_NODE_ADMISSION_TIMEOUT_MS
-    : 60_000;
+    : NATIVE_HOST_START_TIMEOUT_MS + NATIVE_NODE_REQUEST_MARGIN_MS;
 }
 
 type AuthorizedNativeNode = ConnectedNode & {

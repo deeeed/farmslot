@@ -1,0 +1,1 @@
+- A host start waits up to 50 s while its supervisor replays session journals, instead of a fixed 10 s, and waits for a supervisor already starting instead of spawning a duplicate.

@@ -6,6 +6,7 @@ import {
   withNativeHostRefreshPolicy,
 } from '@farmslot/agent-runtime/native/client';
 import { NATIVE_NODE_REFRESH_MAX_RUNNERS } from '@farmslot/agent-runtime/native/host-runtime';
+import { isNativeHostUnavailableError } from '@farmslot/agent-runtime/native/host-unavailable';
 import {
   NativeHostObservation,
   type NativeSourceReceipt,
@@ -66,6 +67,13 @@ export class NativeNodeSessions {
     try {
       await this.client.warm();
     } catch (error) {
+      if (isNativeHostUnavailableError(error)) {
+        // The host did not become ready in time. Register anyway: each launch starts or waits
+        // for the host itself, and the node must not exit over it.
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(`Native host not ready at node start; registering without it. ${reason}`);
+        return;
+      }
       if (
         !(error instanceof Error) ||
         !('code' in error) ||
