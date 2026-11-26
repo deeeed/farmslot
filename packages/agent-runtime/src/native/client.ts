@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync } from 'node:fs';
 import { open, readdir } from 'node:fs/promises';
@@ -29,6 +29,7 @@ import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { subscribeHost } from './conversation-ipc.js';
 import {
   assertNativeHostRuntime,
+  NATIVE_HOST_START_TIMEOUT_MS,
   nativeHostRunsCurrentRuntime,
   nativeHostVersionSkew,
   retireIdleNativeHost,
@@ -37,7 +38,13 @@ import {
 import { nativeHostUnavailableError } from './host-unavailable.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
 import { currentRuntimeBuild, runtimeBuildIdentity } from './runtime-build.js';
-import { alive, privateDirectory, readJson } from './storage.js';
+import {
+  alive,
+  privateDirectory,
+  readJson,
+  type RecordedProcess,
+  recordedProcessAlive,
+} from './storage.js';
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CANCEL_COMMAND,
@@ -116,6 +123,23 @@ export function releasedSessionsPolicy(
 export interface NativeIdleStopLimits {
   maxRunners: number;
 }
+
+/**
+ * How long a host start may take. A new supervisor writes host.json at once, but its host is
+ * ready only after it replays every session journal, which takes many seconds on a node with
+ * hundreds of them. So a start waits up to `timeoutMs` while that supervisor is alive, and
+ * gives up after `noProgressMs` only when no live supervisor has claimed the host.
+ */
+export interface NativeHostStartLimits {
+  timeoutMs: number;
+  noProgressMs: number;
+  progressMs: number;
+}
+export const NATIVE_HOST_START_LIMITS: NativeHostStartLimits = {
+  timeoutMs: NATIVE_HOST_START_TIMEOUT_MS,
+  noProgressMs: 10_000,
+  progressMs: 15_000,
+};
 
 /** The policy a refresh runs under, and whether it is one launch's own. */
 interface RefreshScope {
@@ -206,6 +230,7 @@ export class NativeSessionClient {
     readonly executionNodeId = 'local',
     private readonly checkoutBuild: () => string = runtimeBuildIdentity,
     private readonly idleStopLimits?: NativeIdleStopLimits,
+    private readonly hostStartLimits: NativeHostStartLimits = NATIVE_HOST_START_LIMITS,
   ) {
     this.root = resolve(root);
     // This process's build is read now, before a checkout update can change the files under it.
@@ -307,27 +332,96 @@ export class NativeSessionClient {
 
   private async host(): Promise<HostIdentity> {
     privateDirectory(this.root);
-    const path = join(this.root, 'host.json');
-    if (existsSync(path)) {
-      const host = readJson<HostIdentity>(path);
-      this.assertHostNode(host);
-      if (alive(host.pid) && existsSync(join(this.root, 'ready.json')) && existsSync(host.socket))
-        return host;
-    }
     if (this.starting) return this.starting;
-    this.starting = this.start();
+    const current = this.recordedHost();
+    if (current?.ready) return current.host;
+    // A supervisor that is still starting owns the host: wait for it rather than spawn a
+    // duplicate. If it stops before ready, start a host of our own in the time left, so the
+    // whole call stays within one start timeout.
+    const deadline = Date.now() + this.hostStartLimits.timeoutMs;
+    this.starting = current?.starting
+      ? this.waitForReady(undefined, deadline).catch((error: unknown) => {
+          if (this.recordedHost()?.starting) throw error;
+          return this.start(deadline);
+        })
+      : this.start(deadline);
     try {
       return await this.starting;
     } finally {
       this.starting = undefined;
     }
   }
+  /**
+   * The host.json host while its PID runs: `ready` once it accepts requests, else `starting`
+   * while the supervisor that wrote it still runs with its recorded start identity and has not
+   * failed a stop. A bare PID can belong to another process after a reboot or a kill.
+   * `confirmed` caches identities checked within one wait, so polling skips `ps`.
+   */
+  private recordedHost(
+    confirmed?: Set<string>,
+  ): { host: HostIdentity; ready: boolean; starting: boolean } | undefined {
+    const path = join(this.root, 'host.json');
+    if (!existsSync(path)) return undefined;
+    const host = readJson<HostIdentity>(path);
+    this.assertHostNode(host);
+    if (!alive(host.pid)) return undefined;
+    const ready = existsSync(join(this.root, 'ready.json')) && existsSync(host.socket);
+    return { host, ready, starting: !ready && this.supervisorStarting(host.pid, confirmed) };
+  }
+  private supervisorStarting(pid: number, confirmed?: Set<string>): boolean {
+    const ownerFile = join(this.root, 'lock', 'owner.json');
+    if (!existsSync(ownerFile)) return false;
+    const owner = readJson<RecordedProcess>(ownerFile);
+    if (owner.pid !== pid || this.stopFailed()) return false;
+    const key = `${owner.pid}:${owner.identity ?? ''}`;
+    if (confirmed?.has(key)) return true;
+    if (!recordedProcessAlive(owner)) return false;
+    confirmed?.add(key);
+    return true;
+  }
+  /** A failed stop keeps its supervisor alive with readiness withdrawn; it never becomes ready. */
+  private stopFailed(): boolean {
+    const cleanupFile = join(this.root, 'cleanup.json');
+    if (!existsSync(cleanupFile)) return false;
+    const cleanup = readJson<{ state: string; hostPid?: number }>(cleanupFile);
+    if (cleanup.state !== 'unknown') return false;
+    // A record left by an earlier host does not describe the current one.
+    const workerFile = join(this.root, 'worker.json');
+    return !existsSync(workerFile) || readJson<RecordedProcess>(workerFile).pid === cleanup.hostPid;
+  }
   private assertHostNode(host: HostIdentity) {
     if ((host.executionNodeId ?? 'local') !== this.executionNodeId)
       throw new Error('Native state directory belongs to another execution node');
   }
-  private async start(): Promise<HostIdentity> {
+  private async start(
+    deadline = Date.now() + this.hostStartLimits.timeoutMs,
+  ): Promise<HostIdentity> {
     privateDirectory(this.root);
+    // No time left: do not leave a detached supervisor behind a call that has already failed.
+    if (Date.now() >= deadline) throw nativeHostUnavailableError(join(this.root, 'host.log'));
+    const child = this.spawnSupervisor();
+    let spawnError: Error | undefined;
+    let exited = false;
+    child.on('error', (error) => {
+      spawnError = error;
+    });
+    child.once('exit', () => {
+      exited = true;
+    });
+    return this.waitForReady(
+      {
+        failed: () => {
+          if (spawnError) throw spawnError;
+          // A clean exit can hand off to another supervisor still starting. An abnormal
+          // exit of our child cannot become ready.
+          return exited && child.exitCode !== 0;
+        },
+      },
+      deadline,
+    );
+  }
+  /** Starts a detached supervisor for this home; its host replays the journals, then listens. */
+  protected spawnSupervisor(): ChildProcess {
     // A prebuilt CLI snapshot runs the .js built beside each source: start the supervisor from
     // its source with TSX, as when this module itself runs from source.
     const running = fileURLToPath(import.meta.url);
@@ -344,27 +438,33 @@ export class NativeSessionClient {
     });
     closeSync(log);
     child.unref();
-    let spawnError: Error | undefined;
-    let exited = false;
-    child.on('error', (error) => {
-      spawnError = error;
-    });
-    child.once('exit', () => {
-      exited = true;
-    });
-    const deadline = Date.now() + 10_000;
+    return child;
+  }
+  /**
+   * Waits for a ready host until `deadline`. While a supervisor is starting it (see
+   * `recordedHost`) the wait logs progress; otherwise it ends after the no-progress bound. With
+   * no child of ours (`own` undefined), that supervisor stopping ends it at once.
+   */
+  private async waitForReady(
+    own: { failed: () => boolean } | undefined,
+    deadline: number,
+  ): Promise<HostIdentity> {
+    const { noProgressMs, progressMs } = this.hostStartLimits;
+    const started = Date.now();
+    const confirmed = new Set<string>();
+    let nextProgress = started + progressMs;
     while (Date.now() < deadline) {
-      if (spawnError) throw spawnError;
-      const path = join(this.root, 'host.json');
-      if (existsSync(path)) {
-        const host = readJson<HostIdentity>(path);
-        this.assertHostNode(host);
-        if (alive(host.pid) && existsSync(join(this.root, 'ready.json')) && existsSync(host.socket))
-          return host;
+      if (own?.failed()) break;
+      const current = this.recordedHost(confirmed);
+      if (current?.ready) return current.host;
+      const starting = current?.starting === true;
+      if (!starting && (!own || Date.now() - started >= noProgressMs)) break;
+      if (starting && current && Date.now() >= nextProgress) {
+        nextProgress += progressMs;
+        console.warn(
+          `Waiting for native host supervisor ${current.host.pid} to become ready (${Math.round((Date.now() - started) / 1000)}s; see ${join(this.root, 'host.log')})`,
+        );
       }
-      // A clean exit can hand off to another supervisor still starting. An abnormal
-      // exit of our child cannot become ready; keep the live-start ceiling unchanged.
-      if (exited && child.exitCode !== 0) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw nativeHostUnavailableError(join(this.root, 'host.log'));
