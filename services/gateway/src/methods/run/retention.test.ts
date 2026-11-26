@@ -40,6 +40,8 @@ import { stageStoragePaths, storageArchiveManifest } from '../../runs/storage-ar
 import {
   archiveRun,
   createRun,
+  deleteArchivedRun,
+  deleteRun,
   getAllRunsWithArchived,
   getRunWithArchived,
   persistRunNow,
@@ -1852,6 +1854,78 @@ for (const form of ['unresolved alias', 'alias created after indexing'] as const
     );
     assert.equal(existsSync(f.taskPin), form === 'unresolved alias');
   });
+
+test('an archived prior that becomes held through a late alias keeps its pin independently', async (t) => {
+  const f = await recreatableRun(t);
+  const { task, slotPin } = await pinInSlot(f);
+  const parent = path.join(path.dirname(f.roots.taskPins), 'late-archived');
+  await mkdir(parent);
+  const alias = path.join(parent, 'task');
+  await assert.rejects(realpath(alias), { code: 'ENOENT' });
+  const review = {
+    flowType: 'review-pr',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'o/r#9',
+  } as const;
+  const prior = createRun(review);
+  updateRun(prior.id, {
+    status: 'done',
+    completedAt: settled,
+    prState: 'CLOSED',
+    reviewWorkspace: { ...workspace(parent, 'mini'), taskPath: alias },
+  });
+  await persistRunNow(prior);
+  assert.equal(await archiveRun(prior.id), true);
+  t.after(async () => {
+    await deleteArchivedRun(prior.id);
+  });
+  const live = createRun(review);
+  t.after(async () => {
+    await persistRunNow(updateRun(live.id, { status: 'cancelled' }));
+    await deleteRun(live.id);
+  });
+  updateRun(live.id, { status: 'monitoring' });
+  await persistRunNow(live);
+  const deps = { ...privateDeps, openPrs: async () => [] };
+  const plan = await runRetentionPass({ ...f.options, apply: false }, deps);
+  assert.ok(plan.runs.includes(prior.id), 'the archived prior was released in the plan');
+
+  let selected = false;
+  onPinDeletionIntent(t, f, slotPin, async () => {
+    await symlink(task, alias);
+    updateRun(live.id, {
+      repeatReviewContext: {
+        version: 1,
+        chainId: 'chain',
+        generation: 2,
+        priorRunId: prior.id,
+        priorFamilyId: prior.familyId ?? prior.id,
+        repository: 'o/r',
+        prNumber: 9,
+        currentHeadSha: 'cccccccccccccccc',
+        verdict: 'request changes',
+        unresolvedFindings: [],
+        artifactRefs: [],
+        farmslotEvidenceRefs: [],
+        mode: 'warm',
+        validationDepth: 'static-code',
+      },
+    });
+    selected = true;
+  });
+  const result = await runRetentionPass(f.options, deps);
+  assert.ok(selected, 'the live review selected its archived prior after the intent');
+  assert.ok(result.paths['task-dirs'].includes(f.task), 'the independent task was archived');
+  assert.ok(result.paths['task-pins'].includes(f.taskPin), 'the independent pin was deleted');
+  assert.ok(existsSync(slotPin), 'the newly held archived prior retains its canonical pin');
+  assert.ok(!result.paths['task-pins'].includes(slotPin));
+  const { entries } = await f.manifest();
+  assert.equal(
+    entries.find((entry: { source: string }) => entry.source === slotPin)?.state,
+    'kept',
+  );
+});
 
 for (const form of ['canonical path', 'symlink alias'] as const)
   test(`a review owner using its ${form} can keep a pin at staging`, async (t) => {

@@ -215,6 +215,7 @@ function indexActiveSources(live: readonly Run[]) {
         if (prior) reviewPriors.set(prior, 'prior of an in-flight review');
   }
   return {
+    followUps,
     reviewPriors,
     inherited(run: Run) {
       const family = followUps.get(resolveFamilyIdentity(run).familyId);
@@ -247,7 +248,7 @@ function currentRetentionHold(
 }
 
 function protectedPinPathsAtStage(
-  live: readonly Run[],
+  owners: readonly Run[],
   activeAtIndex: ReadonlyMap<string, ReadonlySet<string>>,
   indexedOwners: ReadonlyMap<string, ReadonlySet<string>>,
   realPaths: ReadonlyMap<string, TaskPinPathResolution>,
@@ -256,7 +257,7 @@ function protectedPinPathsAtStage(
   const paths = new Set<string>();
   const fresh = new Map<string, TaskPinPathResolution>();
   let unresolved = false;
-  for (const run of live) {
+  for (const run of owners) {
     let dirs = pinTaskDirs(run);
     if (runIsSettled(run)) {
       // The index already rechecks holds for paths with known targets. Refresh missing or newly
@@ -407,6 +408,8 @@ export async function runRetentionPass(
   // that gains a hold during the pass keeps the pins of every dir it reads.
   const dirRuns = new Map<string, Set<string>>();
   const unresolvedOwners = new Set<string>();
+  const missingPathOwners = new Set<string>();
+  const missingOwnersByFamily = new Map<string, string[]>();
   const activeAtIndex = new Map<string, Set<string>>();
   if (taskPins.length) {
     for (const other of runs) {
@@ -428,10 +431,21 @@ export async function runRetentionPass(
         for (const id of ids) unresolvedOwners.add(id);
         continue;
       }
+      if (canonical === null) {
+        for (const id of ids) missingPathOwners.add(id);
+        continue;
+      }
       if (!canonical || canonical === dir) continue;
       const combined = dirRuns.get(canonical);
       if (combined) for (const id of ids) combined.add(id);
       else dirRuns.set(canonical, new Set(ids));
+    }
+    for (const run of runs) {
+      if (!missingPathOwners.has(run.id)) continue;
+      const { familyId } = resolveFamilyIdentity(run);
+      const family = missingOwnersByFamily.get(familyId);
+      if (family) family.push(run.id);
+      else missingOwnersByFamily.set(familyId, [run.id]);
     }
   }
   const heldPinDirs = await withRealPaths(
@@ -557,8 +571,19 @@ export async function runRetentionPass(
 
             const isHeld = (owner: Run) =>
               Boolean(owner.park || currentRetentionHold(owner, context, sources));
+            // An in-flight review or follow-up can start reading archived work after planning.
+            // Refresh only its missing-path owners, using the same stage lookup as live owners.
+            const sourceIds = new Set(sources.reviewPriors.keys());
+            for (const family of sources.followUps.keys())
+              for (const id of missingOwnersByFamily.get(family) ?? []) sourceIds.add(id);
+            const pinOwners = [...liveNow];
+            for (const id of sourceIds) {
+              if (!missingPathOwners.has(id) || getRun(id)) continue;
+              const owner = getCachedRunWithArchived(id);
+              if (owner) pinOwners.push(owner);
+            }
             const protection = protectedPinPathsAtStage(
-              liveNow,
+              pinOwners,
               activeAtIndex,
               dirRuns,
               realPaths,
