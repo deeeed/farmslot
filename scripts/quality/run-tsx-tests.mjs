@@ -211,10 +211,18 @@ export function discoverTests(roots, cwd) {
   return [...new Set(roots.flatMap((root) => collectTests(root, cwd)))].sort();
 }
 
+/** Whether a test file needs Node's module mocks (`--experimental-test-module-mocks`). */
+export function usesModuleMocks(source) {
+  return source.includes('mock.module(') || source.includes('mock-pty.test-support');
+}
+
+/**
+ * The lane a test file runs in. The serial pragma wins: a marked file runs alone even
+ * when it also uses module mocks, and is then started with the module-mock flag.
+ */
 export function classifyTest(source) {
-  if (source.includes('mock.module(') || source.includes('mock-pty.test-support'))
-    return 'module-mock';
   if (source.includes(SERIAL_PRAGMA)) return 'serial';
+  if (usesModuleMocks(source)) return 'module-mock';
   return 'parallel';
 }
 
@@ -225,7 +233,10 @@ export function classifyTest(source) {
  * file lands in exactly one worker bucket. Assignment is round-robin over the
  * sorted file list, so the same input always yields the same plan.
  */
-export function partitionTests(tests, { workers = 1, classify, nodeTest = false } = {}) {
+export function partitionTests(
+  tests,
+  { workers = 1, classify, usesMocks = () => false, nodeTest = false } = {},
+) {
   const moduleMock = [];
   const serial = [];
   const parallelFiles = [];
@@ -249,7 +260,14 @@ export function partitionTests(tests, { workers = 1, classify, nodeTest = false 
 
   // Each module-mock file runs in its own process, so its mocks cannot reach another
   // file: it shares the parallel workers. `--node-test` files keep their own lane.
-  return { moduleMock, serial, parallel, moduleMockParallel: !nodeTest };
+  // Serial files that use module mocks run alone, with the module-mock flag.
+  return {
+    moduleMock,
+    serial,
+    serialModuleMocks: serial.filter((file) => usesMocks(file)),
+    parallel,
+    moduleMockParallel: !nodeTest,
+  };
 }
 
 /**
@@ -879,10 +897,16 @@ async function main() {
     return;
   }
 
+  const sources = new Map();
+  const source = (file) => {
+    if (!sources.has(file)) sources.set(file, readFileSync(file, 'utf8'));
+    return sources.get(file);
+  };
   const partition = partitionTests(tests, {
     workers,
     nodeTest,
-    classify: (file) => classifyTest(readFileSync(file, 'utf8')),
+    classify: (file) => classifyTest(source(file)),
+    usesMocks: (file) => usesModuleMocks(source(file)),
   });
 
   // Every file's state and private TMPDIR live here; removed when the run ends,
@@ -961,8 +985,14 @@ async function main() {
       ...(await runLaneSequentially(partition.moduleMock, { ...context, moduleMock: true })),
     );
 
-  // Serial files run alone, before the workers start.
-  records.push(...(await runLaneSequentially(partition.serial, context)));
+  // Serial files run alone, before the workers start; those using module mocks get the flag.
+  const serialMocks = new Set(partition.serialModuleMocks ?? []);
+  records.push(
+    ...(await runLaneSequentially(
+      partition.serial.map((file) => ({ file, moduleMock: serialMocks.has(file) })),
+      context,
+    )),
+  );
   const parallelRecords = await Promise.all(
     activeLanes.map((lane) => runLaneSequentially(lane, { ...context, buffered })),
   );

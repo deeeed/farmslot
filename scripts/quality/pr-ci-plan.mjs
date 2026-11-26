@@ -53,7 +53,6 @@ export function packPrTasks(jobs, tasks, budget = 120, maxJobs = PR_MATRIX_LIMIT
   return pooled;
 }
 
-/** Match the runner: mocks/serial first, then four sorted round-robin lanes. */
 // As run-tsx-tests runs them: serial files alone, then the workers, parallel files
 // round-robin from the first worker and module-mock files from the last.
 export function estimateTestMs(files, workers, durations, lanes) {

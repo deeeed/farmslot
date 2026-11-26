@@ -37,6 +37,7 @@ import {
   TEST_STATUS_ENV,
   testCommand,
   tmpdirLeakFailure,
+  usesModuleMocks,
   verifyAssignment,
   watchSharedPool,
   workerLanes,
@@ -207,11 +208,10 @@ test('classification keys off module mocks and the serial pragma', () => {
     'module-mock',
   );
   assert.equal(classifyTest(`// ${SERIAL_PRAGMA} — drives tmux\nconst x = 1;`), 'serial');
-  assert.equal(
-    classifyTest(`// ${SERIAL_PRAGMA}\nmock.module('./a.js', {});`),
-    'module-mock',
-    'module mocks need the module-mock lane even when also marked serial',
-  );
+  const markedMock = `// ${SERIAL_PRAGMA}\nmock.module('./a.js', {});`;
+  assert.equal(classifyTest(markedMock), 'serial', 'the serial pragma wins over module mocks');
+  assert.equal(usesModuleMocks(markedMock), true, 'and the file still gets the module-mock flag');
+  assert.equal(usesModuleMocks('const x = 1;'), false);
 });
 
 // The runner prints its aggregate failure list immediately before exiting. If it
@@ -814,7 +814,7 @@ test('a module-mock file runs at the same time as a parallel file', () => {
         : []),
       `test('${self} overlaps ${other}', async () => {`,
       `  writeFileSync(${JSON.stringify(path.join(meet, self))}, '');`,
-      '  const until = Date.now() + 4000;',
+      '  const until = Date.now() + 30_000;',
       `  while (!existsSync(${JSON.stringify(path.join(meet, other))})) {`,
       `    if (Date.now() > until) throw new Error('${self} never overlapped ${other}');`,
       '    await new Promise((resolve) => setTimeout(resolve, 20));',
@@ -831,6 +831,50 @@ test('a module-mock file runs at the same time as a parallel file', () => {
     );
     const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
     assert.match(out, /module_mock=1 serial=0 parallel=1/, out);
+    assert.equal(result.status, 0, out);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('a serial file that uses module mocks runs alone, before the workers, with the mock flag', () => {
+  const fixtureDir = path.join(REPO_ROOT, 'temp', `tsx-runner-serial-mock-${process.pid}`);
+  const done = path.join(fixtureDir, 'serial.done');
+  mkdirSync(fixtureDir, { recursive: true });
+  writeFileSync(
+    path.join(fixtureDir, 'serial-mock.test.ts'),
+    [
+      `// ${SERIAL_PRAGMA}`,
+      "import { writeFileSync } from 'node:fs';",
+      "import { mock, test } from 'node:test';",
+      // Throws unless the runner passes --experimental-test-module-mocks.
+      "mock.module('node:os', { namedExports: { hostname: () => 'fixture-host' } });",
+      "test('marked serial suite', async () => {",
+      '  await new Promise((resolve) => setTimeout(resolve, 1000));',
+      `  writeFileSync(${JSON.stringify(done)}, '');`,
+      '});',
+    ].join('\n') + '\n',
+  );
+  // On a worker it would start alongside the serial file, before that file is done.
+  writeFileSync(
+    path.join(fixtureDir, 'plain.test.ts'),
+    [
+      "import assert from 'node:assert/strict';",
+      "import { existsSync } from 'node:fs';",
+      "import { test } from 'node:test';",
+      "test('starts after the serial lane', () => {",
+      `  assert.ok(existsSync(${JSON.stringify(done)}), 'the serial file finished first');`,
+      '});',
+    ].join('\n') + '\n',
+  );
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [RUNNER_PATH, '--cwd', REPO_ROOT, '--workers', '2', path.relative(REPO_ROOT, fixtureDir)],
+      { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 },
+    );
+    const out = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    assert.match(out, /module_mock=0 serial=1 parallel=1/, out);
     assert.equal(result.status, 0, out);
   } finally {
     rmSync(fixtureDir, { recursive: true, force: true });

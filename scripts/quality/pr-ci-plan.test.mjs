@@ -39,7 +39,7 @@ test('PR estimates put module-mock files on the workers, as the runner does', ()
 test('PR sharding bounds the critical path without repeating tests or losing available workers', () => {
   const files = Array.from({ length: 40 }, (_, index) => `file-${String(index).padStart(2, '0')}`);
   const durations = Object.fromEntries(files.map((file, i) => [file, i < 20 ? 12000 : 2000]));
-  const lanes = new Map(files.slice(0, 20).map((file) => [file, 'module-mock']));
+  const lanes = new Map(files.slice(0, 20).map((file) => [file, 'serial']));
   const bins = balanceTestShards(files, 4, 2, durations, lanes);
   assert.deepEqual(bins.flatMap((bin) => bin.files).sort(), files);
   assert.ok(Math.max(...bins.map((bin) => bin.ms)) <= 72000);
