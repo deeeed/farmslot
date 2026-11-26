@@ -413,10 +413,30 @@ test('inline plan works without an artifact and keeps selection scoped to suite 
     const verified = spawnSync(process.execPath, [worker, 'verify'], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...env, CI_INLINE_PR_PLAN: inline, CI_MATRIX_RESULT: 'success' },
+      env: {
+        ...env,
+        CI_INLINE_PR_PLAN: inline,
+        CI_MATRIX_RESULT: 'success',
+        CI_INSTALL_RESULT: 'success',
+      },
     });
     assert.equal(verified.status, 0, verified.stdout + verified.stderr);
     assert.match(verified.stdout, /Verified 1 jobs/);
+  }
+  // Every receipt is in, but the install the checks ran on did not validate.
+  for (const install of ['failure', 'cancelled', 'skipped', '', undefined]) {
+    const refused = spawnSync(process.execPath, [worker, 'verify'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...env,
+        CI_INLINE_PR_PLAN: '',
+        CI_MATRIX_RESULT: 'success',
+        CI_INSTALL_RESULT: install,
+      },
+    });
+    assert.notEqual(refused.status, 0, String(install));
+    assert.match(refused.stderr, new RegExp(`Install validation result: ${install}`));
   }
 });
 
@@ -493,4 +513,50 @@ test('native fixture children and typed tests work after changing cwd', async (t
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
   }
+});
+
+test('Prepare plans on TypeScript alone only when the install is cached, and the gate needs the install job', async () => {
+  const { readFileSync } = await import('node:fs');
+  const workflow = readFileSync(
+    new URL('../../.github/workflows/farmslot-quality.yml', import.meta.url),
+    'utf8',
+  );
+  const job = (name) => {
+    const match = new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [\\w-]+:\\n|$)`).exec(workflow);
+    assert.ok(match, `job ${name}`);
+    return match[1];
+  };
+  const steps = (body) => body.split(/\n {6}- /).slice(1);
+  const prepare = steps(job('prepare'));
+  const at = (pattern) => {
+    const index = prepare.findIndex((step) => pattern.test(step));
+    assert.notEqual(index, -1, String(pattern));
+    return index;
+  };
+  const keys = at(/id: cache-keys\n\s+uses: \.\/\.github\/actions\/ci-cache-keys/);
+  const lookup = at(/id: install-cached/);
+  const planner = at(/id: planner-typescript/);
+  const setup = at(/uses: \.\/\.github\/actions\/ci-setup/);
+  const plan = at(/name: Plan dependency-affected tests and checks/);
+  assert.deepEqual([keys, lookup, planner, setup, plan], [0, 1, 2, 3, 4].map((i) => i + keys));
+  // The install lookup uses the same paths and key ci-setup restores, without downloading it.
+  assert.match(prepare[lookup], /path: \$\{\{ steps\.cache-keys\.outputs\.install-paths \}\}/);
+  assert.match(prepare[lookup], /key: \$\{\{ steps\.cache-keys\.outputs\.install-key \}\}/);
+  assert.match(prepare[lookup], /lookup-only: true/);
+  // TypeScript alone is restored only over a cached install; anything else sets up in full here.
+  assert.match(
+    prepare[planner],
+    /^id: planner-typescript\n\s+if: steps\.install-cached\.outputs\.cache-hit == 'true'\n/,
+  );
+  assert.match(prepare[planner], /key: \$\{\{ steps\.cache-keys\.outputs\.planner-key \}\}/);
+  assert.match(
+    prepare[setup],
+    /^if: steps\.planner-typescript\.outputs\.cache-hit != 'true'\n\s+uses: \.\/\.github\/actions\/ci-setup\n?$/,
+  );
+  // The install job validates in full, and the gate refuses a run without it.
+  const install = steps(job('install'));
+  assert.ok(install.some((step) => /^uses: \.\/\.github\/actions\/ci-setup\n?$/.test(step)));
+  const quality = job('quality');
+  assert.match(quality, /if: always\(\)\n\s+needs: \[prepare, install, checks\]/);
+  assert.match(quality, /CI_INSTALL_RESULT: \$\{\{ needs\.install\.result \}\}/);
 });

@@ -24,6 +24,7 @@ const SHARED_INPUTS = new Set([
   'scripts/quality/workspace-test-targets.mjs',
   'apps/command-center/tsconfig.base.json',
   '.github/actions/ci-setup/action.yml',
+  '.github/actions/ci-cache-keys/action.yml',
 ]);
 
 // CI implementation changes exercise their own contracts and runtime bootstrap
