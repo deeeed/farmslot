@@ -80,17 +80,16 @@ test('publication gives hooks a separate fifteen-minute default push budget', as
 
 test('a slow pre-push hook succeeds within the project push budget', async (t) => {
   const f = fixture(t, 'sleep 0.05\necho ran > hook-ran');
-  projectBudget = '2500';
+  projectBudget = '10000';
   await f.push();
-  assert.deepEqual(f.budgets, [2500]);
+  assert.deepEqual(f.budgets, [10000]);
   assert.equal(readFileSync(path.join(repo, 'hook-ran'), 'utf8'), 'ran\n');
   assert.equal(f.git('rev-parse', 'origin/fix/fixture'), f.git('rev-parse', 'HEAD'));
 });
 
 test('pool push budget wins and a slow hook timeout names its budget', async (t) => {
-  // The budget also covers git reaching the hook: on a loaded host that took over 500 ms, so
-  // git timed out before the hook started (fails 10/10 with every core busy; over 1.5 s seen).
-  // The hook blocks until the budget kills it.
+  // The budget also covers git's startup before the hook, so it leaves that headroom; the
+  // hook blocks until the budget kills its process group.
   const f = fixture(t, 'echo started > hook-started\nsleep 30\necho ran > hook-ran');
   projectBudget = '10000';
   poolBudget = '3000';
