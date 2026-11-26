@@ -1,3 +1,4 @@
+// Install-miss proof for #2547; reverted.
 module.exports = {
   name: '@farmslot/plugin-hardlink-store',
   factory: (require) => {
