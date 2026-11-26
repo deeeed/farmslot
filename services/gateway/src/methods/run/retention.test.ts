@@ -1141,70 +1141,62 @@ for (const keeper of [
     },
   );
 
-test(
-  'apply resolves each task dir once per pass, however many runs it weighs',
-  { timeout: 9000 },
-  async (t) => {
-    // Performance rule 1: per-candidate work must not grow with run history. Each removable run
-    // is checked against the held runs' dirs, resolved once for the pass.
-    const roots = await retentionRoots(t, runsDirectory());
-    const slots = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks');
-    const dirs: string[] = [];
-    for (const [kind, count] of [
-      ['released', 6],
-      ['held', 6],
-    ] as const)
-      for (let i = 0; i < count; i++) {
-        const run = createRun({
-          flowType: 'fix-bug',
-          project: 'farmslot-farm',
-          mode: 'autonomous',
-          ticketOrPr: `RETENTION-COUNT-${kind}-${i}`,
-        });
-        const dir = path.join(slots, run.id);
-        dirs.push(dir);
-        await file(path.join(dir, 'TASK.md'));
-        updateRun(run.id, {
-          status: 'done',
-          completedAt: settled,
-          activeTaskFile: path.join(dir, 'TASK.md'),
-          ...(kind === 'held' ? { tags: ['keep'] } : {}),
-        });
-        await persistRunNow(run);
-        await pin(roots, run.id, dir, NOW - RUN_RETENTION_AGE_MS - 60_000);
-      }
-    let lookups = 0;
-    const original = fsPromises.realpath;
-    t.mock.method(
-      fsPromises,
-      'realpath',
-      async (...args: Parameters<typeof fsPromises.realpath>) => {
-        lookups++;
-        return original(...args);
-      },
-    );
-    syncBuiltinESMExports();
-    t.after(() => {
-      t.mock.restoreAll();
-      syncBuiltinESMExports();
-    });
-    await runRetentionPass(
-      { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60_000 },
-      privateDeps,
-    );
+test('apply resolves each task dir once per pass, however many runs it weighs', async (t) => {
+  // Performance rule 1: per-candidate work must not grow with run history. Each removable run
+  // is checked against the held runs' dirs, resolved once for the pass.
+  const roots = await retentionRoots(t, runsDirectory());
+  const slots = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks');
+  const dirs: string[] = [];
+  for (const [kind, count] of [
+    ['released', 6],
+    ['held', 6],
+  ] as const)
+    for (let i = 0; i < count; i++) {
+      const run = createRun({
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        mode: 'autonomous',
+        ticketOrPr: `RETENTION-COUNT-${kind}-${i}`,
+      });
+      const dir = path.join(slots, run.id);
+      dirs.push(dir);
+      await file(path.join(dir, 'TASK.md'));
+      updateRun(run.id, {
+        status: 'done',
+        completedAt: settled,
+        activeTaskFile: path.join(dir, 'TASK.md'),
+        ...(kind === 'held' ? { tags: ['keep'] } : {}),
+      });
+      await persistRunNow(run);
+      await pin(roots, run.id, dir, NOW - RUN_RETENTION_AGE_MS - 60_000);
+    }
+  let lookups = 0;
+  const original = fsPromises.realpath;
+  t.mock.method(fsPromises, 'realpath', async (...args: Parameters<typeof fsPromises.realpath>) => {
+    lookups++;
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
     t.mock.restoreAll();
     syncBuiltinESMExports();
-    // Every run in the store counts, other tests' runs too: each dir resolves at most once in the
-    // plan and once in apply, never once per candidate.
-    const allDirs = new Set((await getAllRunsWithArchived()).flatMap(pinTaskDirs));
-    assert.ok(
-      lookups <= allDirs.size * 2,
-      `${lookups} real-path lookups for ${allDirs.size} task dirs (plan and apply once each)`,
-    );
-    for (const [i, dir] of dirs.entries())
-      assert.equal(existsSync(path.join(roots.taskPins, path.basename(dir))), i >= 6);
-  },
-);
+  });
+  await runRetentionPass(
+    { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60_000 },
+    privateDeps,
+  );
+  t.mock.restoreAll();
+  syncBuiltinESMExports();
+  // Every run in the store counts, other tests' runs too: each dir resolves at most once in the
+  // plan and once in apply, never once per candidate.
+  const allDirs = new Set((await getAllRunsWithArchived()).flatMap(pinTaskDirs));
+  assert.ok(
+    lookups <= allDirs.size * 2,
+    `${lookups} real-path lookups for ${allDirs.size} task dirs (plan and apply once each)`,
+  );
+  for (const [i, dir] of dirs.entries())
+    assert.equal(existsSync(path.join(roots.taskPins, path.basename(dir))), i >= 6);
+});
 
 test('the gateway root keeps pins a held run reads through its review workspace, and a parked run’s', async (t) => {
   const roots = await retentionRoots(t);
@@ -1644,4 +1636,46 @@ test('the hourly turn runs the shared-store pass after the run pass fails', asyn
     },
   );
   assert.equal(shared, 1);
+});
+
+test('a settled run that gains a hold mid-pass keeps the pin of a dir its review workspace reads', async (t) => {
+  const f = await recreatableRun(t);
+  const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', 'temp', 'tasks', f.run.id);
+  await file(path.join(slotTask, 'TASK.md'));
+  updateRun(f.run.id, { activeTaskFile: path.join(slotTask, 'TASK.md') });
+  await persistRunNow(f.run);
+  const slotPin = await pin(
+    f.roots,
+    `${f.run.id}-slot`,
+    slotTask,
+    NOW - RUN_RETENTION_AGE_MS - 60_000,
+  );
+  const reviewer = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'RETENTION-LATE-HOLD',
+  });
+  updateRun(reviewer.id, {
+    status: 'done',
+    completedAt: settled,
+    reviewWorkspace: { ...workspace(path.dirname(slotTask)), taskPath: slotTask },
+  });
+  await persistRunNow(reviewer);
+  let tagged = false;
+  let checks = 0;
+  await runRetentionPass(f.options, {
+    ...privateDeps,
+    // The plan sees the reviewer released; it gains a keep tag when apply reaches the candidate,
+    // after the pass's held set was taken.
+    holdsSlot: async (run) => {
+      if (run.id === f.run.id && ++checks === 2) {
+        tagged = true;
+        updateRun(reviewer.id, { tags: ['keep'] });
+      }
+      return false;
+    },
+  });
+  assert.ok(tagged);
+  assert.ok(existsSync(slotPin), 'the late hold keeps the pin');
 });

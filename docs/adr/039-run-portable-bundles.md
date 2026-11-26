@@ -915,6 +915,10 @@ Each hourly pass, after the run pass:
   pins go even while the directory still exists. Both kept and released directories are compared
   by their real paths too, since a pin records its task directory's real path and a run the path
   it was given;
+- just before a pin is staged, the gateway re-reads the hold of every run that names the pin's
+  task directory, so a settled run that gains a hold during the pass keeps the pins of every
+  directory it reads; a run that names it only through a different symlinked path is matched by
+  the node's next pass instead;
 - a pin no run references keeps the earlier rule and goes only once its task directory is gone,
   so manual tasks keep their pins; and
 - each node pass inspects at most 32 pins (read only) and removes at most 8, and decides only

@@ -79,7 +79,7 @@ import {
   runsDirectory,
   runSessionArchiveDir,
 } from '../../runs/store.js';
-import { taskPinRelease } from '../../runs/task-pin-owners.js';
+import { pinTaskDirs, taskPinRelease } from '../../runs/task-pin-owners.js';
 
 type Emit = (event: string, payload: unknown) => void;
 const RUN_RETENTION_FIRST_PASS_MS = 10 * 60 * 1000;
@@ -356,6 +356,11 @@ export async function runRetentionPass(
   // ADR-039 Amendment 12: the task dirs held runs' pins serve, resolved once per pass. Held runs
   // are bounded (live, in the window, on open PRs); each directory resolves once via the cache.
   const realPaths = new Map<string, string | null>();
+  // Which runs name each task dir, so the stage re-check can re-read their holds: a settled run
+  // that gains a hold during the pass keeps the pins of every dir it reads.
+  const dirRuns = new Map<string, string[]>();
+  for (const other of runs)
+    for (const dir of pinTaskDirs(other)) dirRuns.set(dir, [...(dirRuns.get(dir) ?? []), other.id]);
   const heldPinDirs = await withRealPaths(
     taskPinRelease(
       runs.filter((run) => !removableIds.has(run.id)),
@@ -464,7 +469,12 @@ export async function runRetentionPass(
                 if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
                 if (
                   current.keepsTaskDirectory(path.resolve(taskDir)) ||
-                  keptPinDirs.has(path.resolve(taskDir))
+                  keptPinDirs.has(path.resolve(taskDir)) ||
+                  (dirRuns.get(path.resolve(taskDir)) ?? []).some((id) => {
+                    if (id === run.id) return false;
+                    const other = getCachedRunWithArchived(id);
+                    return Boolean(other && currentRetentionHold(other, context));
+                  })
                 )
                   return false;
                 return (
