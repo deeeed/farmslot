@@ -18,9 +18,22 @@ function link(file,target){
  if(st){if(!st.isSymbolicLink()||path.resolve(path.dirname(file),fs.readlinkSync(file))!==target)throw Error('Conflicting review skill: '+file);}
  else{if(input.verifyOnly)throw Error('Review skill link missing');fs.symlinkSync(target,file);}
 }
+// ADR-058 Amendment 4: a skill installed by its repository's tools/install, as an engineer does.
+function installCheck(install){
+ if(!/^[a-z0-9][a-z0-9._-]*$/.test(install.repo)||!/^[a-z0-9-]+\/[a-z0-9-]+$/.test(install.include)||!/^mms-[a-z0-9-]+$/.test(install.installedName))throw Error('Invalid review skill install');
+ return ['.agents/skills','.claude/skills','.cursor/rules'].map(dir=>path.join(checkout,dir,install.installedName));
+}
 if(input.action==='cleanup'){
  const links=[],directories=[];
- for(const skill of input.skills){
+ for(const skill of input.skills.filter(skill=>skill.install)){
+  for(const dir of installCheck(skill.install)){
+   const st=exists(dir);
+   if(!st)continue;
+   if(st.isSymbolicLink()||!st.isDirectory()||!within(checkout,fs.realpathSync(dir)))throw Error('Installed review skill changed; refusing cleanup');
+   fs.rmSync(dir,{recursive:true});
+  }
+ }
+ for(const skill of input.skills.filter(skill=>!skill.install)){
   if(!/^[a-zA-Z0-9_-]+$/.test(skill.name))throw Error('Invalid review skill name');
   const root=path.join(checkout,'.agents','skills',skill.name),source=path.dirname(skill.path);
   if(exists(root)){
@@ -47,6 +60,17 @@ if(input.action==='cleanup'){
 const installed=[];
 for(const skill of input.skills){
  if(!/^[a-zA-Z0-9_-]+$/.test(skill.name))throw Error('Invalid review skill name');
+ if(skill.install){
+  const [agents]=installCheck(skill.install);
+  if(!input.verifyOnly){
+   const run=require('node:child_process').spawnSync('bash',[path.join(skill.install.source,'tools','install'),'--repo',skill.install.repo,'--target',checkout,'--source',skill.install.source,'--include',skill.install.include],{encoding:'utf8'});
+   if(run.status!==0)throw Error('tools/install failed: '+String(run.stderr||run.stdout).slice(-2000));
+  }
+  for(const file of [path.join(agents,'SKILL.md'),path.join(agents,'scripts','review-task.mjs')])
+   if(!exists(file)||!within(checkout,fs.realpathSync(file)))throw Error('Review skill installation missing: '+path.relative(checkout,file));
+  installed.push(skill.name);
+  continue;
+ }
  const source=path.dirname(skill.path),root=path.join(checkout,'.agents','skills',skill.name);
  directory(root);
  const names=fs.readdirSync(source);

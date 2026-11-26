@@ -376,7 +376,18 @@ function summarize(manifest: Manifest, root: string): ReviewWorkspaceSupportBind
     })),
     skills: manifest.sources
       .filter((source) => source.kind === 'skill')
-      .map((source) => ({ name: source.name, path: path.posix.join(root, source.entry!) })),
+      .map((source) => ({
+        name: source.name,
+        path: path.posix.join(root, source.entry!),
+        ...(source.install
+          ? {
+              install: {
+                ...source.install,
+                source: path.posix.join(root, source.destination),
+              },
+            }
+          : {}),
+      })),
     ...(runtime
       ? { runtime: { name: runtime.name, path: path.posix.join(root, 'bin', runtime.name) } }
       : {}),

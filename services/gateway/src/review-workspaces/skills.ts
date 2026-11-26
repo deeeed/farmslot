@@ -42,6 +42,8 @@ interface SourceManifest {
   sourceRevision?: string;
   sourceDirty?: boolean;
   packages?: Array<{ path: string; name: string; version: string }>;
+  /** ADR-058 Amendment 4: installed by the frozen repository's own `tools/install`. */
+  install?: { repo: string; include: string; installedName: string };
 }
 export interface FrozenReviewWorkspaceSupport {
   manifest: {
@@ -249,9 +251,13 @@ export async function collectReviewWorkspaceSupport(
       const source = resolution.sources.find(
         (source) => source.id === `${definition.kind}:${definition.name}`,
       )!;
+      const install =
+        definition.kind === 'skill' && 'install' in definition ? definition.install : undefined;
       const destination =
         definition.kind === 'skill'
-          ? `skills/${definition.name}`
+          ? install
+            ? `skill-sources/${definition.name}`
+            : `skills/${definition.name}`
           : definition.kind === 'library'
             ? `libraries/${definition.name}`
             : 'runtime/package';
@@ -272,6 +278,34 @@ export async function collectReviewWorkspaceSupport(
         entryPath = `${destination}/${definition.entry}`;
         identity.entry = entryPath;
         identity.sourceEntry = definition.entry;
+      }
+      if (install && definition.kind === 'skill') {
+        // The installer walks a skills repository: freeze its tools/ and this one skill, laid
+        // out as the repository lays them out, so tools/install installs only this skill.
+        const subpath = definition.subpath!;
+        const repositoryRoot = path.resolve(source.root, ...subpath.split('/').map(() => '..'));
+        const [, domain, , skill] = subpath.split('/');
+        const skillFiles = await collectSupportFiles(source.root, `${destination}/${subpath}`);
+        const tools = await collectSupportFiles(
+          path.join(repositoryRoot, 'tools'),
+          `${destination}/tools`,
+        );
+        if (
+          !skillFiles.length ||
+          !tools.some((file) => file.relativePath.endsWith('/tools/install'))
+        )
+          throw new Error(
+            `Review skill ${definition.name} needs tools/install and its skill files`,
+          );
+        files.push(...skillFiles, ...tools);
+        identity.entry = `${destination}/${subpath}/${definition.entry}`;
+        identity.install = {
+          repo: install.repo,
+          include: `${domain}/${skill}`,
+          installedName: `mms-${skill}`,
+        };
+        sources.push(identity);
+        continue;
       }
       if (definition.kind === 'runtime') {
         if (!/\.(?:js|mjs|cjs)$/.test(definition.entry))
