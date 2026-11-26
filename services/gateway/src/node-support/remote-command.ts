@@ -16,9 +16,10 @@ import { packMachineNames } from '@farmslot/protocol/node/pack-portability';
 // always travel together and rollout order stops mattering.
 import { currentProjectSources, poolDirectory } from '@farmslot/slot-config';
 
-import type { ProjectVars, RawProjectJson, SlotVars } from '../core/index.js';
+import { isLocal, type ProjectVars, type RawProjectJson, type SlotVars } from '../core/index.js';
 import { lazyImport } from '../core/lazy-import.js';
 import { farmCommandRootsForSlot, farmPathsForSlot } from '../fleet/farm-paths.js';
+import { usesNodeLink } from '../fleet/node-link-policy.js';
 
 import { NODE_SUPPORT_COMMAND_CACHE_MS, wrapNodeSupportReadCommand } from './activation.js';
 import {
@@ -204,6 +205,8 @@ const pendingEnsures = new Map<string, Delivery>();
  */
 const machinePublishes = new Map<string, Delivery>();
 const localBundles = new Map<string, HeldBundle>();
+/** Finished deliveries whose cache record is still being checked. */
+const pendingRecords = new Set<Promise<void>>();
 
 /**
  * The caller's time budget, or the delivery's own deadline, ran out while the
@@ -221,6 +224,21 @@ export function hasRemoteFarmRef(
   root = legacyRemoteFarmPaths().code.node,
 ): boolean {
   return remoteFarmRef(root).test(command);
+}
+
+/**
+ * Whether `execOnSlot` delivers the slot's support bundle before running `command`. It mirrors the
+ * routing in `execOnSlot` and `resolveRemoteFarmCommand` (keep them in step): a remote or node-link
+ * slot, no locked project sources, and a farm reference on a path boundary. A command that passes
+ * may answer "pending" with no output while a delivery runs.
+ */
+export function commandWaitsForNodeSupport(
+  vars: Pick<SlotVars, 'host' | 'machine' | 'machineEnv'>,
+  command: string,
+): boolean {
+  if (currentProjectSources()) return false;
+  if (isLocal(vars.host, vars.machine) && !usesNodeLink(vars.machine)) return false;
+  return farmCommandRootsForSlot(vars).some((root) => hasRemoteFarmRef(command, root));
 }
 
 /**
@@ -451,9 +469,60 @@ function ensureOnce(
   // after every waiter left must not become an unhandled rejection, which
   // would end the gateway.
   delivery.promise.catch(() => undefined);
+  // Recorded after the delivery resolves, never inside it: its waiters and the machine's other
+  // slots get the result without waiting for the record's config check.
+  const record = delivery.promise.then(
+    (state) => rememberFinishedDelivery(vars, local, slotKey, selectSlot, state),
+    // A failed delivery records nothing; its waiters, or the next command, report the failure.
+    () => undefined,
+  );
+  pendingRecords.add(record);
+  void record.finally(() => pendingRecords.delete(record));
   pendingEnsures.set(slotKey, delivery);
   if (!upload) machinePublishes.set(machineKey, delivery);
   return delivery;
+}
+
+function rememberVerified(
+  cacheKey: string,
+  slotId: string,
+  supportDir: string,
+  selectSlot: boolean,
+): void {
+  if (selectionCurrent(slotId, supportDir, selectSlot))
+    verifiedBundles.set(cacheKey, { at: Date.now(), supportDir });
+}
+
+/**
+ * Records a finished delivery, so one that finished after every waiter's budget ran out serves the
+ * next command from the cache. Without this, a delivery slower than the budget (a fleet probe waits
+ * 10 s) was redone by every later command and never caught up. An unwatched delivery is recorded
+ * only while the slot's current config still builds its bundle, checked without collecting: a
+ * delivery overtaken by a config change records nothing.
+ */
+async function rememberFinishedDelivery(
+  vars: SlotVars,
+  local: LocalBundle,
+  cacheKey: string,
+  selectSlot: boolean,
+  state: NodeSupportBundleState | null,
+): Promise<void> {
+  if (!state?.hash || state.hash !== local.hash) return;
+  try {
+    const projectVars = await loadProjectVarsIfAny(vars.projectName);
+    if (!projectVars) return;
+    const pathsKey = nodeSupportBundlePaths(vars.projectName, projectVars.projectJson).join('\0');
+    const held = localBundles.get(vars.projectName);
+    if (!held || held.pathsKey !== pathsKey || !(await heldBundleCurrent(held))) return;
+    if ((await held.bundle).hash !== local.hash) return;
+  } catch (error) {
+    // An unreadable config is not evidence that this bundle is current: record nothing.
+    console.warn(
+      `[node-support] ${vars.slotId}: finished delivery not cached: ${(error as Error).message}`,
+    );
+    return;
+  }
+  rememberVerified(cacheKey, vars.slotId, state.supportDir, selectSlot);
 }
 
 /**
@@ -624,8 +693,7 @@ export async function resolveRemoteFarmCommand(
     options.signal,
   );
   if (!state?.hash) return command;
-  if (selectionCurrent(vars.slotId, state.supportDir, selectSlot))
-    verifiedBundles.set(cacheKey, { at: Date.now(), supportDir: state.supportDir });
+  rememberVerified(cacheKey, vars.slotId, state.supportDir, selectSlot);
   const mapped = remap(state.supportDir, state.paths);
   return selectSlot ? mapped : wrapNodeSupportReadCommand(mapped, state.supportDir);
 }
@@ -643,6 +711,14 @@ export async function resolveSlotFarmCommand(
   return resolveRemoteFarmCommand(await loadSlotVars(slotId), command, { budgetMs });
 }
 
+/** Test seam: wait for every delivery still running, including the ones nobody waits for. */
+export async function settleNodeSupportDeliveries(): Promise<void> {
+  await Promise.all(
+    [...pendingEnsures.values()].map((delivery) => delivery.promise.catch(() => null)),
+  );
+  await Promise.all([...pendingRecords]);
+}
+
 /** Test seam: forget what this process verified. */
 export function resetRemoteFarmCommandCache(): void {
   verifiedBundles.clear();
@@ -652,4 +728,5 @@ export function resetRemoteFarmCommandCache(): void {
   localBundles.clear();
   pendingEnsures.clear();
   machinePublishes.clear();
+  pendingRecords.clear();
 }
