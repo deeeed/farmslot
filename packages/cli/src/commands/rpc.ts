@@ -2,7 +2,11 @@ import { once } from 'node:events';
 
 import type { Command } from 'commander';
 
-import { type EventFrame, Methods } from '@farmslot/protocol';
+import {
+  type EventFrame,
+  Methods,
+  RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS,
+} from '@farmslot/protocol';
 
 import { resolveContext } from '../context.js';
 
@@ -16,6 +20,9 @@ export function resolveRpcGatewayTimeoutMs(
   params: unknown,
   globalTimeout: unknown,
 ): number | undefined {
+  // The gateway may wait for a busy worker before refreshing; the call outlasts that wait.
+  if (method === Methods.RUN_REFRESH_PUBLISH_PACKAGE)
+    return Math.max(Number(globalTimeout) || 0, RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS);
   if (
     method !== Methods.RUNTIME_CAPABILITY_ACQUIRE &&
     !(
