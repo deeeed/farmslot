@@ -26,21 +26,51 @@ function installCheck(install){
  if(!/^[a-z0-9][a-z0-9._-]*$/.test(install.repo)||!/^[a-z0-9-]+\/[a-z0-9-]+$/.test(install.include)||!/^mms-[a-z0-9-]+$/.test(install.installedName))throw Error('Invalid review skill install');
  return ['.agents/skills','.claude/skills','.cursor/rules'].map(dir=>path.join(checkout,dir,install.installedName));
 }
+function verifyInstallDestinations(destinations){
+ function rejectLinks(dir){
+  for(const entry of fs.readdirSync(dir,{withFileTypes:true})){
+   if(entry.isSymbolicLink())throw Error('Review skill destination contains a symbolic link');
+   if(entry.isDirectory())rejectLinks(path.join(dir,entry.name));
+  }
+ }
+ for(const dir of destinations){
+  const parent=path.dirname(dir);
+  if(exists(parent)&&(fs.realpathSync(parent)!==parent||!fs.statSync(parent).isDirectory()))throw Error('Review skill destination parent is not an owned directory');
+  const st=exists(dir);
+  if(st){
+   if(!st.isDirectory()||fs.realpathSync(dir)!==dir)throw Error('Review skill destination is not an owned directory');
+   rejectLinks(dir);
+  }
+  const surface=path.dirname(parent);
+  if(exists(surface)&&(fs.realpathSync(surface)!==surface||!fs.statSync(surface).isDirectory()))throw Error('Review skill destination parent is not an owned directory');
+ }
+ const tracked=require('node:child_process').spawnSync('git',['-C',checkout,'ls-files','-z','--',...destinations.map(dir=>path.relative(checkout,dir))],{encoding:'utf8'});
+ if(tracked.status!==0||tracked.stdout)throw Error('Review skill installation would overwrite tracked files');
+}
 if(input.action==='cleanup'){
  const links=[],directories=[];
  for(const skill of input.skills.filter(skill=>skill.install)){
-  for(const dir of installCheck(skill.install)){
+  const destinations=installCheck(skill.install);
+  verifyInstallDestinations(destinations);
+  for(const dir of destinations){
    const st=exists(dir);
    if(!st)continue;
    if(st.isSymbolicLink()||!st.isDirectory()||!within(checkout,fs.realpathSync(dir)))throw Error('Installed review skill changed; refusing cleanup');
    fs.rmSync(dir,{recursive:true});
   }
  }
- // The round folders stay in the workspace's review-tasks; only the checkout's link goes.
- const tasks=path.join(checkout,'temp','tasks'),taskLink=exists(tasks);
- if(taskLink&&taskLink.isSymbolicLink()&&fs.readlinkSync(tasks)===TASK_LINK){
-  fs.unlinkSync(tasks);
-  if(fs.readdirSync(path.dirname(tasks)).length===0)fs.rmdirSync(path.dirname(tasks));
+ if(input.skills.some(skill=>skill.install)){
+  const rules=path.join(checkout,'.cursor','rules'),st=exists(rules);
+  if(st?.isDirectory()&&fs.readdirSync(rules).length===0)fs.rmdirSync(rules);
+  // The round folders stay in the workspace's review-tasks; only the checkout's link goes.
+  const temp=path.join(checkout,'temp'),tasks=path.join(temp,'tasks');
+  if(exists(temp)&&fs.realpathSync(temp)===temp){
+   const taskLink=exists(tasks);
+   if(taskLink&&taskLink.isSymbolicLink()&&fs.readlinkSync(tasks)===TASK_LINK){
+    fs.unlinkSync(tasks);
+    if(fs.readdirSync(temp).length===0)fs.rmdirSync(temp);
+   }
+  }
  }
  for(const skill of input.skills.filter(skill=>!skill.install)){
   if(!/^[a-zA-Z0-9_-]+$/.test(skill.name))throw Error('Invalid review skill name');
@@ -85,8 +115,9 @@ const installed=[];
 for(const skill of input.skills){
  if(!/^[a-zA-Z0-9_-]+$/.test(skill.name))throw Error('Invalid review skill name');
  if(skill.install){
-  const [agents]=installCheck(skill.install);
+  const destinations=installCheck(skill.install),[agents]=destinations;
   if(!input.verifyOnly){
+   verifyInstallDestinations(destinations);
    const run=require('node:child_process').spawnSync('bash',[path.join(skill.install.source,'tools','install'),'--repo',skill.install.repo,'--target',checkout,'--source',skill.install.source,'--include',skill.install.include],{encoding:'utf8'});
    if(run.status!==0)throw Error('tools/install failed: '+String(run.stderr||run.stdout).slice(-2000));
   }

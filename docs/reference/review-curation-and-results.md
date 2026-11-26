@@ -26,6 +26,8 @@ Before a review reaches or refreshes its gate, every inline comment MUST resolve
 Under [ADR-058 Amendment 4](../adr/058-static-review-and-farm-owned-qa.md#amendment-4-one-checklist-for-skill-backed-reviews-2026-11-26),
 a `review-pr` run in the configured installable skill's domain MUST use that skill's round. The gateway MUST install the frozen skill with its repository's `tools/install` and start it in the checkout with `review-task.mjs start <base>..<head> --pr <n>`. A fresh review chain starts cold. The checkout is read-only during review, with `temp/tasks` linked to the workspace's writable round directory.
 
+The skill's harness executable must be on the execution node's PATH. The existing provider CLI health check verifies the configured version on the node and its shells. Other review domains admit their configured static support without the installable skill.
+
 - `task.progress` and the harness watcher read the round's single `CHECKLIST.md` and marks.
 - Completion MUST require the recorded round's successful signal, a finished `review.json` matching the recorded head and revision, and the same verdict and head in `artifacts/review.md`.
 - The review result uses the report's verdict and Markdown, `artifacts/line-comments.json`, and round number, mode and changed files if present. The gateway retains the skill ledger and learnings with the report. Learning curation reads PASS and FINDING rows by their ledger headings.

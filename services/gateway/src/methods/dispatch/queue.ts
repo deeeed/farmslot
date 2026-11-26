@@ -145,6 +145,7 @@ export async function dispatchQueueAdd(
           effort: params.effort,
           transport: params.transport,
           nativeProfile: params.nativeProfile,
+          domain: params.domain,
         },
         staticReviewOwner?.ownerId ?? resolveStaticReviewOwner('live').ownerId,
       )))
@@ -177,7 +178,7 @@ export async function dispatchQueueAdd(
     };
   }
   let executionTemplate: import('@farmslot/protocol').ExecutionTemplateReference | undefined;
-  if (configuredCatalog) {
+  if (configuredCatalog && (!workspaceAdmission || params.executionTemplateId)) {
     // A pool candidate supplies template context without becoming an explicit slot pin.
     const templateSlotId =
       params.slotId ?? (params.flowType === 'qa' ? params.allowedSlots?.[0] : undefined);

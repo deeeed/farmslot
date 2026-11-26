@@ -1120,17 +1120,20 @@ async function previewDispatch(
             effort: params.effort,
             transport: params.transport,
             nativeProfile: params.nativeProfile,
+            domain: params.domain,
           },
           resolveStaticReviewOwner('live').ownerId,
         ));
-      const projectVars = await loadProjectVars(params.project);
-      const selected = await resolveConfiguredExecutionTemplateForSlot(projectVars, {
-        flow: 'review-pr',
-        platform: await resolveReviewWorkspacePlatform(admission.pool, params.project),
-        runMode: params.mode ?? 'autonomous',
-        explicitDomain: params.domain,
-        explicitId: admission.project.staticReview!.templateId,
-      });
+      const templateId = admission.project.staticReview!.templateId;
+      const selected = templateId
+        ? await resolveConfiguredExecutionTemplateForSlot(await loadProjectVars(params.project), {
+            flow: 'review-pr',
+            platform: await resolveReviewWorkspacePlatform(admission.pool, params.project),
+            runMode: params.mode ?? 'autonomous',
+            explicitDomain: params.domain,
+            explicitId: templateId,
+          })
+        : undefined;
       return {
         preview: {
           slotId: null,
@@ -1141,7 +1144,7 @@ async function previewDispatch(
           model: params.model,
           taskId: params.ticketOrPr,
           domain: params.domain,
-          executionTemplate: selected.reference,
+          executionTemplate: selected?.reference,
           reviewWorkspace: {
             machine: admission.pool.machine,
             executionNodeId: admission.executionNodeId,

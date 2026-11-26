@@ -220,6 +220,7 @@ async function rereviewWithSources(
     {
       flowType: 'review-pr',
       project: run.project,
+      domain: run.domain ?? undefined,
       // Original casing for display; the continuation context compares
       // repositories lower-cased, as engine-decisions does.
       ticketOrPr: `${target.repo}#${target.number}`,

@@ -9,6 +9,7 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -100,6 +101,13 @@ test('a skill review links its writable round folders into the read-only checkou
     );
   try {
     assert.throws(() => run({ reviewTasks: path.join(root, 'elsewhere') }), /review task root/);
+    const outside = path.join(root, 'outside');
+    const cursor = path.join(checkout, '.cursor');
+    mkdirSync(outside);
+    symlinkSync(outside, cursor);
+    assert.throws(() => run(), /destination parent is not an owned directory/);
+    assert.equal(existsSync(path.join(outside, 'rules')), false);
+    unlinkSync(cursor);
     run();
     run();
     run({ verifyOnly: true });
@@ -115,6 +123,7 @@ test('a skill review links its writable round folders into the read-only checkou
     run({ action: 'cleanup' });
     assert.equal(existsSync(path.join(checkout, 'temp')), false);
     assert.equal(existsSync(path.join(checkout, '.agents/skills/mms-perps-review-pr')), false);
+    assert.equal(existsSync(path.join(checkout, '.cursor/rules')), false);
     assert(existsSync(path.join(reviewTasks, 'review/pr-1/r1')));
     assert.throws(() => run({ verifyOnly: true }), /installation missing|link missing/);
   } finally {

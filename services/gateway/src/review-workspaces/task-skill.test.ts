@@ -29,7 +29,7 @@ if (!fs.existsSync(dir + '/review.json')) {
   fs.mkdirSync(dir + '/artifacts', { recursive: true });
   fs.writeFileSync(dir + '/CHECKLIST.md', ${JSON.stringify(ROUND_CHECKLIST)});
   fs.writeFileSync(dir + '/SIGNAL.json', JSON.stringify({ attemptId: 'skill-attempt', step: 'started', status: 'running', timestamp: new Date().toISOString() }));
-  fs.writeFileSync(dir + '/review.json', JSON.stringify({ schemaVersion: 1, skill: 'perps-review-pr', revision: 'rev-1', target: args[1], pr: args[3], head, forkPoint: base, round: 1, mode: 'cold', reason: 'first round', previous: null, startedAt: new Date().toISOString(), files: ['src/a.ts'], marks: true, checklist: 'CHECKLIST.md', rows: 2 }));
+  fs.writeFileSync(dir + '/review.json', JSON.stringify({ schemaVersion: 1, skill: 'perps-review-pr', revision: 'rev-1', target: args[1], pr: args[3], head, forkPoint: base, round: 1, mode: 'cold', reason: 'first round', previous: null, startedAt: new Date().toISOString(), files: ['src/a.ts'], marks: !fs.existsSync('../harness-unavailable'), checklist: 'CHECKLIST.md', rows: 2 }));
 }
 console.log('Started cold round r1: first round\\nfolder: ' + dir);
 `;
@@ -65,6 +65,7 @@ async function skillReview(f: Fixture) {
   };
   const deps = {
     ...f.deps,
+    readCommentDiff: async () => '@@ -2,1 +2,2 @@\n unchanged\n+added\n',
     recordReviewTask: async (
       _runId: string,
       round: NonNullable<NonNullable<Fixture['run']['reviewWorkspace']>['reviewTask']>,
@@ -157,6 +158,7 @@ test('a skill review starts its round in the checkout and gives the reviewer one
     const { deps, folder, calls } = await skillReview(f);
     // A project review in the skill's domain needs no frozen static template.
     f.run.executionTemplate = undefined;
+    f.subject.contributionBaseSha = 'd'.repeat(40);
     await assert.rejects(
       materializeReviewWorkspaceTask(f.run.id, f.subject, {
         ...deps,
@@ -168,8 +170,8 @@ test('a skill review starts its round in the checkout and gives the reviewer one
     );
     const task = await materializeReviewWorkspaceTask(f.run.id, f.subject, deps);
     assert.deepEqual(await calls(), [
-      ['start', `${f.subject.baseSha}..${f.subject.headSha}`, '--pr', '1', '--cold'],
-      ['start', `${f.subject.baseSha}..${f.subject.headSha}`, '--pr', '1'],
+      ['start', `${f.subject.contributionBaseSha}..${f.subject.headSha}`, '--pr', '1', '--cold'],
+      ['start', `${f.subject.contributionBaseSha}..${f.subject.headSha}`, '--pr', '1'],
     ]);
     assert.deepEqual(f.run.reviewWorkspace!.reviewTask, {
       folder,
@@ -198,7 +200,7 @@ test('a skill review starts its round in the checkout and gives the reviewer one
     await materializeReviewWorkspaceTask(f.run.id, f.subject, deps);
     assert.deepEqual((await calls())[2], [
       'start',
-      `${f.subject.baseSha}..${f.subject.headSha}`,
+      `${f.subject.contributionBaseSha}..${f.subject.headSha}`,
       '--pr',
       '1',
     ]);
@@ -219,6 +221,22 @@ test('a review outside the skill domain keeps the static template path', async (
       materializeReviewWorkspaceTask(f.run.id, f.subject, deps),
       /frozen template and source subject/,
     );
+  });
+});
+
+test('an unmarked fallback can replay after the harness returns', async () => {
+  await withReviewWorkspaceTaskFixture(async (f) => {
+    const { deps, folder } = await skillReview(f);
+    const unavailable = path.join(f.root, 'harness-unavailable');
+    await writeFile(unavailable, '');
+    await assert.rejects(
+      materializeReviewWorkspaceTask(f.run.id, f.subject, deps),
+      /has no marked checklist/,
+    );
+    await assert.rejects(readFile(path.join(folder, 'review.json')), { code: 'ENOENT' });
+    await rm(unavailable);
+    await materializeReviewWorkspaceTask(f.run.id, f.subject, deps);
+    assert.equal(f.run.reviewWorkspace!.reviewTask?.folder, folder);
   });
 });
 
@@ -290,6 +308,21 @@ test('a skill round is refused for another commit, head or skill revision', asyn
     await assert.rejects(
       readReviewWorkspaceCompletion(f.run.id, deps),
       /does not belong to the recorded round attempt/,
+    );
+    await writeFile(path.join(folder, 'review.json'), JSON.stringify(record));
+    await finishRound(folder, acceptedAt, {
+      verdict: 'REQUEST_CHANGES',
+      commit: f.subject.headSha,
+    });
+    await writeFile(
+      path.join(folder, 'artifacts/line-comments.json'),
+      JSON.stringify({
+        comments: [{ path: 'src/a.ts', line: 9, body: 'Outside', severity: 'must_fix' }],
+      }),
+    );
+    await assert.rejects(
+      readReviewWorkspaceCompletion(f.run.id, deps),
+      /outside the RIGHT-side diff/,
     );
   });
 });

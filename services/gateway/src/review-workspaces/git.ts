@@ -32,7 +32,7 @@ export async function workspaceReviewGit(params: {
   const baseSha =
     snapshot?.source !== 'unavailable' && snapshot?.headSha === subject.headSha && snapshot.baseSha
       ? snapshot.baseSha
-      : subject.baseSha;
+      : ((run.reviewWorkspace.reviewTask && subject.contributionBaseSha) ?? subject.baseSha);
   if (
     (params.base !== undefined && params.base !== baseSha) ||
     (params.head !== undefined && params.head !== subject.headSha) ||

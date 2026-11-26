@@ -52,6 +52,7 @@ import {
   ORCHESTRATOR_LOCALITY,
   slotCopyDir,
   slotCopyFile,
+  slotDeletePath,
   slotFileExists,
   type SlotLocality,
   slotMkdir,
@@ -72,6 +73,7 @@ import { usesPreviousReviewDelta } from '../review/session-mode.js';
 import { reviewDeltaSinceReviewedHead } from '../review/snapshots.js';
 import {
   appendReviewFindingBodies,
+  assertReviewCommentLines,
   deriveReviewLineComments,
   readReviewCommentDiff,
 } from '../review-publication/validate-comments.js';
@@ -404,6 +406,7 @@ async function startReviewTask(
   subject: ReviewWorkspaceSubject,
   skill: NonNullable<ReturnType<typeof reviewSkillFor>>,
   io: SlotLocality,
+  assertCurrent: () => void,
 ): Promise<ReviewTaskRound> {
   const workspace = run.reviewWorkspace;
   const pr = reviewPRIdentity(run)?.prNumber;
@@ -423,11 +426,12 @@ async function startReviewTask(
     'node',
     shellQuote(`.agents/skills/${skill.install.installedName}/scripts/review-task.mjs`),
     'start',
-    `${subject.baseSha}..${subject.headSha}`,
+    shellQuote(`${subject.contributionBaseSha ?? subject.baseSha}..${subject.headSha}`),
     '--pr',
     String(pr),
     '"$@"',
   ].join(' ');
+  assertCurrent();
   const result =
     workspace.executionNodeId === 'local'
       ? await readLocalCommand(command, {
@@ -464,6 +468,11 @@ async function startReviewTask(
   )
     throw new Error('Review skill round does not describe the frozen head');
   // Without mm-harness the round is a plain file: no marks and no SIGNAL.json to accept.
+  if (record.marks === false && !workspace.reviewTask) {
+    assertCurrent();
+    // The fallback has never been dispatched. Remove it so the skill can initialize marks on replay.
+    await slotDeletePath(io, path.posix.join(root, relative));
+  }
   if (record.marks !== true)
     throw new Error(
       `Review skill round has no marked checklist: ${result.stderr.trim() || 'mm-harness was unavailable'}`,
@@ -512,15 +521,19 @@ async function materializeSkillReviewBundle(
     'review-pr',
     { mode: run.mode, now: subject.capturedAt },
   );
-  const round = await startReviewTask(run, subject, skill, io);
-  const current = ownedRun(run.id, deps);
-  if (
-    isTerminalRunStatus(current.status) ||
-    current.engineState?.generation !== run.engineState?.generation ||
-    !sameWorkspaceIdentity(current.reviewWorkspace, run.reviewWorkspace) ||
-    !isDeepStrictEqual(current.reviewWorkspaceSubject, subject)
-  )
-    throw new Error('Review workspace ownership changed during skill start');
+  const generation = run.engineState?.generation;
+  const assertCurrent = () => {
+    const current = ownedRun(run.id, deps);
+    if (
+      isTerminalRunStatus(current.status) ||
+      current.engineState?.generation !== generation ||
+      !sameWorkspaceIdentity(current.reviewWorkspace, run.reviewWorkspace) ||
+      !isDeepStrictEqual(current.reviewWorkspaceSubject, subject)
+    )
+      throw new Error('Review workspace ownership changed during skill start');
+  };
+  const round = await startReviewTask(run, subject, skill, io, assertCurrent);
+  assertCurrent();
   if (!run.reviewWorkspace.reviewTask)
     await (deps.recordReviewTask ?? recordReviewTask)(run.id, round);
   const taskDir = run.reviewWorkspace.taskPath;
@@ -543,7 +556,7 @@ async function materializeSkillReviewBundle(
     `Run: ${run.id}`,
     `PR: ${run.ticketOrPr}`,
     `Checkout (read-only): ${run.reviewWorkspace.checkoutPath}`,
-    `Base: ${subject.baseSha}`,
+    `Base: ${subject.contributionBaseSha ?? subject.baseSha}`,
     `Head: ${subject.headSha}`,
     `Round: r${round.round} (${round.mode})`,
     '```',
@@ -1383,8 +1396,9 @@ async function readReviewTaskCompletion(
       `Review skill report must keep VERDICT ${JSON.stringify(record.verdict)} and COMMIT ${snapshot.subject.headSha}; received VERDICT ${JSON.stringify(recommendation)} and COMMIT ${JSON.stringify(commit)}.`,
     );
   let comments: unknown;
+  const commentsText = await confinedRead(io, taskDir, 'artifacts/line-comments.json');
   try {
-    comments = JSON.parse(await confinedRead(io, taskDir, 'artifacts/line-comments.json'));
+    comments = JSON.parse(commentsText);
   } catch (error) {
     throw invalid(
       `Review skill line comments are invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
@@ -1410,6 +1424,14 @@ async function readReviewTaskCompletion(
       );
     return { path: entry.path, line: entry.line, body: entry.body, severity: entry.severity };
   });
+  const reviewSnapshot = {
+    baseSha: snapshot.subject.contributionBaseSha ?? snapshot.subject.baseSha,
+    headSha: snapshot.subject.headSha,
+    headRef: snapshot.subject.branch,
+    capturedAt: snapshot.subject.capturedAt,
+    source: 'github-pr' as const,
+  };
+  await assertReviewCommentLines(run, lineComments, reviewSnapshot, deps.readCommentDiff);
   await retain();
   assertCompletionIdentity(run.id, snapshot, deps);
   const changedFiles = Array.isArray(record.changedFiles)
@@ -1422,13 +1444,7 @@ async function readReviewTaskCompletion(
       reviewMd,
       lineComments,
       artifactManifest: await scanArtifacts(viewer),
-      reviewSnapshot: {
-        baseSha: snapshot.subject.baseSha,
-        headSha: snapshot.subject.headSha,
-        headRef: snapshot.subject.branch,
-        capturedAt: snapshot.subject.capturedAt,
-        source: 'github-pr',
-      },
+      reviewSnapshot,
       reviewInputArtifactPaths: [
         SUBJECT,
         ...(snapshot.workspace.support ? ['inputs/review-support.json'] : []),

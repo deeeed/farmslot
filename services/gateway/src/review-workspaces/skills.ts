@@ -283,11 +283,10 @@ export async function collectReviewWorkspaceSupport(
         // The installer walks a skills repository: freeze its tools/ and this one skill, laid
         // out as the repository lays them out, so tools/install installs only this skill.
         const subpath = definition.subpath!;
-        const repositoryRoot = path.resolve(source.root, ...subpath.split('/').map(() => '..'));
         const [, domain, , skill] = subpath.split('/');
         const skillFiles = await collectSupportFiles(source.root, `${destination}/${subpath}`);
         const tools = await collectSupportFiles(
-          path.join(repositoryRoot, 'tools'),
+          reviewSkillInstallerDirectory(source.root, subpath),
           `${destination}/tools`,
         );
         if (
@@ -396,6 +395,11 @@ export function reviewWorkspaceCommandEnvOptions(
 
 // The harness requires a checkout-relative journal directory. This resolves into the writable rounds.
 export const REVIEW_TASK_RUNTIME_DIR = 'temp/tasks/.runtime';
+
+/** The configured skill lives at domains/<domain>/skills/<skill> in its repository. */
+export function reviewSkillInstallerDirectory(skillRoot: string, subpath: string): string {
+  return path.resolve(skillRoot, ...subpath.split('/').map(() => '..'), 'tools');
+}
 
 type InstalledReviewSkill = ReviewWorkspaceSupportBinding['skills'][number] & {
   install: NonNullable<ReviewWorkspaceSupportBinding['skills'][number]['install']>;
