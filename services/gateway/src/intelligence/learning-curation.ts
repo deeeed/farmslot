@@ -74,11 +74,17 @@ async function evaluate(
     maxTokens: 8000,
     allowCliFallback: false,
   });
-  return firstJsonArray(result.text);
+  return outcomeList(result.text);
 }
 
-/** The reply's first complete JSON array, ignoring fences and any text before or after it. */
-export function firstJsonArray(text: string): unknown {
+const isOutcome = (value: unknown) => isRecord(value) && typeof value.id === 'string';
+
+/**
+ * The reply's first complete JSON array of outcomes (records with an `id`), ignoring fences,
+ * any text around it and any other array: prose such as `[1, 2]`, or an inner `observed`
+ * list when a reply cut off at its token limit never closes the outer one.
+ */
+export function outcomeList(text: string): unknown {
   for (let start = text.indexOf('['); start !== -1; start = text.indexOf('[', start + 1)) {
     let depth = 0;
     let quoted = false;
@@ -90,15 +96,21 @@ export function firstJsonArray(text: string): unknown {
       } else if (char === '"') quoted = true;
       else if (char === '[' || char === '{') depth += 1;
       else if ((char === ']' || char === '}') && --depth === 0) {
+        let candidate: unknown;
         try {
-          return JSON.parse(text.slice(start, index + 1));
+          candidate = JSON.parse(text.slice(start, index + 1));
         } catch {
+          // Not JSON from this bracket (prose, or brackets inside a string the scan
+          // misread): try the next '['.
           break;
         }
+        if (Array.isArray(candidate) && candidate.length && candidate.every(isOutcome))
+          return candidate;
+        break;
       }
     }
   }
-  throw new Error('Curation reply holds no JSON array');
+  throw new Error('Curation reply holds no JSON array of outcomes');
 }
 
 let evaluator: LearningEvaluator = evaluate;

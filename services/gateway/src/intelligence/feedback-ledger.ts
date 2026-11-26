@@ -37,6 +37,8 @@ export interface LearningCurationReceipt {
   citations: LearningCitation[];
   instruction?: string;
   retryable?: boolean;
+  /** A keep's inclusion bar, which its rule proposal states. */
+  recurrence?: 'recurring' | 'blocker';
   /** A drop that only its own run confirms: recorded and never promoted. */
   unconfirmed?: true;
   /** The review rule proposal a kept v1 lesson became. */

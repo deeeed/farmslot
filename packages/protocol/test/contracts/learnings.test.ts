@@ -91,6 +91,24 @@ test('a malformed entry names its line and what is wrong', () => {
     [`${EDIT}\n- None\n`, /"- None" stands alone/],
   ];
   for (const [text, message] of cases) assert.match(issues(H + text).join('\n'), message, text);
+  // A field indented wrongly is reported once and still read, so no field reads as missing.
+  assert.deepEqual(
+    issues(`${H}- edit: x.\n   evidence: core a.ts:1\n  family: a.md#x\n  confirmation: none\n`),
+    ['line 4: indent fields two spaces'],
+  );
+  const unknown = parseLearnings(`${H}- idea: x.\n`);
+  assert.equal(unknown.version === 1 ? unknown.entries[0]?.kind : undefined, null);
+});
+
+test('a near miss of the v1 header is read as v1 and reported', () => {
+  for (const header of ['#Learnings v1', '# Learnings V1', '#  learnings v 1']) {
+    const parsed = parseLearnings(`${header}\n\n- None\n`);
+    assert.equal(parsed.version, 1, header);
+    assert.deepEqual(parsed.version === 1 ? parsed.issues : [], [
+      'line 1: write the header exactly as "# Learnings v1"',
+    ]);
+  }
+  assert.deepEqual(parseLearnings('# Learnings v2\n\n- x\n'), { version: 'legacy' });
 });
 
 test('a file without the v1 header is legacy and is not judged', () => {
@@ -112,6 +130,7 @@ test('a run never confirms its own lesson', () => {
     undefined,
     { kind: 'none' as const },
     { kind: 'run' as const, runId: '0f3c2a1b', path: 'artifacts/review.md' },
+    { kind: 'run' as const, runId: '0F3C2A1B', path: 'artifacts/review.md' },
     { kind: 'run' as const, runId: '0f3c2a1b-77aa-4b5c', path: 'artifacts/review.md' },
     { kind: 'fix' as const, ref: 'metamask/core#9' },
     { kind: 'fix' as const, ref: 'MetaMask/metamask-extension#47777' },
@@ -135,10 +154,16 @@ test('run results decide the rule kind', () => {
     kind: 'none',
     reason: 'antipatterns.md#missing-data recorded a FINDING in run r1: the rule worked',
   });
-  assert.equal(decideLearningKind({ kind: 'retire', family }, rows('PASS')).kind, 'edit');
-  assert.equal(decideLearningKind({ kind: 'edit', family }, rows('PASS')).kind, 'edit');
-  assert.deepEqual(decideLearningKind({ kind: 'retire', family }, []), {
+  // A retire turns on a rejected finding, which no row records: its claim stands.
+  assert.deepEqual(decideLearningKind({ kind: 'retire', family }, rows('PASS')), {
     kind: 'retire',
+    basis: 'claim',
+    reason: 'No run result decides this kind',
+  });
+  assert.equal(decideLearningKind({ kind: 'retire', family }, rows('FINDING')).kind, 'retire');
+  assert.equal(decideLearningKind({ kind: 'edit', family }, rows('PASS')).kind, 'edit');
+  assert.deepEqual(decideLearningKind({ kind: 'edit', family }, []), {
+    kind: 'edit',
     basis: 'claim',
     reason: 'No review row records antipatterns.md#missing-data',
   });

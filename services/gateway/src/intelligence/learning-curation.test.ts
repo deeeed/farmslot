@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   curateLearningEntries,
-  firstJsonArray,
+  outcomeList,
   setLearningEvaluatorForTest,
   validateCuration,
 } from './learning-curation.js';
@@ -158,14 +158,19 @@ test('each lesson gets exactly one outcome when the reply adds, repeats or omits
   );
 });
 
-test('the reply is read from its first complete JSON array', () => {
+test('the reply is read from its first complete JSON array of outcomes', () => {
   const rows = [{ id: 'L1', outcome: 'drop', reason: 'quote "a]b" and [c' }];
+  const kept = { id: 'L2', outcome: 'keep', observed: [{ runId: 'r', line: 1 }] };
   for (const text of [
     JSON.stringify(rows),
     `\`\`\`json\n${JSON.stringify(rows)}\n\`\`\``,
     `Here are the outcomes:\n${JSON.stringify(rows)}\nNote: [L1] was a setup tip.`,
     `[not json] ${JSON.stringify(rows)}`,
+    `Checked [1, 2] first. ${JSON.stringify(rows)}`,
   ])
-    assert.deepEqual(firstJsonArray(text), rows);
-  assert.throws(() => firstJsonArray('no outcomes'), /no JSON array/);
+    assert.deepEqual(outcomeList(text), rows);
+  // Cut off at the token limit: the outer array never closes, and the inner list is no answer.
+  const cut = `[${JSON.stringify(rows[0])}, ${JSON.stringify(kept).slice(0, -1)}`;
+  assert.throws(() => outcomeList(cut), /no JSON array of outcomes/);
+  assert.throws(() => outcomeList('no outcomes'), /no JSON array of outcomes/);
 });

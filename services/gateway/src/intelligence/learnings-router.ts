@@ -88,15 +88,15 @@ export interface LearningsEntry {
 
 // ─── Splitting ───
 
+/** `- None` and "Nothing new." say there is nothing to report; they are not lessons. */
+const NOTHING_TO_REPORT = /^(?:[-*] )?(?:none|nothing new)\.?$/i;
+
 /**
  * Split a (possibly family-composed, multi-section) learnings blob into
  * routable entries. Entries are top-level `- ` bullets with their continuation
  * lines; a section with prose but no bullets becomes one whole-block entry so
- * malformed content is held, not dropped. `- None` and "Nothing new." are skipped.
+ * malformed content is held, not dropped.
  */
-/** `- None` and "Nothing new." say there is nothing to report; they are not lessons. */
-const NOTHING_TO_REPORT = /^(?:[-*] )?(?:none|nothing new)\.?$/i;
-
 export function splitLearningsEntries(blob: string): LearningsEntry[] {
   // Workers on other platforms may hand over CRLF content; normalize so no
   // entry text carries embedded carriage returns into prompts or cards.
@@ -322,7 +322,7 @@ export function knowledgeDestinationKey(destination: KnowledgeDestination): stri
 }
 
 interface ProjectKnowledgeConfig {
-  vars?: { knowledge_destination?: unknown };
+  vars?: { knowledge_destination?: unknown; knowledge_clients?: unknown };
   static_review?: { support?: { libraries?: Array<{ name?: unknown }> } };
   reference_repos?: Record<string, { repo_url?: unknown }>;
 }
@@ -335,14 +335,33 @@ interface ProjectKnowledgeConfig {
  * anti-pattern file. Null when neither is configured — the caller holds the
  * entry visibly instead of inventing a path.
  */
+/** `vars.knowledge_clients`: which client each evidence repo belongs to, when the project says. */
+function knowledgeClients(projectJson: ProjectKnowledgeConfig): Record<string, string> | undefined {
+  const raw = projectJson.vars?.knowledge_clients;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const clients = Object.fromEntries(
+    Object.entries(raw).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(entry[1]),
+    ),
+  );
+  return Object.keys(clients).length ? clients : undefined;
+}
+
 export function knowledgeDestinationFromConfig(
   projectJson: ProjectKnowledgeConfig,
 ): KnowledgeDestination | null {
+  const clients = knowledgeClients(projectJson);
   const explicit = projectJson.vars?.knowledge_destination;
   if (explicit && typeof explicit === 'object') {
     const { repo, path } = explicit as { repo?: unknown; path?: unknown };
     if (typeof repo === 'string' && repo.trim() && typeof path === 'string' && path.trim()) {
-      return { repo: repo.trim(), path: path.trim(), source: 'vars.knowledge_destination' };
+      return {
+        repo: repo.trim(),
+        path: path.trim(),
+        source: 'vars.knowledge_destination',
+        ...(clients ? { clients } : {}),
+      };
     }
     return null;
   }
@@ -355,6 +374,7 @@ export function knowledgeDestinationFromConfig(
     path: DEFAULT_LIBRARY_ANTIPATTERNS_PATH,
     library: library.trim(),
     source: 'static_review',
+    ...(clients ? { clients } : {}),
   };
 }
 
@@ -563,7 +583,7 @@ export async function routeLearnings(
 ): Promise<RoutedLearnings> {
   // A v1 file routes by its kinds; a legacy file goes through the classifier as before.
   const parsed = parseLearnings(learnings);
-  const checked = new Map<string, LearningV1Entry>();
+  const checked = new Map<string, LearningV1Entry & { kind: LearningRuleKind }>();
   const holds: LearningsHold[] = [];
   let buckets: ClassifiedLearnings;
   if (parsed.version === 1) {
@@ -580,7 +600,7 @@ export async function routeLearnings(
         });
       else {
         buckets.domain.push(routed);
-        checked.set(entry.source, entry);
+        checked.set(entry.source, { ...entry, kind: entry.kind });
       }
     }
   } else buckets = await classifyLearningsEntries(splitLearningsEntries(learnings));
@@ -605,7 +625,7 @@ export async function routeLearnings(
   const gated = new Map<LearningsEntry, CuratedLearning>();
   const targets = new Map<
     LearningsEntry,
-    { kind: LearningRuleKind; path: string; section?: string }
+    { kind: LearningRuleKind; basis: 'results' | 'claim'; path: string; section?: string }
   >();
   const ownPrs = ownPullRequests(options.runId ? getRun(options.runId) : undefined);
   const domain = buckets.domain.filter((entry) => {
@@ -633,7 +653,7 @@ export async function routeLearnings(
       holds.push({ entry: entry.text, reason: target.hold });
       return false;
     }
-    targets.set(entry, { kind: decision.kind, ...target });
+    targets.set(entry, { kind: decision.kind, basis: decision.basis, ...target });
     return true;
   });
   const ledger = await readFeedbackLedger();
@@ -670,6 +690,7 @@ export async function routeLearnings(
     reason: result.reason,
     instruction: result.instruction,
     retryable: result.retryable,
+    ...(result.recurrence ? { recurrence: result.recurrence } : {}),
     ...(result.unconfirmed ? { unconfirmed: true as const } : {}),
     citations: result.citations,
     recordedAt: new Date().toISOString(),
@@ -742,7 +763,7 @@ export async function routeLearnings(
     let proposal: LearningsAntipatternDraft['proposal'];
     if (target && lesson) {
       try {
-        proposal = learningRuleProposal(lesson, target.kind, evidence, context.runId, destination);
+        proposal = learningRuleProposal(lesson, target, evidence, context.runId, destination);
       } catch (error) {
         holds.push({
           entry: entry.text,

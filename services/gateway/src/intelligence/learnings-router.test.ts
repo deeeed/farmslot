@@ -636,6 +636,19 @@ for (const failure of ['transport', 'malformed'] as const)
 // records before the model sees it.
 test('a checked (v1) lesson is gated by its own run, its rule results and its target', async (t) => {
   setupProject({ repoKey: 'testrepo' });
+  // The project maps evidence repos to clients; an unmapped repo's new rule goes to the shared file.
+  writeFileSync(
+    path.join(TEST_PROJECT_DIR, 'project.json'),
+    `${JSON.stringify({
+      name: TEST_PROJECT,
+      vars: { knowledge_clients: { 'metamask-mobile': 'mobile' } },
+      static_review: {
+        support: { libraries: [{ name: 'testrepo', root: { env: 'LRN_TEST_LIBRARY_ROOT' } }] },
+      },
+      reference_repos: { testrepo_library: { repo_url: TEST_LIBRARY_REPO } },
+    })}\n`,
+  );
+  invalidateProjectVarsCache(TEST_PROJECT);
   const root = mkdtempSync(path.join(tmpdir(), 'learnings-v1-'));
   const previous = process.env.FARMSLOT_FEEDBACK_LEDGER;
   process.env.FARMSLOT_FEEDBACK_LEDGER = path.join(root, 'ledger.json');
@@ -700,9 +713,17 @@ test('a checked (v1) lesson is gated by its own run, its rule results and its ta
     '  evidence: metamask-mobile app/b.ts:3',
     '  family: antipatterns.md#protocol-abstraction',
     `  ${outside}`,
-    '- retire: The rule passed while a later run found the problem.',
+    '- edit: The rule passed while a later run found the problem.',
     '  evidence: metamask-mobile app/c.ts:3',
     '  family: antipatterns.md#missing-numeric-data-stays-undefined',
+    `  ${outside}`,
+    '- retire: The rule fires on every formatter.',
+    '  evidence: core app/g.ts:3',
+    '  family: antipatterns.md#protocol-abstraction',
+    `  ${outside}`,
+    '- add: A rule for a repo no client owns.',
+    '  evidence: metamask-mobile app/h.ts:2, core app/h.ts:5',
+    '  examined: antipatterns.md#protocol-abstraction',
     `  ${outside}`,
     '- add: No rule checks this mobile test layer.',
     '  evidence: metamask-mobile app/d.test.ts:7',
@@ -723,38 +744,67 @@ test('a checked (v1) lesson is gated by its own run, its rule results and its ta
   const routed = await routeLearnings(TEST_PROJECT, learnings, { runId, context });
 
   assert.deepEqual(evaluated, [
-    '- retire: The rule passed while a later run found the problem.',
+    '- edit: The rule passed while a later run found the problem.',
+    '- retire: The rule fires on every formatter.',
+    '- add: A rule for a repo no client owns.',
     '- add: No rule checks this mobile test layer.',
   ]);
   assert.equal(routed.systemContent, '- workflow: The template names a stale flag.');
-  assert.deepEqual(
-    routed.drafts.map((draft) => ({
+  const drafts = (value: typeof routed) =>
+    value.drafts.map((draft) => ({
       path: draft.targetPath,
       section: draft.targetSection,
       kind: draft.proposal?.kind,
       family: draft.proposal?.family,
-      examined: draft.proposal?.bar?.examined,
+      source: draft.proposal?.source,
+      bar: draft.proposal?.bar,
       delta: draft.proposal?.netRuleDelta,
-    })),
-    [
-      {
-        path: 'review/antipatterns.md',
-        section: 'missing-numeric-data-stays-undefined',
-        kind: 'edit',
-        family: 'missing-numeric-data-stays-undefined',
-        examined: ['missing-numeric-data-stays-undefined'],
-        delta: 0,
-      },
-      {
-        path: 'review/antipatterns.mobile.md',
-        section: undefined,
-        kind: 'add',
-        family: undefined,
-        examined: ['mobile-test-layers'],
-        delta: 1,
-      },
-    ],
-  );
+    }));
+  const expected = [
+    {
+      path: 'review/antipatterns.md',
+      section: 'missing-numeric-data-stays-undefined',
+      kind: 'edit',
+      family: 'missing-numeric-data-stays-undefined',
+      // The rule recorded PASS on the problem: it missed it.
+      source: 'miss',
+      bar: { recurrence: 'recurring', examined: ['missing-numeric-data-stays-undefined'] },
+      delta: 0,
+    },
+    {
+      // A retire turns on a rejected finding no row records: the FINDING row does not decide it.
+      path: 'review/antipatterns.md',
+      section: 'protocol-abstraction',
+      kind: 'retire',
+      family: 'protocol-abstraction',
+      source: 'finding',
+      bar: undefined,
+      delta: -1,
+    },
+    {
+      path: 'review/antipatterns.md',
+      section: undefined,
+      kind: 'add',
+      family: undefined,
+      source: 'finding',
+      bar: { recurrence: 'recurring', examined: ['protocol-abstraction'] },
+      delta: 1,
+    },
+    {
+      path: 'review/antipatterns.mobile.md',
+      section: undefined,
+      kind: 'add',
+      family: undefined,
+      source: 'finding',
+      bar: { recurrence: 'recurring', examined: ['mobile-test-layers'] },
+      delta: 1,
+    },
+  ];
+  assert.deepEqual(drafts(routed), expected);
+  // A second trigger reuses the recorded curations, bar included.
+  const again = await routeLearnings(TEST_PROJECT, learnings, { runId, context });
+  assert.equal(evaluated.length, 4, 'completed curations are reused');
+  assert.deepEqual(drafts(again), expected);
   assert.deepEqual(
     routed.holds.map((hold) => [hold.entry.split('\n')[0], hold.reason.split(';')[0]]),
     [
@@ -764,7 +814,7 @@ test('a checked (v1) lesson is gated by its own run, its rule results and its ta
       ],
       [
         '- edit: A malformed entry.',
-        'Learnings v1: line 28: evidence must be "<repo> <path>:<line>", comma-separated',
+        'Learnings v1: line 36: evidence must be "<repo> <path>:<line>", comma-separated',
       ],
       ['- edit: A requirement is not a rule.', 'requirements.md#order-size is a requirement'],
     ],

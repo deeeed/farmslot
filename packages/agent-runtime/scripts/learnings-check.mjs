@@ -7,25 +7,28 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 let protocol;
+let unavailable;
 try {
   protocol = await import('@farmslot/protocol/contracts/learnings');
 } catch (error) {
-  // A source checkout before @farmslot/protocol has built: nothing to check against.
-  if (error?.code !== 'ERR_MODULE_NOT_FOUND' && error?.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED')
-    throw error;
-  if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME)
-    console.warn(`[agent-runtime] learnings v1 checks unavailable: ${error.message}`);
+  // A warning must never fail a mark or a run, so any load failure (a source checkout before
+  // @farmslot/protocol has built, an older install) only turns the checks off, and says so.
+  unavailable = `learnings v1 checks unavailable: ${error?.code ?? error?.message ?? error}`;
 }
 
 /** The issues of a v1 learnings file, each `line N: ...`; none for a legacy or missing file. */
 export function learningsWarnings(taskDir) {
-  if (!protocol) return [];
   let text;
   try {
     text = readFileSync(path.join(taskDir, 'artifacts', 'learnings.md'), 'utf8');
   } catch (error) {
     if (error?.code === 'ENOENT') return [];
-    throw error;
+    // An unreadable file is the contract's to judge; this check only reports it.
+    return [`learnings.md is unreadable (${error?.code ?? error?.message ?? error})`];
+  }
+  if (!protocol) {
+    if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME) console.warn(`[agent-runtime] ${unavailable}`);
+    return [];
   }
   const parsed = protocol.parseLearnings(text);
   return parsed.version === 1 ? parsed.issues : [];
@@ -38,8 +41,7 @@ export function learningsWarningText(warnings) {
     'LEARNINGS_V1_WARN artifacts/learnings.md (fix it before the run ends; this does not block):',
     ...warnings.map((warning) => `- ${warning}`),
     '',
-    protocol.LEARNINGS_V1_FORMAT,
-    '',
+    ...(protocol ? [protocol.LEARNINGS_V1_FORMAT, ''] : []),
   ].join('\n');
 }
 

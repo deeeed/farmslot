@@ -463,8 +463,9 @@ rule types, and the loop shown there.
 
    The review rows are the `artifacts/review-coverage.json` rows of the lesson's run
    family: each family's PASS or FINDING, named by its pack id or its heading's anchor.
-   Without a row, the claim stands. No retained record yet ties a rejected finding to a
-   family, so that row is not decided here, and the recipe rows are the harness lane's.
+   They decide an `edit`; without a row, the claim stands. No retained record yet ties a
+   rejected finding to a family, so that row is not decided here and a `retire` claim
+   stands; the recipe rows are the harness lane's.
 
 4. **A run never confirms its own lesson.** A confirmation counts only when it points
    outside the lesson's own run: a later run's finding or miss, a merged fix, a rejected
@@ -475,8 +476,9 @@ rule types, and the loop shown there.
 
 5. **Targeting.** The domain comes from the files in `evidence`, not from the project
    that ran. A tightening targets the cited family's file and section; a new rule
-   targets the client file when every evidence repo belongs to one client
-   (`metamask-mobile` → `antipatterns.mobile.md`), else the shared file. Requirements
+   targets the client file when the project maps every evidence repo to one client
+   (`vars.knowledge_clients`, `metamask-mobile` → `mobile` → `antipatterns.mobile.md`),
+   else the shared file. Requirements
    are read for coverage and never edited. A lesson without a clear target is held for
    a person. A kept lesson becomes a `ReviewRuleProposal`, validated by
    `parseReviewRuleProposal` and recorded with its curation receipt.

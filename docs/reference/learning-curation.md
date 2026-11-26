@@ -40,17 +40,19 @@ are held for the recipe library owner. Before the model sees a rule-kind entry:
 
 - a confirmation that names the source run, its own PR, or `none` records a drop with
   `unconfirmed: true`, never promoted;
-- a cited family whose review row (`artifacts/review-coverage.json` of the run's family)
-  recorded FINDING records a drop: the rule worked; one that recorded PASS makes the
-  lesson an `edit`;
+- an `edit` whose cited family's review row (`artifacts/review-coverage.json` of the run's
+  family) recorded FINDING records a drop: the rule worked; one that recorded PASS stays
+  an `edit` from a miss. A `retire` claim stands, since no row records a rejected finding.
+  The source run's rows are required; a family run whose rows cannot be read is skipped;
 - the target is the cited family's file and section, or for an `add` the client file
-  when every evidence repo maps to one client, else the shared file. A requirement, a
-  missing file or a missing section is a hold.
+  when `vars.knowledge_clients` maps every evidence repo to one client, else the shared
+  file. A requirement, a missing file or a missing section is a hold.
 
 The curator also MUST NOT count the source run's own review as confirmation of any
 lesson; an accepted PR comment fix from that run still counts. Each entry is sent with
 an id and its outcome is matched by id: a reply that omits, repeats or adds entries
-gives only the affected entries a retryable drop. A kept v1 entry records the
+gives only the affected entries a retryable drop. The reply is its first JSON array of
+records that carry an `id`. A keep records its recurrence bar on its receipt. A kept v1 entry records the
 `ReviewRuleProposal` it became, validated by `parseReviewRuleProposal`, on its receipt
 and its draft. A peer run whose evidence cannot be read is skipped with a warning; the
 source run's evidence stays required.

@@ -23,9 +23,10 @@ function sectionAnchors(text: string): Set<string> {
 
 /**
  * A tightening targets the cited family's file and section. A new rule targets
- * the client file when every evidence repo belongs to one client (`metamask-mobile`
- * → `antipatterns.mobile.md`), else the shared file. Requirements are read for
- * coverage and never edited; a lesson without a clear target is held for a person.
+ * the client file when the project maps every evidence repo to one client
+ * (`vars.knowledge_clients`, `metamask-mobile` → `mobile` → `antipatterns.mobile.md`),
+ * else the shared file. Requirements are read for coverage and never edited; a
+ * lesson without a clear target is held for a person.
  */
 export function learningTarget(
   entry: LearningV1Entry,
@@ -47,12 +48,11 @@ export function learningTarget(
     return { path: rules.path, section: entry.family.anchor };
   }
   const base = path.posix.basename(destination.path, '.md');
-  const clientFiles = new Set(
-    (entry.evidence ?? []).map((ref) => file(`${base}.${ref.repo.split('-').pop()}.md`)),
-  );
-  const [client] = clientFiles;
-  if (clientFiles.size === 1 && library.some((doc) => doc.path === client))
-    return { path: client! };
+  const clients = new Set((entry.evidence ?? []).map((ref) => destination.clients?.[ref.repo]));
+  const [client] = clients;
+  const clientFile = client && file(`${base}.${client}.md`);
+  if (clients.size === 1 && clientFile && library.some((doc) => doc.path === clientFile))
+    return { path: clientFile };
   return { path: destination.path };
 }
 
@@ -63,11 +63,18 @@ export function learningTarget(
  */
 export function learningRuleProposal(
   entry: LearningV1Entry,
-  kind: LearningRuleKind,
-  curated: CuratedLearning,
+  decision: { kind: LearningRuleKind; basis: 'results' | 'claim' },
+  curated: Pick<CuratedLearning, 'instruction' | 'recurrence'>,
   runId: string,
   destination: KnowledgeDestination,
 ): ReviewRuleProposal {
+  const { kind } = decision;
+  let recurrence: CuratedLearning['recurrence'];
+  if (kind !== 'retire') {
+    // A receipt from before the bar was recorded cannot say which bar the keep met.
+    recurrence = curated.recurrence;
+    if (!recurrence) throw new Error('the curation recorded no recurrence bar');
+  }
   const examined =
     kind === 'add'
       ? (entry.examined ?? []).map((ref) => ref.anchor)
@@ -79,15 +86,14 @@ export function learningRuleProposal(
     pack: destination.library ?? path.posix.basename(destination.repo, '.git'),
     kind,
     ...(kind === 'add' ? {} : { family: entry.family?.anchor }),
-    source: 'finding',
+    // A rule that recorded PASS on the problem missed it.
+    source: decision.basis === 'results' ? 'miss' : 'finding',
     evidence: (entry.evidence ?? []).map((ref) => ({
       ref: `${ref.repo} (run ${runId})`,
       location: `${ref.path}:${ref.line}${ref.end ? `-${ref.end}` : ''}`,
     })),
     confirmation: entry.confirmation?.kind === 'fix' ? 'fix' : 'second-check',
-    ...(kind === 'retire'
-      ? {}
-      : { bar: { recurrence: curated.recurrence ?? 'recurring', examined } }),
+    ...(recurrence ? { bar: { recurrence, examined } } : {}),
     change: curated.instruction ?? entry.text,
     netRuleDelta: kind === 'add' ? 1 : kind === 'retire' ? -1 : 0,
     decision: { status: 'pending' },

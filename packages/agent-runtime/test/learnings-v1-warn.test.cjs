@@ -62,6 +62,15 @@ test('completion warns on v1 issues and never fails the run on format', (t) => {
   assert.match(checked.stderr, /LEARNINGS_V1_WARN/);
 });
 
+test('an unreadable learnings file is reported, and the contract still passes', (t) => {
+  const dir = task(undefined);
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, 'artifacts', 'learnings.md'));
+  const checked = run(contract, [dir]);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.match(checked.stderr, /- learnings\.md is unreadable \(EISDIR\)/);
+});
+
 test('a valid v1 file, a legacy file and a task without learnings stay quiet', (t) => {
   for (const learnings of [
     '# Learnings v1\n\n- None\n',

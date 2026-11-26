@@ -74,7 +74,8 @@ export type LearningConfirmationRef =
   | { kind: 'fix'; ref: string };
 
 export interface LearningV1Entry {
-  kind: LearningKind;
+  /** Null when the written kind is unknown; `source` keeps what was written. */
+  kind: LearningKind | null;
   /** The one-line lesson after `- <kind>: `. */
   text: string;
   /** 1-based line of the entry's bullet. */
@@ -132,7 +133,6 @@ criterion, searched   one line each
 A confirmation counts only when it points outside this run: another run's record, or a
 merged PR other than this run's. Your own report or review is none.`;
 
-const KIND = new Set<string>(LEARNING_KINDS);
 const FIELD = new Set<string>(LEARNING_FIELDS);
 const ANCHOR = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const FAMILY = /^([\w.-]+\.md)#(\S+)$/;
@@ -213,15 +213,22 @@ function readField(entry: LearningV1Entry, name: LearningField, value: string): 
   }
 }
 
+/** `#Learnings v1`, `# Learnings V1`: meant as the v1 header, but not written as it. */
+const NEAR_HEADER = /^#\s*learnings\s*v\s*1\s*$/i;
+
 /**
  * Parses a learnings file. A file whose first non-blank line is not
- * `# Learnings v1` is legacy and is not judged.
+ * `# Learnings v1` is legacy and is not judged; a near miss of the header is
+ * read as v1 and reported.
  */
 export function parseLearnings(text: string): ParsedLearnings {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const first = lines.findIndex((line) => line.trim());
-  if (first === -1 || lines[first]!.trim() !== LEARNINGS_V1_HEADER) return { version: 'legacy' };
+  const header = first === -1 ? '' : lines[first]!.trim();
+  if (header !== LEARNINGS_V1_HEADER && !NEAR_HEADER.test(header)) return { version: 'legacy' };
   const issues: string[] = [];
+  if (header !== LEARNINGS_V1_HEADER)
+    issues.push(`line ${first + 1}: write the header exactly as "${LEARNINGS_V1_HEADER}"`);
   const entries: (LearningV1Entry & { seen: Set<string>; lines: string[] })[] = [];
   let none = 0;
   let current: (typeof entries)[number] | undefined;
@@ -236,8 +243,9 @@ export function parseLearnings(text: string): ParsedLearnings {
     }
     const bullet = /^- ([a-z-]+): (\S.*)$/.exec(line);
     if (bullet) {
+      const kind = LEARNING_KINDS.find((known) => known === bullet[1]) ?? null;
       current = {
-        kind: bullet[1] as LearningKind,
+        kind,
         text: bullet[2]!.trim(),
         line: index + 1,
         source: '',
@@ -245,12 +253,12 @@ export function parseLearnings(text: string): ParsedLearnings {
         seen: new Set(),
         lines: [line],
       };
-      if (!KIND.has(bullet[1]!))
+      if (!kind)
         current.issues.push(`${at}: unknown kind "${bullet[1]}"; use ${LEARNING_KINDS.join(', ')}`);
       entries.push(current);
       continue;
     }
-    const field = /^ {2}([a-z]+): (\S.*)$/.exec(line);
+    const field = /^( +)([a-z]+): (\S.*)$/.exec(line);
     if (!current || !field) {
       issues.push(
         `${at}: expected "- <kind>: <lesson>", an indented "<field>: <value>" or "- None"`,
@@ -259,14 +267,14 @@ export function parseLearnings(text: string): ParsedLearnings {
       continue;
     }
     current.lines.push(line);
-    const name = field[1]!;
-    const value = field[2]!;
+    // A field indented other than two spaces is still the entry's; reporting it keeps the
+    // fields after it from reading as missing.
+    if (field[1] !== '  ') current.issues.push(`${at}: indent fields two spaces`);
+    const name = field[2]!;
+    const value = field[3]!;
     if (!FIELD.has(name)) current.issues.push(`${at}: unknown field "${name}"`);
     else if (current.seen.has(name)) current.issues.push(`${at}: duplicate field "${name}"`);
-    else if (
-      KIND.has(current.kind) &&
-      !LEARNING_KIND_FIELDS[current.kind].includes(name as LearningField)
-    )
+    else if (current.kind && !LEARNING_KIND_FIELDS[current.kind].includes(name as LearningField))
       current.issues.push(`${at}: ${name} does not belong to a ${current.kind} entry`);
     else {
       current.seen.add(name);
@@ -275,7 +283,7 @@ export function parseLearnings(text: string): ParsedLearnings {
     }
   }
   const parsed = entries.map(({ seen, lines: entryLines, ...entry }) => {
-    if (KIND.has(entry.kind))
+    if (entry.kind)
       for (const name of LEARNING_KIND_FIELDS[entry.kind])
         if (!seen.has(name)) entry.issues.push(`line ${entry.line}: ${entry.kind} needs ${name}`);
     return { ...entry, source: entryLines.join('\n') };
@@ -288,7 +296,7 @@ export function parseLearnings(text: string): ParsedLearnings {
   return { version: 1, none: none > 0, entries: parsed, issues };
 }
 
-export const isLearningRuleKind = (kind: LearningKind): kind is LearningRuleKind =>
+export const isLearningRuleKind = (kind: LearningKind | null): kind is LearningRuleKind =>
   kind === 'add' || kind === 'edit' || kind === 'retire';
 
 /**
@@ -302,7 +310,8 @@ export function learningConfirmationIsOutside(
   own: { runId: string; prs?: readonly string[] },
 ): boolean {
   if (!confirmation || confirmation.kind === 'none') return false;
-  if (confirmation.kind === 'run') return !own.runId.startsWith(confirmation.runId);
+  if (confirmation.kind === 'run')
+    return !own.runId.toLowerCase().startsWith(confirmation.runId.toLowerCase());
   const ref = confirmation.ref.toLowerCase();
   return !(own.prs ?? []).some((pr) =>
     pr.startsWith('#') ? ref.endsWith(pr) : ref === pr.toLowerCase(),
@@ -323,17 +332,18 @@ export type LearningKindDecision =
   | { kind: LearningKind; basis: 'results' | 'claim'; reason: string };
 
 /**
- * The agent's kind is a claim; run results decide (Amendment 4, rule 3). For
- * the rule kinds, the review rows of the lesson's run decide: a cited family
+ * The agent's kind is a claim; run results decide (Amendment 4, rule 3). An
+ * edit's cited family decides it from the review rows of the lesson's run: one
  * that recorded a FINDING worked, and one that recorded PASS while the problem
- * was confirmed elsewhere needs an edit. Without a row the claim stands. The
- * recipe kinds are decided by the recipe library's owner.
+ * was confirmed elsewhere needs the edit. Without a row the claim stands. A
+ * retire turns on a rejected finding, which no retained row records, so its
+ * claim stands; the recipe kinds are decided by the recipe library's owner.
  */
 export function decideLearningKind(
-  entry: Pick<LearningV1Entry, 'kind' | 'family'>,
+  entry: Pick<LearningV1Entry, 'kind' | 'family'> & { kind: LearningKind },
   results: readonly LearningRuleResult[],
 ): LearningKindDecision {
-  if (!isLearningRuleKind(entry.kind) || entry.kind === 'add' || !entry.family)
+  if (entry.kind !== 'edit' || !entry.family)
     return { kind: entry.kind, basis: 'claim', reason: 'No run result decides this kind' };
   const ref = `${entry.family.file}#${entry.family.anchor}`;
   const rows = results.filter((row) => row.family === entry.family!.anchor);

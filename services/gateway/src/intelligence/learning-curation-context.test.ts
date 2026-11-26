@@ -160,6 +160,23 @@ test('curation reads configured shared/overlay rules and retained evidence after
     true,
   );
 
+  // The source run's own review rows are required: unreadable rows would leave every kind
+  // claim unchecked.
+  const broken = createRun({ project, flowType: 'fix-bug', ticketOrPr: 'BROKEN-ROWS-1' });
+  t.after(async () => {
+    updateRun(broken.id, { status: 'cancelled' });
+    await deleteRun(broken.id);
+  });
+  const brokenTask = path.join(root, 'broken-task');
+  await mkdir(path.join(brokenTask, 'artifacts'), { recursive: true });
+  await writeFile(path.join(brokenTask, 'TASK.md'), '# Broken');
+  await writeFile(path.join(brokenTask, 'artifacts/review-coverage.json'), '{unreadable');
+  updateRun(broken.id, { taskFile: path.join(brokenTask, 'TASK.md'), status: 'done' });
+  assert.match(
+    (await loadLearningCurationContext(project, destination, broken.id)).unavailable ?? '',
+    /Curation evidence unavailable: .*JSON/,
+  );
+
   const missing = await loadLearningCurationContext(
     project,
     { ...destination, repo: 'git@github.com:example/absent.git' },

@@ -1664,6 +1664,8 @@ export interface KnowledgeDestination {
   path: string;
   library?: string;
   source: 'vars.knowledge_destination' | 'static_review';
+  /** `vars.knowledge_clients`: evidence repo → client, whose rules file is `<base>.<client>.md`. */
+  clients?: Record<string, string>;
 }
 
 export interface LearningsDraftPayload {

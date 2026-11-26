@@ -272,6 +272,10 @@ export async function loadLearningCurationContext(
       try {
         results.push(...(await reviewRowsForRun(run)));
       } catch (error) {
+        // As with evidence: the source run's rows are required, since without them every
+        // kind claim would stand unchecked; a family run whose bundle retention pruned is
+        // skipped.
+        if (run.id === runId) throw error;
         console.warn(
           `[learning-curation] Review rows of run ${run.id} unavailable: ${error instanceof Error ? error.message : String(error)}`,
         );
