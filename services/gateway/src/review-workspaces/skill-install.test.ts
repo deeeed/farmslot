@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -118,6 +119,18 @@ test('a skill review links its writable round folders into the read-only checkou
     run();
     run();
     run({ verifyOnly: true });
+    const saved = path.join(root, 'saved-install');
+    renameSync(existing, saved);
+    mkdirSync(existing);
+    writeFileSync(path.join(existing, 'replacement.txt'), 'preserve the replacement');
+    assert.throws(() => run({ verifyOnly: true }), /destination identity changed/);
+    assert.throws(() => run({ action: 'cleanup' }), /destination identity changed/);
+    assert.equal(
+      readFileSync(path.join(existing, 'replacement.txt'), 'utf8'),
+      'preserve the replacement',
+    );
+    rmSync(existing, { recursive: true });
+    renameSync(saved, existing);
     const link = path.join(checkout, 'temp/tasks');
     assert(lstatSync(link).isSymbolicLink());
     assert.equal(readlinkSync(link), '../../review-tasks');

@@ -353,15 +353,18 @@ async function startReviewTask(){
   if(!list().includes(name)||roundPath(name)!==request.boundFolder)
    throw Error('Recorded review skill round is unavailable');
   directory(request.boundFolder);
+  assertWorkspaceOperationCurrent();
   write(receipt,{generation:input.generation,baseline:list()});
   return {stdout:'folder: '+path.posix.join('temp/tasks','review','pr-'+request.pr,name),stderr:''};
  }
  if(previous&&previous.generation<input.generation){
   // The gateway has no bound round for this run. Discard only new rounds left by its older start.
   const baseline=new Set(previous.baseline);
+  assertWorkspaceOperationCurrent();
   for(const name of list())if(!baseline.has(name))remove(name);
  }
  const baseline=previous?.generation===input.generation?previous.baseline:list();
+ assertWorkspaceOperationCurrent();
  write(receipt,{generation:input.generation,baseline});
  const result=await runOwnedCommand(['-c',request.command],'start-review-task','bash');
  assertWorkspaceOperationCurrent();
@@ -482,6 +485,7 @@ function finishCleanup() {
   if(input.action==='start-review-task'){
     const previousPath=claim();
     await recover(previousPath);
+    assertWorkspaceOperationCurrent();
     const output=await startReviewTask();
     write(path.join(operationPath,'state.json'),{state:'complete'});
     process.stdout.write(JSON.stringify({state:'review-task',...output}));
