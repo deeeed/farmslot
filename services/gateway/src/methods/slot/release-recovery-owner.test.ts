@@ -124,6 +124,10 @@ const row = {
 await writeFile(path.join(root, 'status.json'), JSON.stringify({ slots: [row] }));
 const { slotRelease, slotReleasePreflight } = await import('./release.js');
 
+// Finish async setup before registering tests so the shared fixture stays live for every case.
+const { replaySlotReclaimCheck } = await import('../run/replay-step.js');
+const { trackCleanupCommand } = await import('../../core/cleanup-scope.js');
+
 test('a recovery continuation keeps the terminal owner of its borrowed release fence', async () => {
   await assert.rejects(
     slotRelease({ slotId: 'owned-recovery', preserveAgents: true }, () => {}, {
@@ -142,8 +146,6 @@ test('a recovery continuation keeps the terminal owner of its borrowed release f
   assert.equal(reachedCleanup, true);
 });
 
-const { replaySlotReclaimCheck } = await import('../run/replay-step.js');
-const { trackCleanupCommand } = await import('../../core/cleanup-scope.js');
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
