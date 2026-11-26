@@ -32,6 +32,7 @@ import {
   bindWorkspaceReviewResult,
   rereviewWorkspaceReviewer,
 } from '../../review-workspaces/continuity.js';
+import { configuresReviewSkill } from '../../review-workspaces/skills.js';
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
@@ -90,6 +91,9 @@ async function currentWorkspaceTemplate(run: Run, machine: string) {
     loadProjectConfig(run.project),
   ]);
   const templateId = project?.staticReview?.templateId;
+  // A review in its skill's domain without a configured template runs the skill alone.
+  if (!templateId && configuresReviewSkill(project?.staticReview?.support, run.domain))
+    return undefined;
   if (!templateId)
     throw new Error('Workspace re-review requires the project canonical static-review template');
   return resolveWorkspaceReviewTemplate({

@@ -329,6 +329,7 @@ export async function allocateReviewWorkspace(
             }
           : {}),
       ...(originalBinding?.support ? { support: originalBinding.support } : {}),
+      ...(originalBinding?.reviewTask ? { reviewTask: originalBinding.reviewTask } : {}),
       ...(!originalBinding
         ? {
             retentionDays:

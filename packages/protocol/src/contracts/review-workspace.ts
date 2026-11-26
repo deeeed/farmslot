@@ -140,6 +140,8 @@ export interface ReviewTaskRound {
   /** The skill revision `review-task.mjs` recorded. */
   revision: string;
   startedAt: string;
+  /** The attempt opened by the skill's initial checklist mark. */
+  attemptId: string;
 }
 
 /** Trusted binding created by the execution runtime, never supplied by a caller. */

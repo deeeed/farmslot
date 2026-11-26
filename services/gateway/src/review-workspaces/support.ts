@@ -42,6 +42,8 @@ import { REVIEW_SKILL_INSTALL_SCRIPT } from './skill-install.js';
 import {
   collectReviewWorkspaceSupport,
   type FrozenReviewWorkspaceSupport,
+  reviewSkillFor,
+  reviewTaskRoot,
   reviewWorkspaceSupportEnvironment,
   verifyReviewWorkspaceSupport,
 } from './skills.js';
@@ -479,6 +481,8 @@ export async function ensureReviewWorkspaceSupport(
         workspace: {
           ...run.reviewWorkspace,
           support: undefined,
+          // Recorded at task materialization, after support admission (ADR-058 Amendment 4).
+          reviewTask: undefined,
           cleanedAt: undefined,
           retainedAt: undefined,
           retainedUntil: undefined,
@@ -627,6 +631,12 @@ export async function ensureReviewWorkspaceSupport(
       JSON.stringify({
         checkout: current.reviewWorkspace!.checkoutPath,
         skills: binding.skills,
+        ...(reviewSkillFor({
+          domain: current.domain,
+          reviewWorkspace: { ...current.reviewWorkspace!, support: binding },
+        })
+          ? { reviewTasks: reviewTaskRoot(current.reviewWorkspace!) }
+          : {}),
         verifyOnly:
           current.agentContexts?.some(
             (context) =>

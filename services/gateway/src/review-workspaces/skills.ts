@@ -381,14 +381,71 @@ export function reviewWorkspaceCommandEnvOptions(
   return {
     domain,
     overrides: support
-      ? Object.fromEntries(
-          Object.entries(support.environment).map(([name, value]) => [
-            name,
-            bindReviewWorkspaceSupportValue(value, support),
-          ]),
-        )
+      ? {
+          ...Object.fromEntries(
+            Object.entries(support.environment).map(([name, value]) => [
+              name,
+              bindReviewWorkspaceSupportValue(value, support),
+            ]),
+          ),
+          ...(workspace.reviewTask ? { RECIPE_RUNTIME_DIR: REVIEW_TASK_RUNTIME_DIR } : {}),
+        }
       : undefined,
   };
+}
+
+// The harness requires a checkout-relative journal directory. This resolves into the writable rounds.
+export const REVIEW_TASK_RUNTIME_DIR = 'temp/tasks/.runtime';
+
+type InstalledReviewSkill = ReviewWorkspaceSupportBinding['skills'][number] & {
+  install: NonNullable<ReviewWorkspaceSupportBinding['skills'][number]['install']>;
+};
+
+/**
+ * ADR-058 Amendment 4: the installed review skill whose round folder is this run's review.
+ * Only a run in the skill's own domain (`<domain>/<skill>`) uses it; any other review of
+ * the project keeps the configured static template.
+ */
+export function reviewSkillFor(
+  run: Pick<Run, 'domain' | 'reviewWorkspace'>,
+): InstalledReviewSkill | undefined {
+  return run.reviewWorkspace?.support?.skills.find(
+    (skill): skill is InstalledReviewSkill =>
+      Boolean(run.domain) && skill.install?.include.split('/')[0] === run.domain,
+  );
+}
+
+/** The same choice from configuration, before a support binding exists (admission). */
+export function configuresReviewSkill(
+  support: ReviewWorkspaceSupportConfig | undefined,
+  domain: string | null | undefined,
+): boolean {
+  return Boolean(
+    domain &&
+    support?.skills?.some((skill) => skill.install && skill.subpath?.split('/')[1] === domain),
+  );
+}
+
+/**
+ * The writable home of a skill review's round folders: `runs/<workspaceId>/review-tasks`, a
+ * sibling of the read-only checkout that `<checkout>/temp/tasks` links to.
+ */
+export function reviewTaskRoot(
+  workspace: Pick<NonNullable<Run['reviewWorkspace']>, 'checkoutPath'>,
+) {
+  return path.posix.join(path.posix.dirname(workspace.checkoutPath), 'review-tasks');
+}
+
+/** The reviewer's writable roots. The task stays first: the sandbox puts its temp dir there. */
+export function reviewWorkspaceWritableRoots(
+  run: Pick<Run, 'domain'> & { reviewWorkspace: NonNullable<Run['reviewWorkspace']> },
+): string[] {
+  const workspace = run.reviewWorkspace;
+  return [
+    workspace.taskPath,
+    workspace.artifactPath,
+    ...(reviewSkillFor(run) ? [reviewTaskRoot(workspace)] : []),
+  ];
 }
 
 /** Both launch transports grant the same frozen source and reference inputs. */

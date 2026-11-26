@@ -623,6 +623,7 @@ export async function planRunCreation(
           effort: params.effort,
           transport: params.transport,
           nativeProfile: params.nativeProfile,
+          domain: params.domain,
         },
         reviewOwner().ownerId,
         options.replanningRunId,
@@ -658,7 +659,8 @@ export async function planRunCreation(
     );
   }
   let executionTemplateSnapshot: Run['executionTemplate'];
-  if (workspaceAdmission) {
+  // A review in its skill's domain without a configured template runs the skill alone.
+  if (workspaceAdmission && params.executionTemplateId) {
     executionTemplateSnapshot = await resolveWorkspaceReviewTemplate({
       project: params.project,
       pool: workspaceAdmission.pool,
@@ -885,6 +887,7 @@ export async function planRunCreation(
         effort: params.effort,
         transport: params.transport,
         nativeProfile: params.nativeProfile,
+        domain: params.domain,
       },
       reviewOwner().ownerId,
       options.replanningRunId,

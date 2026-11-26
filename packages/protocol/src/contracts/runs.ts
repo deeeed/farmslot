@@ -418,7 +418,10 @@ export type RunReviewResult = Pick<
   | 'reviewSnapshot'
   | 'artifactManifest'
   | 'reviewInputArtifactPaths'
->;
+> & {
+  /** The review skill's round that produced this result (ADR-058 Amendment 4). */
+  reviewTask?: { round: number; mode: 'cold' | 'warm'; changedFiles?: string[] };
+};
 
 export type PublicationTarget = 'draft' | 'ready';
 export type PublicationStatus =
