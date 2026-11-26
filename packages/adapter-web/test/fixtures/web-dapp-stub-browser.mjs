@@ -227,7 +227,7 @@ function serveCdp(socket) {
     if (method === 'Target.getTargets') {
       result = {
         targetInfos:
-          committedAppUrl && mode !== 'reuse-closed'
+          committedAppUrl
             ? [{ targetId: 'APP', type: 'page', url: committedAppUrl }]
             : mode === 'restored'
               ? [{ targetId: 'OLD', type: 'page', url: `${appOrigin}/` }]
@@ -236,7 +236,7 @@ function serveCdp(socket) {
     } else if (method === 'Target.attachToTarget' && params.targetId === 'APP') {
       result = { sessionId: 'SREUSE' };
     } else if (method === 'Runtime.evaluate' && sessionId === 'SREUSE') {
-      result = { result: { type: 'boolean', value: mode !== 'reuse-error' } };
+      result = { result: { type: 'boolean', value: true } };
     } else if (method === 'Target.createTarget') {
       result = { targetId: createdTargets++ === 0 ? 'APP' : 'RESOLVER' };
     } else if (method === 'Page.getFrameTree') {

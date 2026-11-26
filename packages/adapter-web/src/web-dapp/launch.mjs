@@ -294,33 +294,27 @@ async function withBrowserClient(cdpPort, callback, timeoutMs = 15000) {
   }
 }
 
-async function hasHealthyAppPage(cdpPort, appOrigin) {
-  return withBrowserClient(
-    cdpPort,
-    async (client) => {
-      const { targetInfos } = await client.send('Target.getTargets');
-      const page = targetInfos.find(
-        (target) => target.type === 'page' && isAppUrl(target.url, appOrigin),
-      );
-      if (!page) return false;
-      const { sessionId } = await client.send('Target.attachToTarget', {
-        targetId: page.targetId,
-        flatten: true,
-      });
-      const { result } = await client.send(
-        'Runtime.evaluate',
-        {
-          // Next can keep the requested URL when it replaces the app with its error document.
-          expression:
-            "!document.documentURI.startsWith('chrome-error:') && document.documentElement?.id !== '__next_error__'",
-          returnByValue: true,
-        },
-        sessionId,
-      );
-      return result?.value === true;
-    },
-    5000,
+export async function hasHealthyAppPage(client, appOrigin) {
+  const { targetInfos } = await client.send('Target.getTargets');
+  const page = targetInfos.find(
+    (target) => target.type === 'page' && isAppUrl(target.url, appOrigin),
   );
+  if (!page) return false;
+  const { sessionId } = await client.send('Target.attachToTarget', {
+    targetId: page.targetId,
+    flatten: true,
+  });
+  const { result } = await client.send(
+    'Runtime.evaluate',
+    {
+      // Next can keep the requested URL when it replaces the app with its error document.
+      expression:
+        "!document.documentURI.startsWith('chrome-error:') && document.documentElement?.id !== '__next_error__'",
+      returnByValue: true,
+    },
+    sessionId,
+  );
+  return result?.value === true;
 }
 
 export function backgroundWindowParams(url, placement) {
@@ -567,7 +561,10 @@ export async function launchWebDappBrowser(
     previous.networkEnforcement?.fingerprint === enforcementFingerprint &&
     ownsProcess('browser', previous.browserPid, runtime) &&
     ownsProcess('wallet-host', previous.hostPid, runtime);
-  if (reusable && (await hasHealthyAppPage(cdpPort, appOrigin))) {
+  if (
+    reusable &&
+    (await withBrowserClient(cdpPort, (client) => hasHealthyAppPage(client, appOrigin), 5000))
+  ) {
     log(`reusing browser pid ${previous.browserPid} (${signer}, ${account.name})`);
     const state = { ...previous, slowMoMs };
     if (previous.slowMoMs !== slowMoMs)
