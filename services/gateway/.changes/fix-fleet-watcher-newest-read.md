@@ -1,0 +1,1 @@
+- The status file watcher no longer broadcasts a fleet read that a newer read overtook, so state-change listeners never get an older slot binding after a newer one.

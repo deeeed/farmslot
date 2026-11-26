@@ -841,6 +841,21 @@ export function stateChangeHandlerCountForTests(): number {
   return changeHandlers.length;
 }
 
+/**
+ * A read overtaken by a newer read, a commit or an overlay change returns its own,
+ * older snapshot and leaves the cache to the newer one (readers tag it with its older
+ * revisions). The file watcher broadcasts what it reads, so it reads again until its
+ * read is the newest: state-change handlers never get a fleet older than the cache.
+ */
+async function loadNewestFleetStatus(): Promise<FleetStatus> {
+  for (;;) {
+    // loadFleetStatus(true) takes the next version synchronously, before its first await.
+    const version = fleetReadVersion + 1;
+    const fleet = await loadFleetStatus(true);
+    if (version === fleetReadVersion) return fleet;
+  }
+}
+
 export function startFileWatcher() {
   // A file watch can lose an unlink immediately after a change on macOS.
   // Keep watching its directory across atomic replacements and recreation.
@@ -867,7 +882,7 @@ export function startFileWatcher() {
       await reloadPRRules();
       return;
     }
-    const fleet = await loadFleetStatus(true);
+    const fleet = await loadNewestFleetStatus();
     for (const handler of changeHandlers) handler(fleet);
   });
   watcher.on('raw', (_event, filename: unknown, details: unknown) => {

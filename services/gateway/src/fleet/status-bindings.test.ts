@@ -630,6 +630,63 @@ test(
   },
 );
 
+test('a watcher read overtaken by a newer write never hands handlers its older fleet', async (t) => {
+  await fs.writeFile(state.statusFile, JSON.stringify(rows('older')));
+  await loadFleetStatus(true, true);
+  await withWatcherClock(t, async () => {
+    const watcher = startFileWatcher();
+    t.after(() => watcher.close());
+    await watcher.ready;
+    return watcher;
+  });
+  const owners: (string | null)[] = [];
+  let listening = true;
+  t.after(() => {
+    listening = false;
+  });
+  onStateChange((fleet) => {
+    if (listening) owners.push(fleet.slots[0]?.currentRunId ?? null);
+  });
+  const until = async (done: () => boolean, what: string) => {
+    for (let attempt = 0; attempt < 500 && !done(); attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(done(), what);
+  };
+  let captured!: () => void;
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // The watcher's read of the first write captures its bytes, then waits.
+  holdNextRead = () => {
+    captured();
+    return gate;
+  };
+  try {
+    await fs.writeFile(state.statusFile, JSON.stringify(rows('first')));
+    await ready;
+    // A second write is read, cached and broadcast while the first read waits.
+    await fs.writeFile(state.statusFile, JSON.stringify(rows('second')));
+    await until(() => owners.includes('second'), 'the second write is broadcast');
+    const seen = owners.length;
+    release();
+    // The overtaken read finishes; whatever it broadcasts must not be the older owner.
+    await until(() => owners.length > seen, 'the overtaken read finishes and broadcasts');
+    const after = owners.slice(owners.indexOf('second'));
+    assert.ok(
+      after.every((owner) => owner === 'second'),
+      `no broadcast after the newer one may carry the older owner: ${JSON.stringify(owners)}`,
+    );
+    assert.equal(getCachedFleet()?.slots[0].currentRunId, 'second');
+  } finally {
+    holdNextRead = undefined;
+    release();
+  }
+});
+
 test('fleet reads after a gateway commit read neither the status file nor unchanged pools; an outside write wins', async (t) => {
   const poolFile = path.join(process.env.FARMSLOT_POOL_DIR!, 'commit-proof.json');
   await fs.writeFile(
