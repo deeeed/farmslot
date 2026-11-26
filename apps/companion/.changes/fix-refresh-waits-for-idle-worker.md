@@ -1,0 +1,1 @@
+- Refresh package waits while the gateway waits for a worker still finishing its turn, instead of timing out first.

@@ -146,6 +146,8 @@ export interface RouteRunMethodContext {
   /** Caller-only emitter retained in the routing context; shared run mutations use broadcast. */
   emit: (event: string, payload: unknown) => void;
   broadcast: (frame: EventFrame) => void;
+  /** Whether the caller's connection is still open; a long wait for it stops once it is not. */
+  callerConnected: () => boolean;
   authorizeEvidenceAttestation?: (action?: string) => EvidenceAttestationApprover;
   authorizeVisualClaimReview?: import('../methods/run/claim-reviews.js').VisualClaimReviewDependencies['authorizeVisualClaimReview'];
 }
@@ -324,7 +326,11 @@ export async function routeRunMethod(
     case Methods.RUN_REREVIEW_LATEST_HEAD:
       return handled(runRereviewLatestHead(p as RunRereviewLatestHeadParams));
     case Methods.RUN_REFRESH_PUBLISH_PACKAGE:
-      return handled(runRefreshPublishPackage(p as RunRefreshPublishPackageParams, emit));
+      return handled(
+        runRefreshPublishPackage(p as RunRefreshPublishPackageParams, emit, {
+          callerConnected: context.callerConnected,
+        }),
+      );
     case Methods.RUN_REFRESH_PUBLISHED_EVIDENCE:
       return handled(refreshPublishedEvidence(p as RunRefreshPublishedEvidenceParams, emit));
     case Methods.RUN_REFRESH_MIRROR:

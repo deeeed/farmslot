@@ -80,19 +80,21 @@ test('publication gives hooks a separate fifteen-minute default push budget', as
 
 test('a slow pre-push hook succeeds within the project push budget', async (t) => {
   const f = fixture(t, 'sleep 0.05\necho ran > hook-ran');
-  projectBudget = '2500';
+  projectBudget = '10000';
   await f.push();
-  assert.deepEqual(f.budgets, [2500]);
+  assert.deepEqual(f.budgets, [10000]);
   assert.equal(readFileSync(path.join(repo, 'hook-ran'), 'utf8'), 'ran\n');
   assert.equal(f.git('rev-parse', 'origin/fix/fixture'), f.git('rev-parse', 'HEAD'));
 });
 
 test('pool push budget wins and a slow hook timeout names its budget', async (t) => {
-  const f = fixture(t, 'echo started > hook-started\nsleep 0.8\necho ran > hook-ran');
-  projectBudget = '2500';
-  poolBudget = '500';
-  await assert.rejects(f.push(), /git push.*timed out.*500 ms.*pre-push hook budget/);
-  assert.deepEqual(f.budgets, [500]);
+  // The budget also covers git's startup before the hook, so it leaves that headroom; the
+  // hook blocks until the budget kills its process group.
+  const f = fixture(t, 'echo started > hook-started\nsleep 30\necho ran > hook-ran');
+  projectBudget = '10000';
+  poolBudget = '3000';
+  await assert.rejects(f.push(), /git push.*timed out.*3000 ms.*pre-push hook budget/);
+  assert.deepEqual(f.budgets, [3000]);
   assert.ok(existsSync(path.join(repo, 'hook-started')));
   assert.equal(existsSync(path.join(repo, 'hook-ran')), false);
   assert.equal(f.git('ls-remote', 'origin', 'refs/heads/fix/fixture'), '');

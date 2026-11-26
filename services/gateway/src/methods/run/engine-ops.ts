@@ -29,7 +29,7 @@ import { captureRunOutput, failRunOutputCapture } from '../../run-completion/out
 import { refreshResultDecisionAfterCapture } from '../../run-completion/result-decision.js';
 import { pinnedActivationProfile, runPrepareIsPinned } from '../../run-engine/pinned-prepare.js';
 import { loadProjectVarsOrNull } from '../../run-engine/project-vars.js';
-import { refreshPublishPackage } from '../../run-engine/publish-package-refresh.js';
+import { refreshPublishPackageForCaller } from '../../run-engine/publish-package-refresh.js';
 import { refreshReviewGate } from '../../run-engine/review-gate.js';
 import { copyTaskFilesToSlot } from '../../run-engine/task-sync.js';
 import { workerTaskDirectory } from '../../run-engine/worker-task-dir.js';
@@ -88,8 +88,9 @@ export async function runRefreshReviewGate(
 export async function runRefreshPublishPackage(
   params: RunRefreshPublishPackageParams,
   _emit: Emit,
+  context: { callerConnected: () => boolean },
 ): Promise<RunRefreshPublishPackageResult> {
-  return refreshPublishPackage(params);
+  return refreshPublishPackageForCaller(params, { callerConnected: context.callerConnected });
 }
 
 export async function runRefreshMirror(

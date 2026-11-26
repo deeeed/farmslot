@@ -18,8 +18,18 @@ test('node native execution rejects other owners and conflicting execution ident
     supportsProfiles: true,
     supportsWorkerStopAttestation: true,
     supportsStructuredResults: true,
+    supportsHostRefresh: true,
     supportsObservations: true,
   });
+  await assert.rejects(
+    service.route({
+      owner: 'owner',
+      method: 'native.session.create',
+      params: {},
+      hostRelease: 'all',
+    }),
+    /hostRelease must be a list of session IDs/,
+  );
   await assert.rejects(
     service.route({ owner: 'another', method: 'native.session.list', params: {} }),
     /not owned/,
@@ -75,4 +85,30 @@ test('native target metadata reports its actual home and refuses an old ready ho
   );
   assert.equal(service.metadata('owner').supportsStandaloneDelegation, true);
   assert.equal(service.metadata('owner').supportsWorkerCompaction, true);
+});
+
+test('a node start whose native host is not ready in time registers instead of exiting', async (t) => {
+  const { NativeSessionClient } = await import('@farmslot/agent-runtime/native');
+  const { nativeHostUnavailableError } =
+    await import('@farmslot/agent-runtime/native/host-unavailable');
+  t.mock.method(NativeSessionClient.prototype, 'warm', async () => {
+    throw nativeHostUnavailableError('/fixture/host.log');
+  });
+  const warned = t.mock.method(console, 'warn', () => {});
+  const service = new NativeNodeSessions('node-a', 'owner', '/unused-native-test');
+  await service.prepareRuntime();
+  assert.equal(warned.mock.callCount(), 1);
+  assert.match(
+    String(warned.mock.calls[0]?.arguments[0]),
+    /not ready at node start.*\/fixture\/host\.log/,
+  );
+});
+
+test('a node start still fails on a native error that is not a host-readiness one', async (t) => {
+  const { NativeSessionClient } = await import('@farmslot/agent-runtime/native');
+  t.mock.method(NativeSessionClient.prototype, 'warm', async () => {
+    throw new Error('Native state directory belongs to another execution node');
+  });
+  const service = new NativeNodeSessions('node-a', 'owner', '/unused-native-test');
+  await assert.rejects(service.prepareRuntime(), /another execution node/);
 });

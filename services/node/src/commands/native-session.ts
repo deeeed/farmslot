@@ -2,6 +2,12 @@ import path from 'node:path';
 
 import { NATIVE_WORKER_METHODS, NativeSessionClient } from '@farmslot/agent-runtime/native';
 import {
+  releasedSessionsPolicy,
+  withNativeHostRefreshPolicy,
+} from '@farmslot/agent-runtime/native/client';
+import { NATIVE_NODE_REFRESH_MAX_RUNNERS } from '@farmslot/agent-runtime/native/host-runtime';
+import { isNativeHostUnavailableError } from '@farmslot/agent-runtime/native/host-unavailable';
+import {
   NativeHostObservation,
   type NativeSourceReceipt,
 } from '@farmslot/agent-runtime/native/observation';
@@ -15,6 +21,7 @@ import type {
   NativeConversationCursor,
   NativeConversationUpdate,
   NativeExecutionNodeDeclaration,
+  NativeNodeSessionEnvelope,
 } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
@@ -41,12 +48,16 @@ export class NativeNodeSessions {
         supportsWorkerStopAttestation: true,
         supportsStructuredResults: true,
         supportsProfiles: true,
+        supportsHostRefresh: true,
         ...{ supportsObservations: true },
       };
     }
+    // Only fenced idle stops, few enough to finish within the gateway's launch timeout.
     this.client = new NativeSessionClient(
       path.join(root, 'nodes', encodeURIComponent(machine)),
       machine,
+      undefined,
+      { maxRunners: NATIVE_NODE_REFRESH_MAX_RUNNERS },
     );
   }
 
@@ -56,14 +67,22 @@ export class NativeNodeSessions {
     try {
       await this.client.warm();
     } catch (error) {
+      if (isNativeHostUnavailableError(error)) {
+        // The host did not become ready in time. Register anyway: each launch starts or waits
+        // for the host itself, and the node must not exit over it.
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(`Native host not ready at node start; registering without it. ${reason}`);
+        return;
+      }
       if (
         !(error instanceof Error) ||
         !('code' in error) ||
         error.code !== 'NATIVE_HOST_VERSION_SKEW'
       )
         throw error;
-      // Keep reads and cleanup available. The client refuses new admissions until a later
-      // node restart can refresh the idle host; never kill a busy reviewer to deploy.
+      // Keep reads and cleanup available. New admissions are refused until a launch carrying
+      // the gateway's release list finds every live session idle and released, or a later
+      // node start finds every runner stopped; never kill a busy reviewer to deploy.
       console.warn(error.message);
     }
   }
@@ -186,26 +205,38 @@ export class NativeNodeSessions {
     });
   }
 
-  async route(value: Record<string, unknown>): Promise<unknown> {
+  /** The gateway's `native.session` request; its fields are checked here. */
+  async route(value: Partial<Record<keyof NativeNodeSessionEnvelope, unknown>>): Promise<unknown> {
     if (!this.declaration || value.owner !== this.declaration.ownerPrincipalId)
       throw Object.assign(new Error('Native profile is not owned by this principal'), {
         code: 'AUTH_FORBIDDEN',
       });
     if (typeof value.method !== 'string')
       throw Object.assign(new Error('Native method is required'), { code: 'INVALID_PARAMS' });
-    if (NATIVE_WORKER_METHODS.includes(value.method))
-      return routeNativeWorkerSession(
-        this.client,
-        this.declaration.ownerPrincipalId,
-        value.method,
-        value.params,
-      );
-    return routeNativeSession(
-      this.client,
-      this.declaration.ownerPrincipalId,
-      value.method,
-      value.params,
-      parseNativeSessionRequester(value.requester),
+    const owner = this.declaration.ownerPrincipalId;
+    const method = value.method;
+    const route = () =>
+      NATIVE_WORKER_METHODS.includes(method)
+        ? routeNativeWorkerSession(this.client, owner, method, value.params)
+        : routeNativeSession(
+            this.client,
+            owner,
+            method,
+            value.params,
+            parseNativeSessionRequester(value.requester),
+          );
+    if (value.hostRelease === undefined) return route();
+    if (
+      !Array.isArray(value.hostRelease) ||
+      !value.hostRelease.every((id) => typeof id === 'string')
+    )
+      throw Object.assign(new Error('hostRelease must be a list of session IDs'), {
+        code: 'INVALID_PARAMS',
+      });
+    // A launch to a host on another runtime refreshes it, stopping only released idle sessions.
+    return withNativeHostRefreshPolicy(
+      releasedSessionsPolicy(owner, new Set(value.hostRelease)),
+      route,
     );
   }
 }

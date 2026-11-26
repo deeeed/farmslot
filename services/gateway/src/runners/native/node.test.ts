@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import { WebSocket } from 'ws';
 
-import { NATIVE_WORKER_CANCEL } from '@farmslot/agent-runtime/native';
-import { Methods } from '@farmslot/protocol';
+import {
+  NATIVE_WORKER_CANCEL,
+  NATIVE_WORKER_COMPACT,
+  NATIVE_WORKER_CONFIRM_STOPPED,
+  NATIVE_WORKER_TRANSFER,
+} from '@farmslot/agent-runtime/native';
+import {
+  NATIVE_HOST_START_TIMEOUT_MS,
+  NATIVE_NODE_ADMISSION_TIMEOUT_MS,
+  NATIVE_NODE_REFRESH_MAX_RUNNERS,
+  nativeIdleStopCleanupMs,
+} from '@farmslot/agent-runtime/native/host-runtime';
+import { Methods, type Principal } from '@farmslot/protocol';
 
 import {
   getAllNodes,
@@ -12,9 +23,15 @@ import {
   registerNode,
   unregisterByWs,
 } from '../../fleet/machine-registry.js';
-import { handleNodeResponse } from '../../fleet/node-rpc.js';
+import {
+  handleNodeResponse,
+  NodeRpcTimeoutError,
+  withNodeReconnectWait,
+} from '../../fleet/node-rpc.js';
+import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
+import { nativeNodeDeclaration } from '../../security/native-node.js';
 
-import { routeNativeExecution } from './node.js';
+import { nativeNodeSessionTimeout, routeNativeExecution } from './node.js';
 
 test('native requests recheck issued authority after a reply and refuse revoked dispatch', async () => {
   const machine = 'native-authority-test';
@@ -290,6 +307,309 @@ test('older node decoders cannot silently drop an explicit approval mode before 
     });
     assert.equal(requests, 1);
   } finally {
+    unregisterByWs(ws);
+  }
+});
+
+test('a node that declares stop attestation accepts explicit stopped-process confirmation', async () => {
+  const machine = 'native-stop-attestation';
+  const owner = 'native-owner';
+  const principal: Principal = {
+    id: 'node-stop-principal',
+    subject: {
+      type: 'node',
+      displayName: machine,
+      machine,
+      nativeOwnerPrincipalId: owner,
+    },
+    roles: [],
+  };
+  let requests = 0;
+  const session = {
+    id: 'session',
+    ownerPrincipalId: owner,
+    executionNodeId: machine,
+    processStopped: true,
+  };
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      requests++;
+      const frame = JSON.parse(raw);
+      assert.equal(frame.params.method, NATIVE_WORKER_CONFIRM_STOPPED);
+      assert.equal(frame.params.owner, owner);
+      assert.equal(frame.params.params.generation, params.generation);
+      assert.equal(frame.params.params.leaseId, params.leaseId);
+      handleNodeResponse(frame.id, true, { session }, undefined, undefined, ws);
+    },
+  } as WebSocket;
+  const params = {
+    executionNodeId: machine,
+    sessionId: 'session',
+    generation: 'generation',
+    leaseId: 'lease',
+  };
+  const register = (supportsWorkerStopAttestation?: boolean) =>
+    registerNode(
+      machine,
+      1,
+      ws,
+      undefined,
+      undefined,
+      nativeNodeDeclaration(
+        { ownerPrincipalId: owner, supportsWorkers: true, supportsWorkerStopAttestation },
+        machine,
+        principal,
+        true,
+      ),
+      { principalId: principal.id, valid: () => true },
+    );
+  try {
+    register();
+    await assert.rejects(
+      routeNativeExecution(owner, NATIVE_WORKER_CONFIRM_STOPPED, params),
+      /Execution node upgrade required for explicit stopped-process confirmation/,
+    );
+    assert.equal(requests, 0);
+    unregisterByWs(ws);
+    register(true);
+    assert.equal(getNode(machine)?.nativeSessions?.supportsWorkerStopAttestation, true);
+    assert.deepEqual(await routeNativeExecution(owner, NATIVE_WORKER_CONFIRM_STOPPED, params), {
+      session,
+    });
+    assert.equal(requests, 1);
+  } finally {
+    unregisterByWs(ws);
+  }
+});
+
+/** A node that may declare host refresh and refuses the next `refuse` requests as skewed. */
+function skewRefusingNode(machine: string, owner: string, supportsHostRefresh: boolean) {
+  const frames: Array<{ method: string; hostRelease?: unknown }> = [];
+  const state = { refuse: 0, onSend: () => {} };
+  const session = { id: 'session', ownerPrincipalId: owner, executionNodeId: machine };
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      const frame = JSON.parse(raw);
+      frames.push({ method: frame.params.method, hostRelease: frame.params.hostRelease });
+      state.onSend();
+      if (state.refuse > 0) {
+        state.refuse -= 1;
+        handleNodeResponse(
+          frame.id,
+          false,
+          undefined,
+          'Native host runtime version skew',
+          'NATIVE_HOST_VERSION_SKEW',
+          ws,
+        );
+      } else handleNodeResponse(frame.id, true, { session }, undefined, undefined, ws);
+    },
+  } as WebSocket;
+  registerNode(
+    machine,
+    1,
+    ws,
+    undefined,
+    undefined,
+    { ownerPrincipalId: owner, supportsEnsure: true, supportsWorkers: true, supportsHostRefresh },
+    { principalId: 'node-test', valid: () => true },
+  );
+  return { frames, state, ws };
+}
+
+const skewed = { code: 'NATIVE_HOST_VERSION_SKEW' };
+
+test('a launch a node refuses as skewed is sent once more with the gateway’s release list', async () => {
+  const machine = 'native-host-refresh-node';
+  const owner = 'native-owner';
+  const { frames, state, ws } = skewRefusingNode(machine, owner, false);
+  const run = createRun({ flowType: 'dev', project: 'host-refresh', ticketOrPr: 'HOST-REFRESH-1' });
+  updateRun(run.id, {
+    status: 'done',
+    agentContexts: [
+      {
+        id: 'review-context',
+        role: 'review',
+        label: 'review',
+        status: 'idle',
+        slotId: 'slot',
+        runId: run.id,
+        nativeSession: {
+          sessionId: 'finished-reviewer',
+          executionNodeId: machine,
+          ownerPrincipalId: owner,
+          leaseId: 'lease',
+          commandId: 'command',
+        },
+      },
+    ],
+  });
+  const create = { executionNodeId: machine, runner: 'codex', cwd: '/tmp' };
+  try {
+    // A current host: one send, no list.
+    await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create);
+    // An older node gets no list, so its refusal stands.
+    state.refuse = 1;
+    await assert.rejects(
+      routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create),
+      skewed,
+    );
+    getNode(machine)!.nativeSessions!.supportsHostRefresh = true;
+    // A node that reads one gets it on the second send; a refusal then stands.
+    state.refuse = 1;
+    await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, create);
+    state.refuse = 2;
+    await assert.rejects(
+      routeNativeExecution(owner, Methods.NATIVE_SESSION_ENSURE, {
+        ...create,
+        sessionId: 'finished-reviewer',
+      }),
+      skewed,
+    );
+    state.refuse = 2;
+    await assert.rejects(
+      routeNativeExecution(owner, NATIVE_WORKER_TRANSFER, {
+        executionNodeId: machine,
+        sessionId: 'finished-reviewer',
+        leaseId: 'lease',
+        generation: 'generation',
+      }),
+      skewed,
+    );
+    // A message is not a launch: its refusal is not sent again.
+    state.refuse = 1;
+    await assert.rejects(
+      routeNativeExecution(owner, Methods.NATIVE_SESSION_SEND, {
+        executionNodeId: machine,
+        sessionId: 'session',
+        commandId: 'command',
+        text: 'hello',
+      }),
+      skewed,
+    );
+    assert.deepEqual(frames, [
+      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
+      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
+      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: undefined },
+      { method: Methods.NATIVE_SESSION_CREATE, hostRelease: ['finished-reviewer'] },
+      { method: Methods.NATIVE_SESSION_ENSURE, hostRelease: undefined },
+      { method: Methods.NATIVE_SESSION_ENSURE, hostRelease: [] },
+      { method: NATIVE_WORKER_TRANSFER, hostRelease: undefined },
+      { method: NATIVE_WORKER_TRANSFER, hostRelease: ['finished-reviewer'] },
+      { method: Methods.NATIVE_SESSION_SEND, hostRelease: undefined },
+    ]);
+  } finally {
+    unregisterByWs(ws);
+    // A run hands its native binding back only once it is closed.
+    const closedAt = new Date().toISOString();
+    updateRun(run.id, {
+      agentContexts: getRun(run.id)!.agentContexts?.map((context) =>
+        context.nativeSession
+          ? { ...context, nativeSession: { ...context.nativeSession, closedAt } }
+          : context,
+      ),
+    });
+    await deleteRun(run.id);
+  }
+});
+
+test('a launch whose run stopped while the first send waited is not sent again', async () => {
+  const machine = 'native-host-refresh-cancel';
+  const owner = 'native-owner';
+  const { frames, state, ws } = skewRefusingNode(machine, owner, true);
+  let cancelled = false;
+  state.refuse = 1;
+  state.onSend = () => (cancelled = true);
+  try {
+    await assert.rejects(
+      withNodeReconnectWait(
+        () =>
+          routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, {
+            executionNodeId: machine,
+            runner: 'codex',
+            cwd: '/tmp',
+          }),
+        () => {
+          if (cancelled) throw new Error('run was cancelled');
+        },
+      ),
+      /run was cancelled/,
+    );
+    assert.equal(frames.length, 1);
+  } finally {
+    unregisterByWs(ws);
+  }
+});
+
+test('launches and messages to a node that refreshes its host wait long enough for the refresh', () => {
+  for (const method of [
+    Methods.NATIVE_SESSION_CREATE,
+    NATIVE_WORKER_TRANSFER,
+    Methods.NATIVE_SESSION_SEND,
+  ])
+    assert.equal(nativeNodeSessionTimeout(method, true), NATIVE_NODE_ADMISSION_TIMEOUT_MS);
+  assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_CREATE, false), 60_000);
+  assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_READ, true), 60_000);
+  assert.equal(nativeNodeSessionTimeout(NATIVE_WORKER_COMPACT, true), 185_000);
+});
+
+test('every node request outlasts the host start the node may wait for first', () => {
+  for (const method of [Methods.NATIVE_SESSION_READ, Methods.NATIVE_SESSION_CREATE])
+    for (const refreshes of [false, true])
+      assert.ok(nativeNodeSessionTimeout(method, refreshes) > NATIVE_HOST_START_TIMEOUT_MS);
+  // A refreshing launch: the idle stops, then the start.
+  assert.ok(
+    NATIVE_NODE_ADMISSION_TIMEOUT_MS >
+      nativeIdleStopCleanupMs(NATIVE_NODE_REFRESH_MAX_RUNNERS) + NATIVE_HOST_START_TIMEOUT_MS,
+  );
+});
+
+test('a launch to a node that refreshes its host waits past 60 s for its answer', async () => {
+  const machine = 'native-host-refresh-timeout';
+  const owner = 'native-owner';
+  const sent: string[] = [];
+  // The node never answers.
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      sent.push(raw);
+    },
+  } as WebSocket;
+  registerNode(
+    machine,
+    1,
+    ws,
+    undefined,
+    undefined,
+    { ownerPrincipalId: owner, supportsHostRefresh: true },
+    { principalId: 'node-test', valid: () => true },
+  );
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    let settled = false;
+    const launch = routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, {
+      executionNodeId: machine,
+      runner: 'codex',
+      cwd: '/tmp',
+    }).finally(() => (settled = true));
+    // A launch refused before it sends ends the wait and fails the assertion below.
+    for (let turn = 0; turn < 1_000 && !sent.length && !settled; turn++)
+      await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(sent.length, 1);
+    mock.timers.tick(60_001);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false, 'still waiting after the usual 60 s');
+    mock.timers.tick(NATIVE_NODE_ADMISSION_TIMEOUT_MS - 60_001);
+    await assert.rejects(
+      launch,
+      (error: unknown) =>
+        error instanceof NodeRpcTimeoutError &&
+        error.timeoutMs === NATIVE_NODE_ADMISSION_TIMEOUT_MS,
+    );
+  } finally {
+    mock.timers.reset();
     unregisterByWs(ws);
   }
 });

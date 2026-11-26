@@ -14,13 +14,19 @@ import { appendFile, mkdir, readFile, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  decideLearningKind,
   Events,
   type FeedbackCandidate,
+  isLearningRuleKind,
   type KnowledgeDestination,
+  learningConfirmationIsOutside,
+  type LearningRuleKind,
   type LearningsAntipatternDraft,
   type LearningsDraftPayload,
   type LearningsDraftReceipt,
   type LearningsHold,
+  type LearningV1Entry,
+  parseLearnings,
   type Run,
   type RunDecision,
 } from '@farmslot/protocol';
@@ -41,11 +47,13 @@ import {
 } from './feedback-ledger.js';
 import { improvementBroadcast } from './improvement-engine.js';
 import {
+  type CuratedLearning,
   curateLearningEntries,
   curationDigest,
   type LearningCurationContext,
 } from './learning-curation.js';
 import { learningCurationContext } from './learning-curation-context.js';
+import { learningRuleProposal, learningTarget } from './learning-targets.js';
 
 export const LEARNINGS_DRAFT_DECISION_TYPE = 'engine_learnings_draft';
 /** Human gate: the drafts landed in the canonical library; record the consumed feedback. */
@@ -80,6 +88,9 @@ export interface LearningsEntry {
 
 // ─── Splitting ───
 
+/** `- None` and "Nothing new." say there is nothing to report; they are not lessons. */
+const NOTHING_TO_REPORT = /^(?:[-*] )?(?:none|nothing new)\.?$/i;
+
 /**
  * Split a (possibly family-composed, multi-section) learnings blob into
  * routable entries. Entries are top-level `- ` bullets with their continuation
@@ -96,12 +107,13 @@ export function splitLearningsEntries(blob: string): LearningsEntry[] {
   let prose: string[] = [];
 
   const flushCurrent = () => {
-    if (current) entries.push({ section, text: current.join('\n').trimEnd() });
+    const text = current?.join('\n').trimEnd();
+    if (text && !NOTHING_TO_REPORT.test(text)) entries.push({ section, text });
     current = null;
   };
   const flushProse = () => {
     const text = prose.join('\n').trim();
-    if (text) entries.push({ section, text });
+    if (text && !NOTHING_TO_REPORT.test(text)) entries.push({ section, text });
     prose = [];
   };
 
@@ -310,9 +322,22 @@ export function knowledgeDestinationKey(destination: KnowledgeDestination): stri
 }
 
 interface ProjectKnowledgeConfig {
-  vars?: { knowledge_destination?: unknown };
+  vars?: { knowledge_destination?: unknown; knowledge_clients?: unknown };
   static_review?: { support?: { libraries?: Array<{ name?: unknown }> } };
   reference_repos?: Record<string, { repo_url?: unknown }>;
+}
+
+/** `vars.knowledge_clients`: which client each evidence repo belongs to, when the project says. */
+function knowledgeClients(projectJson: ProjectKnowledgeConfig): Record<string, string> | undefined {
+  const raw = projectJson.vars?.knowledge_clients;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const clients = Object.fromEntries(
+    Object.entries(raw).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[1] === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(entry[1]),
+    ),
+  );
+  return Object.keys(clients).length ? clients : undefined;
 }
 
 /**
@@ -326,11 +351,17 @@ interface ProjectKnowledgeConfig {
 export function knowledgeDestinationFromConfig(
   projectJson: ProjectKnowledgeConfig,
 ): KnowledgeDestination | null {
+  const clients = knowledgeClients(projectJson);
   const explicit = projectJson.vars?.knowledge_destination;
   if (explicit && typeof explicit === 'object') {
     const { repo, path } = explicit as { repo?: unknown; path?: unknown };
     if (typeof repo === 'string' && repo.trim() && typeof path === 'string' && path.trim()) {
-      return { repo: repo.trim(), path: path.trim(), source: 'vars.knowledge_destination' };
+      return {
+        repo: repo.trim(),
+        path: path.trim(),
+        source: 'vars.knowledge_destination',
+        ...(clients ? { clients } : {}),
+      };
     }
     return null;
   }
@@ -343,6 +374,7 @@ export function knowledgeDestinationFromConfig(
     path: DEFAULT_LIBRARY_ANTIPATTERNS_PATH,
     library: library.trim(),
     source: 'static_review',
+    ...(clients ? { clients } : {}),
   };
 }
 
@@ -535,19 +567,48 @@ function reconstructSections(entries: LearningsEntry[]): string {
   return parts.join('\n\n');
 }
 
+/** The run's own PRs, `owner/repo#n`, or `#n` when only the number is recorded. */
+function ownPullRequests(run: Run | undefined): string[] {
+  if (!run) return [];
+  return [
+    ...(run.prPublications ?? []).map(({ pr }) => `${pr.repo}#${pr.number}`),
+    ...(run.prNumber ? [`#${run.prNumber}`] : []),
+  ];
+}
+
 export async function routeLearnings(
   project: string,
   learnings: string,
   options: { runId?: string; context?: LearningCurationContext } = {},
 ): Promise<RoutedLearnings> {
-  const entries = splitLearningsEntries(learnings);
-  const buckets = await classifyLearningsEntries(entries);
-  const domain = buckets.domain;
-  if (!domain.length && !buckets.unclassified.length)
+  // A v1 file routes by its kinds; a legacy file goes through the classifier as before.
+  const parsed = parseLearnings(learnings);
+  const checked = new Map<string, LearningV1Entry & { kind: LearningRuleKind }>();
+  const holds: LearningsHold[] = [];
+  let buckets: ClassifiedLearnings;
+  if (parsed.version === 1) {
+    buckets = { system: [], domain: [], unclassified: [] };
+    for (const entry of parsed.entries) {
+      const routed = { section: null, text: entry.source };
+      if (entry.issues.length)
+        holds.push({ entry: entry.source, reason: `Learnings v1: ${entry.issues.join('; ')}` });
+      else if (entry.kind === 'workflow') buckets.system.push(routed);
+      else if (!isLearningRuleKind(entry.kind))
+        holds.push({
+          entry: entry.source,
+          reason: 'A recipe lesson goes to the recipe library owner, not the review rules',
+        });
+      else {
+        buckets.domain.push(routed);
+        checked.set(entry.source, { ...entry, kind: entry.kind });
+      }
+    }
+  } else buckets = await classifyLearningsEntries(splitLearningsEntries(learnings));
+  if (!buckets.domain.length && !buckets.unclassified.length)
     return {
       buckets,
       drafts: [],
-      holds: [],
+      holds,
       drops: [],
       destination: null,
       systemContent: buckets.system.length ? reconstructSections(buckets.system) : null,
@@ -555,10 +616,46 @@ export async function routeLearnings(
   const destination = await resolveKnowledgeDestination(project);
   const context =
     options.context ??
-    (domain.length || buckets.unclassified.length
+    (buckets.domain.length || buckets.unclassified.length
       ? await learningCurationContext(project, destination, options.runId)
       : { runId: options.runId ?? '', evidence: [], library: [] });
   const digest = curationDigest(context);
+  // A checked lesson is decided before the model sees it: only its own run confirms it, its
+  // cited rule worked, or it has no clear target.
+  const gated = new Map<LearningsEntry, CuratedLearning>();
+  const targets = new Map<
+    LearningsEntry,
+    { kind: LearningRuleKind; basis: 'results' | 'claim'; path: string; section?: string }
+  >();
+  const ownPrs = ownPullRequests(options.runId ? getRun(options.runId) : undefined);
+  const domain = buckets.domain.filter((entry) => {
+    const lesson = checked.get(entry.text);
+    if (!lesson) return true;
+    if (
+      !learningConfirmationIsOutside(lesson.confirmation, { runId: context.runId, prs: ownPrs })
+    ) {
+      gated.set(entry, {
+        outcome: 'drop',
+        reason: 'Unconfirmed: only its own run confirms it; recorded and never promoted',
+        citations: [],
+        unconfirmed: true,
+      });
+      return true;
+    }
+    const decision = decideLearningKind(lesson, context.results ?? []);
+    if (decision.kind === 'none') {
+      gated.set(entry, { outcome: 'drop', reason: decision.reason, citations: [] });
+      return true;
+    }
+    if (!destination || !isLearningRuleKind(decision.kind)) return true;
+    const target = learningTarget(lesson, decision.kind, context.library, destination);
+    if ('hold' in target) {
+      holds.push({ entry: entry.text, reason: target.hold });
+      return false;
+    }
+    targets.set(entry, { kind: decision.kind, basis: decision.basis, ...target });
+    return true;
+  });
   const ledger = await readFeedbackLedger();
   const destinationKey = destination ? knowledgeDestinationKey(destination) : project;
   const previous = new Map(
@@ -572,14 +669,17 @@ export async function routeLearnings(
       )
       .map((row) => [row.sourceKey, row]),
   );
-  const missing = domain.filter((entry) => !previous.has(learningEntryKey(entry.text)));
+  const missing = domain.filter(
+    (entry) => !gated.has(entry) && !previous.has(learningEntryKey(entry.text)),
+  );
   const fresh = await curateLearningEntries(
     missing.map((entry) => entry.text),
     context,
   );
   const evaluated = new Map(missing.map((entry, index) => [entry, fresh[index]!]));
   const curated = domain.map(
-    (entry) => previous.get(learningEntryKey(entry.text)) ?? evaluated.get(entry)!,
+    (entry) =>
+      gated.get(entry) ?? previous.get(learningEntryKey(entry.text)) ?? evaluated.get(entry)!,
   );
   const receipts: LearningCurationReceipt[] = curated.map((result, index) => ({
     sourceKey: learningEntryKey(domain[index]!.text),
@@ -590,6 +690,8 @@ export async function routeLearnings(
     reason: result.reason,
     instruction: result.instruction,
     retryable: result.retryable,
+    ...(result.recurrence ? { recurrence: result.recurrence } : {}),
+    ...(result.unconfirmed ? { unconfirmed: true as const } : {}),
     citations: result.citations,
     recordedAt: new Date().toISOString(),
   }));
@@ -623,7 +725,6 @@ export async function routeLearnings(
     });
   }
   const drafts: LearningsAntipatternDraft[] = [];
-  const holds: LearningsHold[] = [];
   const landed = consumptionsBySourceKey(ledger);
   const pending: LearningsEntry[] = [];
   for (const entry of eligible) {
@@ -657,13 +758,31 @@ export async function routeLearnings(
       continue;
     }
     const evidence = curated[domain.indexOf(entry)]!;
+    const target = targets.get(entry);
+    const lesson = checked.get(entry.text);
+    let proposal: LearningsAntipatternDraft['proposal'];
+    if (target && lesson) {
+      try {
+        proposal = learningRuleProposal(lesson, target, evidence, context.runId, destination);
+      } catch (error) {
+        holds.push({
+          entry: entry.text,
+          reason: `Kept, but not a valid rule proposal: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        continue;
+      }
+      const receipt = receipts.find((row) => row.sourceKey === learningEntryKey(entry.text));
+      if (receipt) receipt.proposal = proposal;
+    }
     drafts.push({
       ...draft,
       action: evidence.instruction!,
       cause: `${draft.cause}\nEvidence: ${evidence.citations.map((c) => `run ${c.runId} ${c.path}:${c.line}`).join('; ')}`,
-      targetPath: destination.path,
+      targetPath: target?.path ?? destination.path,
+      ...(target?.section ? { targetSection: target.section } : {}),
       targetRepo: destination.repo,
       sourceEntry: entry.text,
+      ...(proposal ? { proposal } : {}),
     });
   }
   // Persist before emitting any draft/hold; drops never enter the consumption index.

@@ -36,7 +36,7 @@ const request = (ticketData: unknown) => ({
   ticketOrPr: 'TAT-4436',
   ticketData,
 });
-const context = { emit: () => {}, broadcast: () => {} };
+const context = { callerConnected: () => true, emit: () => {}, broadcast: () => {} };
 test.afterEach(async () => {
   for (const run of getAllRuns()) {
     updateRun(run.id, { status: 'done' });
@@ -50,6 +50,7 @@ test('run.create refuses missing ticketData.description before registering or em
   const events: unknown[] = [];
   await assert.rejects(
     routeRunMethod(Methods.RUN_CREATE, request(withoutDescription), {
+      callerConnected: () => true,
       emit: (_event, payload) => events.push(payload),
       broadcast: (frame) => events.push(frame),
     }),

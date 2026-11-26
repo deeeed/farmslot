@@ -738,6 +738,12 @@ if (terminalCommand !== 'blocked') {
   }
 }
 
+// Learnings v1 issues warn and never fail: a finished run is never refused on format.
+{
+  const { learningsWarningText, learningsWarnings } = await import('./learnings-check.mjs');
+  process.stderr.write(learningsWarningText(learningsWarnings(taskDir)));
+}
+
 if (issues.length > 0) {
   console.error('TASK_ARTIFACT_CONTRACT_FAIL');
   for (const issue of issues) console.error(`- ${issue}`);

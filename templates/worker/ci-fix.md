@@ -71,7 +71,7 @@ STATUS: pending
   # - report.md when you changed code
   # - no-change-report.md when no code change was needed
   # Include the issue, what changed or why no change was needed, validation commands + results, and commit SHA if any.
-  # Also write learnings.md: one bullet per failure likely to recur that should change a template, reviewer or engine step, or "- None".
+  # Also write learnings.md in Learnings v1: "# Learnings v1", then "- None" or one "- <kind>: <lesson>" entry per failure likely to recur (./mark prints the kinds and fields).
   # Mark this item using its visible step number.
   ```
 

@@ -1,0 +1,1 @@
+- mm-harness 0.96.47 consumes the recipe-runner 0.52.5 cohort: recipe-runner 0.52.5, Recipe CLI 0.35.35, agent-runtime 0.51.2, adapter-sdk 0.31.4, adapter-web 0.19.35, adapter-rn 0.31.37, adapter-node 0.8.36, protocol 0.92.1 (one copy of each). `ui.wait_for` on a busy page reports its own timeout instead of a raw CDP timeout.

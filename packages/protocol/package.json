@@ -175,6 +175,11 @@
       "import": "./dist/contracts/interactive-operator-packets.js",
       "default": "./dist/contracts/interactive-operator-packets.js"
     },
+    "./contracts/learnings": {
+      "types": "./dist/contracts/learnings.d.ts",
+      "import": "./dist/contracts/learnings.js",
+      "default": "./dist/contracts/learnings.js"
+    },
     "./contracts/recipes": {
       "types": "./dist/contracts/recipes.d.ts",
       "import": "./dist/contracts/recipes.js",

@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import { RECOVERY_CASES, runRecoveryMatrix } from './recovery.mjs';
 import { runPerformanceCanary } from './performance.mjs';
+import { runNodeHostRefresh } from './node-host-refresh.mjs';
 import { FULLFLOW_CASES, runFullflow } from './fullflow.mjs';
 import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
 import { dismissReaper, runProofs } from './proofs.mjs';
@@ -18,7 +19,9 @@ import { dismissReaper, runProofs } from './proofs.mjs';
 //            a restart with the worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW, its fix
 //            round, HUMAN_GATE prep and FINALIZE, which must leave it alive (no model call: the test
 //            answers the reviewer), and a Pi-runner worker in MONITOR whose model stream drops as
-//            the gateway restarts. --with-review adds one reviewed run whose reviewer turns the test answers
+//            the gateway restarts, and node-host-refresh: a node host left on an older runtime build by
+//            a busy runner across a node restart is refreshed at launch (node-host-refresh.mts).
+//            --with-review adds one reviewed run whose reviewer turns the test answers
 //            (no model call): REVIEW and its fix round. `proofs` runs the opt-in proofs nothing else
 //            runs (proofs.mts): two e2e gateway proofs and the warm-review proof, whose codex reviewer
 //            uses config.json proofs.reviewModel (the only nightly model calls).
@@ -132,6 +135,7 @@ const CASES = [
   ...FULLFLOW_CASES,
   ...RECOVERY_CASES,
   'performance',
+  'node-host-refresh',
   'lifecycle',
   'f324',
   'native-check',
@@ -155,6 +159,7 @@ const available: readonly string[] =
         ? ['lifecycle', 'f324', 'native-check', 'monitor']
         : [
             'performance',
+            'node-host-refresh',
             ...RESTART_STEPS,
             'review-past-wait',
             'worker-survives',
@@ -348,6 +353,20 @@ try {
         root,
         evidence,
         reaper,
+        onCleanup: (stop) => {
+          stopStack = stop;
+        },
+      }),
+    );
+  if (profile === 'nightly' && wants('node-host-refresh'))
+    onCheck(
+      await runNodeHostRefresh({
+        root,
+        evidence,
+        reaper,
+        log,
+        cliSnapshots: expand(arg('cli-snapshots') ?? '~/farmslot-canary/cli-snapshots'),
+        ...(arg('cli-snapshot') ? { cliSnapshot: expand(arg('cli-snapshot')!) } : {}),
         onCleanup: (stop) => {
           stopStack = stop;
         },

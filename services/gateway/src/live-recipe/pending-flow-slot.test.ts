@@ -249,7 +249,7 @@ async function held(
     const result = await routeRunMethod(
       Methods.RUN_RECIPE_RUNS_FOR_RUN,
       { runId: id, includeRecordedEvidence: true },
-      { emit: noMutation, broadcast: noMutation },
+      { callerConnected: () => true, emit: noMutation, broadcast: noMutation },
     );
     assert.ok(result.handled);
     return (result.value as RunRecipeRunsForRunResult).pendingFlow;

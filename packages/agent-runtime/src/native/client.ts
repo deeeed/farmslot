@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync } from 'node:fs';
 import { open, readdir } from 'node:fs/promises';
@@ -28,6 +28,7 @@ import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { subscribeHost } from './conversation-ipc.js';
 import {
   assertNativeHostRuntime,
+  NATIVE_HOST_START_TIMEOUT_MS,
   nativeHostRunsCurrentRuntime,
   nativeHostVersionSkew,
   retireIdleNativeHost,
@@ -36,7 +37,13 @@ import {
 import { nativeHostUnavailableError } from './host-unavailable.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
 import { currentRuntimeBuild, runtimeBuildIdentity } from './runtime-build.js';
-import { alive, privateDirectory, readJson } from './storage.js';
+import {
+  alive,
+  privateDirectory,
+  readJson,
+  type RecordedProcess,
+  recordedProcessAlive,
+} from './storage.js';
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CANCEL_COMMAND,
@@ -73,6 +80,74 @@ export function observeExistingNativeHost<T>(read: () => Promise<T>): Promise<T>
 export type NativeHostRefreshPolicy = (
   sessions: NativeSessionInfo[],
 ) => Promise<ReadonlyMap<string, string>>;
+
+const requestRefreshPolicies = new AsyncLocalStorage<NativeHostRefreshPolicy>();
+/**
+ * Runs a request under its caller's own refresh policy: an execution node gets the gateway's
+ * release list with each launch, so the policy belongs to that launch, not to the client.
+ */
+export function withNativeHostRefreshPolicy<T>(
+  policy: NativeHostRefreshPolicy,
+  run: () => Promise<T>,
+): Promise<T> {
+  return requestRefreshPolicies.run(policy, run);
+}
+
+/**
+ * A node's policy for one launch: it may stop only its owner's sessions that the gateway's run
+ * census released. Any other live session keeps the host. A session released when the list was
+ * sent and claimed by a run before the stop is still stopped; a launch that waited for another
+ * refresh is refused rather than use its older list.
+ */
+export function releasedSessionsPolicy(
+  owner: string,
+  released: ReadonlySet<string>,
+): NativeHostRefreshPolicy {
+  return async (sessions) =>
+    new Map(
+      sessions.flatMap((session): [string, string][] =>
+        session.ownerPrincipalId !== owner
+          ? [[session.id, 'another owner']]
+          : released.has(session.id)
+            ? []
+            : [[session.id, 'not released by the gateway']],
+      ),
+    );
+}
+
+/**
+ * An execution node stops idle runners only under a host's idle-runner fence, and at most this
+ * many, so a launch that refreshes its host normally finishes within its gateway's timeout.
+ */
+export interface NativeIdleStopLimits {
+  maxRunners: number;
+}
+
+/**
+ * How long a host start may take. A new supervisor writes host.json at once, but its host is
+ * ready only after it replays every session journal, which takes many seconds on a node with
+ * hundreds of them. So a start waits up to `timeoutMs` while that supervisor is alive, and
+ * gives up after `noProgressMs` only when no live supervisor has claimed the host.
+ */
+export interface NativeHostStartLimits {
+  timeoutMs: number;
+  noProgressMs: number;
+  progressMs: number;
+}
+export const NATIVE_HOST_START_LIMITS: NativeHostStartLimits = {
+  timeoutMs: NATIVE_HOST_START_TIMEOUT_MS,
+  noProgressMs: 10_000,
+  progressMs: 15_000,
+};
+
+/** The policy a refresh runs under, and whether it is one launch's own. */
+interface RefreshScope {
+  policy?: NativeHostRefreshPolicy;
+  perLaunch: boolean;
+}
+
+/** A launch waited for another refresh; its release list may no longer match the runs. */
+const STALE_RELEASE_LIST = 'another refresh ran while this launch waited: retry with a fresh list';
 
 /** How long a busy census answers launches before the host is asked again. */
 const NATIVE_REFRESH_BUSY_REUSE_MS = 5_000;
@@ -153,6 +228,8 @@ export class NativeSessionClient {
     root = currentFarmPaths('node').state.nativeSessions,
     readonly executionNodeId = 'local',
     private readonly checkoutBuild: () => string = runtimeBuildIdentity,
+    private readonly idleStopLimits?: NativeIdleStopLimits,
+    private readonly hostStartLimits: NativeHostStartLimits = NATIVE_HOST_START_LIMITS,
   ) {
     this.root = resolve(root);
     // This process's build is read now, before a checkout update can change the files under it.
@@ -242,27 +319,96 @@ export class NativeSessionClient {
 
   private async host(): Promise<HostIdentity> {
     privateDirectory(this.root);
-    const path = join(this.root, 'host.json');
-    if (existsSync(path)) {
-      const host = readJson<HostIdentity>(path);
-      this.assertHostNode(host);
-      if (alive(host.pid) && existsSync(join(this.root, 'ready.json')) && existsSync(host.socket))
-        return host;
-    }
     if (this.starting) return this.starting;
-    this.starting = this.start();
+    const current = this.recordedHost();
+    if (current?.ready) return current.host;
+    // A supervisor that is still starting owns the host: wait for it rather than spawn a
+    // duplicate. If it stops before ready, start a host of our own in the time left, so the
+    // whole call stays within one start timeout.
+    const deadline = Date.now() + this.hostStartLimits.timeoutMs;
+    this.starting = current?.starting
+      ? this.waitForReady(undefined, deadline).catch((error: unknown) => {
+          if (this.recordedHost()?.starting) throw error;
+          return this.start(deadline);
+        })
+      : this.start(deadline);
     try {
       return await this.starting;
     } finally {
       this.starting = undefined;
     }
   }
+  /**
+   * The host.json host while its PID runs: `ready` once it accepts requests, else `starting`
+   * while the supervisor that wrote it still runs with its recorded start identity and has not
+   * failed a stop. A bare PID can belong to another process after a reboot or a kill.
+   * `confirmed` caches identities checked within one wait, so polling skips `ps`.
+   */
+  private recordedHost(
+    confirmed?: Set<string>,
+  ): { host: HostIdentity; ready: boolean; starting: boolean } | undefined {
+    const path = join(this.root, 'host.json');
+    if (!existsSync(path)) return undefined;
+    const host = readJson<HostIdentity>(path);
+    this.assertHostNode(host);
+    if (!alive(host.pid)) return undefined;
+    const ready = existsSync(join(this.root, 'ready.json')) && existsSync(host.socket);
+    return { host, ready, starting: !ready && this.supervisorStarting(host.pid, confirmed) };
+  }
+  private supervisorStarting(pid: number, confirmed?: Set<string>): boolean {
+    const ownerFile = join(this.root, 'lock', 'owner.json');
+    if (!existsSync(ownerFile)) return false;
+    const owner = readJson<RecordedProcess>(ownerFile);
+    if (owner.pid !== pid || this.stopFailed()) return false;
+    const key = `${owner.pid}:${owner.identity ?? ''}`;
+    if (confirmed?.has(key)) return true;
+    if (!recordedProcessAlive(owner)) return false;
+    confirmed?.add(key);
+    return true;
+  }
+  /** A failed stop keeps its supervisor alive with readiness withdrawn; it never becomes ready. */
+  private stopFailed(): boolean {
+    const cleanupFile = join(this.root, 'cleanup.json');
+    if (!existsSync(cleanupFile)) return false;
+    const cleanup = readJson<{ state: string; hostPid?: number }>(cleanupFile);
+    if (cleanup.state !== 'unknown') return false;
+    // A record left by an earlier host does not describe the current one.
+    const workerFile = join(this.root, 'worker.json');
+    return !existsSync(workerFile) || readJson<RecordedProcess>(workerFile).pid === cleanup.hostPid;
+  }
   private assertHostNode(host: HostIdentity) {
     if ((host.executionNodeId ?? 'local') !== this.executionNodeId)
       throw new Error('Native state directory belongs to another execution node');
   }
-  private async start(): Promise<HostIdentity> {
+  private async start(
+    deadline = Date.now() + this.hostStartLimits.timeoutMs,
+  ): Promise<HostIdentity> {
     privateDirectory(this.root);
+    // No time left: do not leave a detached supervisor behind a call that has already failed.
+    if (Date.now() >= deadline) throw nativeHostUnavailableError(join(this.root, 'host.log'));
+    const child = this.spawnSupervisor();
+    let spawnError: Error | undefined;
+    let exited = false;
+    child.on('error', (error) => {
+      spawnError = error;
+    });
+    child.once('exit', () => {
+      exited = true;
+    });
+    return this.waitForReady(
+      {
+        failed: () => {
+          if (spawnError) throw spawnError;
+          // A clean exit can hand off to another supervisor still starting. An abnormal
+          // exit of our child cannot become ready.
+          return exited && child.exitCode !== 0;
+        },
+      },
+      deadline,
+    );
+  }
+  /** Starts a detached supervisor for this home; its host replays the journals, then listens. */
+  protected spawnSupervisor(): ChildProcess {
     // A prebuilt CLI snapshot runs the .js built beside each source: start the supervisor from
     // its source with TSX, as when this module itself runs from source.
     const running = fileURLToPath(import.meta.url);
@@ -279,27 +425,33 @@ export class NativeSessionClient {
     });
     closeSync(log);
     child.unref();
-    let spawnError: Error | undefined;
-    let exited = false;
-    child.on('error', (error) => {
-      spawnError = error;
-    });
-    child.once('exit', () => {
-      exited = true;
-    });
-    const deadline = Date.now() + 10_000;
+    return child;
+  }
+  /**
+   * Waits for a ready host until `deadline`. While a supervisor is starting it (see
+   * `recordedHost`) the wait logs progress; otherwise it ends after the no-progress bound. With
+   * no child of ours (`own` undefined), that supervisor stopping ends it at once.
+   */
+  private async waitForReady(
+    own: { failed: () => boolean } | undefined,
+    deadline: number,
+  ): Promise<HostIdentity> {
+    const { noProgressMs, progressMs } = this.hostStartLimits;
+    const started = Date.now();
+    const confirmed = new Set<string>();
+    let nextProgress = started + progressMs;
     while (Date.now() < deadline) {
-      if (spawnError) throw spawnError;
-      const path = join(this.root, 'host.json');
-      if (existsSync(path)) {
-        const host = readJson<HostIdentity>(path);
-        this.assertHostNode(host);
-        if (alive(host.pid) && existsSync(join(this.root, 'ready.json')) && existsSync(host.socket))
-          return host;
+      if (own?.failed()) break;
+      const current = this.recordedHost(confirmed);
+      if (current?.ready) return current.host;
+      const starting = current?.starting === true;
+      if (!starting && (!own || Date.now() - started >= noProgressMs)) break;
+      if (starting && current && Date.now() >= nextProgress) {
+        nextProgress += progressMs;
+        console.warn(
+          `Waiting for native host supervisor ${current.host.pid} to become ready (${Math.round((Date.now() - started) / 1000)}s; see ${join(this.root, 'host.log')})`,
+        );
       }
-      // A clean exit can hand off to another supervisor still starting. An abnormal
-      // exit of our child cannot become ready; keep the live-start ceiling unchanged.
-      if (exited && child.exitCode !== 0) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw nativeHostUnavailableError(join(this.root, 'host.log'));
@@ -323,10 +475,33 @@ export class NativeSessionClient {
    * retired once its runners have all stopped, or, under a refresh policy, when every live
    * session is idle and the policy keeps none: those runners are stopped, their journals kept,
    * and the next host reports them for resume. Returns the sessions that keep it running.
-   * Never starts a host; concurrent callers share one refresh.
+   * Never starts a host. Concurrent callers share one refresh. A launch's own `policy` never
+   * shares one: if another refresh runs, it waits and is refused, since its list may be stale.
+   * A call without one (warm, or the client's policy) joins whichever refresh runs, a launch's
+   * included; no caller today mixes the two on one client.
    */
-  refreshStaleHost(): Promise<{ refreshed: boolean; busy: string[] }> {
-    this.refreshing ??= this.refreshOnce().finally(() => {
+  refreshStaleHost(
+    policy?: NativeHostRefreshPolicy,
+  ): Promise<{ refreshed: boolean; busy: string[] }> {
+    if (policy) return this.refreshUnder(policy);
+    this.refreshing ??= this.refreshOnce({ policy: this.refreshPolicy, perLaunch: false }).finally(
+      () => {
+        this.refreshing = undefined;
+      },
+    );
+    return this.refreshing;
+  }
+
+  /** A refresh under one launch's own policy, from a fresh census, never another's result. */
+  private async refreshUnder(
+    policy: NativeHostRefreshPolicy,
+  ): Promise<{ refreshed: boolean; busy: string[] }> {
+    if (this.refreshing) {
+      // A refresh's outcome belongs to the caller that asked for it; a failure only ends this wait.
+      while (this.refreshing) await this.refreshing.catch(() => undefined);
+      return { refreshed: false, busy: [STALE_RELEASE_LIST] };
+    }
+    this.refreshing = this.refreshOnce({ policy, perLaunch: true }).finally(() => {
       this.refreshing = undefined;
     });
     return this.refreshing;
@@ -373,23 +548,28 @@ export class NativeSessionClient {
   }
 
   /** The version-skew error, saying when the host is refreshed. */
-  private skew(host: HostIdentity, busy: readonly string[]): Error {
+  private skew(host: HostIdentity, busy: readonly string[], capability?: string): Error {
+    // The capability a launch lacks too; the host it is refreshed to has it.
+    const lacks = capability
+      ? ` ${capability.replace(/; existing sessions remain (?:available|readable)$/, '')}.`
+      : '';
     if (this.olderThanCheckout())
       return nativeHostVersionSkew(
         host,
         [],
-        'This service runs older code than its checkout: restart it to take the new runtime and refresh the host.',
+        'This service runs older code than its checkout: restart it to take the new runtime and refresh the host.' +
+          lacks,
       );
-    return nativeHostVersionSkew(
-      host,
-      busy,
-      this.refreshPolicy
+    const refreshes = this.idleStopLimits
+      ? 'A launch refreshes it once every live session is idle and released by the gateway, and a node start once every runner has stopped.'
+      : this.refreshPolicy
         ? 'It is refreshed at a later launch or service restart once no live session is busy.'
-        : 'It is refreshed when its service next starts, once every runner has stopped.',
-    );
+        : 'It is refreshed when its service next starts, once every runner has stopped.';
+    return nativeHostVersionSkew(host, busy, refreshes + lacks);
   }
 
-  private async refreshOnce(): Promise<{ refreshed: boolean; busy: string[] }> {
+  private async refreshOnce(scope: RefreshScope): Promise<{ refreshed: boolean; busy: string[] }> {
+    const { policy } = scope;
     let host: HostIdentity;
     try {
       host = this.existingHost();
@@ -401,6 +581,7 @@ export class NativeSessionClient {
     }
     if (nativeHostRunsCurrentRuntime(host)) return { refreshed: false, busy: [] };
     if (
+      !scope.perLaunch &&
       this.lastBusy?.hostPid === host.pid &&
       Date.now() - this.lastBusy.at < NATIVE_REFRESH_BUSY_REUSE_MS
     )
@@ -413,9 +594,9 @@ export class NativeSessionClient {
     if (this.inFlight)
       return { refreshed: false, busy: [`${this.inFlight} request(s) on their way to the host`] };
     if (await retireIdleNativeHost(this.root, host)) return { refreshed: true, busy: [] };
-    if (!this.refreshPolicy) return { refreshed: false, busy: [] };
+    if (!policy) return { refreshed: false, busy: [] };
     const live = await this.liveSessionsOf(host);
-    const kept = await this.refreshPolicy(live);
+    const kept = await policy(live);
     const busy = live.flatMap((session) => {
       // A live runner (processStopped unset) whose session isn't idle is busy, whatever its
       // state: a closed or failed one still has a process to reconcile.
@@ -429,18 +610,47 @@ export class NativeSessionClient {
               : kept.get(session.id);
       return reason ? [`${session.id} (${reason})`] : [];
     });
-    if (busy.length) return this.busy(host, busy);
+    if (busy.length) return this.busy(host, busy, scope);
+    if (this.idleStopLimits) {
+      // The unfenced stop of an older host relies on this process's admission lock alone, and a
+      // restarted node can't see launches the host still holds from before. The fence itself
+      // checks busy state, not this census: such a launch finishing between the two leaves an
+      // idle session the list didn't release, and it is stopped too.
+      if (!host.supportsIdleRunnerUpgrade)
+        return this.busy(
+          host,
+          [
+            'the host predates the idle-runner fence: close its idle sessions, or refresh it by hand',
+          ],
+          scope,
+        );
+      const { maxRunners } = this.idleStopLimits;
+      if (live.length > maxRunners)
+        return this.busy(
+          host,
+          [
+            `${live.length} idle runner${live.length === 1 ? '' : 's'}, more than the ${maxRunners} a launch may stop: close some, or refresh the host by hand`,
+          ],
+          scope,
+        );
+    }
     const stopped = await stopIdleSessionsNativeHost(this.root, host, live.length);
     if (stopped.stopped) return { refreshed: true, busy: [] };
     return this.busy(
       host,
       stopped.busy.length ? stopped.busy : ['the host process identity could not be verified'],
+      scope,
     );
   }
 
-  private busy(host: HostIdentity, busy: string[]): { refreshed: false; busy: string[] } {
+  /** A busy result; only a census under the client's policy answers later launches for 5 s. */
+  private busy(
+    host: HostIdentity,
+    busy: string[],
+    scope: RefreshScope,
+  ): { refreshed: false; busy: string[] } {
     const result = { refreshed: false as const, busy };
-    this.lastBusy = { at: Date.now(), hostPid: host.pid, result };
+    if (!scope.perLaunch) this.lastBusy = { at: Date.now(), hostPid: host.pid, result };
     return result;
   }
 
@@ -451,17 +661,25 @@ export class NativeSessionClient {
     if (!NATIVE_WORK_METHODS.includes(request.method))
       return this.dispatch<T>(request, await this.host(), []);
     let host: HostIdentity | undefined;
-    if (this.refreshPolicy && NATIVE_ADMISSION_METHODS.includes(request.method)) {
+    const requestPolicy = requestRefreshPolicies.getStore();
+    const policy = requestPolicy ?? this.refreshPolicy;
+    // A node checks every launch first: one without a list is refused without counting itself,
+    // so it never holds the refresh of a launch that carries one.
+    if ((policy || this.idleStopLimits) && NATIVE_ADMISSION_METHODS.includes(request.method)) {
       // A launch checks the host before it counts itself: it never goes to an old host, so
       // it must not hold that host's refresh, nor another launch's. A refresh's outcome
       // belongs to the caller that asked for it, so its error is not this launch's; the
       // launch reads the host again below.
+      const waited = this.refreshing !== undefined;
       while (this.refreshing) await this.refreshing.catch(() => undefined);
       host = await this.host();
       if (!nativeHostRunsCurrentRuntime(host)) {
-        const refresh = await this.refreshStaleHost();
+        if (!policy) return this.dispatch<T>(request, host, []);
+        // A launch's own list predates the refresh it waited for: refuse it rather than use it.
+        if (requestPolicy && waited) return this.dispatch<T>(request, host, [STALE_RELEASE_LIST]);
+        const refresh = await this.refreshStaleHost(requestPolicy);
         // A stopped or vanished host is replaced by a current one; a skewed host refuses
-        // before any request reaches it (capability errors first).
+        // before any request reaches it.
         host = await this.host();
         if (!nativeHostRunsCurrentRuntime(host))
           return this.dispatch<T>(request, host, refresh.busy);
@@ -489,11 +707,8 @@ export class NativeSessionClient {
     return waited;
   }
 
-  private async dispatch<T>(
-    request: HostRequest,
-    host: HostIdentity,
-    busy: readonly string[],
-  ): Promise<T> {
+  /** What the host lacks for this request, as the error to raise. */
+  private missingCapability(request: HostRequest, host: HostIdentity): string | undefined {
     if (
       (request.method === 'setApprovalMode' ||
         ('params' in request &&
@@ -501,58 +716,60 @@ export class NativeSessionClient {
           request.params.approvalMode !== undefined)) &&
       !host.supportsApprovalMode
     )
-      throw new Error('Native host upgrade required for per-session approval modes');
+      return 'Native host upgrade required for per-session approval modes';
     if (
       'params' in request &&
       'profileId' in request.params &&
       request.params.profileId &&
       !host.supportsProfiles
     )
-      throw new Error(
-        'Native host upgrade required for account profiles; existing sessions remain available',
-      );
+      return 'Native host upgrade required for account profiles; existing sessions remain available';
     if (
       request.method === NATIVE_WORKER_RESUME &&
       request.params.relocation &&
       !host.supportsWorkerRelocation
     )
-      throw new Error('Native host upgrade required for worker relocation');
+      return 'Native host upgrade required for worker relocation';
     if (
       (request.method === NATIVE_WORKER_RESUME ||
         (request.method === NATIVE_WORKER_CANCEL && request.resumeCommandId)) &&
       !host.supportsWorkerResumeFence
     )
-      throw new Error('Native host upgrade required for durable worker resume cancellation');
+      return 'Native host upgrade required for durable worker resume cancellation';
     if (NATIVE_WORKER_METHODS.includes(request.method) && !host.supportsWorkers)
-      throw new Error(
-        'Native host upgrade required for worker launch configuration; existing sessions remain available',
-      );
+      return 'Native host upgrade required for worker launch configuration; existing sessions remain available';
     if (request.method === 'ensure' && !host.supportsEnsure)
-      throw new Error(
-        'Native host upgrade required for idempotent creation; existing sessions remain available',
-      );
+      return 'Native host upgrade required for idempotent creation; existing sessions remain available';
     if (request.method === NATIVE_WORKER_CONFIRM_STOPPED && !host.supportsWorkerStopAttestation)
-      throw new Error(
-        'Native host upgrade required for explicit stopped-process confirmation; existing sessions remain readable',
-      );
+      return 'Native host upgrade required for explicit stopped-process confirmation; existing sessions remain readable';
     if (
       'params' in request &&
       'resultSchema' in request.params &&
       request.params.resultSchema &&
       !host.supportsStructuredResults
     )
-      throw new Error('Native host upgrade required for schema-bound review results');
+      return 'Native host upgrade required for schema-bound review results';
     if ('requester' in request && request.requester && !host.supportsStandaloneDelegation)
-      throw new Error('Native host upgrade required for standalone requester attribution');
+      return 'Native host upgrade required for standalone requester attribution';
     if (
       ['create', 'ensure', NATIVE_WORKER_ENSURE, NATIVE_WORKER_RESUME].includes(request.method) &&
       host.conversationStreaming !== 1
     )
-      throw new Error(
-        'Native host upgrade required for conversation streaming before launching new work',
-      );
+      return 'Native host upgrade required for conversation streaming before launching new work';
+    return undefined;
+  }
+
+  private async dispatch<T>(
+    request: HostRequest,
+    host: HostIdentity,
+    busy: readonly string[],
+  ): Promise<T> {
+    const missing = this.missingCapability(request, host);
+    // A launch to a host on another runtime is refused as skew, which its refresh fixes, even
+    // when that host also lacks a capability the launch needs.
     if (NATIVE_ADMISSION_METHODS.includes(request.method) && !nativeHostRunsCurrentRuntime(host))
-      throw this.skew(host, busy);
+      throw this.skew(host, busy, missing);
+    if (missing) throw new Error(missing);
     const result = await requestHost<T>(host, request);
     if ('params' in request && request.params.profileId) {
       const session = result as NativeSessionInfo;
