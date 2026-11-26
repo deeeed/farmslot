@@ -28,6 +28,7 @@ import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { subscribeHost } from './conversation-ipc.js';
 import {
   assertNativeHostRuntime,
+  NATIVE_HOST_START_TIMEOUT_MS,
   nativeHostRunsCurrentRuntime,
   nativeHostVersionSkew,
   retireIdleNativeHost,
@@ -36,7 +37,13 @@ import {
 import { nativeHostUnavailableError } from './host-unavailable.js';
 import { type HostIdentity, type HostRequest, requestHost } from './ipc.js';
 import { currentRuntimeBuild, runtimeBuildIdentity } from './runtime-build.js';
-import { alive, privateDirectory, readJson } from './storage.js';
+import {
+  alive,
+  privateDirectory,
+  readJson,
+  type RecordedProcess,
+  recordedProcessAlive,
+} from './storage.js';
 import {
   NATIVE_WORKER_CANCEL,
   NATIVE_WORKER_CANCEL_COMMAND,
@@ -128,7 +135,7 @@ export interface NativeHostStartLimits {
   progressMs: number;
 }
 export const NATIVE_HOST_START_LIMITS: NativeHostStartLimits = {
-  timeoutMs: 120_000,
+  timeoutMs: NATIVE_HOST_START_TIMEOUT_MS,
   noProgressMs: 10_000,
   progressMs: 15_000,
 };
@@ -315,11 +322,11 @@ export class NativeSessionClient {
     if (this.starting) return this.starting;
     const current = this.recordedHost();
     if (current?.ready) return current.host;
-    // A live supervisor that has not finished starting owns the host: wait for it rather
-    // than spawn a duplicate. If it dies before ready, start a host of our own.
-    this.starting = current
+    // A supervisor that is still starting owns the host: wait for it rather than spawn a
+    // duplicate. If it stops before ready, start a host of our own.
+    this.starting = current?.starting
       ? this.waitForReady(undefined).catch((error: unknown) => {
-          if (this.recordedHost()) throw error;
+          if (this.recordedHost()?.starting) throw error;
           return this.start();
         })
       : this.start();
@@ -329,14 +336,36 @@ export class NativeSessionClient {
       this.starting = undefined;
     }
   }
-  /** The host.json host if its supervisor is alive; ready once it accepts requests. */
-  private recordedHost(): { host: HostIdentity; ready: boolean } | undefined {
+  /**
+   * The host.json host while its PID runs: `ready` once it accepts requests, else `starting`
+   * while the supervisor that wrote it still runs with its recorded start identity and has not
+   * failed a stop. A bare PID can belong to another process after a reboot or a kill.
+   */
+  private recordedHost(): { host: HostIdentity; ready: boolean; starting: boolean } | undefined {
     const path = join(this.root, 'host.json');
     if (!existsSync(path)) return undefined;
     const host = readJson<HostIdentity>(path);
     this.assertHostNode(host);
     if (!alive(host.pid)) return undefined;
-    return { host, ready: existsSync(join(this.root, 'ready.json')) && existsSync(host.socket) };
+    const ready = existsSync(join(this.root, 'ready.json')) && existsSync(host.socket);
+    return { host, ready, starting: !ready && this.supervisorStarting(host.pid) };
+  }
+  /** The supervisor whose start identity was last confirmed, so polling skips `ps`. */
+  private confirmedSupervisor?: string;
+  private supervisorStarting(pid: number): boolean {
+    const ownerFile = join(this.root, 'lock', 'owner.json');
+    const cleanupFile = join(this.root, 'cleanup.json');
+    if (!existsSync(ownerFile)) return false;
+    const owner = readJson<RecordedProcess>(ownerFile);
+    if (owner.pid !== pid) return false;
+    // A failed stop keeps its supervisor alive with readiness withdrawn; it never becomes ready.
+    if (existsSync(cleanupFile) && readJson<{ state: string }>(cleanupFile).state === 'unknown')
+      return false;
+    const key = `${owner.pid}:${owner.identity ?? ''}`;
+    if (this.confirmedSupervisor === key) return true;
+    if (!recordedProcessAlive(owner)) return false;
+    this.confirmedSupervisor = key;
+    return true;
   }
   private assertHostNode(host: HostIdentity) {
     if ((host.executionNodeId ?? 'local') !== this.executionNodeId)
@@ -383,9 +412,9 @@ export class NativeSessionClient {
     return child;
   }
   /**
-   * Waits for a ready host. While a live supervisor holds host.json the wait lasts up to the
-   * start timeout, logging progress; without one it ends after the no-progress bound. With no
-   * child of ours (`own` undefined), the recorded supervisor dying ends it at once.
+   * Waits for a ready host. While a supervisor is starting it (see `recordedHost`) the wait
+   * lasts up to the start timeout, logging progress; otherwise it ends after the no-progress
+   * bound. With no child of ours (`own` undefined), that supervisor stopping ends it at once.
    */
   private async waitForReady(own: { failed: () => boolean } | undefined): Promise<HostIdentity> {
     const { timeoutMs, noProgressMs, progressMs } = this.hostStartLimits;
@@ -395,8 +424,9 @@ export class NativeSessionClient {
       if (own?.failed()) break;
       const current = this.recordedHost();
       if (current?.ready) return current.host;
-      if (!current && (!own || Date.now() - started >= noProgressMs)) break;
-      if (current && Date.now() >= nextProgress) {
+      const starting = current?.starting === true;
+      if (!starting && (!own || Date.now() - started >= noProgressMs)) break;
+      if (starting && current && Date.now() >= nextProgress) {
         nextProgress += progressMs;
         console.warn(
           `Waiting for native host supervisor ${current.host.pid} to become ready (${Math.round((Date.now() - started) / 1000)}s; see ${join(this.root, 'host.log')})`,

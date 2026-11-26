@@ -77,11 +77,21 @@ export function nativeIdleStopCleanupMs(runners: number): number {
   return NATIVE_HOST_CLEANUP_MS + runners * NATIVE_RUNNER_CLEANUP_MS;
 }
 
+/**
+ * The longest a client waits for a host that is visibly starting: its supervisor holds the
+ * host while the host replays every session journal. A node request that may start a host
+ * gets this plus a margin from the gateway, so the node never outwaits its caller.
+ */
+export const NATIVE_HOST_START_TIMEOUT_MS = 50_000;
+/** The gateway's wait for a node request beyond the host start it may include. */
+export const NATIVE_NODE_REQUEST_MARGIN_MS = 10_000;
 /** The most idle runners an execution node stops when a launch refreshes its host. */
 export const NATIVE_NODE_REFRESH_MAX_RUNNERS = 6;
 /** A launch to a node may first stop that many idle runners, then start the new host. */
 export const NATIVE_NODE_ADMISSION_TIMEOUT_MS =
-  60_000 + nativeIdleStopCleanupMs(NATIVE_NODE_REFRESH_MAX_RUNNERS);
+  NATIVE_HOST_START_TIMEOUT_MS +
+  NATIVE_NODE_REQUEST_MARGIN_MS +
+  nativeIdleStopCleanupMs(NATIVE_NODE_REFRESH_MAX_RUNNERS);
 
 /**
  * The supervisor's command line ends with the state directory it was started on, spelled as

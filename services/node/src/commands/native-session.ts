@@ -6,7 +6,7 @@ import {
   withNativeHostRefreshPolicy,
 } from '@farmslot/agent-runtime/native/client';
 import { NATIVE_NODE_REFRESH_MAX_RUNNERS } from '@farmslot/agent-runtime/native/host-runtime';
-import { NATIVE_HOST_UNAVAILABLE } from '@farmslot/agent-runtime/native/host-unavailable';
+import { isNativeHostUnavailableError } from '@farmslot/agent-runtime/native/host-unavailable';
 import {
   NativeHostObservation,
   type NativeSourceReceipt,
@@ -67,20 +67,23 @@ export class NativeNodeSessions {
     try {
       await this.client.warm();
     } catch (error) {
-      const code = error instanceof Error && 'code' in error ? error.code : undefined;
-      if (code === NATIVE_HOST_UNAVAILABLE) {
+      if (isNativeHostUnavailableError(error)) {
         // The host did not become ready in time. Register anyway: each launch starts or waits
         // for the host itself, and the node must not exit over it.
-        console.warn(
-          `Native host not ready at node start; registering without it. ${(error as Error).message}`,
-        );
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(`Native host not ready at node start; registering without it. ${reason}`);
         return;
       }
-      if (code !== 'NATIVE_HOST_VERSION_SKEW') throw error;
+      if (
+        !(error instanceof Error) ||
+        !('code' in error) ||
+        error.code !== 'NATIVE_HOST_VERSION_SKEW'
+      )
+        throw error;
       // Keep reads and cleanup available. New admissions are refused until a launch carrying
       // the gateway's release list finds every live session idle and released, or a later
       // node start finds every runner stopped; never kill a busy reviewer to deploy.
-      console.warn((error as Error).message);
+      console.warn(error.message);
     }
   }
 

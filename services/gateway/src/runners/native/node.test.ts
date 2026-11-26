@@ -9,7 +9,10 @@ import {
   NATIVE_WORKER_CONFIRM_STOPPED,
   NATIVE_WORKER_TRANSFER,
 } from '@farmslot/agent-runtime/native';
-import { NATIVE_NODE_ADMISSION_TIMEOUT_MS } from '@farmslot/agent-runtime/native/host-runtime';
+import {
+  NATIVE_HOST_START_TIMEOUT_MS,
+  NATIVE_NODE_ADMISSION_TIMEOUT_MS,
+} from '@farmslot/agent-runtime/native/host-runtime';
 import { Methods, type Principal } from '@farmslot/protocol';
 
 import {
@@ -548,6 +551,14 @@ test('launches and messages to a node that refreshes its host wait long enough f
   assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_CREATE, false), 60_000);
   assert.equal(nativeNodeSessionTimeout(Methods.NATIVE_SESSION_READ, true), 60_000);
   assert.equal(nativeNodeSessionTimeout(NATIVE_WORKER_COMPACT, true), 185_000);
+});
+
+test('every node request outlasts the host start the node may wait for first', () => {
+  for (const method of [Methods.NATIVE_SESSION_READ, Methods.NATIVE_SESSION_CREATE])
+    for (const refreshes of [false, true])
+      assert.ok(nativeNodeSessionTimeout(method, refreshes) > NATIVE_HOST_START_TIMEOUT_MS);
+  // A refreshing launch: the idle stops, then the start.
+  assert.ok(NATIVE_NODE_ADMISSION_TIMEOUT_MS - NATIVE_HOST_START_TIMEOUT_MS >= 100_000);
 });
 
 test('a launch to a node that refreshes its host waits past 60 s for its answer', async () => {

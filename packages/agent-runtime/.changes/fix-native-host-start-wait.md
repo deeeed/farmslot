@@ -1,1 +1,1 @@
-- A host start waits while its supervisor is alive and still replaying session journals, up to 120 s (`NATIVE_HOST_START_LIMITS`), logging progress every 15 s, instead of giving up after a fixed 10 s. A client waits for a supervisor already starting instead of spawning a duplicate, and starts its own if that one dies.
+- A host start waits up to 50 s while its supervisor replays session journals, instead of a fixed 10 s, and waits for a supervisor already starting instead of spawning a duplicate.
