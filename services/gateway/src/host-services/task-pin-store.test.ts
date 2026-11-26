@@ -41,10 +41,19 @@ import {
 const HOUR = 60 * 60 * 1000;
 const sha256 = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
 const objectsOf = (root: string) => path.join(root, '.content', 'sha256');
+/** A directory that does not exist reads as empty; any other error fails the test. */
+async function listOrEmpty(dir: string): Promise<string[]> {
+  try {
+    return await readdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}
 
 async function storeEntries(root: string): Promise<string[]> {
   const found: string[] = [];
-  for (const shard of await readdir(objectsOf(root)).catch(() => []))
+  for (const shard of await listOrEmpty(objectsOf(root)))
     for (const name of await readdir(path.join(objectsOf(root), shard)))
       found.push(path.join(objectsOf(root), shard, name));
   return found;
@@ -90,7 +99,7 @@ async function realPins(t: test.TestContext) {
 
 /** Restore owner write bits so the fixture's own cleanup can remove read-only store files. */
 async function chmodTree(dir: string): Promise<void> {
-  for (const name of await readdir(dir).catch(() => [])) {
+  for (const name of await listOrEmpty(dir)) {
     const file = path.join(dir, name);
     const info = await lstat(file);
     if (info.isDirectory()) await chmodTree(file);
@@ -313,8 +322,9 @@ test('a pin that changes while it is shared is not recorded and is logged as unv
     {
       // Something writes into the pin mid-pass: the recomputed fingerprint must catch it.
       beforeLink: async () => {
+        // Pin directories stay writable; only their files are read-only.
         for (const receipt of receipts)
-          await writeFile(path.join(receipt.pin, 'cli', 'stray.txt'), 'appeared').catch(() => {});
+          await writeFile(path.join(receipt.pin, 'cli', 'stray.txt'), 'appeared');
       },
     },
   );
