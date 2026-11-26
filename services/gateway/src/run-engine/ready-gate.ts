@@ -930,7 +930,7 @@ interface ReadyGatePackageDependencies {
  * Waits for a worker that is making progress to go idle, so the gate builds its own
  * package instead of leaving an "unavailable" card only Retry Gate clears.
  */
-function waitForGateWorkerIdle(
+async function waitForGateWorkerIdle(
   runId: string,
   generation: number,
   dependencies: ReadyGatePackageDependencies,
@@ -938,10 +938,12 @@ function waitForGateWorkerIdle(
   updateRunStep(runId, S.HUMAN_GATE, {
     detail: 'Preparing operator decision: waiting for the owned worker to be idle',
   });
-  return waitForOwnedWorkerIdle(runId, generation, {
+  const waited = await waitForOwnedWorkerIdle(runId, generation, {
     readProgress: dependencies.readProgress,
     bounds: dependencies.workerIdleWait,
   });
+  // A park gets the gate's card; the park fence then holds the gate.
+  return waited === 'parked' ? 'timeout' : waited;
 }
 
 /** A publication the operator adopted ends this gate; its continuation is checked first. */

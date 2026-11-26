@@ -147,7 +147,7 @@ export interface RouteRunMethodContext {
   emit: (event: string, payload: unknown) => void;
   broadcast: (frame: EventFrame) => void;
   /** Whether the caller's connection is still open; a long wait for it stops once it is not. */
-  callerConnected?: () => boolean;
+  callerConnected: () => boolean;
   authorizeEvidenceAttestation?: (action?: string) => EvidenceAttestationApprover;
   authorizeVisualClaimReview?: import('../methods/run/claim-reviews.js').VisualClaimReviewDependencies['authorizeVisualClaimReview'];
 }

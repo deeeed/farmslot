@@ -11,6 +11,8 @@ export interface OwnedWorkerIdleWaitBounds {
   pollMs: number;
   maxPollMs: number;
   timeoutMs: number;
+  /** How often a cancellable wait checks its caller between progress reads. */
+  cancelCheckMs?: number;
 }
 
 // A compaction or a last turn finishes in minutes; past this the caller sees why. Polls back off
@@ -21,9 +23,6 @@ export const OWNED_WORKER_IDLE_WAIT: OwnedWorkerIdleWaitBounds = {
   timeoutMs: OWNED_WORKER_IDLE_WAIT_MS,
 };
 
-// How often a cancellable wait checks its caller between progress reads.
-const CANCEL_CHECK_MS = 1_000;
-
 export interface OwnedWorkerIdleWaitOptions {
   readProgress?: typeof readRunProgress;
   /** Tests shorten it. */
@@ -32,14 +31,14 @@ export interface OwnedWorkerIdleWaitOptions {
   cancelled?: () => boolean;
 }
 
-function pause(ms: number, cancelled: (() => boolean) | undefined): Promise<void> {
+function pause(ms: number, cancelled: (() => boolean) | undefined, checkMs: number): Promise<void> {
   if (!cancelled) return new Promise((resolve) => setTimeout(resolve, ms));
   const until = Date.now() + ms;
   return new Promise((resolve) => {
     const tick = () => {
       const left = until - Date.now();
       if (left <= 0 || cancelled()) resolve();
-      else setTimeout(tick, Math.min(left, CANCEL_CHECK_MS));
+      else setTimeout(tick, Math.min(left, checkMs));
     };
     tick();
   });
@@ -47,24 +46,29 @@ function pause(ms: number, cancelled: (() => boolean) | undefined): Promise<void
 
 /**
  * Waits for an owned worker that is making progress to go idle. A worker that cannot go idle by
- * itself (at a prompt, pane unproven) or a gate park ends the wait at once as `timeout`; a replay,
- * pause or cancel of the run, or a cancelled caller, ends it as `abort`.
+ * itself (at a prompt, pane unproven) ends the wait at once as `timeout`, and a gate park as
+ * `parked`; a replay, pause or cancel of the run, or a cancelled caller, ends it as `abort`.
  */
 export async function waitForOwnedWorkerIdle(
   runId: string,
   generation: number,
   options: OwnedWorkerIdleWaitOptions = {},
-): Promise<'idle' | 'abort' | 'timeout'> {
-  const { pollMs, maxPollMs, timeoutMs } = options.bounds ?? OWNED_WORKER_IDLE_WAIT;
+): Promise<'idle' | 'abort' | 'timeout' | 'parked'> {
+  const {
+    pollMs,
+    maxPollMs,
+    timeoutMs,
+    cancelCheckMs = 1_000,
+  } = options.bounds ?? OWNED_WORKER_IDLE_WAIT;
   const readProgress = options.readProgress ?? readRunProgress;
   const stopped = () =>
     Boolean(options.cancelled?.()) || runSupersededSince(getRun(runId), generation);
   const deadline = Date.now() + timeoutMs;
   for (let delay = pollMs; Date.now() < deadline; delay = Math.min(delay * 2, maxPollMs)) {
-    await pause(Math.min(delay, deadline - Date.now()), options.cancelled);
+    await pause(Math.min(delay, deadline - Date.now()), options.cancelled, cancelCheckMs);
     if (stopped()) return 'abort';
     const before = getRun(runId)!;
-    if (isGateParkInFlightOrFreed(before)) return 'timeout';
+    if (isGateParkInFlightOrFreed(before)) return 'parked';
     const progress = await readProgress(before);
     // The probe awaited a remote read: an operator may have replayed or cancelled meanwhile.
     if (stopped()) return 'abort';

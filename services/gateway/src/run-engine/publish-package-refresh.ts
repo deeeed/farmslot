@@ -69,6 +69,7 @@ import { buildReadyGateInputs } from './ready-gate-inputs.js';
 import { readGateRecordedEvidenceSources } from './recorded-evidence-sources.js';
 import { refreshReviewDiffIdentities, refreshReviewDiffSnapshot } from './review-diff-refresh.js';
 import { projectClaimFindingSettlements } from './review-finding-settlements.js';
+import { runSupersededSince } from './run-generation.js';
 import { getDiffStat } from './task-artifacts.js';
 import { refreshRunTicket } from './ticket-refresh.js';
 import { activeVisualRepair, visualRepairOffered } from './visual-repair.js';
@@ -184,6 +185,28 @@ function refreshFailureMessage(error: unknown): string {
 function refreshFailureLogLine(message: string): string {
   const line = message.replace(/\s+/gu, ' ');
   return line.length > 2000 ? `${line.slice(0, 2000)}…` : line;
+}
+
+function secondsSince(startedAt: number): number {
+  return Math.round((Date.now() - startedAt) / 1000);
+}
+
+// A caller that timed out never sees a refusal, so the log keeps it.
+function logRefreshRefused(runId: string, startedAt: number, message: string): void {
+  console.warn(
+    `[run-engine] run ${runId.slice(0, 8)} — publish package refresh refused after ${secondsSince(startedAt)}s: ${refreshFailureLogLine(message)}`,
+  );
+}
+
+/** The pending ready gate a refresh rebuilds: the named one, or any when none is named. */
+function pendingReadyDecision(run: Run | undefined, decisionId: string | undefined) {
+  return run?.decisions.find(
+    (d) =>
+      d.type === 'engine_human_gate' &&
+      !d.resolvedAt &&
+      (!decisionId || d.id === decisionId) &&
+      (d.payload as ReadyGatePayload | undefined)?.kind === 'ready',
+  );
 }
 
 /** Coalesce polling readers, and never snapshot a worker that is still progressing. */
@@ -394,69 +417,94 @@ type RefreshReaders = {
  * `run.refreshPublishPackage`: a worker still making progress (a compaction, or its last turn
  * after the completion signal) is waited for, as the ready gate waits before building its own
  * package, and the refresh then runs once more. The wait runs outside the run's transition lock.
- * A replay, pause or cancel, or a caller that disconnected, ends it without a refresh. Inspection
- * and receipt refreshes call `refreshPublishPackage` and keep its immediate refusal.
+ * A replay, pause or cancel, a gate resolved meanwhile, a gate park, or a caller that disconnected
+ * ends it without a refresh. Inspection and receipt refreshes call `refreshPublishPackage` and
+ * keep its immediate refusal.
  */
 export async function refreshPublishPackageForCaller(
   params: Parameters<typeof refreshPublishPackageTransitionLocked>[0],
   options: {
-    callerConnected?: () => boolean;
+    callerConnected: () => boolean;
     readers?: RefreshReaders;
     wait?: Pick<OwnedWorkerIdleWaitOptions, 'bounds'>;
-  } = {},
+  },
 ): ReturnType<typeof refreshPublishPackageTransitionLocked> {
   const startedAt = Date.now();
+  // The run the first attempt saw: a replay after it ends the wait.
+  const generation = getRun(params.runId)?.engineState?.generation ?? 0;
   try {
     return await refreshPublishPackage(params, options.readers, { logBusy: false });
   } catch (error) {
     if (!(error instanceof OwnedWorkerBusyError)) throw error;
-    const callerGone = () => options.callerConnected?.() === false;
-    const generation = getRun(params.runId)?.engineState?.generation ?? 0;
+    const runId = params.runId;
+    const callerGone = () => !options.callerConnected();
+    const gateClosed = () => !pendingReadyDecision(getRun(runId), params.decisionId);
     console.log(
-      `[run-engine] run ${params.runId.slice(0, 8)} — publish package refresh waiting for the owned worker to be idle`,
+      `[run-engine] run ${runId.slice(0, 8)} — publish package refresh waiting for the owned worker to be idle`,
     );
-    const waited = await waitForOwnedWorkerIdle(params.runId, generation, {
+    const waited = await waitForOwnedWorkerIdle(runId, generation, {
       readProgress: options.readers?.progress,
       bounds: options.wait?.bounds,
-      cancelled: callerGone,
+      cancelled: () => callerGone() || gateClosed(),
     });
-    const after = `after ${Math.round((Date.now() - startedAt) / 1000)}s`;
-    if (waited === 'timeout') {
-      console.warn(
-        `[run-engine] run ${params.runId.slice(0, 8)} — publish package refresh refused ${after}: ${refreshFailureLogLine(error.message)}`,
+    if (waited === 'idle') {
+      console.log(
+        `[run-engine] run ${runId.slice(0, 8)} — owned worker idle after ${secondsSince(startedAt)}s; refreshing its publication package`,
       );
-      throw error;
+      return refreshPublishPackage(params, options.readers, {
+        startedAt,
+        // The retry can queue behind other run work; a caller gone by then gets nothing.
+        beforeRefresh: () => {
+          if (callerGone()) throw new Error(CALLER_GONE);
+        },
+      });
     }
-    if (waited === 'abort') {
-      const message = callerGone()
-        ? 'The caller disconnected while the owned worker was busy; the publication package was not refreshed'
-        : 'The run was replayed, paused or cancelled while its owned worker was busy; the publication package was not refreshed';
-      console.warn(`[run-engine] run ${params.runId.slice(0, 8)} — ${message} (${after})`);
-      throw new Error(message);
-    }
-    return refreshPublishPackage(params, options.readers);
+    const refusal =
+      waited === 'timeout'
+        ? error
+        : waited === 'parked'
+          ? new BlockedRunError(
+              'A gate park started while the owned worker was busy; restore or cancel the run before refreshing its publication package',
+            )
+          : new Error(
+              callerGone()
+                ? CALLER_GONE
+                : runSupersededSince(getRun(runId), generation)
+                  ? 'The run was replayed, paused or cancelled while its owned worker was busy; the publication package was not refreshed'
+                  : 'The gate was resolved while its owned worker was busy; the publication package was not refreshed',
+            );
+    logRefreshRefused(runId, startedAt, refusal.message);
+    throw refusal;
   }
 }
+
+const CALLER_GONE =
+  'The caller disconnected while the owned worker was busy; the publication package was not refreshed';
 
 export async function refreshPublishPackage(
   params: Parameters<typeof refreshPublishPackageTransitionLocked>[0],
   readers: RefreshReaders = {},
-  options: { logBusy?: boolean } = {},
+  options: {
+    /** The caller-facing refresh logs the outcome of its wait instead. */
+    logBusy?: boolean;
+    /** When the caller's request began, for the refusal log. */
+    startedAt?: number;
+    /** Runs inside the run's transition lock, before the refresh reads anything. */
+    beforeRefresh?: () => void;
+  } = {},
 ): ReturnType<typeof refreshPublishPackageTransitionLocked> {
-  const startedAt = Date.now();
+  const startedAt = options.startedAt ?? Date.now();
   try {
-    return await withRunTransition(params.runId, () =>
-      refreshPublishPackageTransitionLocked(params, false, readers.progress, readers.source),
-    );
+    return await withRunTransition(params.runId, () => {
+      options.beforeRefresh?.();
+      return refreshPublishPackageTransitionLocked(params, false, readers.progress, readers.source);
+    });
   } catch (error) {
-    // The caller-facing refresh waits for a busy worker and logs the outcome of that wait.
     if (options.logBusy === false && error instanceof OwnedWorkerBusyError) throw error;
-    // A caller that timed out never sees this refusal, so the log keeps it. Inspection runs a
-    // refusal again only once its inputs change, so this is one line per attempt, not per poll.
+    // Inspection runs a refusal again only once its inputs change, so this is one line per
+    // attempt, not per poll.
     const message = refreshFailureMessage(error);
-    console.warn(
-      `[run-engine] run ${params.runId.slice(0, 8)} — publish package refresh refused after ${Math.round((Date.now() - startedAt) / 1000)}s: ${refreshFailureLogLine(message)}`,
-    );
+    logRefreshRefused(params.runId, startedAt, message);
     // The gate shows the latest evidence refusal, not an older remembered one.
     const remembered = refreshRefusals.get(params.runId);
     if (remembered && isEvidenceRefusal(error))
@@ -482,13 +530,7 @@ async function refreshPublishPackageTransitionLocked(
     );
   if (params.refreshTicket && (isTerminalRunStatus(run.status) || run.status === 'paused'))
     throw new Error('Cannot refresh ticket on a terminal or paused run');
-  const decision = run.decisions.find(
-    (d) =>
-      d.type === 'engine_human_gate' &&
-      !d.resolvedAt &&
-      (!params.decisionId || d.id === params.decisionId) &&
-      (d.payload as ReadyGatePayload | undefined)?.kind === 'ready',
-  );
+  const decision = pendingReadyDecision(run, params.decisionId);
   if (!decision && !allowHistorical)
     throw new Error(
       'No pending ready publish package decision; replay complete on this run to restore its gate',

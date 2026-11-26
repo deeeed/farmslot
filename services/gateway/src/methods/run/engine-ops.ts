@@ -88,7 +88,7 @@ export async function runRefreshReviewGate(
 export async function runRefreshPublishPackage(
   params: RunRefreshPublishPackageParams,
   _emit: Emit,
-  context: { callerConnected?: () => boolean } = {},
+  context: { callerConnected: () => boolean },
 ): Promise<RunRefreshPublishPackageResult> {
   return refreshPublishPackageForCaller(params, { callerConnected: context.callerConnected });
 }

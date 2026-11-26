@@ -24,6 +24,7 @@ import {
 import { capturePublicationSource } from '../run-completion/publication-source.js';
 import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
+import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import type { RunProgressObservation } from '../runners/run-progress.js';
 import {
   commitRunBeforeAttemptAttestation,
@@ -43,7 +44,11 @@ import {
   summarizePublishPackageRefreshEvidence,
 } from './publish-package-refresh.js';
 import { refreshReviewGate } from './review-gate.js';
-import { deleteTestRunIfPresent, makeReadyGatePackage } from './test-fixtures.js';
+import {
+  deleteTestRunIfPresent,
+  makeFreedSlotPark,
+  makeReadyGatePackage,
+} from './test-fixtures.js';
 
 test('pending publication reload retains its approved package without reading live source', async (t) => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'approved-package-reload-'));
@@ -282,6 +287,7 @@ test('the refresh RPC waits for a worker finishing its last turn, then refreshes
   const worker = progressReadings('making-progress', 'making-progress', 'idle');
   await assert.rejects(
     refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
       readers: { progress: worker.progress, source },
       wait: FAST_WAIT,
     }),
@@ -297,6 +303,7 @@ test('the refresh RPC refuses a worker still busy when the wait ends', async (t)
   const busy = async (): Promise<RunProgressObservation> => ({ kind: 'making-progress' });
   await assert.rejects(
     refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
       readers: { progress: busy, source },
       wait: { bounds: { pollMs: 1, maxPollMs: 1, timeoutMs: 20 } },
     }),
@@ -327,7 +334,11 @@ test('a replay during the refresh wait ends it without refreshing', async (t) =>
     return { kind: 'making-progress' };
   };
   await assert.rejects(
-    refreshPublishPackageForCaller(params, { readers: { progress, source }, wait: FAST_WAIT }),
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
+      readers: { progress, source },
+      wait: FAST_WAIT,
+    }),
     /replayed, paused or cancelled while its owned worker was busy/,
   );
   assert.equal(reads, 2, 'the superseded refresh did not run again');
@@ -348,12 +359,96 @@ test('a caller that disconnects ends the refresh wait at once and gets no late r
       callerConnected: () => connected,
       readers: { progress: worker.progress, source },
       // The first poll is a minute away: the disconnect, not the poll, ends the wait.
-      wait: { bounds: { pollMs: 60_000, maxPollMs: 60_000, timeoutMs: 120_000 } },
+      wait: { bounds: { pollMs: 60_000, maxPollMs: 60_000, timeoutMs: 120_000, cancelCheckMs: 5 } },
     }),
     /caller disconnected while the owned worker was busy/,
   );
-  assert.ok(Date.now() - started < 5_000, 'the wait ended soon after the disconnect');
+  assert.ok(Date.now() - started < 1_000, 'the wait ended soon after the disconnect');
   assert.deepEqual(worker.reads, ['making-progress'], 'no progress read or refresh after it');
+});
+
+test('a caller that disconnects while the retry waits for the run lock gets no refresh', async (t) => {
+  const { run, params, source } = await mirrorRefusalFixture(t, 'refresh-retry-disconnect');
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  let connected = true;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let holder: Promise<unknown> | undefined;
+  const worker = progressReadings('making-progress', 'idle');
+  const progress = async () => {
+    const reading = await worker.progress();
+    if (worker.reads.length === 2) {
+      // Other run work takes the lock as the worker goes idle; the CLI gives up meanwhile.
+      holder = withRunTransition(run.id, () => held);
+      setTimeout(() => {
+        connected = false;
+        release();
+      }, 20);
+    }
+    return reading;
+  };
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => connected,
+      readers: { progress, source },
+      wait: FAST_WAIT,
+    }),
+    /caller disconnected while the owned worker was busy/,
+  );
+  await holder;
+  assert.deepEqual(worker.reads, ['making-progress', 'idle'], 'the retry read nothing');
+});
+
+test('a gate resolved by another client ends the refresh wait', async (t) => {
+  const { run, params, source } = await mirrorRefusalFixture(t, 'refresh-wait-resolved');
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const worker = progressReadings('making-progress');
+  setTimeout(() => {
+    updateRun(run.id, {
+      decisions: getRun(run.id)!.decisions.map((decision) => ({
+        ...decision,
+        resolvedAt: new Date().toISOString(),
+        resolvedAction: 'hold',
+      })),
+    });
+  }, 20);
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
+      readers: { progress: worker.progress, source },
+      wait: { bounds: { pollMs: 60_000, maxPollMs: 60_000, timeoutMs: 120_000, cancelCheckMs: 5 } },
+    }),
+    /gate was resolved while its owned worker was busy/,
+  );
+  assert.deepEqual(worker.reads, ['making-progress']);
+});
+
+test('a gate park during the refresh wait is refused as a park, not as a busy worker', async (t) => {
+  const { run, params, source } = await mirrorRefusalFixture(t, 'refresh-wait-park');
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const worker = progressReadings('making-progress');
+  const progress = async () => {
+    // The machine parks the slot while the worker is still busy.
+    updateRun(run.id, { park: makeFreedSlotPark(getRun(run.id)!) });
+    return worker.progress();
+  };
+  await assert.rejects(
+    refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
+      readers: { progress, source },
+      wait: FAST_WAIT,
+    }),
+    (error) =>
+      error instanceof BlockedRunError &&
+      !(error instanceof OwnedWorkerBusyError) &&
+      /gate park started while the owned worker was busy/.test(error.message),
+  );
+  assert.deepEqual(worker.reads, ['making-progress']);
 });
 
 test('the refresh RPC does not wait for a worker at a prompt', async (t) => {
@@ -362,6 +457,7 @@ test('the refresh RPC does not wait for a worker at a prompt', async (t) => {
   const worker = progressReadings('awaiting-input');
   await assert.rejects(
     refreshPublishPackageForCaller(params, {
+      callerConnected: () => true,
       readers: { progress: worker.progress, source },
       wait: { bounds: { pollMs: 60_000, maxPollMs: 60_000, timeoutMs: 120_000 } },
     }),

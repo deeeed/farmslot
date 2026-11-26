@@ -78,6 +78,35 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
+/** A slot-freeing park that has freed the slot: the gate is fenced until a restore or cancel. */
+export function makeFreedSlotPark(run: Pick<Run, 'id' | 'slotId'>): NonNullable<Run['park']> {
+  return {
+    version: 1,
+    operationId: 'park-1',
+    previewId: 'preview-1',
+    runId: run.id,
+    generation: 1,
+    machine: 'machine-a',
+    slotId: run.slotId!,
+    mode: 'release',
+    phase: 'parked',
+    slotDisposition: 'freed',
+    slotFreedAt: '2026-09-05T00:00:10.000Z',
+    prePauseStatus: 'human-gating',
+    prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
+    resourceManifest: {
+      capturedAt: '2026-09-05T00:00:00.000Z',
+      resources: [],
+      capabilityLeases: [],
+    },
+    recoveryHandle: null,
+    errors: [],
+    residuals: { runner: 'stopped', resources: [] },
+    createdAt: '2026-09-05T00:00:00.000Z',
+    updatedAt: '2026-09-05T00:00:10.000Z',
+  };
+}
+
 export function makeCollisionDecision(existingDirs: string[]): RunDecision {
   return {
     id: 'dec-1',

@@ -15,32 +15,30 @@ import { followNativeSession } from './native-session-follow.js';
 const RESOURCE_CONTROL_BOOT_RPC_TIMEOUT_MS = 150_000;
 export const RUNTIME_CAPABILITY_ACQUIRE_RPC_TIMEOUT_MS = 420_000;
 
+/** The least time a call waits for its reply, for calls that can outlast the default. */
+function minimumRpcTimeoutMs(method: string, params: unknown): number | undefined {
+  // The gateway may wait for a busy worker before refreshing.
+  if (method === Methods.RUN_REFRESH_PUBLISH_PACKAGE) return RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS;
+  if (method === Methods.RUNTIME_CAPABILITY_ACQUIRE)
+    return RUNTIME_CAPABILITY_ACQUIRE_RPC_TIMEOUT_MS;
+  if (
+    method === Methods.RESOURCE_CONTROL &&
+    typeof params === 'object' &&
+    params !== null &&
+    'action' in params &&
+    params.action === 'boot'
+  )
+    return RESOURCE_CONTROL_BOOT_RPC_TIMEOUT_MS;
+  return undefined;
+}
+
 export function resolveRpcGatewayTimeoutMs(
   method: string,
   params: unknown,
   globalTimeout: unknown,
 ): number | undefined {
-  // The gateway may wait for a busy worker before refreshing; the call outlasts that wait.
-  if (method === Methods.RUN_REFRESH_PUBLISH_PACKAGE)
-    return Math.max(Number(globalTimeout) || 0, RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS);
-  if (
-    method !== Methods.RUNTIME_CAPABILITY_ACQUIRE &&
-    !(
-      method === Methods.RESOURCE_CONTROL &&
-      typeof params === 'object' &&
-      params !== null &&
-      'action' in params &&
-      params.action === 'boot'
-    )
-  ) {
-    return undefined;
-  }
-  return Math.max(
-    Number(globalTimeout) || 0,
-    method === Methods.RESOURCE_CONTROL
-      ? RESOURCE_CONTROL_BOOT_RPC_TIMEOUT_MS
-      : RUNTIME_CAPABILITY_ACQUIRE_RPC_TIMEOUT_MS,
-  );
+  const minimum = minimumRpcTimeoutMs(method, params);
+  return minimum === undefined ? undefined : Math.max(Number(globalTimeout) || 0, minimum);
 }
 
 export function registerRpcCommand(program: Command): void {
