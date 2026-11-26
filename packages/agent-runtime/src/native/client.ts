@@ -323,13 +323,15 @@ export class NativeSessionClient {
     const current = this.recordedHost();
     if (current?.ready) return current.host;
     // A supervisor that is still starting owns the host: wait for it rather than spawn a
-    // duplicate. If it stops before ready, start a host of our own.
+    // duplicate. If it stops before ready, start a host of our own in the time left, so the
+    // whole call stays within one start timeout.
+    const deadline = Date.now() + this.hostStartLimits.timeoutMs;
     this.starting = current?.starting
-      ? this.waitForReady(undefined).catch((error: unknown) => {
+      ? this.waitForReady(undefined, deadline).catch((error: unknown) => {
           if (this.recordedHost()?.starting) throw error;
-          return this.start();
+          return this.start(deadline);
         })
-      : this.start();
+      : this.start(deadline);
     try {
       return await this.starting;
     } finally {
@@ -340,38 +342,47 @@ export class NativeSessionClient {
    * The host.json host while its PID runs: `ready` once it accepts requests, else `starting`
    * while the supervisor that wrote it still runs with its recorded start identity and has not
    * failed a stop. A bare PID can belong to another process after a reboot or a kill.
+   * `confirmed` caches identities checked within one wait, so polling skips `ps`.
    */
-  private recordedHost(): { host: HostIdentity; ready: boolean; starting: boolean } | undefined {
+  private recordedHost(
+    confirmed?: Set<string>,
+  ): { host: HostIdentity; ready: boolean; starting: boolean } | undefined {
     const path = join(this.root, 'host.json');
     if (!existsSync(path)) return undefined;
     const host = readJson<HostIdentity>(path);
     this.assertHostNode(host);
     if (!alive(host.pid)) return undefined;
     const ready = existsSync(join(this.root, 'ready.json')) && existsSync(host.socket);
-    return { host, ready, starting: !ready && this.supervisorStarting(host.pid) };
+    return { host, ready, starting: !ready && this.supervisorStarting(host.pid, confirmed) };
   }
-  /** The supervisor whose start identity was last confirmed, so polling skips `ps`. */
-  private confirmedSupervisor?: string;
-  private supervisorStarting(pid: number): boolean {
+  private supervisorStarting(pid: number, confirmed?: Set<string>): boolean {
     const ownerFile = join(this.root, 'lock', 'owner.json');
-    const cleanupFile = join(this.root, 'cleanup.json');
     if (!existsSync(ownerFile)) return false;
     const owner = readJson<RecordedProcess>(ownerFile);
-    if (owner.pid !== pid) return false;
-    // A failed stop keeps its supervisor alive with readiness withdrawn; it never becomes ready.
-    if (existsSync(cleanupFile) && readJson<{ state: string }>(cleanupFile).state === 'unknown')
-      return false;
+    if (owner.pid !== pid || this.stopFailed()) return false;
     const key = `${owner.pid}:${owner.identity ?? ''}`;
-    if (this.confirmedSupervisor === key) return true;
+    if (confirmed?.has(key)) return true;
     if (!recordedProcessAlive(owner)) return false;
-    this.confirmedSupervisor = key;
+    confirmed?.add(key);
     return true;
+  }
+  /** A failed stop keeps its supervisor alive with readiness withdrawn; it never becomes ready. */
+  private stopFailed(): boolean {
+    const cleanupFile = join(this.root, 'cleanup.json');
+    if (!existsSync(cleanupFile)) return false;
+    const cleanup = readJson<{ state: string; hostPid?: number }>(cleanupFile);
+    if (cleanup.state !== 'unknown') return false;
+    // A record left by an earlier host does not describe the current one.
+    const workerFile = join(this.root, 'worker.json');
+    return !existsSync(workerFile) || readJson<RecordedProcess>(workerFile).pid === cleanup.hostPid;
   }
   private assertHostNode(host: HostIdentity) {
     if ((host.executionNodeId ?? 'local') !== this.executionNodeId)
       throw new Error('Native state directory belongs to another execution node');
   }
-  private async start(): Promise<HostIdentity> {
+  private async start(
+    deadline = Date.now() + this.hostStartLimits.timeoutMs,
+  ): Promise<HostIdentity> {
     privateDirectory(this.root);
     const child = this.spawnSupervisor();
     let spawnError: Error | undefined;
@@ -382,14 +393,17 @@ export class NativeSessionClient {
     child.once('exit', () => {
       exited = true;
     });
-    return this.waitForReady({
-      failed: () => {
-        if (spawnError) throw spawnError;
-        // A clean exit can hand off to another supervisor still starting. An abnormal
-        // exit of our child cannot become ready.
-        return exited && child.exitCode !== 0;
+    return this.waitForReady(
+      {
+        failed: () => {
+          if (spawnError) throw spawnError;
+          // A clean exit can hand off to another supervisor still starting. An abnormal
+          // exit of our child cannot become ready.
+          return exited && child.exitCode !== 0;
+        },
       },
-    });
+      deadline,
+    );
   }
   /** Starts a detached supervisor for this home; its host replays the journals, then listens. */
   protected spawnSupervisor(): ChildProcess {
@@ -412,17 +426,21 @@ export class NativeSessionClient {
     return child;
   }
   /**
-   * Waits for a ready host. While a supervisor is starting it (see `recordedHost`) the wait
-   * lasts up to the start timeout, logging progress; otherwise it ends after the no-progress
-   * bound. With no child of ours (`own` undefined), that supervisor stopping ends it at once.
+   * Waits for a ready host until `deadline`. While a supervisor is starting it (see
+   * `recordedHost`) the wait logs progress; otherwise it ends after the no-progress bound. With
+   * no child of ours (`own` undefined), that supervisor stopping ends it at once.
    */
-  private async waitForReady(own: { failed: () => boolean } | undefined): Promise<HostIdentity> {
-    const { timeoutMs, noProgressMs, progressMs } = this.hostStartLimits;
+  private async waitForReady(
+    own: { failed: () => boolean } | undefined,
+    deadline: number,
+  ): Promise<HostIdentity> {
+    const { noProgressMs, progressMs } = this.hostStartLimits;
     const started = Date.now();
+    const confirmed = new Set<string>();
     let nextProgress = started + progressMs;
-    while (Date.now() - started < timeoutMs) {
+    while (Date.now() < deadline) {
       if (own?.failed()) break;
-      const current = this.recordedHost();
+      const current = this.recordedHost(confirmed);
       if (current?.ready) return current.host;
       const starting = current?.starting === true;
       if (!starting && (!own || Date.now() - started >= noProgressMs)) break;

@@ -47,8 +47,9 @@ class FakeStartClient extends NativeSessionClient {
   constructor(
     root: string,
     private readonly supervisor: () => ChildProcess,
+    limits = LIMITS,
   ) {
-    super(root, 'local', currentRuntimeBuild, undefined, LIMITS);
+    super(root, 'local', currentRuntimeBuild, undefined, limits);
   }
   protected override spawnSupervisor(): ChildProcess {
     this.spawned += 1;
@@ -100,10 +101,11 @@ test('a start waits past the no-progress bound while its own supervisor is still
 
 test('a start whose supervisor exits abnormally fails at once, not at the no-progress bound', async (t) => {
   const { root, child } = setup(t);
-  const client = new FakeStartClient(root, () => child(0, 1));
+  const limits = { ...LIMITS, timeoutMs: 20_000, noProgressMs: 10_000 };
+  const client = new FakeStartClient(root, () => child(0, 1), limits);
   const started = Date.now();
   await assert.rejects(client.warm(), { code: NATIVE_HOST_UNAVAILABLE });
-  assert.ok(Date.now() - started < LIMITS.noProgressMs, `failed after ${Date.now() - started} ms`);
+  assert.ok(Date.now() - started < 3_000, `failed after ${Date.now() - started} ms`);
 });
 
 test('a client waits for a supervisor already starting instead of spawning a duplicate', async (t) => {
@@ -154,4 +156,33 @@ test('a supervisor whose stop failed does not count as starting', async (t) => {
   const client = new FakeStartClient(root, () => starting(100));
   await client.warm();
   assert.equal(client.spawned, 1);
+});
+
+test('a fallback start after a starting supervisor stops gets only the time left', async (t) => {
+  const { root, child } = setup(t);
+  t.mock.method(console, 'warn', () => {});
+  // The first supervisor stops late; ours then claims the host but never becomes ready.
+  claim(root, child(LIMITS.timeoutMs / 2000).pid!);
+  const client = new FakeStartClient(root, () => {
+    const process = child();
+    claim(root, process.pid!);
+    return process;
+  });
+  const started = Date.now();
+  await assert.rejects(client.warm(), { code: NATIVE_HOST_UNAVAILABLE });
+  const elapsed = Date.now() - started;
+  assert.equal(client.spawned, 1);
+  assert.ok(elapsed < LIMITS.timeoutMs + 500, `one start timeout in all, not two: ${elapsed} ms`);
+});
+
+test('a failed-stop record left by an earlier host does not stop a supervisor counting as starting', async (t) => {
+  const { root, starting } = setup(t);
+  starting(600);
+  write(join(root, 'worker.json'), { pid: 1_000_001 });
+  write(join(root, 'cleanup.json'), { hostPid: 1_000_000, state: 'unknown' });
+  const client = new FakeStartClient(root, () => {
+    throw new Error('a starting host must not get a second supervisor');
+  });
+  await client.warm();
+  assert.equal(client.spawned, 0);
 });

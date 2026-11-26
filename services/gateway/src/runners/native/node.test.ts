@@ -12,6 +12,8 @@ import {
 import {
   NATIVE_HOST_START_TIMEOUT_MS,
   NATIVE_NODE_ADMISSION_TIMEOUT_MS,
+  NATIVE_NODE_REFRESH_MAX_RUNNERS,
+  nativeIdleStopCleanupMs,
 } from '@farmslot/agent-runtime/native/host-runtime';
 import { Methods, type Principal } from '@farmslot/protocol';
 
@@ -558,7 +560,10 @@ test('every node request outlasts the host start the node may wait for first', (
     for (const refreshes of [false, true])
       assert.ok(nativeNodeSessionTimeout(method, refreshes) > NATIVE_HOST_START_TIMEOUT_MS);
   // A refreshing launch: the idle stops, then the start.
-  assert.ok(NATIVE_NODE_ADMISSION_TIMEOUT_MS - NATIVE_HOST_START_TIMEOUT_MS >= 100_000);
+  assert.ok(
+    NATIVE_NODE_ADMISSION_TIMEOUT_MS >
+      nativeIdleStopCleanupMs(NATIVE_NODE_REFRESH_MAX_RUNNERS) + NATIVE_HOST_START_TIMEOUT_MS,
+  );
 });
 
 test('a launch to a node that refreshes its host waits past 60 s for its answer', async () => {
