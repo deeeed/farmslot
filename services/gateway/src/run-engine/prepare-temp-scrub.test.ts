@@ -66,7 +66,9 @@ test(
     const run = runs.updateRun(created.id, {
       taskFile: '/farm/projects/farmslot-farm/tasks/feat/tat-4900-1125-090000/TASK.md',
     })!;
-    t.after(() => runs.updateRun(run.id, { status: 'failed' }));
+    t.after(() =>
+      runs.persistRunNow(runs.updateRun(run.id, { status: 'failed' }), 'fixture teardown'),
+    );
     const events: unknown[] = [];
 
     const recorded: TempScrubReceipt[] = [];
@@ -129,7 +131,9 @@ test(
     const run = runs.updateRun(created.id, {
       taskFile: '/farm/projects/farmslot-farm/tasks/feat/tat-4901-1125-090000/TASK.md',
     })!;
-    t.after(() => runs.updateRun(run.id, { status: 'failed' }));
+    t.after(() =>
+      runs.persistRunNow(runs.updateRun(run.id, { status: 'failed' }), 'fixture teardown'),
+    );
     const recorded: TempScrubReceipt[] = [];
 
     await assert.rejects(
