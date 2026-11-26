@@ -384,6 +384,8 @@ export class NativeSessionClient {
     deadline = Date.now() + this.hostStartLimits.timeoutMs,
   ): Promise<HostIdentity> {
     privateDirectory(this.root);
+    // No time left: do not leave a detached supervisor behind a call that has already failed.
+    if (Date.now() >= deadline) throw nativeHostUnavailableError(join(this.root, 'host.log'));
     const child = this.spawnSupervisor();
     let spawnError: Error | undefined;
     let exited = false;

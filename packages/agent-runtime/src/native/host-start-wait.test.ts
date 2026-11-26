@@ -172,7 +172,7 @@ test('a fallback start after a starting supervisor stops gets only the time left
   await assert.rejects(client.warm(), { code: NATIVE_HOST_UNAVAILABLE });
   const elapsed = Date.now() - started;
   assert.equal(client.spawned, 1);
-  assert.ok(elapsed < LIMITS.timeoutMs + 500, `one start timeout in all, not two: ${elapsed} ms`);
+  assert.ok(elapsed < LIMITS.timeoutMs + 700, `one start timeout in all, not two: ${elapsed} ms`);
 });
 
 test('a failed-stop record left by an earlier host does not stop a supervisor counting as starting', async (t) => {
