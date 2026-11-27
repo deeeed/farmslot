@@ -1,1 +1,0 @@
-- Pass the configured writable review round directory to the terminal review sandbox.

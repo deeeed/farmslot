@@ -1,1 +1,0 @@
-- `OWNED_WORKER_IDLE_WAIT_MS` (15 minutes) is how long the gateway waits for a busy owned worker before a package refresh. `RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS` (20 minutes) is the client timeout for `run.refreshPublishPackage`.
