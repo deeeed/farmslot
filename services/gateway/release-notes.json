@@ -2,9 +2,8 @@
   "version": "0.39.13",
   "date": "2026-11-27",
   "items": [
-    "Learning curation matches each outcome to its lesson by id, so a reply that adds, splits or repeats entries no longer drops the whole batch, and reads the reply's first JSON array of outcomes that carry an `id`",
-    "`- None` and \"Nothing new.\" are no longer curated as lessons",
-    "A run whose evidence cannot be read (a pruned bundle) is skipped instead of making the curation context unavailable",
-    "Learnings v1 lessons route by kind. One that only its own run confirms is recorded unconfirmed; an edit whose cited rule recorded a FINDING drops it; the family file and section, or for a new rule the client file named by `vars.knowledge_clients`, is the target; a kept lesson records its validated `ReviewRuleProposal` and recurrence bar. The source run's own review no longer confirms any lesson"
+    "Opt in to a Level 2 debrief with postRunDebrief in the execution template. The gateway collects it after slot release and links it to retained worker evidence.",
+    "Learning curation matches outcomes to lesson IDs, skips empty lessons and ignores runs whose retained evidence is gone.",
+    "Learning proposals route by kind and require independent confirmation before a lesson changes a rule."
   ]
 }
