@@ -1,1 +1,0 @@
-- `mark` and `check-task-artifact-contract.mjs` warn on a learnings v1 file's issues (`LEARNINGS_V1_WARN`, with the format to fix it against) at every step mark and at completion, and never fail on them. New `scripts/learnings-check.mjs`.

@@ -1,1 +1,0 @@
-- Native execution node declarations can carry `supportsHostRefresh`. `NativeNodeSessionEnvelope` types the gateway's `native.session` request to a node, including its `hostRelease` list.
