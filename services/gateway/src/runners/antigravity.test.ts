@@ -191,11 +191,11 @@ test('resolveTrustedNativeExecutable reads configured pool antigravity_path outs
   const root = mkdtempSync(join(tmpdir(), 'agy-pool-exec-'));
   const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
   try {
-    const poolDir = join(root, 'pool');
-    mkdirSync(poolDir, { recursive: true });
+    const tempPoolRoot = join(root, 'pool');
+    mkdirSync(tempPoolRoot, { recursive: true });
     const configuredBin = join(root, 'custom-bin', 'agy');
     writeFileSync(
-      join(poolDir, 'macwork.json'),
+      join(tempPoolRoot, 'macwork.json'),
       JSON.stringify({
         machine: 'macwork',
         project: 'demo',
@@ -207,7 +207,7 @@ test('resolveTrustedNativeExecutable reads configured pool antigravity_path outs
         slots: [{ id: 'macwork-1', enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
       }),
     );
-    process.env.FARMSLOT_POOL_DIR = poolDir;
+    process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
     assert.equal(await resolveTrustedNativeExecutable('antigravity', 'local'), configuredBin);
     assert.equal(await resolveTrustedNativeExecutable('agy', 'macwork'), configuredBin);
   } finally {
