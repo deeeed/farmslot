@@ -179,12 +179,12 @@ export function acceptedTaskDebriefPatch(run: Run): TaskDebriefAcceptancePatch {
   const prior = run.taskDebrief;
   const bundle = output?.workerFinished && !output.captureError ? output.artifactBundle : undefined;
   const attemptId = context?.signalAttemptId;
+  // A recapture can change gateway-owned metadata. Keep the original bundle for this accepted attempt.
   if (
     bundle &&
     attemptId &&
     prior?.attemptId === attemptId &&
     prior.contextId === context?.id &&
-    prior.bundle.bundleDigest === bundle.bundleDigest &&
     prior.manifestDigest === output?.manifestDigest
   )
     return {};
