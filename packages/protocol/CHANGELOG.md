@@ -6,6 +6,20 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.92.2 - 2026-11-27
+
+- Add the learnings v1 format (ADR-026 Amendment 4): `parseLearnings`, `LEARNINGS_V1_FORMAT`, `decideLearningKind` and `learningConfirmationIsOutside`, also at `@farmslot/protocol/contracts/learnings`. A file opts in with `# Learnings v1`; other files stay free text.
+- `LearningsAntipatternDraft` gains optional `targetSection` and `proposal` (a `ReviewRuleProposal`).
+- Stream retained run recordings and support seeking with short-lived playback URLs.
+- Share the versioned task debrief contract and JSON Schema with CLI and gateway consumers.
+- Expose the bound review skill round on review workspaces and its number, mode and changed files on saved review results.
+- `slotRecoveryEligibility` reports a busy slot's named protection (an unconfirmed closeout, a parked predecessor) before its busy state. A busy slot with no named protection reads "Slot is returning to idle" while an ownerless recovery runs, and "Slot is busy for an unfinished run" otherwise, rather than "Slot is working".
+- `NativeExecutionNodeDeclaration.supportsSessionArchive`, and `NATIVE_SESSION_ARCHIVE`, `NATIVE_SESSION_ARCHIVE_LIMIT` and `NativeSessionArchiveReceipt` for run retention's node archive request (ADR-039 Amendment 11).
+- Native execution node declarations can carry `supportsHostRefresh`. `NativeNodeSessionEnvelope` types the gateway's `native.session` request to a node, including its `hostRelease` list.
+- `SlotPrepareParams` documents that `runId` and `bindRunId` supply the run's `flowType`, `domain` and `app` when those are unset, and must name a run of the slot's project.
+- `SlotRunHistoryEntry` gains an optional `domain`: the run's domain.
+- `OWNED_WORKER_IDLE_WAIT_MS` (15 minutes) is how long the gateway waits for a busy owned worker before a package refresh. `RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS` (20 minutes) is the client timeout for `run.refreshPublishPackage`.
+
 ## 0.92.1 - 2026-11-25
 
 - Shared eval-run helpers for run lists: isEvalRun (comparison lane), evalRunBadge, productRunsFirst and productFamiliesFirst, and RunListQuery lane 'product' to hide eval runs. selectRecentRunFamilyGroups lists product families before eval-only ones. Command Center and Companion use them.

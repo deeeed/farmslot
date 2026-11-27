@@ -443,6 +443,9 @@ Grant-time head records provenance. Later fix heads on the same owned branch use
 
 ## WARM delta packets
 
+[Skill-backed reviews](https://github.com/deeeed/farmslot/blob/main/docs/reference/review-curation-and-results.md#skill-backed-review-rounds)
+use the earlier round and diff supplied by their skill. This section applies to the static template path.
+
 Under ADR-063 Amendment 14, the gateway freezes `inputs/warm-delta.json`
 with lineage and validated baseline identity, prior/current heads, compared
 ranges, unresolved findings, changed audit rows and required completion actions.

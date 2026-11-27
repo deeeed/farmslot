@@ -1171,6 +1171,15 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["name", "root", "entry"],
+                "if": { "required": ["install"] },
+                "then": {
+                  "required": ["subpath"],
+                  "properties": {
+                    "subpath": {
+                      "pattern": "^domains/[a-z0-9][a-z0-9-]*/skills/[a-z0-9][a-z0-9-]*$"
+                    }
+                  }
+                },
                 "properties": {
                   "name": {
                     "type": "string",
@@ -1211,6 +1220,15 @@
                     "type": "string",
                     "minLength": 1,
                     "pattern": "^(?!\\.\\.?$)[^/\\\\\\x00\\r\\n]+$"
+                  },
+                  "install": {
+                    "type": "object",
+                    "description": "Use the skill repository's standard installer for this review domain.",
+                    "additionalProperties": false,
+                    "required": ["repo"],
+                    "properties": {
+                      "repo": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" }
+                    }
                   }
                 }
               }

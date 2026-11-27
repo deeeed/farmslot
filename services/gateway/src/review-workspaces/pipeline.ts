@@ -272,6 +272,7 @@ async function admittedRun(runId: string, generation: number) {
       effort: run.effort,
       transport: run.transport,
       nativeProfile: run.nativeProfile,
+      domain: run.domain,
     },
     run.nativeOwnerPrincipalId,
     runId,
@@ -922,7 +923,11 @@ async function executeOwnedReviewWorkspaceStep(
       await preflightReviewWorkspaceAccount(run, check);
       await ensureReviewWorkspaceSupport(runId, check);
       check();
-      const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
+      const subject = run.reviewWorkspaceSubject;
+      const task = await waitForWorkspaceOperation(
+        () => materializeReviewWorkspaceTask(runId, subject),
+        check,
+      );
       check();
       const qualifiedContext =
         task.interdiff && run.repeatReviewContext
@@ -958,7 +963,9 @@ async function executeOwnedReviewWorkspaceStep(
           `Operator replay of this retained review, generation ${generation}.`,
           `Continue the original task at ${run.reviewWorkspace.taskPath}; do not start another review.`,
           `Validation failure (data): ${JSON.stringify(retained.reason)}.`,
-          'Keep the existing findings and attempt identity. Repair the requested output, record findings once in review-result.json issues with the full problem, evidence and concrete ask, and finish through ./mark complete --mark-last.',
+          run.reviewWorkspace.reviewTask
+            ? `Keep the existing findings. Repair the round in ${run.reviewWorkspace.reviewTask.folder} and run its finish command again.`
+            : 'Keep the existing findings and attempt identity. Repair the requested output, record findings once in review-result.json issues with the full problem, evidence and concrete ask, and finish through ./mark complete --mark-last.',
         ].join('\n');
         const binding = context.nativeSession;
         const commandId = binding ? retained.commandId : undefined;
@@ -1027,7 +1034,11 @@ async function executeOwnedReviewWorkspaceStep(
       }
       await ensureReviewWorkspaceSupport(runId, check);
       check();
-      const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
+      const subject = run.reviewWorkspaceSubject;
+      const task = await waitForWorkspaceOperation(
+        () => materializeReviewWorkspaceTask(runId, subject),
+        check,
+      );
       const project = await loadProjectVars(run.project);
       check();
       const config = resolveMonitorConfig(project.projectJson.monitoring, run.project, 'review-pr');
@@ -1173,7 +1184,10 @@ async function executeOwnedReviewWorkspaceStep(
             throw error;
           check();
           const current = currentWorkspaceRun(runId, generation);
-          const text = `In the original task directory ${current.reviewWorkspace!.taskPath}: ${artifactContractWorkerInstruction(error.message)}`;
+          const round = current.reviewWorkspace!.reviewTask;
+          const text = round
+            ? `In the review skill round ${round.folder}: ${error.message} Correct it, then run its finish command again.`
+            : `In the original task directory ${current.reviewWorkspace!.taskPath}: ${artifactContractWorkerInstruction(error.message)}`;
           const binding = current.agentContexts?.find(
             (entry) => entry.id === 'review',
           )?.nativeSession;

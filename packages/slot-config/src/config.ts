@@ -1258,7 +1258,13 @@ export function validateStaticReviewSupport(
       const field = `static_review.support.${kind}`;
       const source = object(
         item,
-        ['name', 'root', 'subpath', ...(kind === 'libraries' ? [] : ['entry'])],
+        [
+          'name',
+          'root',
+          'subpath',
+          ...(kind === 'libraries' ? [] : ['entry']),
+          ...(kind === 'skills' ? ['install'] : []),
+        ],
         field,
       );
       if (
@@ -1294,6 +1300,20 @@ export function validateStaticReviewSupport(
           throw new Error(`${projectConfig}: ${field}.entry must be a confined relative file`);
         if (kind === 'skills' && /[\\/]/.test(source.entry))
           throw new Error(`${projectConfig}: skill entry must be at its source root`);
+        if (kind === 'skills' && source.install !== undefined) {
+          // ADR-058 Amendment 4: the skill repository's tools/install installs this skill for
+          // `repo`, so the subpath names it as the installer does: domains/<domain>/skills/<skill>.
+          const install = object(source.install, ['repo'], `${field}.install`);
+          if (typeof install.repo !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/.test(install.repo))
+            throw new Error(`${projectConfig}: ${field}.install.repo must be a repository name`);
+          if (
+            typeof source.subpath !== 'string' ||
+            !/^domains\/[a-z0-9][a-z0-9-]*\/skills\/[a-z0-9][a-z0-9-]*$/.test(source.subpath)
+          )
+            throw new Error(
+              `${projectConfig}: ${field}.install needs subpath domains/<domain>/skills/<skill>`,
+            );
+        }
         if (kind === 'runtime' && !/\.(js|mjs|cjs)$/.test(source.entry))
           throw new Error(`${projectConfig}: runtime entry must be compiled Node code`);
       }

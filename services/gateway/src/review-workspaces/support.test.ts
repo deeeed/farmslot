@@ -182,6 +182,26 @@ test('support refuses two review-enabled pools for the same machine', async (t) 
   assert.equal(f.counts.writes, 0);
 });
 
+test('the static fallback admits support without the Perps installer source', async (t) => {
+  const f = await fixture(t);
+  const support = f.project.projectJson.static_review?.support;
+  assert.ok(support?.skills);
+  support.skills.push({
+    name: 'mms-perps-review-pr',
+    root: { projectPath: 'missing-perps-skills' },
+    subpath: 'domains/perps/skills/perps-review-pr',
+    entry: 'skill.md',
+    install: { repo: 'core' },
+  });
+  const run = await f.addRun('static-fallback-support');
+  run.domain = 'testing';
+  const binding = await ensureReviewWorkspaceSupport(run.id, () => {}, f.deps);
+  assert.deepEqual(
+    binding?.skills.map((skill) => skill.name),
+    ['team-review'],
+  );
+});
+
 test('concurrent reviews publish once, and warm/restarted runs reuse verified cache without collecting or copying', async (t) => {
   const f = await fixture(t);
   const a = await f.addRun('review-a'),

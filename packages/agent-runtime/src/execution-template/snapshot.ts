@@ -17,6 +17,9 @@ export function executionTemplateReference(
   renderedMarkdown?: string,
 ): ExecutionTemplateReference {
   const declaredVersion = entry.frontmatter?.version;
+  const postRunDebrief = entry.frontmatter?.postRunDebrief;
+  if (postRunDebrief !== undefined && typeof postRunDebrief !== 'boolean')
+    throw new Error('postRunDebrief must be a boolean');
   const firstSubtask = entry.frontmatter?.firstSubtask;
   if (
     firstSubtask !== undefined &&
@@ -30,6 +33,7 @@ export function executionTemplateReference(
     platforms: entry.platforms,
     labels: entry.labels,
     relativePath: entry.relativePath,
+    ...(postRunDebrief === undefined ? {} : { postRunDebrief }),
     ...(firstSubtask ? { firstSubtask } : {}),
     ...(entry.sourceRevision ? { sourceRevision: entry.sourceRevision } : {}),
     ...(entry.sourceDirty === undefined ? {} : { sourceDirty: entry.sourceDirty }),

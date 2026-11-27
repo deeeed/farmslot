@@ -26,6 +26,8 @@ import {
 } from '../review-workspaces/compaction.js';
 import {
   bindReviewWorkspaceSupportValue,
+  reviewSkillFor,
+  reviewTaskRoot,
   reviewWorkspaceReadOnlyRoots,
 } from '../review-workspaces/skills.js';
 import { getAllRuns, getRun, getRunWithArchived, persistRunNow } from '../runs/store.js';
@@ -369,6 +371,9 @@ export async function reviewTmuxOperation(
       environment,
       support: w.support?.path,
       readOnlyRoots: reviewWorkspaceReadOnlyRoots(w),
+      signalAttemptId: w.reviewTask?.attemptId,
+      // Beyond the task: a skill review's round folders (ADR-058 Amendment 4).
+      writableRoots: reviewSkillFor(run) ? [reviewTaskRoot(w)] : [],
       runtimeRoots: nativeRunnerDefinitions[runner]?.reviewRuntimeRoots?.({ HOME: '~' }) ?? [
         '~/.codex',
       ],

@@ -1,2 +1,0 @@
-- Add the learnings v1 format (ADR-026 Amendment 4): `parseLearnings`, `LEARNINGS_V1_FORMAT`, `decideLearningKind` and `learningConfirmationIsOutside`, also at `@farmslot/protocol/contracts/learnings`. A file opts in with `# Learnings v1`; other files stay free text.
-- `LearningsAntipatternDraft` gains optional `targetSection` and `proposal` (a `ReviewRuleProposal`).

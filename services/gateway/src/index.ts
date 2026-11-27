@@ -100,7 +100,7 @@ import { refreshBranches } from './methods/dispatch.js';
 import { assertPressureAdmissionConfigValid } from './methods/dispatch/pressure-admission.js';
 import { assertDispatchPressureAdmissionEnvValid } from './methods/dispatch/pressure-admission-control.js';
 import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
-import { serveFile, serveRunArtifact } from './methods/filesystem.js';
+import { serveFile, serveRunArtifactRequest } from './methods/filesystem.js';
 import { fleetHealthRefresh, isFleetCheckedAtStale, isFleetRefreshDue } from './methods/fleet.js';
 import {
   startGatewayUpdateObservation,
@@ -560,6 +560,10 @@ async function main(): Promise<void> {
   initCIMonitor(observedBroadcast);
   initAutoRecycle(observedBroadcast);
   initAutoRecovery(observedBroadcast);
+  if (ENABLE_ORCHESTRATION) {
+    const { resumeAcceptedTaskDebriefs } = await import('./run-completion/task-debrief.js');
+    resumeAcceptedTaskDebriefs();
+  }
 
   // Co-pilot: store + workspace bootstrap + observer
   initChatStore();
@@ -757,22 +761,16 @@ async function main(): Promise<void> {
   const resolveWebhookPrincipal = (principalId: string) =>
     gatewayAuthRuntime.resolver.resolvePrincipalId(principalId);
 
-  // Authentication derives scrypt off the event loop, so it answers asynchronously.
-  const serveAuthorized = (
-    req: IncomingMessage,
+  const serveHttpResource = (
     res: ServerResponse,
     resource: 'file' | 'run-artifact',
-    serve: (req: IncomingMessage, res: ServerResponse) => void,
+    serve: () => Promise<void>,
   ): void => {
-    authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource })
-      .then((authorized) => {
-        if (authorized) serve(req, res);
-      })
-      .catch((err: unknown) => {
-        console.error(`[http] ${resource} request failed: ${(err as Error).message}`);
-        if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Internal error' }));
-      });
+    void serve().catch((err: unknown) => {
+      console.error(`[http] ${resource} request failed: ${(err as Error).message}`);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal error' }));
+    });
   };
 
   const handleHttpRequest = (req: IncomingMessage, res: ServerResponse): void => {
@@ -816,13 +814,18 @@ async function main(): Promise<void> {
     // Serve raw files: /api/file?slotId=X&path=Y
     if (req.url?.startsWith('/api/file?')) {
       recordGatewayHttpRoute('http.file');
-      serveAuthorized(req, res, 'file', serveFile);
+      serveHttpResource(res, 'file', async () => {
+        if (await authorizeHttpRequest({ runtime: gatewayAuthRuntime, req, res, resource: 'file' }))
+          await serveFile(req, res);
+      });
       return;
     }
     // Serve run artifacts: /api/run-artifact?runId=X&path=Y (relative to task artifacts dir)
     if (req.url?.startsWith('/api/run-artifact?')) {
       recordGatewayHttpRoute('http.run-artifact');
-      serveAuthorized(req, res, 'run-artifact', serveRunArtifact);
+      serveHttpResource(res, 'run-artifact', () =>
+        serveRunArtifactRequest(req, res, gatewayAuthRuntime),
+      );
       return;
     }
     // Webhook endpoints

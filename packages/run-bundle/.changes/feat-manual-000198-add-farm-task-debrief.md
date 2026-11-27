@@ -1,0 +1,1 @@
+- Retain current and superseded debrief snapshots, and include the current debrief artifact when exporting its accepted run bundle.

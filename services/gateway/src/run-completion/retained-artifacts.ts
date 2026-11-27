@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -403,7 +404,7 @@ export async function readRetainedEvidencePackage(
   return readRecordedEvidencePackage(root, await retainedEvidenceReadIO(run, root, ref));
 }
 
-async function retentionPolicy(): Promise<RunBundleRetentionPolicy> {
+export async function retentionPolicy(): Promise<RunBundleRetentionPolicy> {
   return runBundleRetentionSettings(runBundleHome()).policy;
 }
 
@@ -700,6 +701,52 @@ export async function retainCapturedRunArtifacts(input: {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
   }
+  const optionalReceipts = new Map<string, Buffer>();
+  if (input.run.executionTemplate?.postRunDebrief === true) {
+    for (const file of [
+      TASK_DIRECTORY_LAYOUT.checklistWorkerMirror.relativePath,
+      TASK_DIRECTORY_LAYOUT.workerSignalMirror.relativePath,
+      TASK_DIRECTORY_LAYOUT.signal.relativePath,
+    ]) {
+      if (artifacts.some((artifact) => artifact.path === file)) continue;
+      try {
+        const actual = path.join(taskDir, file);
+        const info = await lstat(actual);
+        if (!info.isFile() || info.size > 1024 * 1024) continue;
+        const handle = await open(
+          actual,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        try {
+          const opened = await handle.stat();
+          if (
+            !opened.isFile() ||
+            opened.size !== info.size ||
+            opened.ino !== info.ino ||
+            opened.dev !== info.dev
+          )
+            continue;
+          const buffer = Buffer.alloc(info.size + 1);
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+          if (bytesRead !== info.size) continue;
+          const bytes = buffer.subarray(0, bytesRead);
+          optionalReceipts.set(file, bytes);
+          artifacts.push({
+            path: file,
+            purpose: 'task-input',
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+            sizeBytes: bytes.length,
+          });
+        } finally {
+          await handle.close();
+        }
+      } catch (error) {
+        // A failed optional read lowers debrief coverage. Ordinary bundle inputs are unchanged.
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+          console.warn(`[debrief] optional receipt unavailable for ${input.run.id}: ${file}`);
+      }
+    }
+  }
   // The capture key names the content of every file the output identity leaves out: the gateway
   // diff files and the task files added above. Otherwise a capture after the gateway writes one
   // of them reuses the earlier bundle, which lacks the change, while the output lists it.
@@ -740,6 +787,7 @@ export async function retainCapturedRunArtifacts(input: {
     onMediaArchived: reportRunMediaArchive,
     run: input.run,
     artifacts,
+    optionalReceipts,
     taskDir,
     gatewayFiles: input.gatewayFiles && {
       taskDir: path.dirname(input.run.taskFile),

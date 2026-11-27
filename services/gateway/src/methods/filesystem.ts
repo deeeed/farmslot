@@ -29,6 +29,7 @@ import {
   isTerminalRunStatus,
   type OkResult,
   type Run,
+  RUN_ARTIFACT_MEDIA_GRANT_PARAM,
   type RunArtifactBundleRef,
 } from '@farmslot/protocol';
 import { resolveRunBundleEntry } from '@farmslot/run-bundle';
@@ -40,6 +41,8 @@ import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { invalidateArtifactTextCache } from '../live-recipe/context.js';
+import { authorizeHttpRequest, type GatewayAuthRuntime } from '../security/auth.js';
+import { runArtifactMediaGrants } from '../security/run-artifact-media.js';
 
 import {
   mimeForPath,
@@ -889,6 +892,7 @@ export async function resolveRetainedRunArtifact(
   run: Run,
   requested: string,
   selectors: URLSearchParams,
+  metadataOnly = false,
 ) {
   if (
     path.isAbsolute(requested) ||
@@ -939,6 +943,7 @@ export async function resolveRetainedRunArtifact(
     ref,
     runId,
     path: artifactPath,
+    metadataOnly,
   });
   const expected = selectors.get('v');
   if (
@@ -950,9 +955,69 @@ export async function resolveRetainedRunArtifact(
   return { entry, ref, artifactPath };
 }
 
+/** Used only after grant verification. The manifest still proves run ownership and byte identity. */
+async function resolveGrantedRunArtifact(
+  runId: string,
+  artifactPath: string,
+  selectors: URLSearchParams,
+) {
+  const storeId = selectors.get('mediaStoreId');
+  const taskKey = selectors.get('mediaTaskKey');
+  const bundleDigest = selectors.get('bundleDigest');
+  const manifestDigest = selectors.get('mediaManifestDigest');
+  if (!storeId || !taskKey || !bundleDigest || !manifestDigest)
+    throw new Error('Playback URL is missing its retained snapshot.');
+  const ref: RunArtifactBundleRef = { storeId, taskKey, bundleDigest, manifestDigest };
+  const { runBundleStore } = await loadRetainedArtifacts();
+  const entry = await resolveRunBundleEntry({
+    store: await runBundleStore(),
+    ref,
+    runId,
+    path: artifactPath,
+  });
+  return { entry, ref, artifactPath };
+}
+
+type RunArtifactMediaAccess = 'issue' | { sha256: string };
+
+export async function serveRunArtifactRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: GatewayAuthRuntime,
+  grants = runArtifactMediaGrants,
+): Promise<void> {
+  const url = new URL(req.url!, 'http://gateway');
+  const isIssue = req.method === 'POST';
+  const hasGrant = url.searchParams.has(RUN_ARTIFACT_MEDIA_GRANT_PARAM);
+  if (hasGrant || isIssue) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+  }
+  if (hasGrant) {
+    const sha256 = req.method === 'GET' ? grants.verify(url) : undefined;
+    if (!sha256) {
+      res.writeHead(401);
+      res.end('Playback URL is invalid or expired.');
+      return;
+    }
+    await serveRunArtifact(req, res, { sha256 });
+    return;
+  }
+  if (
+    await authorizeHttpRequest({ runtime, req, res, resource: 'run-artifact', headerOnly: isIssue })
+  )
+    await serveRunArtifact(req, res, isIssue ? 'issue' : undefined, grants);
+}
+
 // Serve a file relative to a run's task artifact directory.
 // URL: /api/run-artifact?runId=X&path=Y[&recipeRunId=Z]  (path is relative to task dir or selected recipe-run artifact root)
-export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function serveRunArtifact(
+  req: IncomingMessage,
+  res: ServerResponse,
+  media?: RunArtifactMediaAccess,
+  grants = runArtifactMediaGrants,
+): Promise<void> {
   try {
     const url = new URL(req.url!, `http://${req.headers.host}`);
     const runId = url.searchParams.get('runId');
@@ -971,10 +1036,16 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
     const { getRun } = await loadRunStore();
     const run = getRun(runId);
     if (!run) throw new Error('Run not found.');
+    if (media && !mimeForPath(requested).startsWith('video/')) {
+      res.writeHead(400);
+      res.end('Playback URLs require a retained video artifact.');
+      return;
+    }
     // Operation logs are live task files, not publication evidence. Resolve only
     // canonical logs of the run that still owns this slot; pinned snapshots keep
     // using retained storage, including after the slot is released or reused.
     if (
+      !media &&
       /^artifacts\/operations\/[a-f0-9-]{36}\.log$/.test(requested) &&
       !['recipeRunId', 'decisionId', 'bundleDigest', 'v'].some((key) =>
         url.searchParams.has(key),
@@ -1003,11 +1074,67 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
       }
       return;
     }
-    const { entry, ref, artifactPath } = await resolveRetainedRunArtifact(
-      run,
-      requested,
-      url.searchParams,
-    );
+    const recipeRunId = url.searchParams.get('recipeRunId');
+    const pinned = url.searchParams.has('bundleDigest') || url.searchParams.has('decisionId');
+    if (
+      !media &&
+      (run.taskDebrief?.status === 'settled' ||
+        (pinned && (run.taskDebrief || run.priorTaskDebriefBundles))) &&
+      requested === 'artifacts/debrief.json' &&
+      (!recipeRunId || ['current-artifacts', 'decision-evidence'].includes(recipeRunId))
+    ) {
+      const { readTaskDebriefSidecar, taskDebriefEvidenceBundle } =
+        await import('../run-completion/task-debrief.js');
+      const selected = await retainedRunArtifactRef(run, url.searchParams);
+      const ref = taskDebriefEvidenceBundle(run, selected, pinned);
+      const sidecar = readTaskDebriefSidecar(run, ref);
+      if (sidecar) {
+        const expected = url.searchParams.get('v');
+        if (
+          expected &&
+          !expected.startsWith('s') &&
+          !sidecar.artifact.sha256?.startsWith(expected.replace(/^sha256:/u, ''))
+        )
+          throw new Error('This artifact link refers to a different retained snapshot.');
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'X-Farmslot-Bundle-Digest': ref.bundleDigest,
+          ETag: `"${sidecar.artifact.sha256}"`,
+        });
+        res.end(sidecar.bytes);
+        return;
+      }
+    }
+    const resolved =
+      media && media !== 'issue'
+        ? await resolveGrantedRunArtifact(runId, requested, url.searchParams)
+        : await resolveRetainedRunArtifact(run, requested, url.searchParams, media === 'issue');
+    const { entry, ref, artifactPath } = resolved;
+    const mime = mimeForPath(artifactPath);
+    if (media) {
+      if (!mime.startsWith('video/') || (media !== 'issue' && media.sha256 !== entry.sha256)) {
+        res.writeHead(403);
+        res.end('Playback URL does not match the retained video.');
+        return;
+      }
+      if (media === 'issue') {
+        // Convert a mutable selection or group-relative path into one retained entry. The
+        // signature covers the store identity and direct task-relative lookup on every GET.
+        url.search = new URLSearchParams({
+          runId,
+          path: artifactPath,
+          recipeRunId: 'current-artifacts',
+          bundleDigest: ref.bundleDigest,
+          v: entry.sha256,
+          mediaStoreId: ref.storeId,
+          mediaTaskKey: ref.taskKey,
+          mediaManifestDigest: ref.manifestDigest,
+        }).toString();
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(grants.issue(url, entry.sha256)));
+        return;
+      }
+    }
     res.setHeader('X-Farmslot-Bundle-Digest', ref.bundleDigest);
     res.setHeader('ETag', `"${entry.sha256}"`);
     const handle = await openLocalReadHandle(entry.path, artifactPath);
@@ -1018,7 +1145,14 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
         return;
       }
       // The shared range helper owns the handle after a successful stream handoff.
-      serveLocalFileWithRange(req, res, handle, mimeForPath(entry.path), entry.bytes);
+      serveLocalFileWithRange(
+        req,
+        res,
+        handle,
+        mime,
+        entry.bytes,
+        media ? 'private, no-store' : undefined,
+      );
     } catch (error) {
       await handle.close();
       throw error;

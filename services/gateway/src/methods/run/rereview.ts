@@ -32,6 +32,7 @@ import {
   bindWorkspaceReviewResult,
   rereviewWorkspaceReviewer,
 } from '../../review-workspaces/continuity.js';
+import { configuresReviewSkill } from '../../review-workspaces/skills.js';
 import {
   automatedRepeatReviewSelection,
   buildRepeatReviewContext,
@@ -90,6 +91,7 @@ async function currentWorkspaceTemplate(run: Run, machine: string) {
     loadProjectConfig(run.project),
   ]);
   const templateId = project?.staticReview?.templateId;
+  if (configuresReviewSkill(project?.staticReview?.support, run.domain)) return undefined;
   if (!templateId)
     throw new Error('Workspace re-review requires the project canonical static-review template');
   return resolveWorkspaceReviewTemplate({
@@ -216,6 +218,7 @@ async function rereviewWithSources(
     {
       flowType: 'review-pr',
       project: run.project,
+      domain: run.domain ?? undefined,
       // Original casing for display; the continuation context compares
       // repositories lower-cased, as engine-decisions does.
       ticketOrPr: `${target.repo}#${target.number}`,

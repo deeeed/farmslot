@@ -179,7 +179,7 @@ async function main() {
         fs.realpathSync(root),
       ),
     ],
-    writableRoots: [task],
+    writableRoots: [task, ...(input.writableRoots ?? []).map((root) => fs.realpathSync(root))],
   };
   const promptFile = path.join(task, '.terminal-prompt.txt');
   fs.writeFileSync(promptFile, input.prompt, { mode: 0o600 });
@@ -226,7 +226,9 @@ async function main() {
     ),
   );
   environment.FARMSLOT_SIGNAL_ATTEMPT_ID =
-    previousAttempt?.signalAttemptId ?? require('node:crypto').randomUUID();
+    input.signalAttemptId ??
+    previousAttempt?.signalAttemptId ??
+    require('node:crypto').randomUUID();
   // This helper accepts only the gateway's farm review launch, after identity and source-policy checks.
   workspaceTrustByRunner[input.runner]?.(cwd, environment, undefined, {
     executable: input.executable,

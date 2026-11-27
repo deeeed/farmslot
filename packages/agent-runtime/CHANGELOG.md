@@ -4,6 +4,15 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.51.3 - 2026-11-27
+
+- `mark` and `check-task-artifact-contract.mjs` warn on a learnings v1 file's issues (`LEARNINGS_V1_WARN`, with the format to fix it against) at every step mark and at completion, and never fail on them. New `scripts/learnings-check.mjs`.
+- Freeze the optional post-run debrief setting when selecting an execution template.
+- Pass the configured writable review round directory to the terminal review sandbox.
+- A host start waits up to 50 s while its supervisor replays session journals, instead of a fixed 10 s, and waits for a supervisor already starting instead of spawning a duplicate.
+- Native hosts archive settled sessions' journals out of startup replay on request (`archiveSessions`, declared `supportsSessionArchive`), and load a summary instead of replaying a settled session's unchanged journal at start, replaying it the first time something reads it (ADR-039 Amendment 11).
+- The worker push budget test's timeout case now uses a 3000 ms budget, leaving room for shell, node and git startup before its pre-push hook, so it no longer fails on a loaded host.
+
 ## 0.51.2 - 2026-11-25
 
 - Uses adapter-sdk 0.31.4 (recipe-runner 0.52.5), so mm-harness keeps one copy of each package.

@@ -1,0 +1,1 @@
+- Document the standalone task debrief commands and their options in the CLI reference.

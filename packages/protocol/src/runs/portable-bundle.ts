@@ -26,6 +26,10 @@ export function sanitizeRunForBundleExport(run: Run, profile: RunBundleProfile):
   const cloned = stripRunnerSessionArchives(structuredClone(run));
   // Replays use frozen provenance; a local admission request is never executable bundle input.
   delete cloned.dispatchRequest;
+  // The debrief artifact can travel, but another gateway cannot resume the originating turn.
+  delete cloned.taskDebrief;
+  delete cloned.priorTaskDebriefBundles;
+  delete cloned.priorTaskDebriefs;
   if (profile === 'reference' || profile === 'family') {
     delete cloned.monitorState;
     if (cloned.engineState) {

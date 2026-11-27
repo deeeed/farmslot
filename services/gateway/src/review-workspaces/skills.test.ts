@@ -18,9 +18,12 @@ import { promisify } from 'node:util';
 import {
   bindReviewWorkspaceSupportValue,
   collectReviewWorkspaceSupport,
+  configuresReviewSkill,
   type FrozenReviewWorkspaceSupport,
+  reviewSkillFor,
   type ReviewWorkspaceSupportConfig,
   reviewWorkspaceSupportEnvironment,
+  reviewWorkspaceWritableRoots,
   verifyReviewWorkspaceSupport,
 } from './skills.js';
 
@@ -449,4 +452,68 @@ test('support values bind the frozen root, recorded references, and empty for a 
     bindReviewWorkspaceSupportValue('{{support}}/lib', { path: '/support' }),
     '/support/lib',
   );
+});
+
+test('only a review in the installed skill domain is a skill review, with its round folders writable', () => {
+  const config: ReviewWorkspaceSupportConfig = {
+    skills: [
+      {
+        name: 'mms-perps-review-pr',
+        root: { env: 'SKILLS' },
+        subpath: 'domains/perps/skills/perps-review-pr',
+        entry: 'skill.md',
+        install: { repo: 'core' },
+      },
+    ],
+  };
+  // Admission: a template is optional only for a review in the skill's own domain.
+  assert.equal(configuresReviewSkill(config, 'perps'), true);
+  for (const domain of ['swaps', '', null, undefined])
+    assert.equal(configuresReviewSkill(config, domain), false);
+  assert.equal(
+    configuresReviewSkill({ skills: [{ ...config.skills![0]!, install: undefined }] }, 'perps'),
+    false,
+  );
+  const workspace = {
+    workspaceId: 'w',
+    machine: 'node',
+    executionNodeId: 'node',
+    checkoutPath: '/reviews/runs/w/source',
+    taskPath: '/reviews/runs/w/task',
+    artifactPath: '/reviews/runs/w/task/artifacts',
+    support: {
+      path: '/reviews/support',
+      sha256: 'f'.repeat(64),
+      sources: [],
+      environment: {},
+      skills: [
+        {
+          name: 'mms-perps-review-pr',
+          path: '/reviews/support/skill.md',
+          install: {
+            repo: 'core',
+            source: '/reviews/support/skill-sources/mms-perps-review-pr',
+            include: 'perps/perps-review-pr',
+            installedName: 'mms-perps-review-pr',
+          },
+        },
+      ],
+    },
+  };
+  assert.equal(
+    reviewSkillFor({ domain: 'perps', reviewWorkspace: workspace })?.name,
+    'mms-perps-review-pr',
+  );
+  assert.equal(reviewSkillFor({ domain: 'swaps', reviewWorkspace: workspace }), undefined);
+  assert.equal(reviewSkillFor({ domain: undefined, reviewWorkspace: workspace }), undefined);
+  // The task stays first (the sandbox's temp dir); the round folders are the checkout's sibling.
+  assert.deepEqual(reviewWorkspaceWritableRoots({ domain: 'perps', reviewWorkspace: workspace }), [
+    '/reviews/runs/w/task',
+    '/reviews/runs/w/task/artifacts',
+    '/reviews/runs/w/review-tasks',
+  ]);
+  assert.deepEqual(reviewWorkspaceWritableRoots({ domain: 'swaps', reviewWorkspace: workspace }), [
+    '/reviews/runs/w/task',
+    '/reviews/runs/w/task/artifacts',
+  ]);
 });

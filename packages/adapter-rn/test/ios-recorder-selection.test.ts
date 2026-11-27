@@ -262,3 +262,32 @@ test('native fallback retains the simulator inventory failure', async (t) => {
     /iOS device discovery returned an invalid response/,
   );
 });
+
+test(
+  'an unavailable capture-helper warns once when iOS recording falls back to simctl',
+  { skip: process.platform !== 'darwin' },
+  async (t) => {
+    const f = fixture(t, { windows: [visible] });
+    fs.writeFileSync(path.join(f.dir, 'capture-helper'), '#!/missing-capture-helper-interpreter\n');
+    const warning = t.mock.method(console, 'warn', () => {});
+    const recorder = createIosSimulatorVideoRecorder('sim-1');
+    assert.equal((await recorder.doctor?.())?.ok, true);
+    assert.equal(warning.mock.callCount(), 0);
+
+    const active = await recorder.start(f.request);
+    await waitForFile(f.request.outputPath);
+    const video = (await active.stop()).segments[0];
+    assert.equal(video?.recorder?.name, 'simctl');
+    const reason = video?.recorder?.fallbackReason;
+    assert.match(String(reason), /capture-helper doctor could not be executed/u);
+    const rotated = await recorder.start({
+      ...f.request,
+      outputPath: path.join(f.dir, 'run-segment-1.mp4'),
+    });
+    await rotated.stop();
+    assert.equal(warning.mock.callCount(), 1);
+    assert.deepEqual(warning.mock.calls[0]?.arguments, [
+      `Falling back to simctl for iOS recording. ${reason}`,
+    ]);
+  },
+);

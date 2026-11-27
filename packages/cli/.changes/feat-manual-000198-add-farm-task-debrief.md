@@ -1,0 +1,1 @@
+- Expose the local handoff debrief commands under `farmslot task debrief`.

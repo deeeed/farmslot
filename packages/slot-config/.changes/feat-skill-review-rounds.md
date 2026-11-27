@@ -1,0 +1,1 @@
+- Allow a review workspace skill to select the repository configuration used by its standard installer.

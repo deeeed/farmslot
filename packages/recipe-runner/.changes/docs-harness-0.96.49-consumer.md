@@ -1,0 +1,1 @@
+- mm-harness 0.96.49 pins adapter-web 0.19.36 for Terminal browser recovery and updates Extension wallet lock navigation. It keeps recipe-runner 0.52.5 and Recipe CLI 0.35.35.

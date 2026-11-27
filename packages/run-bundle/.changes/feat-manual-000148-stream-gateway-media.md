@@ -1,0 +1,1 @@
+- Reuse verified retained recording metadata and archive identities while their file stamps remain stable.
