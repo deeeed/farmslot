@@ -226,12 +226,11 @@ function serveCdp(socket) {
     let result = {};
     if (method === 'Target.getTargets') {
       result = {
-        targetInfos:
-          committedAppUrl
-            ? [{ targetId: 'APP', type: 'page', url: committedAppUrl }]
-            : mode === 'restored'
-              ? [{ targetId: 'OLD', type: 'page', url: `${appOrigin}/` }]
-              : [],
+        targetInfos: committedAppUrl
+          ? [{ targetId: 'APP', type: 'page', url: committedAppUrl }]
+          : mode === 'restored'
+            ? [{ targetId: 'OLD', type: 'page', url: `${appOrigin}/` }]
+            : [],
       };
     } else if (method === 'Target.attachToTarget' && params.targetId === 'APP') {
       result = { sessionId: 'SREUSE' };
