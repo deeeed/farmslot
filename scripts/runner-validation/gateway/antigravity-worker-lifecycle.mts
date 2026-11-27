@@ -1097,6 +1097,8 @@ try {
   result.trackedWorkingTreeClean = trackedWorkingTreeClean;
   result.isolatedCheckoutVerifiedBeforeLaunch = true;
   result.isolatedCheckoutVerifiedBeforeSeal = true;
+  result.isolatedModuleResolutionVerified = frozenSource.isolatedModuleResolutionVerified;
+  result.resolvedModules = frozenSource.resolvedModules;
   result.attemptId = attemptId;
   result.outputDir = output;
   const hostLogPath = path.join(root, 'native/host.log');
@@ -1116,6 +1118,8 @@ try {
         trackedWorkingTreeClean: result.trackedWorkingTreeClean,
         isolatedCheckoutVerifiedBeforeLaunch: result.isolatedCheckoutVerifiedBeforeLaunch,
         isolatedCheckoutVerifiedBeforeSeal: result.isolatedCheckoutVerifiedBeforeSeal,
+        isolatedModuleResolutionVerified: result.isolatedModuleResolutionVerified,
+        resolvedModules: result.resolvedModules,
         attemptId: result.attemptId,
         outputDir: result.outputDir,
         hostStopped: result.hostStopped,

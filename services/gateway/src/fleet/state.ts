@@ -70,6 +70,7 @@ import { invalidateLLMConfig } from '../llm/config.js';
 import { farmslotRoot, resolveStatusFilePath } from '../projects/repo-root.js';
 import { capabilityResourceChanges } from '../resources/capability-changes.js';
 import { publishConfigurationResources } from '../resources/configuration-changes.js';
+import { nativeCatalogChanges } from '../resources/native-catalog-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import {
   slotResourceChanges as slotResources,
@@ -959,6 +960,7 @@ export function startFileWatcher() {
       return;
     publishConfigurationResources();
     capabilityResourceChanges.catalogChanged();
+    nativeCatalogChanges.poolChanged();
     publishWorkerResources();
     clearTimeout(poolDebounce);
     poolDebounce = setTimeout(async () => {

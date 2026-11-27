@@ -8,6 +8,8 @@ import {
 import { NATIVE_NODE_REFRESH_MAX_RUNNERS } from '@farmslot/agent-runtime/native/host-runtime';
 import { isNativeHostUnavailableError } from '@farmslot/agent-runtime/native/host-unavailable';
 import {
+  canonicalTrustedExecutablesDigest,
+  EMPTY_TRUSTED_EXECUTABLES_DIGEST,
   NativeHostObservation,
   type NativeSourceReceipt,
 } from '@farmslot/agent-runtime/native/observation';
@@ -150,7 +152,7 @@ export class NativeNodeSessions {
 
   private observation?: NativeHostObservation;
   private trustedExecutables: Record<string, string> = {};
-  private trustedExecutablesDigest = '{}';
+  private trustedExecutablesDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST;
 
   private resolveTrustedExecutable(runner: string): string | undefined {
     const candidate = this.trustedExecutables[runner];
@@ -203,11 +205,7 @@ export class NativeNodeSessions {
         code: 'NATIVE_SOURCE_UNAVAILABLE',
       });
     const next = this.normalizeTrustedExecutables(value.executables);
-    const nextDigest = JSON.stringify(
-      Object.keys(next)
-        .sort()
-        .map((key) => [key, next[key]]),
-    );
+    const nextDigest = canonicalTrustedExecutablesDigest(next);
     this.trustedExecutables = next;
     this.trustedExecutablesDigest = nextDigest;
     if (!this.observation.current().ready) {

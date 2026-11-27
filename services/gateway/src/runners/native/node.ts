@@ -35,9 +35,13 @@ import {
   type NativeSessionReadResult,
   type NativeSessionRequester,
 } from '@farmslot/protocol';
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
-import { loadMachinePool } from '../../core/config.js';
+import {
+  type RawPoolJson,
+  readSlotPools,
+  SlotConfigError,
+  type SlotPools,
+} from '../../core/config.js';
 import { isLocal } from '../../core/index.js';
 import { lazyImport } from '../../core/lazy-import.js';
 import { GatewayMethodError } from '../../core/method-error.js';
@@ -49,7 +53,6 @@ import {
   resolveAfterNodeReconnect,
   sendNodeRequest,
 } from '../../fleet/node-rpc.js';
-import { loadPoolConfigs } from '../../fleet/state.js';
 import { withMeasuredNativeProcessCensus } from '../../host-services/native-process.js';
 import { readCredentialStoreSnapshot } from '../../security/credential-store.js';
 import {
@@ -245,47 +248,87 @@ export async function execNativeNodeArgv(
 }
 
 /**
- * Resolve a runner's trusted executable path from the execution node's pool config,
- * matching worker launch and discovery. Never accepts caller-supplied executables.
+ * Read the pool directory once into a shared snapshot for trusted executable resolution.
+ * Returns an empty snapshot only when the pool directory does not exist yet.
  */
-export async function resolveTrustedNativeExecutable(
-  runner: string,
-  executionNodeId: string,
-): Promise<string | undefined> {
-  const normalized = normalizeRunner(runner);
-  const pools = await loadPoolConfigs(currentFarmPaths('gateway').pool);
-  for (const pool of pools) {
-    if (
-      pool.machine === executionNodeId ||
-      (executionNodeId === 'local' && isLocal(pool.host, pool.machine))
-    ) {
-      const configured = machineRunnerPath(normalized, await loadMachinePool(pool.machine));
-      if (configured) return configured;
+export function loadTrustedNativeExecutableSnapshot(): SlotPools {
+  try {
+    return readSlotPools();
+  } catch (error) {
+    if (error instanceof SlotConfigError && error.code === 'POOL_DIR_NOT_FOUND') {
+      return [];
     }
+    throw error;
   }
-  return undefined;
 }
 
-export async function resolveTrustedNativeExecutablesForNode(
-  executionNodeId: string,
-): Promise<Record<string, string> | undefined> {
-  const pools = await loadPoolConfigs(currentFarmPaths('gateway').pool);
+/**
+ * Resolve trusted runner executable maps for one or many execution nodes from a single
+ * shared pool snapshot, matching `loadMachinePool` precedence (canonical `<machine>.json` first).
+ */
+export function resolveTrustedNativeExecutablesFromSnapshot(
+  pools: SlotPools,
+  executionNodeIds: readonly string[],
+): Map<string, Record<string, string> | undefined> {
+  const canonicalPoolByMachine = new Map<string, RawPoolJson>();
+  for (const entry of pools) {
+    const machine = entry.pool.machine;
+    if (typeof machine !== 'string' || !machine) continue;
+    const isCanonical = entry.file === `${machine}.json`;
+    if (isCanonical || !canonicalPoolByMachine.has(machine)) {
+      canonicalPoolByMachine.set(machine, entry.pool);
+    }
+  }
   const runners = Object.keys(MACHINE_RUNNER_PATH_FIELDS);
-  const resolved: Record<string, string> = {};
-  for (const pool of pools) {
-    if (
-      pool.machine === executionNodeId ||
-      (executionNodeId === 'local' && isLocal(pool.host, pool.machine))
-    ) {
-      const machinePool = await loadMachinePool(pool.machine);
+  const result = new Map<string, Record<string, string> | undefined>();
+  for (const executionNodeId of executionNodeIds) {
+    if (result.has(executionNodeId)) continue;
+    const matchingMachines: string[] = [];
+    for (const [machine, pool] of canonicalPoolByMachine) {
+      if (
+        machine === executionNodeId ||
+        (executionNodeId === 'local' && isLocal(pool.host, pool.machine))
+      ) {
+        matchingMachines.push(machine);
+      }
+    }
+    const resolved: Record<string, string> = {};
+    for (const machine of matchingMachines) {
+      const machinePool = canonicalPoolByMachine.get(machine);
+      if (!machinePool) continue;
       for (const runner of runners) {
         if (resolved[runner]) continue;
         const configured = machineRunnerPath(runner, machinePool);
         if (configured) resolved[runner] = configured;
       }
     }
+    result.set(executionNodeId, Object.keys(resolved).length ? resolved : undefined);
   }
-  return Object.keys(resolved).length ? resolved : undefined;
+  return result;
+}
+
+/**
+ * Resolve a runner's trusted executable path from the execution node's pool config,
+ * matching worker launch and discovery. Never accepts caller-supplied executables.
+ */
+export async function resolveTrustedNativeExecutable(
+  runner: string,
+  executionNodeId: string,
+  snapshot: SlotPools = loadTrustedNativeExecutableSnapshot(),
+): Promise<string | undefined> {
+  const normalized = normalizeRunner(runner);
+  return resolveTrustedNativeExecutablesFromSnapshot(snapshot, [executionNodeId]).get(
+    executionNodeId,
+  )?.[normalized];
+}
+
+export async function resolveTrustedNativeExecutablesForNode(
+  executionNodeId: string,
+  snapshot: SlotPools = loadTrustedNativeExecutableSnapshot(),
+): Promise<Record<string, string> | undefined> {
+  return resolveTrustedNativeExecutablesFromSnapshot(snapshot, [executionNodeId]).get(
+    executionNodeId,
+  );
 }
 
 export async function routeNativeExecution(

@@ -82,6 +82,24 @@ interface SourceSnapshot {
   accounts: string;
 }
 
+/** Canonical digest for an empty trusted executable override map, shared by gateway and node. */
+export const EMPTY_TRUSTED_EXECUTABLES_DIGEST = '[]';
+
+/** Canonical digest for a runner -> trusted executable override map, shared by gateway and node. */
+export function canonicalTrustedExecutablesDigest(
+  executables?: Readonly<Record<string, string>>,
+): string {
+  if (!executables) return EMPTY_TRUSTED_EXECUTABLES_DIGEST;
+  const entries: Array<[string, string]> = [];
+  for (const [runner, executable] of Object.entries(executables)) {
+    if (typeof executable === 'string' && executable.trim()) {
+      entries.push([runner, executable.trim()]);
+    }
+  }
+  entries.sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(entries);
+}
+
 /** One process owner per host. Observes durable journal commits, including other processes. */
 export class NativeHostObservation {
   private watchers: FSWatcher[] = [];
@@ -90,7 +108,7 @@ export class NativeHostObservation {
   private snapshot?: SourceSnapshot;
   private accountDigest = '';
   /** Digest of the desired trusted executable configuration. */
-  private executableConfigDigest = '{}';
+  private executableConfigDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST;
   /** Digest of the trusted executable configuration that produced the cached profileStatuses. */
   private sampledExecutableConfigDigest?: string;
   /** False while the last profile sample failed: sessions stay observable, profile reads don't. */
@@ -139,7 +157,7 @@ export class NativeHostObservation {
     private readonly resolveExecutable?: (
       runner: string,
     ) => Promise<string | undefined> | string | undefined,
-    initialExecutableConfigDigest = '{}',
+    initialExecutableConfigDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST,
   ) {
     this.executableConfigDigest = initialExecutableConfigDigest;
     this.receipt = {

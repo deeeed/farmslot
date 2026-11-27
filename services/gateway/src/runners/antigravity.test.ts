@@ -9,6 +9,8 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { NativeSessionClient } from '@farmslot/agent-runtime/native';
 import { observeAntigravityAccount } from '@farmslot/agent-runtime/native/antigravity';
 import {
+  canonicalTrustedExecutablesDigest,
+  EMPTY_TRUSTED_EXECUTABLES_DIGEST,
   NativeHostObservation,
   type NativeSourceReceipt,
 } from '@farmslot/agent-runtime/native/observation';
@@ -35,6 +37,7 @@ import { resolveRunDispatchRunnerModel } from '../run-engine/dispatch-policy.js'
 import { createGatewayAuthRuntime } from '../security/auth.js';
 
 import {
+  loadTrustedNativeExecutableSnapshot,
   resolveTrustedNativeExecutable,
   resolveTrustedNativeExecutablesForNode,
   routeNativeExecution,
@@ -481,6 +484,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   const prevPath = process.env.PATH;
   const prevAgyEnv = process.env.FARMSLOT_AGY_EXECUTABLE;
   const machine = 'remote-fenced-agy';
+  const machine2 = 'remote-fenced-clean';
   const writePool = (agyPath?: string) => {
     writeFileSync(
       join(tempPoolRoot, `${machine}.json`),
@@ -497,6 +501,18 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     );
   };
   writePool(fakeAgyV1);
+  writeFileSync(
+    join(tempPoolRoot, `${machine2}.json`),
+    JSON.stringify({
+      machine: machine2,
+      project: 'demo',
+      host: 'remote-fenced-clean.example',
+      ssh_user: 'operator',
+      os: process.platform,
+      platform: 'cli',
+      slots: [{ id: `${machine2}-1`, enabled: true, mode: 'dispatch', repo: root, session: 's2' }],
+    }),
+  );
 
   process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
   process.env.FARMSLOT_HOME = farmHome;
@@ -520,6 +536,16 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     [],
     'node-fenced',
   );
+  auth.writer.createPrincipal(
+    {
+      type: 'node',
+      machine: machine2,
+      displayName: 'Remote Clean Node',
+      nativeOwnerPrincipalId: ownerRecord.id,
+    },
+    [],
+    'node-fenced-clean',
+  );
   const principal: Principal = {
     id: ownerRecord.id,
     subject: { type: 'person', displayName: 'Fenced Owner' },
@@ -527,17 +553,40 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   };
 
   const nodeClient = new NativeSessionClient(nodeStateRoot, machine);
+  const node2StateRoot = join(root, 'node2-state');
+  mkdirSync(node2StateRoot, { recursive: true, mode: 0o700 });
+  const node2Client = new NativeSessionClient(node2StateRoot, machine2);
   await routeNativeProfile(nodeClient, ownerRecord.id, Methods.NATIVE_PROFILE_ADD, {
     profileId: 'work',
     runner: 'antigravity',
     directory: profileDir,
   });
+  await routeNativeProfile(node2Client, ownerRecord.id, Methods.NATIVE_PROFILE_ADD, {
+    profileId: 'work',
+    runner: 'antigravity',
+    directory: profileDir,
+  });
 
-  const observations = new GatewayNativeObservations(() => {});
+  let poolSnapshotReads = 0;
+  const invalidatedKeys: Array<{ family: string; nodeId?: string; scope?: string }> = [];
+  const observations = new GatewayNativeObservations(
+    (key) => {
+      invalidatedKeys.push({
+        family: key.family,
+        ...('nodeId' in key ? { nodeId: key.nodeId } : { scope: key.scope }),
+      });
+    },
+    undefined,
+    () => {
+      poolSnapshotReads++;
+      return loadTrustedNativeExecutableSnapshot();
+    },
+  );
   let nodeExecutables: Record<string, string> = {};
-  let nodeExecutablesDigest = '{}';
+  let nodeExecutablesDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST;
   let configureCalls = 0;
   const configuredPayloads: Array<Record<string, string>> = [];
+  let pendingConfigureGate: { entered: Promise<void>; release: () => void } | undefined;
   let lastReceipt: NativeSourceReceipt | undefined;
   let registeredWs: WebSocket | undefined;
   let nodeObs!: NativeHostObservation;
@@ -558,6 +607,35 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     return nodeObs.start();
   };
 
+  let node2Executables: Record<string, string> = {};
+  let node2ExecutablesDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST;
+  let configureCalls2 = 0;
+  const configuredPayloads2: Array<Record<string, string>> = [];
+  let node2SampleCalls = 0;
+  let registeredWs2: WebSocket | undefined;
+  const node2Obs = new NativeHostObservation(
+    node2Client,
+    ownerRecord.id,
+    (receipt) => {
+      if (registeredWs2) observations.acceptRemote(registeredWs2, receipt, () => true);
+    },
+    undefined,
+    async () => {
+      node2SampleCalls++;
+      return [
+        (await routeNativeProfile(
+          node2Client,
+          ownerRecord.id,
+          Methods.NATIVE_PROFILE_STATUS,
+          { profileId: 'work' },
+          { resolveExecutable: (runner) => node2Executables[runner] },
+        )) as NativeProfileStatusResult,
+      ];
+    },
+    (runner) => node2Executables[runner],
+    node2ExecutablesDigest,
+  );
+
   const makeNodeHandler = () => async (frame: RequestFrame) => {
     const p = (frame.params ?? {}) as Record<string, unknown>;
     if (frame.method === 'native.observation.configure') {
@@ -567,12 +645,13 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
           ? (p.executables as Record<string, string>)
           : {};
       configuredPayloads.push({ ...incoming });
+      if (pendingConfigureGate) {
+        const gate = pendingConfigureGate;
+        pendingConfigureGate = undefined;
+        await gate.entered;
+      }
       nodeExecutables = { ...incoming };
-      nodeExecutablesDigest = JSON.stringify(
-        Object.keys(nodeExecutables)
-          .sort()
-          .map((k) => [k, nodeExecutables[k]]),
-      );
+      nodeExecutablesDigest = canonicalTrustedExecutablesDigest(nodeExecutables);
       return nodeObs.setExecutableConfig(nodeExecutablesDigest);
     }
     if (frame.method === 'native.session') {
@@ -583,6 +662,27 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     }
     throw new Error(`Unexpected node method: ${frame.method}`);
   };
+
+  const transport2 = await createTypedNodeTransport(async (frame: RequestFrame) => {
+    const p = (frame.params ?? {}) as Record<string, unknown>;
+    if (frame.method === 'native.observation.configure') {
+      configureCalls2++;
+      const incoming =
+        p.executables && typeof p.executables === 'object' && !Array.isArray(p.executables)
+          ? (p.executables as Record<string, string>)
+          : {};
+      configuredPayloads2.push({ ...incoming });
+      node2Executables = { ...incoming };
+      node2ExecutablesDigest = canonicalTrustedExecutablesDigest(node2Executables);
+      return node2Obs.setExecutableConfig(node2ExecutablesDigest);
+    }
+    if (frame.method === 'native.session') {
+      const profileId = (p.params as { profileId: string }).profileId;
+      return node2Obs.read(() => node2Obs.profileStatus(profileId));
+    }
+    throw new Error(`Unexpected node2 method: ${frame.method}`);
+  });
+  registeredWs2 = transport2.ws;
 
   let activeTransport = await createTypedNodeTransport(makeNodeHandler());
   registeredWs = activeTransport.ws;
@@ -603,20 +703,62 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     },
     { principalId: 'node-fenced', valid: () => true },
   );
+  registerNode(
+    machine2,
+    1,
+    transport2.ws,
+    undefined,
+    undefined,
+    {
+      ownerPrincipalId: ownerRecord.id,
+      supportsStandaloneDelegation: true,
+      supportsProfiles: true,
+      supportsObservations: true,
+      supportsObservationConfiguration: true,
+    },
+    { principalId: 'node-fenced-clean', valid: () => true },
+  );
   observations.attachClient(clientConn, () => principal);
+
+  const waitUntil = async (predicate: () => Promise<boolean> | boolean, label: string) => {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      if (await predicate()) return;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error(`Timed out waiting for ${label}`);
+  };
+
   try {
+    // Register a catalog interest so we can prove model discovery notices still refresh catalog view.
+    const catalogInterests = nativeReadInterests(
+      Methods.NATIVE_SESSION_CATALOG,
+      {},
+      ownerRecord.id,
+    );
+    assert.ok(catalogInterests);
+    await observations.read(
+      clientConn,
+      catalogInterests,
+      async () => ({ contexts: [], runners: [] }),
+      () => null,
+    );
+
     await startNodeObservation();
+    await node2Obs.start();
     assert.ok(lastReceipt?.ready);
 
-    const readThroughGateway = async (): Promise<NativeProfileStatusResult> => {
-      const params = { executionNodeId: machine, profileId: 'work' };
+    const readThroughGateway = async (
+      targetMachine = machine,
+    ): Promise<NativeProfileStatusResult> => {
+      const params = { executionNodeId: targetMachine, profileId: 'work' };
       const interests = nativeReadInterests(Methods.NATIVE_PROFILE_STATUS, params, ownerRecord.id);
       assert.ok(interests);
       const { payload } = await observations.read(
         clientConn,
         interests,
         async () => {
-          const registeredNode = getNode(machine);
+          const registeredNode = getNode(targetMachine);
           assert.ok(registeredNode);
           const envelope = await sendNodeRequest(
             registeredNode,
@@ -631,7 +773,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
           );
           return observations.unwrapRemote<NativeProfileStatusResult>(
             registeredNode.ws,
-            machine,
+            targetMachine,
             envelope,
           );
         },
@@ -640,8 +782,36 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       return payload;
     };
 
-    // First marked read succeeds through the gateway before/after fence with the configured binary.
-    const first = await readThroughGateway();
+    const waitForReadyRead = async (
+      targetMachine = machine,
+    ): Promise<NativeProfileStatusResult> => {
+      let result: NativeProfileStatusResult | undefined;
+      await waitUntil(async () => {
+        try {
+          result = await readThroughGateway(targetMachine);
+          return true;
+        } catch (error) {
+          if ((error as { code?: string }).code === 'NATIVE_PROFILES_UNAVAILABLE') return false;
+          throw error;
+        }
+      }, `ready profile status for ${targetMachine}`);
+      assert.ok(result);
+      return result;
+    };
+
+    // Cold clean node (no overrides) receives explicit {} acknowledgement and skips redundant sampling.
+    const cleanFirst = await waitForReadyRead(machine2);
+    assert.equal(cleanFirst.account.installed, false);
+    assert.equal(configureCalls2, 1);
+    assert.deepEqual(configuredPayloads2, [{}]);
+    assert.equal(
+      node2SampleCalls,
+      1,
+      'empty-map acknowledgement on a cold node must not repeat the initial account sample',
+    );
+
+    // First marked read on configured node succeeds after registration sync with v1.
+    const first = await waitForReadyRead(machine);
     assert.equal(first.account.installed, true);
     assert.equal(first.account.login, 'authenticated');
     assert.equal(first.account.version, '1.5.12');
@@ -653,22 +823,67 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       .filter(Boolean).length;
     assert.equal(probesAfterFirst, 1);
 
-    // Second read with unchanged pool config does zero extra configures and zero extra probes.
-    const second = await readThroughGateway();
+    // Second read with unchanged pool config does zero extra configures, zero probes, zero pool scans.
+    const poolReadsSteady = poolSnapshotReads;
+    const second = await readThroughGateway(machine);
     assert.equal(second.account.version, '1.5.12');
     assert.equal(configureCalls, 1);
+    assert.equal(poolSnapshotReads, poolReadsSteady);
     assert.equal(
       readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
       probesAfterFirst,
     );
 
-    // Update pool config to v2 and fire concurrent reads through the gateway fence:
-    // both coalesce on one refresh, both pass the fence, and both see the new v2 sample.
-    writePool(fakeAgyV2);
+    // Model discovery notice refreshes the catalog view and performs ZERO executable/pool scans or configures.
+    const invalidationsBeforeDiscovery = invalidatedKeys.length;
     observations.catalogChanged({ scope: 'all', reason: 'catalog' });
+    assert.ok(
+      invalidatedKeys
+        .slice(invalidationsBeforeDiscovery)
+        .some((k) => k.family === 'native-session' && k.scope === 'owner'),
+      'model discovery notice must still invalidate the catalog view',
+    );
+    assert.equal(poolSnapshotReads, poolReadsSteady, 'discovery must perform zero pool scans');
+    assert.equal(configureCalls, 1, 'discovery must send zero configure RPCs to configured node');
+    assert.equal(configureCalls2, 1, 'discovery must send zero configure RPCs to clean node');
+
+    // Actual pool edit reads ONE shared pool snapshot for all connected nodes, skips unchanged machine2,
+    // keeps picker reads non-blocking (NATIVE_PROFILES_UNAVAILABLE) while refreshing, then serves v2.
+    let releaseGate!: () => void;
+    const gatePromise = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    pendingConfigureGate = { entered: gatePromise, release: releaseGate };
+    writePool(fakeAgyV2);
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
+    assert.equal(
+      poolSnapshotReads,
+      poolReadsSteady + 1,
+      'pool edit must read one shared pool snapshot across all connected nodes',
+    );
+    assert.equal(
+      configureCalls2,
+      1,
+      'unchanged connected node must receive zero extra configure RPCs on another node pool edit',
+    );
+    await waitUntil(() => configureCalls === 2, 'background configure RPC for changed node');
+    await assert.rejects(
+      readThroughGateway(machine),
+      { code: 'NATIVE_PROFILES_UNAVAILABLE' },
+      'picker read must report pending sample immediately instead of blocking on configure RPC',
+    );
+    const invalidationsBeforeRelease = invalidatedKeys.length;
+    releaseGate();
+    await waitUntil(
+      () =>
+        invalidatedKeys
+          .slice(invalidationsBeforeRelease)
+          .some((k) => k.family === 'profiles' && k.nodeId === machine),
+      'profiles invalidation after background configure completes',
+    );
     const [concurrentA, concurrentB] = await Promise.all([
-      readThroughGateway(),
-      readThroughGateway(),
+      readThroughGateway(machine),
+      readThroughGateway(machine),
     ]);
     assert.equal(concurrentA.account.version, '1.5.13');
     assert.equal(concurrentB.account.version, '1.5.13');
@@ -682,7 +897,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
 
     // Disconnect the node, remove the antigravity_path override from pool while disconnected,
     // then reconnect the same node (which still holds fakeAgyV2 in memory): gateway must
-    // explicitly configure {} on reconnect before admitting reads so the removed binary is not returned.
+    // explicitly configure {} on reconnect so the removed binary is not returned.
     nodeObs.stop();
     unregisterByWs(activeTransport.ws);
     observations.disconnectRemote(activeTransport.ws);
@@ -690,7 +905,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     registeredWs = undefined;
 
     writePool(undefined);
-    observations.catalogChanged({ scope: 'all', reason: 'catalog' });
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
 
     activeTransport = await createTypedNodeTransport(makeNodeHandler());
     registeredWs = activeTransport.ws;
@@ -711,7 +926,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     );
     await startNodeObservation();
 
-    const afterReconnect = await readThroughGateway();
+    const afterReconnect = await waitForReadyRead(machine);
     assert.equal(afterReconnect.account.installed, false);
     assert.equal(configureCalls, 3);
     assert.deepEqual(configuredPayloads.at(-1), {});
@@ -723,7 +938,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     await activeTransport.close();
     registeredWs = undefined;
     writePool(fakeAgyV1);
-    observations.catalogChanged({ scope: 'all', reason: 'catalog' });
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
     activeTransport = await createTypedNodeTransport(makeNodeHandler());
     registeredWs = activeTransport.ws;
     registerNode(
@@ -742,15 +957,18 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     );
     await startNodeObservation();
     await assert.rejects(
-      readThroughGateway(),
+      readThroughGateway(machine),
       /Execution node upgrade required for configured runner executables/,
     );
   } finally {
     nodeObs?.stop();
+    node2Obs.stop();
     observations.detachClient(clientConn);
     observations.dispose();
     unregisterByWs(activeTransport.ws);
+    unregisterByWs(transport2.ws);
     await activeTransport.close();
+    await transport2.close();
     if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
     else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
     if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;

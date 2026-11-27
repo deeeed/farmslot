@@ -1047,6 +1047,8 @@ try {
   frozenSource.verifyBeforeSeal();
   result.isolatedCheckoutVerifiedBeforeLaunch = true;
   result.isolatedCheckoutVerifiedBeforeSeal = true;
+  result.isolatedModuleResolutionVerified = frozenSource.isolatedModuleResolutionVerified;
+  result.resolvedModules = frozenSource.resolvedModules;
   const manifestEntries = await buildProofManifest(output);
   result.manifest = manifestEntries;
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
@@ -1060,6 +1062,8 @@ try {
         trackedWorkingTreeClean: result.trackedWorkingTreeClean,
         isolatedCheckoutVerifiedBeforeLaunch: result.isolatedCheckoutVerifiedBeforeLaunch,
         isolatedCheckoutVerifiedBeforeSeal: result.isolatedCheckoutVerifiedBeforeSeal,
+        isolatedModuleResolutionVerified: result.isolatedModuleResolutionVerified,
+        resolvedModules: result.resolvedModules,
         attemptId: result.attemptId,
         outputDir: result.outputDir,
         hostStopped: result.hostStopped,

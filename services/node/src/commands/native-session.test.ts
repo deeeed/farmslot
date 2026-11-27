@@ -354,7 +354,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   });
 
   await service.startObservation(() => {});
-  assert.equal(service.observationReceipt()?.ready, true);
+  const initialReceipt = service.observationReceipt();
+  assert.equal(initialReceipt?.ready, true);
 
   // Without trusted executables, agy is absent from PATH.
   const withoutExec = (await service.routeObserved({
@@ -363,6 +364,21 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     params: { profileId: 'work' },
   })) as { value: NativeProfileStatusResult };
   assert.equal(withoutExec.value.account.installed, false);
+
+  // Explicit empty-map acknowledgement on a cold node with no overrides shares the canonical
+  // empty digest ('[]') and skips redundant account sampling (same revision and observedAt).
+  const emptyAckReceipt = await service.configureObservation({
+    owner: 'owner',
+    executables: {},
+  });
+  assert.equal(emptyAckReceipt.ready, true);
+  assert.equal(emptyAckReceipt.revision, initialReceipt?.revision);
+  const afterEmptyAck = (await service.routeObserved({
+    owner: 'owner',
+    method: 'native.profile.status',
+    params: { profileId: 'work' },
+  })) as { value: NativeProfileStatusResult };
+  assert.equal(afterEmptyAck.value.account.observedAt, withoutExec.value.account.observedAt);
 
   // Configure trusted executables at the observation owner before admitting reads.
   const configuredReceipt = await service.configureObservation({

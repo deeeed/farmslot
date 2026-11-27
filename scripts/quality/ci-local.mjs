@@ -44,6 +44,7 @@ export const CI_PARITY_STEPS = [
       '--test',
       'scripts/runner-validation/canary/outcome.test.mts',
       'scripts/runner-validation/canary/proofs.test.mts',
+      'scripts/runner-validation/gateway/antigravity-proof-utils.test.mts',
     ],
   ],
   ['large files', ['yarn', 'quality:large-files']],
