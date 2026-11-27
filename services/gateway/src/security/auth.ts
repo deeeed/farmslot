@@ -295,10 +295,11 @@ export async function authorizeHttpRequest(params: {
   req: IncomingMessage;
   res: ServerResponse;
   resource: GatewayHttpResource;
+  headerOnly?: boolean;
 }): Promise<boolean> {
   try {
     if (params.runtime.resolver.isSoloMode()) return true;
-    const credential = getHttpCredential(params.req);
+    const credential = getHttpCredential(params.req, params.headerOnly);
     const result = await authenticateGatewayClient({
       runtime: params.runtime,
       connectParams: {
@@ -373,6 +374,7 @@ function nonEmpty(value: string | undefined): string | undefined {
 
 export function getHttpCredential(
   req: IncomingMessage,
+  headerOnly = false,
 ): { value: string; transport: 'token' } | undefined {
   const auth = req.headers.authorization;
   if (typeof auth === 'string') {
@@ -382,6 +384,7 @@ export function getHttpCredential(
     }
     return undefined;
   }
+  if (headerOnly) return undefined;
   const queryToken = getQueryCredential(req.url, 'token');
   if (queryToken) return { value: queryToken, transport: 'token' };
   const cookieToken = getCookieValue(req.headers.cookie, HTTP_AUTH_COOKIE);

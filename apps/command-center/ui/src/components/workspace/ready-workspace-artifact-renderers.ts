@@ -7,7 +7,7 @@ import { isRunArtifactImagePath, isRunArtifactMediaPath } from '@farmslot/protoc
 import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 import { formatBytes } from '../../utils/format.js';
 import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
-import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
+import { gatewayMediaSrc, gatewayVideoSrc } from '../shared/gateway-media-src.js';
 
 import {
   ARTIFACT_TYPES,
@@ -295,7 +295,7 @@ export function renderReadyArtifactCard(ctx: ReadyArtifactCardContext) {
           ? html`
               <video
                 class="rdy-media-preview"
-                src=${gatewayMediaSrc(ctx.mediaUrl)}
+                src=${gatewayVideoSrc(ctx.mediaUrl)}
                 controls
                 muted
                 preload="metadata"

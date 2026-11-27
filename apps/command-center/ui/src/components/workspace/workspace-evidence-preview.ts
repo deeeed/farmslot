@@ -16,7 +16,7 @@ import '../shared/hydrating-placeholder.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { isPlainClick } from '../progress-tracker/acceptance-panel.js';
-import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
+import { gatewayMediaSrc, gatewayVideoSrc } from '../shared/gateway-media-src.js';
 
 import { renderVisualClaimJudgment } from './visual-claim-judgment.js';
 import {
@@ -173,7 +173,7 @@ export function renderWorkspaceEvidencePreview(input: {
                     />`
                   : isVideo
                     ? html`<video
-                        src=${gatewayMediaSrc(url)}
+                        src=${gatewayVideoSrc(url)}
                         controls
                         muted
                         preload="metadata"
@@ -506,7 +506,7 @@ function renderComparisonPreview(input: WorkspaceEvidenceComparison): TemplateRe
                   aria-label=${`Open fullscreen proof for ${row.claim.id}`}
                 >
                   <video
-                    src=${gatewayMediaSrc(
+                    src=${gatewayVideoSrc(
                       input.artifactUrl(model.artifactPath(row.claim.clips[0]!.videoPath)),
                     )}
                     muted

@@ -29,6 +29,7 @@ import {
   isTerminalRunStatus,
   type OkResult,
   type Run,
+  RUN_ARTIFACT_MEDIA_GRANT_PARAM,
   type RunArtifactBundleRef,
 } from '@farmslot/protocol';
 import { resolveRunBundleEntry } from '@farmslot/run-bundle';
@@ -40,6 +41,8 @@ import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
 import { loadPoolConfigs } from '../fleet/state.js';
 import { invalidateArtifactTextCache } from '../live-recipe/context.js';
+import { authorizeHttpRequest, type GatewayAuthRuntime } from '../security/auth.js';
+import { runArtifactMediaGrants } from '../security/run-artifact-media.js';
 
 import {
   mimeForPath,
@@ -950,9 +953,46 @@ export async function resolveRetainedRunArtifact(
   return { entry, ref, artifactPath };
 }
 
+type RunArtifactMediaAccess = 'issue' | { sha256: string };
+
+export async function serveRunArtifactRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: GatewayAuthRuntime,
+  grants = runArtifactMediaGrants,
+): Promise<void> {
+  const url = new URL(req.url!, 'http://gateway');
+  const isIssue = req.method === 'POST';
+  const hasGrant = url.searchParams.has(RUN_ARTIFACT_MEDIA_GRANT_PARAM);
+  if (hasGrant || isIssue) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+  }
+  if (hasGrant) {
+    const sha256 = req.method === 'GET' ? grants.verify(url) : undefined;
+    if (!sha256) {
+      res.writeHead(401);
+      res.end('Playback URL is invalid or expired.');
+      return;
+    }
+    await serveRunArtifact(req, res, { sha256 });
+    return;
+  }
+  if (
+    await authorizeHttpRequest({ runtime, req, res, resource: 'run-artifact', headerOnly: isIssue })
+  )
+    await serveRunArtifact(req, res, isIssue ? 'issue' : undefined, grants);
+}
+
 // Serve a file relative to a run's task artifact directory.
 // URL: /api/run-artifact?runId=X&path=Y[&recipeRunId=Z]  (path is relative to task dir or selected recipe-run artifact root)
-export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function serveRunArtifact(
+  req: IncomingMessage,
+  res: ServerResponse,
+  media?: RunArtifactMediaAccess,
+  grants = runArtifactMediaGrants,
+): Promise<void> {
   try {
     const url = new URL(req.url!, `http://${req.headers.host}`);
     const runId = url.searchParams.get('runId');
@@ -971,10 +1011,16 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
     const { getRun } = await loadRunStore();
     const run = getRun(runId);
     if (!run) throw new Error('Run not found.');
+    if (media && !mimeForPath(requested).startsWith('video/')) {
+      res.writeHead(400);
+      res.end('Playback URLs require a retained video artifact.');
+      return;
+    }
     // Operation logs are live task files, not publication evidence. Resolve only
     // canonical logs of the run that still owns this slot; pinned snapshots keep
     // using retained storage, including after the slot is released or reused.
     if (
+      !media &&
       /^artifacts\/operations\/[a-f0-9-]{36}\.log$/.test(requested) &&
       !['recipeRunId', 'decisionId', 'bundleDigest', 'v'].some((key) =>
         url.searchParams.has(key),
@@ -1008,6 +1054,19 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
       requested,
       url.searchParams,
     );
+    const mime = mimeForPath(entry.path);
+    if (media) {
+      if (!mime.startsWith('video/') || (media !== 'issue' && media.sha256 !== entry.sha256)) {
+        res.writeHead(403);
+        res.end('Playback URL does not match the retained video.');
+        return;
+      }
+      if (media === 'issue') {
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(grants.issue(url, entry.sha256)));
+        return;
+      }
+    }
     res.setHeader('X-Farmslot-Bundle-Digest', ref.bundleDigest);
     res.setHeader('ETag', `"${entry.sha256}"`);
     const handle = await openLocalReadHandle(entry.path, artifactPath);
@@ -1018,7 +1077,14 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
         return;
       }
       // The shared range helper owns the handle after a successful stream handoff.
-      serveLocalFileWithRange(req, res, handle, mimeForPath(entry.path), entry.bytes);
+      serveLocalFileWithRange(
+        req,
+        res,
+        handle,
+        mime,
+        entry.bytes,
+        media ? 'private, no-store' : undefined,
+      );
     } catch (error) {
       await handle.close();
       throw error;
