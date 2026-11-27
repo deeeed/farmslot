@@ -38,6 +38,7 @@ import {
   isActiveListRun,
   isRacyStamp,
   isRecord,
+  isRunBundleManifest,
   type Run,
   RUN_BUNDLE_VERSION,
   type RunArtifactBundleRef,
@@ -296,6 +297,11 @@ export interface RunBundleMediaArchiveRequest {
 const RUN_BUNDLE_ARCHIVE_HIGH_RATIO = 0.85;
 const RUN_BUNDLE_ARCHIVE_LOW_RATIO = 0.7;
 
+interface RetainedEntryOptions {
+  /** For issuing a reference only. Reads that serve bytes must verify the archive. */
+  metadataOnly?: boolean;
+}
+
 export interface ResolvedRunBundleEntry {
   path: string;
   sha256: string;
@@ -306,7 +312,7 @@ export interface RetainedRunBundleSnapshot {
   directory: string;
   taskDir: string;
   manifest: RunBundleManifest;
-  resolveEntry(file: string): Promise<ResolvedRunBundleEntry>;
+  resolveEntry(file: string, options?: RetainedEntryOptions): Promise<ResolvedRunBundleEntry>;
   readText(file: string): Promise<string>;
 }
 
@@ -1938,7 +1944,20 @@ async function assertStorePairing(store: RunBundleStore): Promise<void> {
     throw new Error('Run bundle store pairing changed.');
 }
 
-const manifestCache = new Map<string, RunBundleManifest>();
+interface VerifiedManifest {
+  stamp: string;
+  manifest: RunBundleManifest;
+  owners: Map<string, Set<string | undefined>>;
+}
+
+const manifestCache = new Map<string, VerifiedManifest>();
+const verifiedArchive = new Map<string, string>();
+const availabilityCache = new Map<string, { stamp: string; value: RunBundleAvailability }>();
+
+function rememberBundleRead<T>(cache: Map<string, T>, key: string, value: T) {
+  if (cache.size >= 128 && !cache.has(key)) cache.delete(cache.keys().next().value!);
+  cache.set(key, value);
+}
 
 const payloadKey = (meta: { sha256: string; bytes: number }) => `${meta.sha256}:${meta.bytes}`;
 
@@ -2230,36 +2249,38 @@ export async function readRunBundleAvailability(
   return raw ? JSON.parse(raw) : { revision: 0, prunedPaths: [] };
 }
 
-/**
- * A published bundle's manifest, digest-checked on every read; parsed metadata is cached.
- * Rejects with `ENOENT` once the bundle has left the store.
- */
-async function readRetainedManifestUntimed(
-  store: RunBundleStore,
-  digest: string,
-): Promise<{ directory: string; manifest: RunBundleManifest }> {
+/** Reuse digest-checked metadata while the published manifest keeps its verified identity. */
+async function readRetainedManifestUntimed(store: RunBundleStore, digest: string) {
   const directory = bundleDirectory(store, digest);
+  const file = path.join(directory, 'manifest.json');
   const cacheKey = `${store.id}:${digest}`;
-  // Parsed metadata may be cached; the published manifest must still exist and match.
-  const raw = await readFile(path.join(directory, 'manifest.json'), 'utf8');
+  const stamp = await fileStamp(file, Date.now());
+  const cached = manifestCache.get(cacheKey);
+  if (!stamp.racy && cached?.stamp === stamp.key) return { directory, ...cached };
+  const raw = await readFile(file, 'utf8');
   if (sha256Text(raw) !== digest) throw new Error('Retained bundle manifest digest mismatch.');
-  let manifest = manifestCache.get(cacheKey);
-  if (!manifest) {
-    manifest = parseManifest(directory);
-    for (const [key, meta] of Object.entries(manifest.entries)) {
-      assertSafeBundleRelativePath(key);
-      if (
-        meta.path !== key ||
-        !/^[a-f0-9]{64}$/u.test(meta.sha256) ||
-        !Number.isSafeInteger(meta.bytes) ||
-        meta.bytes < 0
-      )
-        throw new Error('Invalid retained bundle manifest entry.');
-    }
-    if (manifestCache.size >= 128) manifestCache.delete(manifestCache.keys().next().value!);
-    manifestCache.set(cacheKey, manifest);
+  const manifest: unknown = JSON.parse(raw);
+  if (!isRunBundleManifest(manifest)) throw new Error('Invalid retained bundle manifest.');
+  for (const [key, meta] of Object.entries(manifest.entries)) {
+    assertSafeBundleRelativePath(key);
+    if (
+      meta.path !== key ||
+      !/^[a-f0-9]{64}$/u.test(meta.sha256) ||
+      !Number.isSafeInteger(meta.bytes) ||
+      meta.bytes < 0
+    )
+      throw new Error('Invalid retained bundle manifest entry.');
   }
-  return { directory, manifest };
+  const owners = new Map<string, Set<string | undefined>>();
+  for (const entry of manifest.runs) {
+    const taskKeys = owners.get(entry.originalRunId) ?? new Set();
+    taskKeys.add(entry.taskKey);
+    owners.set(entry.originalRunId, taskKeys);
+  }
+  const value = { stamp: stamp.key, manifest, owners };
+  if (!stamp.racy && (await fileStamp(file, Date.now())).key === stamp.key)
+    rememberBundleRead(manifestCache, cacheKey, value);
+  return { directory, ...value };
 }
 
 export async function readRetainedRunBundle(
@@ -2270,13 +2291,14 @@ export async function readRetainedRunBundle(
   await assertStorePairing(store);
   if (store.id !== ref.storeId) throw new Error('Retained bundle belongs to another Run store.');
   assertSafeBundleSegment(ref.taskKey, 'task key');
-  const { directory, manifest } = await readRetainedManifest(store, ref.bundleDigest);
-  if (
-    !manifest.runs.some((entry) => entry.originalRunId === runId && entry.taskKey === ref.taskKey)
-  )
+  const { directory, manifest, owners } = await readRetainedManifest(store, ref.bundleDigest);
+  if (!owners.get(runId)?.has(ref.taskKey))
     throw new Error('Retained bundle does not belong to this run.');
   const retainedManifest = manifest;
-  const resolveEntry = async (relativePath: string): Promise<ResolvedRunBundleEntry> => {
+  const resolveEntry = async (
+    relativePath: string,
+    options?: RetainedEntryOptions,
+  ): Promise<ResolvedRunBundleEntry> => {
     assertSafeBundleRelativePath(relativePath);
     const key = `tasks/${ref.taskKey}/${relativePath}`;
     const meta = retainedManifest.entries[key];
@@ -2291,10 +2313,18 @@ export async function readRetainedRunBundle(
       real = await realpath(file);
     } catch (error) {
       if (!hasCode(error, 'ENOENT')) throw error;
-      const raw = await readOptional(
-        path.join(store.root, 'availability', `${ref.bundleDigest}.json`),
-      );
-      const availability: RunBundleAvailability | undefined = raw ? JSON.parse(raw) : undefined;
+      const journal = path.join(store.root, 'availability', `${ref.bundleDigest}.json`);
+      const stamp = await fileStamp(journal, Date.now());
+      const cached = availabilityCache.get(journal);
+      let availability: RunBundleAvailability | undefined;
+      if (!stamp.racy && cached?.stamp === stamp.key) {
+        availability = cached.value;
+      } else {
+        const raw = await readOptional(journal);
+        availability = raw ? JSON.parse(raw) : undefined;
+        if (availability && !stamp.racy && (await fileStamp(journal, Date.now())).key === stamp.key)
+          rememberBundleRead(availabilityCache, journal, { stamp: stamp.key, value: availability });
+      }
       archivePath = availability?.archivedPaths?.[key];
       if (archivePath) {
         if (!path.isAbsolute(archivePath) || !isRunBundleMedia(key))
@@ -2320,8 +2350,20 @@ export async function readRetainedRunBundle(
     const info = await lstat(file);
     if (!info.isFile() || info.size !== meta.bytes)
       throw new Error(`Retained artifact is missing, pruned or changed: ${relativePath}`);
-    if (archivePath && (await copyHashed(file, null, meta.bytes)).sha256 !== meta.sha256)
-      throw new Error(`Retained archive bytes changed: ${relativePath}`);
+    if (archivePath && !options?.metadataOnly) {
+      const stamp = statsStamp(info, Date.now());
+      const verification = `${file}:${meta.sha256}`;
+      if (stamp.racy || verifiedArchive.get(verification) !== stamp.key) {
+        const actual = await copyHashed(file, null, meta.bytes);
+        if (
+          actual.sha256 !== meta.sha256 ||
+          actual.bytes !== meta.bytes ||
+          (await fileStamp(file, Date.now())).key !== stamp.key
+        )
+          throw new Error(`Retained archive bytes changed: ${relativePath}`);
+        if (!stamp.racy) rememberBundleRead(verifiedArchive, verification, stamp.key);
+      }
+    }
     return { path: file, sha256: meta.sha256, bytes: meta.bytes };
   };
   return {
@@ -2386,7 +2428,7 @@ const runInventoryCache = new Map<
 
 function statsStamp(stats: Stats, now: number): { key: string; racy: boolean } {
   return {
-    key: `${stats.ino}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}`,
+    key: `${stats.dev}:${stats.ino}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}`,
     racy: isRacyStamp(Math.max(stats.mtimeMs, stats.ctimeMs), now),
   };
 }
@@ -2954,9 +2996,10 @@ export async function resolveRunBundleEntry(input: {
   ref: RunArtifactBundleRef;
   runId: string;
   path: string;
+  metadataOnly?: boolean;
 }): Promise<ResolvedRunBundleEntry> {
   const bundle = await readRetainedRunBundle(input.store, input.ref, input.runId);
-  return bundle.resolveEntry(input.path);
+  return bundle.resolveEntry(input.path, input);
 }
 
 /** Materialize farmrun v1 from one captured inventory, then fence its Run reference under the lock. */

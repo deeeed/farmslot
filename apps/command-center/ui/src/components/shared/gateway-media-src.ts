@@ -1,12 +1,21 @@
 import { noChange, nothing } from 'lit';
 import { AsyncDirective } from 'lit/async-directive.js';
-import { directive } from 'lit/directive.js';
+import { directive, type Part, PartType } from 'lit/directive.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
-import { isRunArtifactImagePath } from '@farmslot/protocol';
+import {
+  isRunArtifactImagePath,
+  isRunEvidenceVideoArtifact,
+  RUN_ARTIFACT_MEDIA_GRANT_PARAM,
+  type RunArtifactMediaGrant,
+} from '@farmslot/protocol';
 
 import { readGatewayAuth } from '../../gateway-url.js';
-import { gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import {
+  gatewayHttpFetch,
+  gatewayHttpOrigin,
+  sameOriginGatewayHttpUrl,
+} from '../../utils/gateway-origin.js';
 
 const MAX_HELD_MEDIA_URLS = 2000;
 const heldMediaIds = new Map<string, string>();
@@ -147,7 +156,56 @@ export async function loadGatewayMedia(
   return objectMedia(await fetchGatewayMedia(url, signal));
 }
 
-type GatewayMediaFormat = 'url' | 'html';
+interface LoadedGatewayMedia {
+  url: string;
+  dispose(): void;
+  renewalUrl?: string;
+}
+
+async function loadGatewayVideo(url: string, signal: AbortSignal): Promise<LoadedGatewayMedia> {
+  if (!isGatewayMediaUrl(url)) return loadGatewayMedia(url, signal);
+  const resource = new URL(url, gatewayHttpOrigin());
+  if (
+    resource.pathname !== '/api/run-artifact' ||
+    !isRunEvidenceVideoArtifact({ path: resource.searchParams.get('path') ?? '' })
+  )
+    return loadGatewayMedia(url, signal);
+  await waitForGatewayMediaAuth(url, signal);
+  resource.searchParams.delete('token');
+  resource.searchParams.delete('password');
+  const response = await gatewayHttpFetch(resource.toString(), { method: 'POST', signal });
+  if (response.status !== 201) {
+    await response.body?.cancel();
+    // Older gateways serve artifact bytes on POST. Keep their existing playback path.
+    if (response.status === 200) return loadGatewayMedia(url, signal);
+    throw new Error(`Could not open gateway recording (${response.status}).`);
+  }
+  const grant = (await response.json()) as RunArtifactMediaGrant;
+  signal.throwIfAborted();
+  const playback = new URL(grant.url, resource);
+  if (
+    playback.origin !== resource.origin ||
+    playback.pathname !== resource.pathname ||
+    !playback.searchParams.has(RUN_ARTIFACT_MEDIA_GRANT_PARAM) ||
+    playback.searchParams.has('token') ||
+    playback.searchParams.has('password')
+  )
+    throw new Error('Gateway returned an invalid playback URL.');
+  playback.hash = resource.hash;
+  const urlForPlayer = sameOriginGatewayHttpUrl(playback.toString());
+  playback.searchParams.delete(RUN_ARTIFACT_MEDIA_GRANT_PARAM);
+  return {
+    url: urlForPlayer,
+    renewalUrl:
+      playback.searchParams.has('bundleDigest') &&
+      /^[a-f0-9]{64}$/u.test(playback.searchParams.get('v') ?? '')
+        ? playback.toString()
+        : undefined,
+    dispose() {},
+  };
+}
+
+type GatewayMediaFormat = 'url' | 'html' | 'video';
 
 export class GatewayMedia extends AsyncDirective {
   private source: string | undefined;
@@ -155,8 +213,17 @@ export class GatewayMedia extends AsyncDirective {
   private lastFormat: GatewayMediaFormat = 'url';
   private onError?: () => void;
   private abort: AbortController | undefined;
-  private media: Awaited<ReturnType<typeof loadGatewayMedia>> | undefined;
+  private media: LoadedGatewayMedia | undefined;
+  private video?: HTMLVideoElement;
   private initial: ReturnType<typeof unsafeHTML> | typeof nothing = nothing;
+
+  override update(part: Part, [url, format, onError]: Parameters<GatewayMedia['render']>) {
+    this.video =
+      format === 'video' && part.type === PartType.ATTRIBUTE && part.element.localName === 'video'
+        ? (part.element as HTMLVideoElement)
+        : undefined;
+    return this.render(url, format, onError);
+  }
 
   render(url: string, format: GatewayMediaFormat = 'url', onError?: () => void) {
     this.lastUrl = url;
@@ -180,8 +247,10 @@ export class GatewayMedia extends AsyncDirective {
     this.source = source;
     const abort = new AbortController();
     this.abort = abort;
-    const loading =
-      format === 'html' ? this.loadDocument(url) : loadGatewayMedia(url, abort.signal);
+    const loading: Promise<LoadedGatewayMedia> =
+      format === 'html'
+        ? this.loadDocument(url)
+        : (format === 'video' ? loadGatewayVideo : loadGatewayMedia)(url, abort.signal);
     loading
       .then((media) => {
         if (abort.signal.aborted) {
@@ -189,6 +258,8 @@ export class GatewayMedia extends AsyncDirective {
           return;
         }
         this.media = media;
+        if (media.renewalUrl && this.video)
+          this.watchVideo(this.video, media.renewalUrl, abort.signal);
         this.setValue(this.value(media.url, format));
       })
       .catch((error: unknown) => {
@@ -204,6 +275,101 @@ export class GatewayMedia extends AsyncDirective {
         console.error('Gateway media could not be loaded.', error);
       });
     return this.initial;
+  }
+
+  private watchVideo(video: HTMLVideoElement, renewalUrl: string, signal: AbortSignal): void {
+    let requestedTime: number | undefined;
+    let canRenew = true;
+    let renewing = false;
+    let playing = !video.paused;
+    video.addEventListener(
+      'play',
+      () => {
+        playing = true;
+      },
+      { signal },
+    );
+    video.addEventListener(
+      'pause',
+      () => {
+        playing = false;
+      },
+      { signal },
+    );
+    video.addEventListener(
+      'seeking',
+      () => {
+        requestedTime = video.currentTime;
+      },
+      { signal },
+    );
+    video.addEventListener(
+      'seeked',
+      () => {
+        requestedTime = undefined;
+        if (!renewing) canRenew = true;
+      },
+      { signal },
+    );
+    video.addEventListener(
+      'loadeddata',
+      () => {
+        if (!renewing && !video.seeking) canRenew = true;
+      },
+      { signal },
+    );
+    // Capture before the lightbox's error listener can replace the player. The browser does
+    // not expose the media response status, so retry one failed signed source per decoded load.
+    video.addEventListener(
+      'error',
+      (event) => {
+        if (!renewing && (!canRenew || this.media?.renewalUrl !== renewalUrl)) return;
+        event.stopImmediatePropagation();
+        if (renewing) return;
+        canRenew = false;
+        renewing = true;
+        const position = requestedTime ?? video.currentTime;
+        const resume = playing;
+        void loadGatewayVideo(renewalUrl, signal)
+          .then((media) => {
+            if (signal.aborted) {
+              media.dispose();
+              return;
+            }
+            if (media.renewalUrl !== renewalUrl) {
+              media.dispose();
+              throw new Error('The retained recording is unavailable.');
+            }
+            video.addEventListener(
+              'loadedmetadata',
+              () => {
+                const time = requestedTime ?? position;
+                video.currentTime = Number.isFinite(video.duration)
+                  ? Math.min(time, video.duration)
+                  : time;
+                if (resume)
+                  void video.play().catch((error: unknown) => {
+                    // Renewing a source can lose user activation. Leave the native player paused.
+                    if (!(error instanceof DOMException) || error.name !== 'NotAllowedError')
+                      console.error('Could not resume gateway recording.', error);
+                  });
+              },
+              { once: true, signal },
+            );
+            this.media?.dispose();
+            this.media = media;
+            renewing = false;
+            this.setValue(media.url);
+          })
+          .catch((error: unknown) => {
+            if (signal.aborted) return;
+            renewing = false;
+            console.error('Could not renew gateway recording.', error);
+            video.dispatchEvent(new Event('error'));
+          });
+      },
+      { capture: true, signal },
+    );
   }
 
   private retryOnReconnect(signal: AbortSignal): void {
@@ -261,6 +427,8 @@ export class GatewayMedia extends AsyncDirective {
 }
 
 export const gatewayMediaSrc = directive(GatewayMedia);
+export const gatewayVideoSrc = (url: string, onError?: () => void) =>
+  gatewayMediaSrc(url, 'video', onError);
 export const gatewayMediaHtml = (html: string) => gatewayMediaSrc(html, 'html');
 
 /** Sanitized report HTML keeps its inline media on the same header-only path. */
