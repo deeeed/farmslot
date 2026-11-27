@@ -704,7 +704,7 @@ export async function retainCapturedRunArtifacts(input: {
   const optionalReceipts = new Map<string, Buffer>();
   if (input.run.executionTemplate?.postRunDebrief === true) {
     for (const file of [
-      TASK_DIRECTORY_LAYOUT.workerChecklistMirror.relativePath,
+      TASK_DIRECTORY_LAYOUT.checklistWorkerMirror.relativePath,
       TASK_DIRECTORY_LAYOUT.workerSignalMirror.relativePath,
       TASK_DIRECTORY_LAYOUT.signal.relativePath,
     ]) {

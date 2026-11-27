@@ -125,7 +125,7 @@ async function addAcceptedDebriefEvidence(
   const snapshot = await readRetainedRunBundle(store, accepted, record.identity.runId!);
   const layout = TASK_DIRECTORY_LAYOUT;
   const alternates = new Map<string, string>([
-    [layout.checklist.relativePath, layout.workerChecklistMirror.relativePath],
+    [layout.checklist.relativePath, layout.checklistWorkerMirror.relativePath],
     [layout.signal.relativePath, layout.workerSignalMirror.relativePath],
   ]);
   const digests = new Map<string, string>();
