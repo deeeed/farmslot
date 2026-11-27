@@ -538,10 +538,7 @@ test('Prepare plans on TypeScript alone only when the install is cached, and the
   const planner = at(/id: planner-typescript/);
   const setup = at(/uses: \.\/\.github\/actions\/ci-setup/);
   const plan = at(/name: Plan dependency-affected tests and checks/);
-  assert.deepEqual(
-    [keys, lookup, planner, setup, plan],
-    [0, 1, 2, 3, 4].map((i) => i + keys),
-  );
+  assert.deepEqual([keys, lookup, planner, setup, plan], [0, 1, 2, 3, 4].map((i) => i + keys));
   // The install lookup uses the same paths and key ci-setup restores, without downloading it.
   assert.match(prepare[lookup], /path: \$\{\{ steps\.cache-keys\.outputs\.install-paths \}\}/);
   assert.match(prepare[lookup], /key: \$\{\{ steps\.cache-keys\.outputs\.install-key \}\}/);

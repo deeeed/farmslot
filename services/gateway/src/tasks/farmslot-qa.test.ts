@@ -67,19 +67,13 @@ test('Farmslot QA checklist retains evidence and terminal completion without loc
     /env -u RECIPE_TASK_DIR -u FARMSLOT_TASK_DIR FARMSLOT_SLOT_REPO="\/fixture\/repo" bash "\/fixture\/repo\/projects\/farmslot-farm\/setup\/validate-recipe\.sh"/,
   );
   assert.match(smoke, /--recipe "\/fixture\/repo\/\.task\/qa\/artifacts\/recipe\.json"/);
-  assert.match(
-    smoke,
-    /--artifacts-dir "\/fixture\/repo\/\.task\/qa\/artifacts\/suite\/cases\/<case-id>"/,
-  );
+  assert.match(smoke, /--artifacts-dir "\/fixture\/repo\/\.task\/qa\/artifacts\/suite\/cases\/<case-id>"/);
   assert.match(smoke, /omit `--task-dir`/);
   assert.match(
     steps[3].rawLabel,
     /remaining.*same standalone route.*finalizeRecipeSuite.*outputDir: "\/fixture\/repo\/\.task\/qa\/artifacts\/suite"/,
   );
-  assert.match(
-    steps[4].rawLabel,
-    /qa-result\.json.*`suitePath` to `suite`.*suite\/cases\/<case-id>.*smoke/,
-  );
+  assert.match(steps[4].rawLabel, /qa-result\.json.*`suitePath` to `suite`.*suite\/cases\/<case-id>.*smoke/);
   assert.match(steps[5].rawLabel, /mark complete --mark-last/);
 });
 

@@ -537,7 +537,8 @@ export default async function (pi: {
       // `timeoutFailure` is reported only when it is what ended the turn. Read
       // unconditionally, it outranked the turn's own ending for the rest of the
       // turn, which is how an intentional abort was labelled a model timeout.
-      const failure = configurationFailure ?? (abortedByTimeout ? timeoutFailure : terminalFailure);
+      const failure =
+        configurationFailure ?? (abortedByTimeout ? timeoutFailure : terminalFailure);
       writePiHook({
         obsDir: obsDir(),
         event: failure ? 'StopFailure' : 'Stop',

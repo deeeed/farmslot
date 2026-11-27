@@ -16,11 +16,7 @@ const account = { host: 'github.com', login: 'publisher' };
 
 /** A finished static review whose operator pressed Publish: the gate is recorded, nothing posted. */
 function finishedReviewAwaitingPublication(t: test.TestContext): Run {
-  const created = createRun({
-    flowType: 'review-pr',
-    project: 'farmslot-farm',
-    ticketOrPr: 'owner/repo#7',
-  });
+  const created = createRun({ flowType: 'review-pr', project: 'farmslot-farm', ticketOrPr: 'owner/repo#7' });
   t.after(() => deleteRun(created.id));
   return updateRun(created.id, {
     status: 'done',
@@ -44,11 +40,7 @@ async function serviceFor(t: test.TestContext, authorized: boolean) {
   const directory = await mkdtemp(join(tmpdir(), 'review-publication-reconcile-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const store = await PRRuleStore.load(join(directory, 'rules.json'));
-  const service = new PRRuleService(
-    store,
-    () => authorized,
-    () => {},
-  );
+  const service = new PRRuleService(store, () => authorized, () => {});
   const published: string[] = [];
   service.publishReview = async (_ownerId: string, runId: string) => {
     published.push(runId);

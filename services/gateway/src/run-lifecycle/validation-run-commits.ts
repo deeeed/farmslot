@@ -61,8 +61,8 @@ function sameParkingOwner(
   expected: Readonly<Record<string, unknown>>,
 ): boolean {
   return (
-    ['slot_epoch', 'current_run_id', 'cleanup_run_id', 'handoff_run_id', 'phase'].every((key) =>
-      sameSlotField(current[key], expected[key]),
+    ['slot_epoch', 'current_run_id', 'cleanup_run_id', 'handoff_run_id', 'phase'].every(
+      (key) => sameSlotField(current[key], expected[key]),
     ) &&
     JSON.stringify(current.workspace_recovery ?? null) ===
       JSON.stringify(expected.workspace_recovery ?? null)

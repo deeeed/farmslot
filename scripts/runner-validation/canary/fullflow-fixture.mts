@@ -52,11 +52,7 @@ export async function validateFullflowQaArtifacts(artifacts: string): Promise<vo
   assert.deepEqual(scope.cases, [{ id: QA_CASE }], 'QA suite must freeze the version CLI case');
   const summaryPath = 'summaries/0001.json';
   const frozenSummary = await read(`${QA_SUITE}/${summaryPath}`);
-  const suite = validateRecipeSuitePackage({
-    scope,
-    result,
-    summaries: { [summaryPath]: frozenSummary },
-  });
+  const suite = validateRecipeSuitePackage({ scope, result, summaries: { [summaryPath]: frozenSummary } });
   assert.equal(suite.status, 'valid', JSON.stringify(suite.findings));
 
   const { readRecordedEvidencePackage } = await import('@farmslot/recipe-runner');
@@ -70,72 +66,38 @@ export async function validateFullflowQaArtifacts(artifacts: string): Promise<vo
   assert.equal(checked.status, 'valid', JSON.stringify(checked.findings));
 
   const entries = recipeTraceEntries(trace)?.filter(isRecord) ?? [];
-  const assertion = entries.find(
-    (entry) =>
-      entry.action === 'assert_output' &&
-      entry.ok === true &&
-      Array.isArray(entry.proves) &&
-      entry.proves.includes(QA_CASE),
-  );
-  assert(
-    isRecord(assertion?.output) &&
-      assertion.output.stream === 'stdout' &&
-      assertion.output.match === QA_STDOUT_MATCH,
-    'QA smoke must assert exact version stdout',
-  );
+  const assertion = entries.find((entry) => entry.action === 'assert_output' && entry.ok === true
+    && Array.isArray(entry.proves) && entry.proves.includes(QA_CASE));
+  assert(isRecord(assertion?.output) && assertion.output.stream === 'stdout'
+    && assertion.output.match === QA_STDOUT_MATCH, 'QA smoke must assert exact version stdout');
   const source = assertion.output.source;
   const command = entries.find((entry) => entry.nodeId === source);
-  assert(
-    command?.action === 'command' &&
-      command.ok === true &&
-      isRecord(command.output) &&
-      command.output.stdout === '1.0.0\n',
-    'QA smoke command must print 1.0.0',
-  );
-  assert(
-    getRecipeWorkflowActionEntries(recipe).some(
-      ({ nodeId, node }) => nodeId === command.nodeId && (node.cmd ?? node.command) === QA_COMMAND,
-    ),
-    'QA smoke must run the version CLI',
-  );
+  assert(command?.action === 'command' && command.ok === true && isRecord(command.output)
+    && command.output.stdout === '1.0.0\n', 'QA smoke command must print 1.0.0');
+  assert(getRecipeWorkflowActionEntries(recipe).some(({ nodeId, node }) =>
+    nodeId === command.nodeId && (node.cmd ?? node.command) === QA_COMMAND), 'QA smoke must run the version CLI');
 }
 
 export const FULLFLOW_SEED: Record<string, string> = {
   'package.json': JSON.stringify({
-    name: 'fullflow-sum',
-    version: '1.0.0',
-    private: true,
-    type: 'module',
+    name: 'fullflow-sum', version: '1.0.0', private: true, type: 'module',
     scripts: { test: 'node --test sum.test.mjs' },
   }),
   '.gitignore': '.sandbox/\n.task/\n.agent/\nnode_modules/\n',
-  'AGENTS.md':
-    '# Canary boundaries\n\nWork only in this tiny repository and its generated task directory. The task-pinned toolchain and the named fullflow-canary checkout are read-only support. Never inspect other worktrees, live services, persistent Farmslot homes, foreign tmux servers, credentials, keys or logins. Never build or repair support tooling. If a prerequisite is missing, retain the exact error and mark blocked. Never push, publish or post.\n',
+  'AGENTS.md': '# Canary boundaries\n\nWork only in this tiny repository and its generated task directory. The task-pinned toolchain and the named fullflow-canary checkout are read-only support. Never inspect other worktrees, live services, persistent Farmslot homes, foreign tmux servers, credentials, keys or logins. Never build or repair support tooling. If a prerequisite is missing, retain the exact error and mark blocked. Never push, publish or post.\n',
   'src/sum.mjs': 'export const sum = (a, b) => a - b;\n',
-  'sum.test.mjs':
-    "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { sum } from './src/sum.mjs';\ntest('sum adds', () => assert.equal(sum(2, 3), 5));\n",
-  'cli.mjs':
-    "import { sum } from './src/sum.mjs';\nconsole.log(process.argv[2] === '--version' ? '1.0.0' : sum(Number(process.argv[2]), Number(process.argv[3])));\n",
-  'CLAUDE.md':
-    '# Fullflow sum fixture\n\nTiny Node package. The public CLI is `node cli.mjs 2 3`; expected output is 5. `node cli.mjs --version` prints 1.0.0. CI is `npm test`. No install, browser, server or device is needed. Use command/assert_output recipe actions. Follow the generated task and the real project quality contracts. All source commits stay local. Never push, publish, post or contact GitHub. Stop on engine refusals and retain their exact messages; do not change task tooling or baseline history.\n',
+  'sum.test.mjs': "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { sum } from './src/sum.mjs';\ntest('sum adds', () => assert.equal(sum(2, 3), 5));\n",
+  'cli.mjs': "import { sum } from './src/sum.mjs';\nconsole.log(process.argv[2] === '--version' ? '1.0.0' : sum(Number(process.argv[2]), Number(process.argv[3])));\n",
+  'CLAUDE.md': '# Fullflow sum fixture\n\nTiny Node package. The public CLI is `node cli.mjs 2 3`; expected output is 5. `node cli.mjs --version` prints 1.0.0. CI is `npm test`. No install, browser, server or device is needed. Use command/assert_output recipe actions. Follow the generated task and the real project quality contracts. All source commits stay local. Never push, publish, post or contact GitHub. Stop on engine refusals and retain their exact messages; do not change task tooling or baseline history.\n',
   // The real fix-bug template reads this path; this fixture has no Command Center app.
-  'apps/command-center/CLAUDE.md':
-    '# CLI fixture\n\nSee root CLAUDE.md. No UI or app runtime exists here.\n',
+  'apps/command-center/CLAUDE.md': '# CLI fixture\n\nSee root CLAUDE.md. No UI or app runtime exists here.\n',
 };
 
-export async function fullflowPack(
-  root: string,
-  worker: { runner: string; model: string } = FULLFLOW_MODEL,
-): Promise<ProjectPack> {
+export async function fullflowPack(root: string, worker: { runner: string; model: string } = FULLFLOW_MODEL): Promise<ProjectPack> {
   const relative = 'projects/farmslot-farm';
   const files: Record<string, string> = {};
   // git ls-files includes tracked files hidden by the project's ignore rules, such as qa.md.
-  for (const file of execFileSync('git', ['ls-files', '-z', relative], {
-    cwd: root,
-    encoding: 'utf8',
-  })
-    .split('\0')
-    .filter(Boolean))
+  for (const file of execFileSync('git', ['ls-files', '-z', relative], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean))
     files[path.relative(relative, file)] = await readFile(path.join(root, file), 'utf8');
   const project = JSON.parse(files['project.json']!);
   delete files['project.json'];
@@ -169,14 +131,7 @@ export async function fullflowPack(
   // All selectable worker/review defaults are cheap, allowlisted real models.
   for (const role of Object.keys(project.defaults)) project.defaults[role] = worker;
   delete project.workflow_defaults;
-  project.review = {
-    ...project.review,
-    ...REVIEWER,
-    enabled: true,
-    mode: 'cold',
-    max_retries: 1,
-    review_timeout_min: 5,
-  };
+  project.review = { ...project.review, ...REVIEWER, enabled: true, mode: 'cold', max_retries: 1, review_timeout_min: 5 };
   project.monitoring = { poll_interval_min: 0.02, total_timeout_min: 25 };
   return { name: FULLFLOW_PROJECT, projectJson: project, files };
 }
