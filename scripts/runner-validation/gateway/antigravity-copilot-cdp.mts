@@ -676,13 +676,101 @@ try {
     );
   }
 
-  const sendViaUi = async (text: string) => {
-    const before = (await read()).cursor;
+  interface ComposerReadinessDiag {
+    label: string;
+    phase: string;
+    historyStatus: string | null;
+    historyFreshness: string | null;
+    sessionMatch: boolean;
+    sessionState: string | null;
+    approvalMode: string | null;
+    approvalModePending: string | null;
+    viewBusy: boolean;
+    connected: boolean;
+    elPresent: boolean;
+    elDisabled: boolean;
+    fieldsetOrAriaDisabled: boolean;
+  }
+  const composerDiagnostics: ComposerReadinessDiag[] = [];
+  checks.composerDiagnostics = composerDiagnostics;
+
+  const readComposerDiagnostics = async (
+    label: string,
+    phase: string,
+  ): Promise<ComposerReadinessDiag> => {
+    const raw = await page!.evaluate<Omit<ComposerReadinessDiag, 'label' | 'phase'>>(`(() => {
+      const view = ${findInShadow('native-session-view')};
+      const el = ${findInShadow('[data-testid=native-message]')};
+      const obs = view?.historyObservation;
+      const session = view?.session;
+      return {
+        historyStatus: obs?.status ?? null,
+        historyFreshness: obs?.freshness ?? null,
+        sessionMatch: Boolean(session && obs?.data?.session === session),
+        sessionState: session?.state ?? null,
+        approvalMode: session?.approvalMode ?? null,
+        approvalModePending: session?.approvalModePending ?? null,
+        viewBusy: Boolean(view?.busy),
+        connected: Boolean(view?.connected),
+        elPresent: Boolean(el),
+        elDisabled: Boolean(el?.disabled),
+        fieldsetOrAriaDisabled: Boolean(el?.closest?.('fieldset:disabled,[aria-disabled="true"]')),
+      };
+    })()`);
+    const entry: ComposerReadinessDiag = { label, phase, ...raw };
+    composerDiagnostics.push(entry);
+    return entry;
+  };
+
+  const waitForComposerReady = async (
+    label: string,
+    expectedApprovalMode?: 'ask' | 'bypass',
+  ): Promise<ComposerReadinessDiag> => {
+    const modeCheck = expectedApprovalMode
+      ? `view?.session?.approvalMode === ${JSON.stringify(expectedApprovalMode)} &&`
+      : '';
     await page!.waitForExpression(
-      `(() => { const el = ${findInShadow('[data-testid=native-message]')}; return Boolean(el && !el.disabled); })()`,
+      `(() => {
+        const view = ${findInShadow('native-session-view')};
+        const el = ${findInShadow('[data-testid=native-message]')};
+        const obs = view?.historyObservation;
+        const session = view?.session;
+        return Boolean(
+          view &&
+          el &&
+          ${modeCheck}
+          obs?.status === 'ready' &&
+          session &&
+          obs?.data?.session === session &&
+          !session.approvalModePending &&
+          !view.busy &&
+          !el.disabled &&
+          !el.closest?.('fieldset:disabled,[aria-disabled="true"]')
+        );
+      })()`,
       { timeoutMs: 30_000 },
     );
-    await page.setInput('[data-testid=native-message]', text);
+    return readComposerDiagnostics(label, 'ready');
+  };
+
+  const sendViaUi = async (text: string, label = `send-${composerDiagnostics.length + 1}`) => {
+    const before = (await read()).cursor;
+    const readyDiag = await waitForComposerReady(label);
+    try {
+      await page.setInput('[data-testid=native-message]', text);
+    } catch (inputError) {
+      const failureDiag = await readComposerDiagnostics(label, 'setInput-failed');
+      let recoveredDiag: ComposerReadinessDiag | null = null;
+      try {
+        recoveredDiag = await waitForComposerReady(label);
+      } catch {
+        // Did not recover within timeout; attach diagnostics below.
+      }
+      throw new Error(
+        `setInput failed during ${label}: ${inputError instanceof Error ? inputError.message : String(inputError)} | diag=${JSON.stringify({ readyDiag, failureDiag, recoveredDiag })}`,
+        { cause: inputError },
+      );
+    }
     await page!.waitForExpression(
       `(() => { const btn = ${findInShadow('[data-testid=native-send]')}; return Boolean(btn && !btn.disabled); })()`,
       { timeoutMs: 15_000 },
@@ -856,6 +944,7 @@ try {
       `approval mode switched to ${mode}`,
       15_000,
     );
+    await waitForComposerReady(`after-approval-mode-${mode}`, mode);
   };
 
   await setApprovalModeViaUi('bypass');

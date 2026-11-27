@@ -35,10 +35,12 @@ import {
   type NativeSessionReadResult,
   type NativeSessionRequester,
 } from '@farmslot/protocol';
+import type { PoolFileEntry } from '@farmslot/protocol/node/slot-by-repo';
 
 import {
   type RawPoolJson,
   readSlotPools,
+  resolveMachinePoolEntry,
   SlotConfigError,
   type SlotPools,
 } from '../../core/config.js';
@@ -262,47 +264,81 @@ export function loadTrustedNativeExecutableSnapshot(): SlotPools {
   }
 }
 
+export interface TrustedNativePoolIndex {
+  readonly entriesByMachine: ReadonlyMap<string, readonly PoolFileEntry<RawPoolJson>[]>;
+  readonly localMachines: readonly string[];
+}
+
+/**
+ * Group a shared pool snapshot by machine once so remote and local executable lookups
+ * resolve through `resolveMachinePoolEntry` in O(1) per machine without rescanning all pools.
+ */
+export function indexTrustedNativePoolSnapshot(pools: SlotPools): TrustedNativePoolIndex {
+  const entriesByMachine = new Map<string, PoolFileEntry<RawPoolJson>[]>();
+  const localMachines = new Set<string>();
+  for (const entry of pools) {
+    const machine = entry.pool.machine;
+    if (typeof machine !== 'string' || !machine) continue;
+    let bucket = entriesByMachine.get(machine);
+    if (!bucket) {
+      bucket = [];
+      entriesByMachine.set(machine, bucket);
+    }
+    bucket.push(entry);
+    if (isLocal(entry.pool.host, entry.pool.machine)) {
+      localMachines.add(machine);
+    }
+  }
+  return {
+    entriesByMachine,
+    localMachines: [...localMachines],
+  };
+}
+
+/**
+ * Resolve one execution node's trusted runner executable map from an indexed pool snapshot,
+ * reusing `resolveMachinePoolEntry` for canonical `<machine>.json` precedence and ambiguous-pool refusal.
+ */
+export function resolveTrustedNativeExecutablesFromIndex(
+  index: TrustedNativePoolIndex,
+  executionNodeId: string,
+): Record<string, string> | undefined {
+  const targetMachines =
+    executionNodeId === 'local'
+      ? index.localMachines
+      : index.entriesByMachine.has(executionNodeId)
+        ? [executionNodeId]
+        : [];
+  if (targetMachines.length === 0) return undefined;
+  const runners = Object.keys(MACHINE_RUNNER_PATH_FIELDS);
+  const resolved: Record<string, string> = {};
+  for (const machine of targetMachines) {
+    const entries = index.entriesByMachine.get(machine);
+    if (!entries?.length) continue;
+    const machinePool = resolveMachinePoolEntry(entries, machine)?.pool;
+    if (!machinePool) continue;
+    for (const runner of runners) {
+      if (resolved[runner]) continue;
+      const configured = machineRunnerPath(runner, machinePool);
+      if (configured) resolved[runner] = configured;
+    }
+  }
+  return Object.keys(resolved).length ? resolved : undefined;
+}
+
 /**
  * Resolve trusted runner executable maps for one or many execution nodes from a single
- * shared pool snapshot, matching `loadMachinePool` precedence (canonical `<machine>.json` first).
+ * shared pool snapshot, reusing `resolveMachinePoolEntry` via one machine index.
  */
 export function resolveTrustedNativeExecutablesFromSnapshot(
   pools: SlotPools,
   executionNodeIds: readonly string[],
 ): Map<string, Record<string, string> | undefined> {
-  const canonicalPoolByMachine = new Map<string, RawPoolJson>();
-  for (const entry of pools) {
-    const machine = entry.pool.machine;
-    if (typeof machine !== 'string' || !machine) continue;
-    const isCanonical = entry.file === `${machine}.json`;
-    if (isCanonical || !canonicalPoolByMachine.has(machine)) {
-      canonicalPoolByMachine.set(machine, entry.pool);
-    }
-  }
-  const runners = Object.keys(MACHINE_RUNNER_PATH_FIELDS);
+  const index = indexTrustedNativePoolSnapshot(pools);
   const result = new Map<string, Record<string, string> | undefined>();
   for (const executionNodeId of executionNodeIds) {
     if (result.has(executionNodeId)) continue;
-    const matchingMachines: string[] = [];
-    for (const [machine, pool] of canonicalPoolByMachine) {
-      if (
-        machine === executionNodeId ||
-        (executionNodeId === 'local' && isLocal(pool.host, pool.machine))
-      ) {
-        matchingMachines.push(machine);
-      }
-    }
-    const resolved: Record<string, string> = {};
-    for (const machine of matchingMachines) {
-      const machinePool = canonicalPoolByMachine.get(machine);
-      if (!machinePool) continue;
-      for (const runner of runners) {
-        if (resolved[runner]) continue;
-        const configured = machineRunnerPath(runner, machinePool);
-        if (configured) resolved[runner] = configured;
-      }
-    }
-    result.set(executionNodeId, Object.keys(resolved).length ? resolved : undefined);
+    result.set(executionNodeId, resolveTrustedNativeExecutablesFromIndex(index, executionNodeId));
   }
   return result;
 }
@@ -317,7 +353,8 @@ export async function resolveTrustedNativeExecutable(
   snapshot: SlotPools = loadTrustedNativeExecutableSnapshot(),
 ): Promise<string | undefined> {
   const normalized = normalizeRunner(runner);
-  return resolveTrustedNativeExecutablesFromSnapshot(snapshot, [executionNodeId]).get(
+  return resolveTrustedNativeExecutablesFromIndex(
+    indexTrustedNativePoolSnapshot(snapshot),
     executionNodeId,
   )?.[normalized];
 }
@@ -326,7 +363,8 @@ export async function resolveTrustedNativeExecutablesForNode(
   executionNodeId: string,
   snapshot: SlotPools = loadTrustedNativeExecutableSnapshot(),
 ): Promise<Record<string, string> | undefined> {
-  return resolveTrustedNativeExecutablesFromSnapshot(snapshot, [executionNodeId]).get(
+  return resolveTrustedNativeExecutablesFromIndex(
+    indexTrustedNativePoolSnapshot(snapshot),
     executionNodeId,
   );
 }

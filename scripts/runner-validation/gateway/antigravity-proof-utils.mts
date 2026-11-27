@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import { mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 export interface CleanSourceIdentity {
   sourceSha: string;
@@ -29,6 +28,12 @@ export interface FrozenProofSession extends CleanSourceIdentity {
   isolatedModuleResolutionVerified: true;
   resolvedModules: ResolvedModuleProof[];
   verifyBeforeSeal: () => CleanSourceIdentity;
+}
+
+export interface PreparedFrozenProofCheckout extends CleanSourceIdentity {
+  snapshotRoot: string;
+  resolvedModules: ResolvedModuleProof[];
+  cleanup: () => void;
 }
 
 export interface ProofManifestEntry {
@@ -168,13 +173,13 @@ export function verifyFrozenModuleResolution(
 }
 
 /**
- * Remove a detached proof worktree and surface any `git worktree remove` failure instead of
- * silently leaving a stale worktree registration behind.
+ * Private removal helper bound strictly to detached checkouts created by `createFrozenProofCheckout`.
+ * Never exported so caller-supplied unrelated worktree paths cannot reach `git worktree remove --force`.
  */
-export function removeFrozenProofCheckout(originRepoRoot: string, snapshotRoot: string): void {
+function removeOwnedDetachedWorktree(originRepoRoot: string, ownedSnapshotRoot: string): void {
   const removed = spawnSync(
     'git',
-    ['-C', originRepoRoot, 'worktree', 'remove', '--force', snapshotRoot],
+    ['-C', originRepoRoot, 'worktree', 'remove', '--force', ownedSnapshotRoot],
     {
       encoding: 'utf8',
     },
@@ -185,11 +190,11 @@ export function removeFrozenProofCheckout(originRepoRoot: string, snapshotRoot: 
       [removed.stderr, removed.stdout].filter(Boolean).join('\n').trim() ||
       `exit ${removed.status ?? removed.signal}`;
     throw new Error(
-      `Failed to remove detached proof worktree ${snapshotRoot} from ${originRepoRoot}: ${detail}`,
+      `Failed to remove detached proof worktree ${ownedSnapshotRoot} from ${originRepoRoot}: ${detail}`,
     );
   }
-  if (fs.existsSync(snapshotRoot)) {
-    fs.rmSync(snapshotRoot, { recursive: true, force: true });
+  if (fs.existsSync(ownedSnapshotRoot)) {
+    fs.rmSync(ownedSnapshotRoot, { recursive: true, force: true });
   }
 }
 
@@ -197,14 +202,14 @@ export function removeFrozenProofCheckout(originRepoRoot: string, snapshotRoot: 
  * Prepare a detached git worktree at `sourceSha` with its own frozen-lock dependency install
  * (`yarn install --immutable`) and locally built workspace outputs so live proofs execute strictly
  * against frozen committed bytes and never resolve workspace modules or built `dist/` files from
- * the originating checkout.
+ * the originating checkout. Cleanup is bound strictly to the owned checkout created here.
  */
 export function createFrozenProofCheckout(
   originRepoRoot: string,
   sourceSha: string,
   sourceTreeSha: string,
   options: CreateFrozenProofCheckoutOptions = {},
-): { snapshotRoot: string; resolvedModules: ResolvedModuleProof[]; cleanup: () => void } {
+): PreparedFrozenProofCheckout {
   const snapshotRoot = fs.realpathSync(
     fs.mkdtempSync(path.join(tmpdir(), 'farmslot-frozen-proof-')),
   );
@@ -214,7 +219,7 @@ export function createFrozenProofCheckout(
     if (cleaned) return;
     cleaned = true;
     if (worktreeAdded) {
-      removeFrozenProofCheckout(originRepoRoot, snapshotRoot);
+      removeOwnedDetachedWorktree(originRepoRoot, snapshotRoot);
       return;
     }
     fs.rmSync(snapshotRoot, { recursive: true, force: true });
@@ -250,8 +255,8 @@ export function createFrozenProofCheckout(
       resolvedModules = verifyFrozenModuleResolution(snapshotRoot, options.verifySpecifiers);
     }
 
-    verifyFrozenProofCheckout(snapshotRoot, sourceSha, sourceTreeSha);
-    return { snapshotRoot, resolvedModules, cleanup };
+    const identity = verifyFrozenProofCheckout(snapshotRoot, sourceSha, sourceTreeSha);
+    return { ...identity, snapshotRoot, resolvedModules, cleanup };
   } catch (error) {
     try {
       cleanup();
@@ -266,12 +271,49 @@ export function createFrozenProofCheckout(
 }
 
 /**
+ * Run a proof operation (or group of proofs sharing one prepared detached checkout) strictly
+ * within the lifetime of the operation that created the detached checkout, ensuring cleanup
+ * runs on both success and failure and reporting any cleanup failure.
+ */
+export async function withFrozenProofCheckout<T>(
+  originRepoRoot: string,
+  run: (prepared: Omit<PreparedFrozenProofCheckout, 'cleanup'>) => Promise<T> | T,
+  options: CreateFrozenProofCheckoutOptions = {},
+): Promise<T> {
+  const { sourceSha, sourceTreeSha } = assertCleanTrackedSource(originRepoRoot);
+  const prepared = createFrozenProofCheckout(originRepoRoot, sourceSha, sourceTreeSha, options);
+  const { cleanup, ...view } = prepared;
+  let result!: T;
+  let runError: unknown;
+  let failed = false;
+  try {
+    result = await run(view);
+  } catch (error) {
+    failed = true;
+    runError = error;
+  }
+  try {
+    cleanup();
+  } catch (cleanupError) {
+    if (failed) {
+      throw new AggregateError(
+        [runError, cleanupError],
+        `Frozen proof execution failed and worktree cleanup also failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      );
+    }
+    throw cleanupError;
+  }
+  if (failed) throw runError;
+  return result;
+}
+
+/**
  * Ensure the proof runs inside an isolated detached checkout of the selected committed tree.
  * When `FARMSLOT_PROOF_FROZEN_*` env vars are already set (for example when sharing one prepared
- * detached checkout across Worker, Command Center, and Companion proofs), verifies the checkout's
- * HEAD, tree SHA, and module resolution before launch and returns a pre-seal verifier.
+ * detached checkout inside `withFrozenProofCheckout`), verifies the checkout's HEAD, tree SHA,
+ * and module resolution before launch and returns a pre-seal verifier.
  * Otherwise prepares a fresh detached checkout on demand, re-executes the proof inside it, cleans
- * up on completion or signal, and reports any cleanup failure.
+ * up on completion, and reports any cleanup failure.
  */
 export function ensureFrozenProofExecution(
   repoRoot: string,
@@ -304,15 +346,6 @@ export function ensureFrozenProofExecution(
 
   const { sourceSha, sourceTreeSha } = assertCleanTrackedSource(repoRoot);
   const { snapshotRoot, cleanup } = createFrozenProofCheckout(repoRoot, sourceSha, sourceTreeSha);
-  const onSignal = (signal: NodeJS.Signals) => {
-    try {
-      cleanup();
-    } finally {
-      process.exit(signal === 'SIGINT' ? 130 : 143);
-    }
-  };
-  process.once('SIGINT', onSignal);
-  process.once('SIGTERM', onSignal);
   try {
     const childArgs = [
       '--import',
@@ -331,14 +364,10 @@ export function ensureFrozenProofExecution(
         FARMSLOT_PROOF_FROZEN_CHECKOUT: snapshotRoot,
       },
     });
-    process.off('SIGINT', onSignal);
-    process.off('SIGTERM', onSignal);
     cleanup();
     if (child.error) throw child.error;
     process.exit(child.status ?? 1);
   } catch (error) {
-    process.off('SIGINT', onSignal);
-    process.off('SIGTERM', onSignal);
     try {
       cleanup();
     } catch (cleanupError) {
@@ -383,57 +412,4 @@ export async function buildProofManifest(
         };
       }),
   );
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const [command, originArg, targetArg] = process.argv.slice(2);
-  if (command === 'prepare') {
-    const originRoot = path.resolve(originArg ?? process.cwd());
-    const { sourceSha, sourceTreeSha } = assertCleanTrackedSource(originRoot);
-    const prepared = createFrozenProofCheckout(originRoot, sourceSha, sourceTreeSha);
-    process.stdout.write(
-      `${JSON.stringify(
-        {
-          originRepoRoot: originRoot,
-          snapshotRoot: prepared.snapshotRoot,
-          sourceSha,
-          sourceTreeSha,
-          resolvedModules: prepared.resolvedModules,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  } else if (command === 'verify') {
-    const checkoutRoot = path.resolve(originArg ?? process.cwd());
-    const expectedSha = process.env.FARMSLOT_PROOF_FROZEN_SOURCE_SHA;
-    const expectedTreeSha = process.env.FARMSLOT_PROOF_FROZEN_TREE_SHA;
-    if (!expectedSha || !expectedTreeSha) {
-      throw new Error(
-        'FARMSLOT_PROOF_FROZEN_SOURCE_SHA and FARMSLOT_PROOF_FROZEN_TREE_SHA are required for verify',
-      );
-    }
-    const verified = verifyFrozenProofCheckout(checkoutRoot, expectedSha, expectedTreeSha);
-    const resolvedModules = verifyFrozenModuleResolution(checkoutRoot);
-    process.stdout.write(
-      `${JSON.stringify(
-        {
-          ...verified,
-          isolatedCheckout: fs.realpathSync(checkoutRoot),
-          isolatedModuleResolutionVerified: true,
-          resolvedModules,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  } else if (command === 'cleanup') {
-    if (!originArg || !targetArg) {
-      throw new Error('Usage: antigravity-proof-utils.mts cleanup <originRepoRoot> <snapshotRoot>');
-    }
-    removeFrozenProofCheckout(path.resolve(originArg), path.resolve(targetArg));
-    process.stdout.write(`${JSON.stringify({ removed: path.resolve(targetArg) })}\n`);
-  } else {
-    throw new Error('Usage: antigravity-proof-utils.mts <prepare|verify|cleanup> ...');
-  }
 }

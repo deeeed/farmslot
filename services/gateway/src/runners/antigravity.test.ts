@@ -251,6 +251,80 @@ test('resolveTrustedNativeExecutable and resolveTrustedNativeExecutablesForNode 
       antigravity: configuredBin,
       pi: configuredPi,
     });
+
+    // Canonical `<machine>.json` must win even when an auxiliary pool sorts earlier (canary-review-node.json).
+    const canaryBin = join(root, 'canary-bin', 'agy');
+    const primaryBin = join(root, 'primary-bin', 'agy');
+    writeFileSync(
+      join(tempPoolRoot, 'canary-review-node.json'),
+      JSON.stringify({
+        machine: 'review-node',
+        project: 'canary',
+        host: 'review-node.example',
+        ssh_user: 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: canaryBin,
+        slots: [
+          { id: 'review-canary-1', enabled: true, mode: 'dispatch', repo: root, session: 's2' },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(tempPoolRoot, 'review-node.json'),
+      JSON.stringify({
+        machine: 'review-node',
+        project: 'primary',
+        host: 'review-node.example',
+        ssh_user: 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: primaryBin,
+        slots: [
+          { id: 'review-primary-1', enabled: true, mode: 'dispatch', repo: root, session: 's3' },
+        ],
+      }),
+    );
+    assert.equal(await resolveTrustedNativeExecutable('antigravity', 'review-node'), primaryBin);
+    assert.deepEqual(await resolveTrustedNativeExecutablesForNode('review-node'), {
+      antigravity: primaryBin,
+    });
+
+    // Multiple auxiliary pools for a machine without `<machine>.json` must fail closed as ambiguous.
+    writeFileSync(
+      join(tempPoolRoot, 'aux-a-ambiguous.json'),
+      JSON.stringify({
+        machine: 'ambiguous-node',
+        project: 'a',
+        host: 'ambiguous.example',
+        ssh_user: 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: canaryBin,
+        slots: [{ id: 'ambig-1', enabled: true, mode: 'dispatch', repo: root, session: 's4' }],
+      }),
+    );
+    writeFileSync(
+      join(tempPoolRoot, 'aux-b-ambiguous.json'),
+      JSON.stringify({
+        machine: 'ambiguous-node',
+        project: 'b',
+        host: 'ambiguous.example',
+        ssh_user: 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: primaryBin,
+        slots: [{ id: 'ambig-2', enabled: true, mode: 'dispatch', repo: root, session: 's5' }],
+      }),
+    );
+    await assert.rejects(
+      resolveTrustedNativeExecutable('antigravity', 'ambiguous-node'),
+      /ambiguous pool settings/,
+    );
+    await assert.rejects(
+      resolveTrustedNativeExecutablesForNode('ambiguous-node'),
+      /ambiguous pool settings/,
+    );
   } finally {
     if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
     else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
@@ -435,7 +509,7 @@ process.exit(127);
   }
 });
 
-test('gateway observation owner syncs remote executables before fence so first and concurrent profile reads succeed with one current sample', async () => {
+test('gateway observation owner syncs remote executables before fence so first and concurrent profile reads succeed with one current sample', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'agy-gw-fence-'));
   const farmHome = join(root, 'farm-home');
   const tempPoolRoot = join(root, 'pool');
@@ -681,6 +755,14 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       return node2Obs.read(() => node2Obs.profileStatus(profileId));
     }
     throw new Error(`Unexpected node2 method: ${frame.method}`);
+  });
+  let transport2Closed = false;
+  t.after(async () => {
+    if (!transport2Closed) {
+      transport2Closed = true;
+      unregisterByWs(transport2.ws);
+      await transport2.close();
+    }
   });
   registeredWs2 = transport2.ws;
 
@@ -966,13 +1048,200 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     observations.detachClient(clientConn);
     observations.dispose();
     unregisterByWs(activeTransport.ws);
-    unregisterByWs(transport2.ws);
     await activeTransport.close();
-    await transport2.close();
+    if (!transport2Closed) {
+      transport2Closed = true;
+      unregisterByWs(transport2.ws);
+      await transport2.close();
+    }
     if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
     else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
     if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    if (prevAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    else process.env.FARMSLOT_AGY_EXECUTABLE = prevAgyEnv;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('local observation retains executable map and reads one shared pool snapshot per pool edit across multiple active profiles', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-local-multi-profile-'));
+  const farmHome = join(root, 'farm-home');
+  const tempPoolRoot = join(root, 'pool');
+  const localStateRoot = join(root, 'local-state');
+  const fakeAgyV1 = join(root, 'bin-v1', 'agy');
+  const fakeAgyV2 = join(root, 'bin-v2', 'agy');
+  mkdirSync(farmHome, { recursive: true });
+  mkdirSync(tempPoolRoot, { recursive: true });
+  mkdirSync(localStateRoot, { recursive: true, mode: 0o700 });
+  chmodSync(localStateRoot, 0o700);
+  mkdirSync(dirname(fakeAgyV1), { recursive: true });
+  mkdirSync(dirname(fakeAgyV2), { recursive: true });
+
+  const writeFakeAgy = (target: string, version: string) => {
+    writeFileSync(
+      target,
+      `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  console.log(${JSON.stringify(version)});
+  process.exit(0);
+}
+const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') {
+    return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} } } });
+  }
+  if (m.method === 'session/list') {
+    return send({ id: m.id, result: { sessions: [] } });
+  }
+});
+`,
+    );
+    chmodSync(target, 0o700);
+  };
+  writeFakeAgy(fakeAgyV1, '1.5.12');
+  writeFakeAgy(fakeAgyV2, '1.5.13');
+
+  const writeLocalPool = (agyPath: string) => {
+    writeFileSync(
+      join(tempPoolRoot, 'maclocal.json'),
+      JSON.stringify({
+        machine: 'maclocal',
+        project: 'demo',
+        host: 'localhost',
+        ssh_user: process.env.USER || 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: agyPath,
+        slots: [{ id: 'maclocal-1', enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
+      }),
+    );
+  };
+  writeLocalPool(fakeAgyV1);
+
+  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
+  const prevFarmHome = process.env.FARMSLOT_HOME;
+  const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  const prevPath = process.env.PATH;
+  const prevAgyEnv = process.env.FARMSLOT_AGY_EXECUTABLE;
+  let observations: GatewayNativeObservations | undefined;
+  try {
+    process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
+    process.env.FARMSLOT_HOME = farmHome;
+    delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    process.env.PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
+
+    const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
+    const ownerRecord = auth.writer.createPrincipal(
+      { type: 'person', displayName: 'Local Owner' },
+      [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+      'local-owner',
+    );
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerRecord.id;
+
+    const localClient = new NativeSessionClient(localStateRoot, 'local');
+    const profileIds = ['local-a', 'local-b', 'local-c'];
+    for (const profileId of profileIds) {
+      const dir = join(root, `profile-${profileId}`);
+      mkdirSync(dir, { recursive: true });
+      await routeNativeProfile(localClient, ownerRecord.id, Methods.NATIVE_PROFILE_ADD, {
+        profileId,
+        runner: 'antigravity',
+        directory: dir,
+      });
+    }
+
+    let poolSnapshotReads = 0;
+    const localInvalidations: Array<{ family: string; nodeId?: string }> = [];
+    observations = new GatewayNativeObservations(
+      (key) => {
+        localInvalidations.push({
+          family: key.family,
+          ...('nodeId' in key ? { nodeId: key.nodeId } : {}),
+        });
+      },
+      localClient,
+      () => {
+        poolSnapshotReads++;
+        return loadTrustedNativeExecutableSnapshot();
+      },
+    );
+
+    const clientConn = {};
+    const principal: Principal = {
+      id: ownerRecord.id,
+      subject: { type: 'person', displayName: 'Local Owner' },
+      roles: [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+    };
+    observations.attachClient(clientConn, () => principal);
+
+    await observations.startLocal(ownerRecord.id);
+    // Initial startLocal reads the pool snapshot ONCE even though 3 active local profiles were sampled.
+    assert.equal(poolSnapshotReads, 1);
+
+    const readLocalProfile = async (profileId: string): Promise<NativeProfileStatusResult> => {
+      const params = { executionNodeId: 'local', profileId };
+      const interests = nativeReadInterests(Methods.NATIVE_PROFILE_STATUS, params, ownerRecord.id);
+      assert.ok(interests);
+      const { payload } = await observations!.read(
+        clientConn,
+        interests,
+        async () =>
+          (await observations!.localProfileStatus(
+            ownerRecord.id,
+            profileId,
+          )) as NativeProfileStatusResult,
+        () => null,
+      );
+      return payload;
+    };
+
+    for (const profileId of profileIds) {
+      const status = await readLocalProfile(profileId);
+      assert.equal(status.account.version, '1.5.12');
+      assert.ok(status.loginCommand.includes(fakeAgyV1));
+    }
+    assert.equal(poolSnapshotReads, 1);
+
+    // Real pool edit refreshes all 3 active local profiles with EXACTLY ONE shared pool snapshot read.
+    const invalidationsBefore = localInvalidations.length;
+    writeLocalPool(fakeAgyV2);
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
+    assert.equal(
+      poolSnapshotReads,
+      2,
+      'pool edit must take exactly one shared pool snapshot even across 3 active local profiles',
+    );
+    const deadline = Date.now() + 5_000;
+    while (
+      Date.now() < deadline &&
+      !localInvalidations
+        .slice(invalidationsBefore)
+        .some((k) => k.family === 'profiles' && k.nodeId === 'local')
+    ) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    for (const profileId of profileIds) {
+      const updated = await readLocalProfile(profileId);
+      assert.equal(updated.account.version, '1.5.13');
+      assert.ok(updated.loginCommand.includes(fakeAgyV2));
+    }
+    assert.equal(
+      poolSnapshotReads,
+      2,
+      'sampling 3 active local profiles must reuse retained local map with zero extra pool scans',
+    );
+  } finally {
+    observations?.dispose();
+    if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
     if (prevPath === undefined) delete process.env.PATH;
     else process.env.PATH = prevPath;
     if (prevAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
