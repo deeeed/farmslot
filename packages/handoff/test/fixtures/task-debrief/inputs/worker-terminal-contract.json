@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "flowType": "dev",
+  "requireSignal": true,
+  "source": "project",
+  "resolvedAt": "2026-01-01T12:00:00.000Z",
+  "whenPresent": [],
+  "commands": {
+    "complete": { "report": "artifacts/report.md", "artifacts": ["artifacts/report.md"] },
+    "no-change": { "artifacts": [] },
+    "blocked": { "artifacts": [] }
+  },
+  "optionalSteps": [
+    { "checklist": "CHECKLIST.md", "stepNumber": 2, "when": "No runtime behavior changed" }
+  ]
+}

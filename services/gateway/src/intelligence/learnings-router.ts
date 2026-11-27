@@ -29,6 +29,7 @@ import {
   parseLearnings,
   type Run,
   type RunDecision,
+  type TaskDebrief,
 } from '@farmslot/protocol';
 import { loadProjectVars } from '@farmslot/slot-config';
 
@@ -576,10 +577,55 @@ function ownPullRequests(run: Run | undefined): string[] {
   ];
 }
 
+/** A debrief contributes workflow suggestions with receipt provenance, never review confirmations. */
+function debriefWorkflowEntries(record: TaskDebrief | undefined): LearningsEntry[] {
+  const template = record?.identity.template;
+  if (!record || record.identity.binding === 'advisory' || !template) return [];
+  const observations = new Map(
+    record.observations.map((observation) => [observation.id, observation]),
+  );
+  const seen = new Set<string>();
+  const entries: LearningsEntry[] = [];
+  for (const candidate of record.workflowCandidates) {
+    if (candidate.templateId && candidate.templateId !== template.id) continue;
+    const cited = candidate.observationIds.flatMap((id) => {
+      const observation = observations.get(id);
+      return observation ? [observation] : [];
+    });
+    if (!cited.length || (candidate.step && !cited.some(({ step }) => step === candidate.step)))
+      continue;
+    const sourceKey = learningEntryKey(
+      JSON.stringify([
+        record.debriefId,
+        [...candidate.observationIds].sort(),
+        candidate.step ?? null,
+        candidate.lesson,
+        candidate.instruction,
+        candidate.measure,
+      ]),
+    );
+    if (seen.has(sourceKey)) continue;
+    seen.add(sourceKey);
+    entries.push({
+      section: 'Task debrief workflow suggestions',
+      text: [
+        `- ${candidate.lesson}`,
+        `  Source: ${sourceKey} (accepted subject ${record.identity.acceptedResultFingerprint})`,
+        `  Template: ${template.sourceId}/${template.id} at ${template.revision ?? template.sha256}`,
+        `  Expected: ${cited.map(({ step, expected }) => `step ${step}, ${expected}`).join(' ')}`,
+        `  Instruction: ${candidate.instruction}`,
+        `  Measure on comparable accepted tasks: ${candidate.measure}`,
+        '  Status: worker suggestion. Independent confirmation and template review apply.',
+      ].join('\n'),
+    });
+  }
+  return entries;
+}
+
 export async function routeLearnings(
   project: string,
   learnings: string,
-  options: { runId?: string; context?: LearningCurationContext } = {},
+  options: { runId?: string; context?: LearningCurationContext; debrief?: TaskDebrief } = {},
 ): Promise<RoutedLearnings> {
   // A v1 file routes by its kinds; a legacy file goes through the classifier as before.
   const parsed = parseLearnings(learnings);
@@ -604,6 +650,7 @@ export async function routeLearnings(
       }
     }
   } else buckets = await classifyLearningsEntries(splitLearningsEntries(learnings));
+  buckets.system.push(...debriefWorkflowEntries(options.debrief));
   if (!buckets.domain.length && !buckets.unclassified.length)
     return {
       buckets,

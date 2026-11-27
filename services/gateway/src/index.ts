@@ -500,6 +500,10 @@ async function main(): Promise<void> {
   );
   await backfillMissingRunLinks(getAllRuns());
   await initializeRunBundleStore();
+  if (ENABLE_ORCHESTRATION) {
+    const { resumeAcceptedTaskDebriefs } = await import('./run-completion/task-debrief.js');
+    resumeAcceptedTaskDebriefs();
+  }
   startRunRetention(observedBroadcast);
   const prMonitoring = await initPRMonitoring(
     gatewayAuthRuntime,

@@ -1,17 +1,31 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  canonicalRecipeJson,
   isRunBundleManifest,
+  isTaskDebrief,
+  type Run,
   RUN_BUNDLE_VERSION,
+  type RunArtifactBundleRef,
   type RunBundleEntryMeta,
   type RunBundleExportRequest,
   type RunBundleExportResult,
   type RunBundleManifest,
   type RunBundleProfile,
   type RunBundleRunEntry,
+  TASK_DIRECTORY_LAYOUT,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import {
@@ -25,7 +39,12 @@ import { copyDirectoryRecursive, registerDirectoryEntries } from './copy-tree.js
 import { captureDecisionHistoryPrefix, decisionHistoryFile } from './decision-history.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir, sanitizeBundleRunId } from './paths.js';
-import { openRunBundleStore, readRetainedRunBundle, resolveRunBundleEntry } from './retained.js';
+import {
+  openRunBundleStore,
+  readRetainedRunBundle,
+  resolveRunBundleEntry,
+  runBundleDebriefDirectory,
+} from './retained.js';
 
 const PACKAGE_FILENAMES = [
   'reference.result-package.json',
@@ -71,6 +90,48 @@ function addFileEntry(
     bytes: content.byteLength,
     path: relativePath,
   };
+}
+
+function currentDebriefBytes(
+  storeRoot: string,
+  run: Run,
+  ref: RunArtifactBundleRef,
+): { file: string; bytes: Buffer } | undefined {
+  const journal = run.taskDebrief;
+  if (
+    journal?.status !== 'settled' ||
+    journal.bundle.bundleDigest !== ref.bundleDigest ||
+    !run.agentContexts?.some(
+      ({ id, signalAttemptId }) =>
+        id === journal.contextId && signalAttemptId === journal.attemptId,
+    )
+  )
+    return undefined;
+  const file = path.join(
+    runBundleDebriefDirectory(storeRoot, run.id, ref.bundleDigest),
+    TASK_DIRECTORY_LAYOUT.debrief.relativePath,
+  );
+  if (!existsSync(file)) return undefined;
+  const stat = lstatSync(file);
+  if (
+    !stat.isFile() ||
+    stat.size > 4 * 1024 * 1024 ||
+    !realpathSync(file).startsWith(realpathSync(storeRoot) + path.sep)
+  )
+    throw new Error('Retained debrief lies outside its bundle or exceeds its size limit.');
+  const bytes = readFileSync(file);
+  const value: unknown = JSON.parse(bytes.toString('utf8'));
+  if (
+    !isTaskDebrief(value) ||
+    value.debriefId !== journal.debriefId ||
+    value.identity.runId !== run.id ||
+    value.identity.attemptId !== journal.attemptId
+  )
+    throw new Error('Retained debrief does not match the exported attempt.');
+  const { recordDigest, ...body } = value;
+  if (sha256Text(canonicalRecipeJson(body)) !== recordDigest)
+    throw new Error('Retained debrief failed its recorded digest.');
+  return { file, bytes };
 }
 
 export async function exportRunsToBundle(
@@ -141,6 +202,11 @@ export async function exportRunsToBundle(
         const taskBundleDir = `tasks/${taskKey}`;
         copyDirectoryRecursive(retained.taskDir, path.join(bundleDir, taskBundleDir));
         registerDirectoryEntries(bundleDir, taskBundleDir, entries);
+        const debrief = currentDebriefBytes(store.root, run, ref);
+        if (debrief) {
+          const relative = `${taskBundleDir}/${TASK_DIRECTORY_LAYOUT.debrief.relativePath}`;
+          addFileEntry(bundleDir, relative, debrief.file, entries, debrief.bytes);
+        }
         entry.taskKey = taskKey;
         entry.artifactBundleDigests = [
           ref.bundleDigest,

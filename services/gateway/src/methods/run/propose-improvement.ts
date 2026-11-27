@@ -145,7 +145,9 @@ async function routeThenAnalyze(
 ): Promise<void> {
   const router = await import('../../intelligence/learnings-router.js');
   const engine = await import('../../intelligence/improvement-engine.js');
-  const routed = await router.routeLearnings(run.project, learnings, { runId });
+  const { currentTaskDebriefForCuration } = await import('../../run-completion/task-debrief.js');
+  const debrief = await currentTaskDebriefForCuration(getRun(runId) ?? run);
+  const routed = await router.routeLearnings(run.project, learnings, { runId, debrief });
   let emissionError: string | null = null;
   try {
     await router.emitLearningsDraftDecision(runId, routed, {
@@ -341,7 +343,12 @@ export async function runProposeImprovement(
   }
 
   const learningsContent = await readRunLearnings(existing);
-  if (!learningsContent.trim()) {
+  if (
+    !learningsContent.trim() &&
+    !(await (
+      await import('../../run-completion/task-debrief.js')
+    ).currentTaskDebriefForCuration(existing))
+  ) {
     throw new Error(
       `Cannot propose improvement: no learnings.md content for run ${params.runId.slice(0, 8)}`,
     );

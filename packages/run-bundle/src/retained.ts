@@ -1669,11 +1669,25 @@ export interface RunBundleReference {
   decision?: RunDecision;
 }
 
+/** Directory for an accepted attempt's debrief, beside the immutable bundle. */
+export function runBundleDebriefDirectory(
+  root: string,
+  runId: string,
+  bundleDigest: string,
+): string {
+  if (!/^[\w-]+$/u.test(runId) || !/^[a-f0-9]{64}$/u.test(bundleDigest))
+    throw new Error('Invalid debrief sidecar identity.');
+  return path.join(root, 'sidecars', 'task-debrief', runId, bundleDigest);
+}
+
 /** Every bundle a run references, each decision's with the decision that captured it. */
 export function runBundleRefs(run: Run): RunBundleReference[] {
   const refs: RunBundleReference[] = [];
   if (run.artifactBundle) refs.push({ ref: run.artifactBundle });
   if (run.output?.artifactBundle) refs.push({ ref: run.output.artifactBundle });
+  if (run.taskDebrief) refs.push({ ref: run.taskDebrief.bundle });
+  for (const ref of Object.values(run.priorTaskDebriefBundles ?? {})) refs.push({ ref });
+
   for (const decision of run.decisions) {
     const ref = decisionArtifactBundleRef(run, decision.payload);
     if (ref) refs.push({ ref, decision });

@@ -35,6 +35,11 @@ import {
   retainedRunBundleRef,
   selectedRetainedRecipeGroup,
 } from '../../run-completion/retained-artifacts.js';
+import {
+  readTaskDebriefSidecar,
+  taskDebriefEvidenceBundle,
+  taskDebriefRunStatus,
+} from '../../run-completion/task-debrief.js';
 import { inspectedRun } from '../../run-engine/gate-inspection.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
 import { readCostAccountingRevision } from '../../runs/cost-accounting-revision.js';
@@ -55,9 +60,17 @@ import {
 
 import { readRunRecordedEvidence } from './evidence-review.js';
 
+function presentTaskDebriefStatus(run: Run): Run {
+  const taskDebrief = run.taskDebrief;
+  const status = taskDebriefRunStatus(run);
+  return taskDebrief && status && status !== taskDebrief.status
+    ? { ...run, taskDebrief: { ...taskDebrief, status } }
+    : run;
+}
+
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
 async function presentRun(run: Run): Promise<Run> {
-  run = inspectedRun(run);
+  run = presentTaskDebriefStatus(inspectedRun(run));
   if (run.repeatReviewContext) {
     const chain = reviewChainForRun(run);
     const records: Run[] = [];
@@ -113,7 +126,12 @@ export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   // The first paint must not wait for worker/source/evidence I/O. The ordinary read
   // serves the last gate check and asks for a new one; command handlers retain their guards.
   if (params.view === 'snapshot')
-    return { run: { ...run, costAccountingRevision: readCostAccountingRevision(run, run) } };
+    return {
+      run: {
+        ...presentTaskDebriefStatus(run),
+        costAccountingRevision: readCostAccountingRevision(run, run),
+      },
+    };
   const listVersion = runListVersion(run);
   const view = await presentRun(run);
   return {
@@ -290,12 +308,18 @@ export async function runRecipeRunsForRun(
     const payload = params.decisionId
       ? run.decisions.find(({ id }) => id === params.decisionId)?.payload
       : undefined;
+    const debrief = run.taskDebrief
+      ? readTaskDebriefSidecar(run, taskDebriefEvidenceBundle(run, ref, Boolean(params.decisionId)))
+          ?.artifact
+      : undefined;
     recordedEvidence.report = {
       reportPath: payload?.kind === 'output-review' ? payload.reportPath : run.output?.reportPath,
       manifestDigest: outputManifestDigest(
         reportManifest.filter((artifact) => artifact.path.startsWith('artifacts/')),
       ),
-      artifactManifest: reportManifest,
+      artifactManifest: debrief
+        ? [...reportManifest.filter(({ path }) => path !== debrief.path), debrief]
+        : reportManifest,
       artifactBundle: ref,
     };
   }

@@ -3213,6 +3213,9 @@ export interface Run {
   executionTemplateId?: string;
   /** Portable snapshot selected and revalidated by the gateway. */
   executionTemplate?: import('./execution-templates.js').ExecutionTemplateReference;
+  /** Optional accepted-attempt debrief receipt. Its artifact is stored beside the sealed bundle. */
+  taskDebrief?: import('./task-debrief.js').ManagedTaskDebrief;
+  priorTaskDebriefBundles?: Record<string, RunArtifactBundleRef>;
   /** Frozen workflow migration provenance and farm-selected QA skill inputs. */
   reviewQaContract?: import('./qa.js').ReviewQaContract;
   qa?: import('./qa.js').QaProfileSelection;

@@ -1003,6 +1003,38 @@ export async function serveRunArtifact(req: IncomingMessage, res: ServerResponse
       }
       return;
     }
+    const recipeRunId = url.searchParams.get('recipeRunId');
+    if (
+      run.taskDebrief &&
+      requested === 'artifacts/debrief.json' &&
+      (!recipeRunId || ['current-artifacts', 'decision-evidence'].includes(recipeRunId))
+    ) {
+      const { readTaskDebriefSidecar, taskDebriefEvidenceBundle } =
+        await import('../run-completion/task-debrief.js');
+      const selected = await retainedRunArtifactRef(run, url.searchParams);
+      const ref = taskDebriefEvidenceBundle(
+        run,
+        selected,
+        url.searchParams.has('bundleDigest') || url.searchParams.has('decisionId'),
+      );
+      const sidecar = readTaskDebriefSidecar(run, ref);
+      if (sidecar) {
+        const expected = url.searchParams.get('v');
+        if (
+          expected &&
+          !expected.startsWith('s') &&
+          !sidecar.artifact.sha256?.startsWith(expected.replace(/^sha256:/u, ''))
+        )
+          throw new Error('This artifact link refers to a different retained snapshot.');
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'X-Farmslot-Bundle-Digest': ref.bundleDigest,
+          ETag: `"${sidecar.artifact.sha256}"`,
+        });
+        res.end(sidecar.bytes);
+        return;
+      }
+    }
     const { entry, ref, artifactPath } = await resolveRetainedRunArtifact(
       run,
       requested,

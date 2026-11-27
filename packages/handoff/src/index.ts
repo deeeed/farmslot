@@ -15,6 +15,8 @@ export {
   deriveCloseoutPackageId,
   type LearningConfig,
 } from './closeout/index.js';
+export { runTaskDebriefCli } from './debrief/cli.js';
+export * from './debrief/index.js';
 export {
   type ArtifactPaths,
   assembleLearningPackage,

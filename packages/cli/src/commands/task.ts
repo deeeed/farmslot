@@ -173,6 +173,23 @@ export function registerTaskCommand(program: Command): void {
   const task = program
     .command('task')
     .description('Initialize, verify and close tasks with retained tooling');
+  const debrief = task.command('debrief').description('Prepare and read a local task debrief');
+  for (const action of ['prepare', 'finalize', 'validate', 'show']) {
+    const operation = debrief.command(action).argument('<task-dir>');
+    if (action === 'validate')
+      operation.option('--bound', 'Verify against the current task evidence');
+    if (action === 'show')
+      operation.option('--export <file>', 'Write the Markdown view to a new file');
+    operation.action(async (directory: string, options: { bound?: boolean; export?: string }) => {
+      const { runTaskDebriefCli } = await import('@farmslot/handoff');
+      await runTaskDebriefCli([
+        action,
+        directory,
+        ...(options.bound ? ['--bound'] : []),
+        ...(options.export ? ['--export', options.export] : []),
+      ]);
+    });
+  }
   const init = recipeProjectOptions(
     task
       .command('init')

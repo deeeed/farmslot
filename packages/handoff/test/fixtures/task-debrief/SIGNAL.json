@@ -1,0 +1,25 @@
+{
+  "attemptId": "receipt-1",
+  "status": "complete",
+  "outcome": "success",
+  "timestamp": "2026-01-01T12:04:00.000Z",
+  "checklistTiming": {
+    "schemaVersion": 1,
+    "source": "CHECKLIST.md",
+    "events": [
+      {
+        "stepNumber": 1,
+        "label": "Capture the baseline",
+        "checkedAt": "2026-01-01T12:01:00.000Z",
+        "remarkedAt": "2026-01-01T12:03:00.000Z"
+      },
+      {
+        "stepNumber": 2,
+        "label": "Record a regression test",
+        "checkedAt": "2026-01-01T12:04:00.000Z",
+        "skipped": true,
+        "reason": "Documentation-only update."
+      }
+    ]
+  }
+}

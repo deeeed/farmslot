@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -698,6 +698,28 @@ export async function retainCapturedRunArtifacts(input: {
       });
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+  }
+  if (input.run.executionTemplate?.postRunDebrief === true) {
+    for (const file of [
+      TASK_DIRECTORY_LAYOUT.workerChecklistMirror.relativePath,
+      TASK_DIRECTORY_LAYOUT.workerSignalMirror.relativePath,
+      TASK_DIRECTORY_LAYOUT.signal.relativePath,
+    ]) {
+      try {
+        const actual = path.join(taskDir, file);
+        const info = await lstat(actual);
+        if (!info.isFile() || info.size > 1024 * 1024) continue;
+        artifacts.push({
+          path: file,
+          purpose: 'task-input',
+          sha256: await sha256File(actual),
+          sizeBytes: info.size,
+        });
+      } catch (error) {
+        // Older captures and local tasks can omit one or more mirrored inputs.
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
     }
   }
   // The capture key names the content of every file the output identity leaves out: the gateway
