@@ -107,6 +107,7 @@ import {
   runnerLaunchBlockerAutoActionKey,
   runnerNeedsPostLaunchPrompt,
   runnerPaneHasDeferredLaunchBlocker,
+  runnerRequiresAccountResolvedModel,
   runnerResolvesPreTaskLaunchBlockers,
   sendRunnerPostLaunchPrompt,
   withRunnerPromptMutationBoundary,
@@ -1254,7 +1255,9 @@ export async function dispatchExecute(
     hasNativeProfile: Boolean(currentRun?.nativeProfile),
     machine: vars.machine,
   });
-  const model = resolvedStrictModel || (runner === 'claude' ? DEFAULT_CLAUDE_MODEL : 'unknown');
+  const model =
+    resolvedStrictModel ||
+    (runnerRequiresAccountResolvedModel(runner) ? 'unknown' : DEFAULT_CLAUDE_MODEL);
   const effort =
     params.effort ||
     extractField(taskContent, /^\*\*Effort:\*\*\s*`?([^`\n]+)/m) ||

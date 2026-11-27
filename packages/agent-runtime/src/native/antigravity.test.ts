@@ -5,13 +5,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { Methods, type NativeProfileStatusResult } from '@farmslot/protocol';
+import {
+  Methods,
+  type NativeProfileInfo,
+  type NativeProfileStatusResult,
+} from '@farmslot/protocol';
 
 import {
   antigravityNativeAdapter,
   configureAntigravityModel,
   observeAntigravityAccount,
-  validateAntigravityProfileModel,
 } from './antigravity.js';
 import { NativeSessionManager } from './manager.js';
 import { routeNativeProfile } from './profile-service.js';
@@ -503,33 +506,18 @@ test('no-model native ensure keeps requested model stable across identical retry
   }
 });
 
-test('validateAntigravityProfileModel and profile status honor configured executable outside PATH and profile ACP models', async () => {
+test('profile status stays a pure observation outside PATH while named-profile launch validates models', async () => {
   const fixture = setupFixture();
   const profileHome = mkdtempSync(join(tmpdir(), 'agy-profile-home-'));
   const isolatedFarmHome = mkdtempSync(join(tmpdir(), 'agy-farm-home-'));
+  const stateRoot = mkdtempSync(join(tmpdir(), 'agy-profile-manager-state-'));
   const previousFarmHome = process.env.FARMSLOT_HOME;
   const previousPath = process.env.PATH;
   const previousAgyEnv = process.env.FARMSLOT_AGY_EXECUTABLE;
   const restrictedPath = `${join(process.execPath, '..')}:/usr/bin:/bin`;
+  const manager = new NativeSessionManager(stateRoot);
+  const validSessionId = randomUUID();
   try {
-    // Verify ACP profile model validation against the profile's own advertised models with agy outside PATH.
-    const valid = await validateAntigravityProfileModel({
-      cwd: profileHome,
-      executable: fixture.executable,
-      env: { ...process.env, PATH: restrictedPath },
-      model: 'gemini-3.8-flash-low',
-    });
-    assert.equal(valid.available, true);
-
-    const invalid = await validateAntigravityProfileModel({
-      cwd: profileHome,
-      executable: fixture.executable,
-      env: { ...process.env, PATH: restrictedPath },
-      model: 'gemini-only-on-other-account',
-    });
-    assert.equal(invalid.available, false);
-    assert.match(invalid.detail ?? '', /not available for the selected profile/);
-
     // Verify routeNativeProfile uses the trusted executable resolver even when PATH has no agy.
     process.env.FARMSLOT_HOME = isolatedFarmHome;
     delete process.env.FARMSLOT_AGY_EXECUTABLE;
@@ -537,16 +525,17 @@ test('validateAntigravityProfileModel and profile status honor configured execut
     const profileDir = join(profileHome, 'work-profile');
     mkdirSync(profileDir, { recursive: true });
     const fakeClient = {} as never;
-    await routeNativeProfile(fakeClient, 'owner-1', Methods.NATIVE_PROFILE_ADD, {
+    const created = (await routeNativeProfile(fakeClient, 'owner-1', Methods.NATIVE_PROFILE_ADD, {
       profileId: 'work',
       runner: 'antigravity',
       directory: profileDir,
-    });
+    })) as { profile: NativeProfileInfo };
+
     const status = (await routeNativeProfile(
       fakeClient,
       'owner-1',
       Methods.NATIVE_PROFILE_STATUS,
-      { profileId: 'work', model: 'gemini-3.8-flash-low' },
+      { profileId: 'work' },
       {
         resolveExecutable: (runner) => (runner === 'antigravity' ? fixture.executable : undefined),
       },
@@ -558,26 +547,74 @@ test('validateAntigravityProfileModel and profile status honor configured execut
       `Expected loginCommand to reference configured executable ${fixture.executable}, got: ${status.loginCommand}`,
     );
 
+    // Routine profile status must reject model parameters instead of running slow ACP model probes
+    // inside the shared profile mutation queue.
     await assert.rejects(
       routeNativeProfile(
         fakeClient,
         'owner-1',
         Methods.NATIVE_PROFILE_STATUS,
-        { profileId: 'work', model: 'gemini-unavailable-in-work-profile' },
+        { profileId: 'work', model: 'gemini-3.8-flash-low' },
         {
           resolveExecutable: (runner) =>
             runner === 'antigravity' ? fixture.executable : undefined,
         },
       ),
-      /not available for the selected profile/,
+      /Native profiles accept native directories/,
+    );
+
+    // Named-profile model validation occurs at the owned launch boundary with the profile env and
+    // configured executable outside PATH.
+    const started = await manager.ensure(
+      'owner-1',
+      {
+        sessionId: validSessionId,
+        runner: 'antigravity',
+        cwd: fixture.cwd,
+        mode: 'default',
+        model: 'gemini-3.8-flash-low',
+        profileId: 'work',
+        accountContextId: created.profile.accountContextId,
+      },
+      undefined,
+      undefined,
+      fixture.executable,
+    );
+    assert.equal(started.model, 'gemini-3.8-flash-low');
+    assert.equal(started.observedModel, 'gemini-3.8-flash-low');
+    assert.equal(started.profileId, 'work');
+
+    await assert.rejects(
+      manager.ensure(
+        'owner-1',
+        {
+          sessionId: randomUUID(),
+          runner: 'antigravity',
+          cwd: fixture.cwd,
+          mode: 'default',
+          model: 'gemini-unavailable-in-work-profile',
+          profileId: 'work',
+          accountContextId: created.profile.accountContextId,
+        },
+        undefined,
+        undefined,
+        fixture.executable,
+      ),
+      /not available for the selected account/,
     );
   } finally {
+    try {
+      await manager.close('owner-1', validSessionId);
+    } catch {
+      // Session may not have been created if an assertion failed before launch.
+    }
     if (previousFarmHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previousFarmHome;
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
     if (previousAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
     else process.env.FARMSLOT_AGY_EXECUTABLE = previousAgyEnv;
+    rmSync(stateRoot, { recursive: true, force: true });
     rmSync(profileHome, { recursive: true, force: true });
     rmSync(isolatedFarmHome, { recursive: true, force: true });
     fixture.cleanup();

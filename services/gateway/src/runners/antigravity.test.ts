@@ -4,17 +4,28 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { normalizeRunner } from '@farmslot/protocol';
+import { WebSocket } from 'ws';
 
+import { DEFAULT_CLAUDE_MODEL, Methods, normalizeRunner } from '@farmslot/protocol';
+
+import { withSlotCommandExecutor } from '../core/exec-scope.js';
 import { computeCandidateStrategyFingerprint } from '../evals/package-store.js';
+import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
+import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { resolvePreviewExecution, resolvePreviewModel } from '../methods/dispatch/preview.js';
 import { axesForTrialTransport } from '../methods/eval/candidate-setup.js';
 import { resolveRunDispatchRunnerModel } from '../run-engine/dispatch-policy.js';
 
-import { resolveTrustedNativeExecutable } from './native/node.js';
+import {
+  resolveTrustedNativeExecutable,
+  resolveTrustedNativeExecutablesForNode,
+  routeNativeExecution,
+} from './native/node.js';
+import { MACHINE_RUNNER_PATH_FIELDS } from './launch-command.js';
 import {
   ModelCatalogFormatError,
   NodeModelCatalogs,
+  nodeModelCatalogs,
   parseAntigravityModelCatalog,
 } from './model-catalog.js';
 import {
@@ -127,6 +138,8 @@ test('Antigravity dispatch without a model never inherits Claude default and req
   assert.equal(runnerRequiresAccountResolvedModel('antigravity'), true);
   assert.equal(runnerRequiresAccountResolvedModel('claude'), false);
   assert.equal(resolvePreviewModel({ runner: 'antigravity', model: null }), 'unknown');
+  // Non-strictAccountCatalog / legacy custom runners preserve DEFAULT_CLAUDE_MODEL fallback compatibility.
+  assert.equal(resolvePreviewModel({ runner: 'custom-legacy', model: null }), DEFAULT_CLAUDE_MODEL);
   assert.deepEqual(
     resolvePreviewExecution({ runner: 'claude', model: 'opus' }, { runner: 'antigravity' }),
     {
@@ -187,13 +200,14 @@ test('eval strategy resolves native-only transport before hashing so omitted and
   assert.throws(() => axesForTrialTransport(baseAxes, 'tmux'), /requires native transport/);
 });
 
-test('resolveTrustedNativeExecutable reads configured pool antigravity_path outside PATH', async () => {
+test('resolveTrustedNativeExecutable and resolveTrustedNativeExecutablesForNode share MACHINE_RUNNER_PATH_FIELDS', async () => {
   const root = mkdtempSync(join(tmpdir(), 'agy-pool-exec-'));
   const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
   try {
     const tempPoolRoot = join(root, 'pool');
     mkdirSync(tempPoolRoot, { recursive: true });
     const configuredBin = join(root, 'custom-bin', 'agy');
+    const configuredPi = join(root, 'custom-bin', 'pi');
     writeFileSync(
       join(tempPoolRoot, 'macwork.json'),
       JSON.stringify({
@@ -204,12 +218,18 @@ test('resolveTrustedNativeExecutable reads configured pool antigravity_path outs
         os: process.platform,
         platform: 'cli',
         antigravity_path: configuredBin,
+        pi_path: configuredPi,
         slots: [{ id: 'macwork-1', enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
       }),
     );
     process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
+    assert.equal(MACHINE_RUNNER_PATH_FIELDS.antigravity, 'antigravity_path');
     assert.equal(await resolveTrustedNativeExecutable('antigravity', 'local'), configuredBin);
     assert.equal(await resolveTrustedNativeExecutable('agy', 'macwork'), configuredBin);
+    assert.deepEqual(await resolveTrustedNativeExecutablesForNode('macwork'), {
+      antigravity: configuredBin,
+      pi: configuredPi,
+    });
   } finally {
     if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
     else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
@@ -217,22 +237,188 @@ test('resolveTrustedNativeExecutable reads configured pool antigravity_path outs
   }
 });
 
-test('remote Antigravity probe failures are isolated so other runner account status remains available', async () => {
-  // Remote host pointing at an unreachable local address causes execOnSlot SSH failure.
+test('remote Antigravity status uses structured ACP probe and preserves last observed login on generic failures', async () => {
+  // Use a real non-local host so isLocal(host, machine) is false and the remote execOnSlot branch runs.
   const remoteVars = makeVars({
-    machine: 'unreachable-remote-proof',
-    host: '127.0.0.1',
-    sshUser: 'nobody',
-    sshTarget: 'nobody@127.0.0.1',
-    antigravityPath: '/nonexistent/agy',
+    machine: 'remote-agy-host',
+    host: 'remote-agy.example',
+    sshUser: 'operator',
+    sshTarget: 'operator@remote-agy.example',
+    antigravityPath: '/opt/agy/bin/agy',
   });
-  const subscriptions = await getHostRunnerSubscriptions(remoteVars, {
-    runners: ['antigravity', 'unknown-peer'],
-  });
-  assert.equal(subscriptions.length, 2);
-  const agy = subscriptions.find((s) => s.runner === 'antigravity');
-  const peer = subscriptions.find((s) => s.runner === 'unknown-peer');
-  assert.equal(agy?.source, 'error');
-  assert.ok(agy?.error, 'Failed remote Antigravity probe must surface an error string');
-  assert.equal(peer?.source, 'unsupported');
+
+  const authenticated = await withSlotCommandExecutor(
+    async (_vars, command) => {
+      assert.ok(command.includes('/opt/agy/bin/agy'));
+      return {
+        stdout: '{"status":"authenticated","version":"1.5.12"}\n',
+        stderr: '',
+        exitCode: 0,
+      };
+    },
+    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity', 'unknown-peer'] }),
+  );
+  const agyAuth = authenticated.find((s) => s.runner === 'antigravity');
+  assert.equal(agyAuth?.source, 'antigravity-auth');
+  assert.equal(agyAuth?.loginMethod, 'agy 1.5.12');
+  assert.deepEqual(agyAuth?.outcome, { identity: 'observed', quota: 'absent' });
+  assert.equal(authenticated.find((s) => s.runner === 'unknown-peer')?.source, 'unsupported');
+
+  const signedOut = await withSlotCommandExecutor(
+    async () => ({
+      stdout: '{"status":"signed-out","version":"1.5.12"}\n',
+      stderr: '',
+      exitCode: 0,
+    }),
+    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity'] }),
+  );
+  assert.equal(signedOut[0]?.source, 'error');
+  assert.equal(signedOut[0]?.error, 'not-logged-in');
+  assert.deepEqual(signedOut[0]?.outcome, { identity: 'absent', quota: 'absent' });
+
+  // Generic exit-1 or transient probe failure must never be misclassified as not-logged-in.
+  const exitOne = await withSlotCommandExecutor(
+    async () => ({
+      stdout: '',
+      stderr: 'temporary network error',
+      exitCode: 1,
+    }),
+    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity'] }),
+  );
+  assert.equal(exitOne[0]?.source, 'error');
+  assert.notEqual(exitOne[0]?.error, 'not-logged-in');
+  assert.deepEqual(exitOne[0]?.outcome, { identity: 'failed', quota: 'absent' });
+
+  // Thrown SSH/transport error is isolated and yields identity: 'failed' while peer runners remain available.
+  const transportFailed = await withSlotCommandExecutor(
+    async () => {
+      throw new Error('ssh connect timed out');
+    },
+    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity', 'unknown-peer'] }),
+  );
+  const agyFailed = transportFailed.find((s) => s.runner === 'antigravity');
+  assert.equal(agyFailed?.source, 'error');
+  assert.match(agyFailed?.error ?? '', /ssh connect timed out/);
+  assert.deepEqual(agyFailed?.outcome, { identity: 'failed', quota: 'absent' });
+  assert.equal(transportFailed.find((s) => s.runner === 'unknown-peer')?.source, 'unsupported');
+
+  const notInstalled = await withSlotCommandExecutor(
+    async () => ({
+      stdout: '{"status":"not-installed"}\n',
+      stderr: '',
+      exitCode: 0,
+    }),
+    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity'] }),
+  );
+  assert.equal(notInstalled[0]?.source, 'error');
+  assert.equal(notInstalled[0]?.error, 'agy not found');
+  assert.deepEqual(notInstalled[0]?.outcome, { identity: 'absent', quota: 'absent' });
+});
+
+test('named-profile ambient catalog skip is limited to strictAccountCatalog runners so other runners keep placement admission', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-profile-gate-'));
+  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
+  const machineA = 'agy-profile-gate-a';
+  const machineB = 'agy-profile-gate-b';
+  const owner = 'profile-gate-owner';
+  const profileAccountContextId = '11111111-2222-4333-8444-555555555555';
+  const expectedSession = {
+    id: 'forwarded-session',
+    executionNodeId: machineA,
+    ownerPrincipalId: owner,
+    profileId: 'work',
+    accountContextId: profileAccountContextId,
+  };
+  let forwardedRequests = 0;
+  const ws = {
+    readyState: WebSocket.OPEN,
+    send(raw: string) {
+      forwardedRequests++;
+      const frame = JSON.parse(raw) as { id: string };
+      handleNodeResponse(frame.id, true, { session: expectedSession }, undefined, undefined, ws);
+    },
+  } as unknown as WebSocket;
+  registerNode(
+    machineA,
+    1,
+    ws,
+    undefined,
+    undefined,
+    { ownerPrincipalId: owner, supportsProfiles: true },
+    { principalId: 'node-gate', valid: () => true },
+  );
+  try {
+    const tempPoolRoot = join(root, 'pool');
+    mkdirSync(tempPoolRoot, { recursive: true });
+    writeFileSync(
+      join(tempPoolRoot, `${machineA}.json`),
+      JSON.stringify({
+        machine: machineA,
+        project: 'demo',
+        host: 'remote-gate-a.example',
+        ssh_user: 'operator',
+        os: process.platform,
+        platform: 'cli',
+        slots: [
+          { id: `${machineA}-1`, enabled: true, mode: 'dispatch', repo: root, session: 's1' },
+        ],
+      }),
+    );
+    process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
+
+    // pi is not a strictAccountCatalog runner; when machineA lacks a model available on machineB,
+    // routeNativeExecution must still reject it at placement time even with profileId set.
+    nodeModelCatalogs.accept('pi', machineA, {
+      ids: ['openai/gpt-5'],
+      nativeIds: ['openai/gpt-5'],
+      configuredProviders: ['openai'],
+      flatCatalog: false,
+      strictAccountCatalog: false,
+    });
+    nodeModelCatalogs.accept('pi', machineB, {
+      ids: ['openai/gpt-5', 'anthropic/claude-only-on-b'],
+      nativeIds: ['openai/gpt-5', 'anthropic/claude-only-on-b'],
+      configuredProviders: ['openai', 'anthropic'],
+      flatCatalog: false,
+      strictAccountCatalog: false,
+    });
+    await assert.rejects(
+      routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, {
+        executionNodeId: machineA,
+        runner: 'pi',
+        model: 'anthropic/claude-only-on-b',
+        cwd: '/tmp',
+        profileId: 'work',
+        accountContextId: '11111111-2222-4333-8444-555555555555',
+      }),
+      /not listed on agy-profile-gate-a/,
+    );
+    assert.equal(forwardedRequests, 0);
+
+    // Antigravity is a strictAccountCatalog runner: with profileId set, the ambient machine catalog
+    // does not pre-block a profile-specific model; the request forwards to the owned launch boundary.
+    nodeModelCatalogs.accept(
+      'antigravity',
+      machineA,
+      parseAntigravityModelCatalog('gemini-4-neon-high\tGemini 4 Neon (High)\n'),
+    );
+    const result = await routeNativeExecution(owner, Methods.NATIVE_SESSION_CREATE, {
+      executionNodeId: machineA,
+      runner: 'antigravity',
+      model: 'gemini-work-profile-only',
+      cwd: '/tmp',
+      profileId: 'work',
+      accountContextId: '11111111-2222-4333-8444-555555555555',
+    });
+    assert.deepEqual(result, { session: expectedSession });
+    assert.equal(forwardedRequests, 1);
+  } finally {
+    unregisterByWs(ws);
+    nodeModelCatalogs.unavailable('pi', machineA);
+    nodeModelCatalogs.unavailable('pi', machineB);
+    nodeModelCatalogs.unavailable('antigravity', machineA);
+    if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
+    rmSync(root, { recursive: true, force: true });
+  }
 });

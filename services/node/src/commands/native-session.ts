@@ -149,6 +149,24 @@ export class NativeNodeSessions {
   }
 
   private observation?: NativeHostObservation;
+  private trustedExecutables: Record<string, string> = {};
+  private trustedExecutablesDigest = '{}';
+
+  private resolveTrustedExecutable(runner: string): string | undefined {
+    const candidate = this.trustedExecutables[runner];
+    return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : undefined;
+  }
+
+  private normalizeTrustedExecutables(value: unknown): Record<string, string> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const normalized: Record<string, string> = {};
+    for (const [runner, executable] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof executable === 'string' && executable.trim()) {
+        normalized[runner] = executable.trim();
+      }
+    }
+    return normalized;
+  }
 
   /** Called once by the daemon transport owner, never by an RPC or panel. */
   async startObservation(publish: (receipt: NativeSourceReceipt) => void): Promise<void> {
@@ -158,6 +176,9 @@ export class NativeNodeSessions {
       this.client,
       this.declaration.ownerPrincipalId,
       publish,
+      undefined,
+      undefined,
+      (runner) => this.resolveTrustedExecutable(runner),
     );
     await this.observation.start();
   }
@@ -189,6 +210,19 @@ export class NativeNodeSessions {
       throw Object.assign(new Error('Native source unsupported'), {
         code: 'NATIVE_SOURCE_UNAVAILABLE',
       });
+    if (value.method === 'native.profile.status') {
+      const next = this.normalizeTrustedExecutables(value.executables);
+      const nextDigest = JSON.stringify(
+        Object.keys(next)
+          .sort()
+          .map((key) => [key, next[key]]),
+      );
+      if (nextDigest !== this.trustedExecutablesDigest) {
+        this.trustedExecutables = next;
+        this.trustedExecutablesDigest = nextDigest;
+        if (this.observation.current().ready) await this.observation.refreshAccountsNow();
+      }
+    }
     if (!this.observation.current().ready) await this.observation.retry();
     return this.observation.read(() => {
       if (value.method === 'native.profile.status') {

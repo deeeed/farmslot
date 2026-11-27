@@ -96,6 +96,7 @@ export class NativeHostObservation {
   private generation = 0;
   private stopped = true;
   private refreshing = false;
+  private refreshPromise?: Promise<void>;
   private queued = false;
   private changes = 0;
   private failed = false;
@@ -441,6 +442,18 @@ export class NativeHostObservation {
         this.recovering = undefined;
       });
   }
+  /** Force a single fenced account sample when trusted node executables change. */
+  async refreshAccountsNow(): Promise<void> {
+    if (this.stopped) return;
+    if (this.refreshing) {
+      this.queued = true;
+      await this.refreshPromise;
+    }
+    if (this.stopped) return;
+    this.refreshAccounts();
+    await this.refreshPromise;
+  }
+
   private refreshAccounts(): void {
     if (this.refreshing) {
       this.queued = true;
@@ -452,7 +465,7 @@ export class NativeHostObservation {
     let change: number;
 
     let before: SourceSnapshot;
-    void Promise.resolve()
+    const current = Promise.resolve()
       .then(async () => {
         before = await this.scan();
         change = this.changes;
@@ -489,12 +502,14 @@ export class NativeHostObservation {
       })
       .finally(() => {
         this.refreshing = false;
+        if (this.refreshPromise === current) this.refreshPromise = undefined;
         if (generation !== this.generation || this.stopped) return;
         if (this.queued) {
           this.queued = false;
           this.refreshAccounts();
         }
       });
+    this.refreshPromise = current;
   }
   private scheduleAccounts(): void {
     if (this.timer) clearTimeout(this.timer);

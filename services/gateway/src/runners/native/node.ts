@@ -57,8 +57,8 @@ import {
   requireGenerationZeroOwner,
 } from '../../security/native-node.js';
 import { ownsLocalNativeProfile } from '../../security/native-owner.js';
-import { machineRunnerPath } from '../launch-command.js';
-import { normalizeRunner } from '../registry.js';
+import { MACHINE_RUNNER_PATH_FIELDS, machineRunnerPath } from '../launch-command.js';
+import { normalizeRunner, runnerRequiresAccountResolvedModel } from '../registry.js';
 
 import { knownNativeExecutionNodes } from './execution-nodes.js';
 import { nodeLaunchRelease } from './host-refresh.js';
@@ -266,11 +266,11 @@ export async function resolveTrustedNativeExecutable(
   return undefined;
 }
 
-async function resolveTrustedNativeExecutablesForNode(
+export async function resolveTrustedNativeExecutablesForNode(
   executionNodeId: string,
 ): Promise<Record<string, string> | undefined> {
   const pools = await loadPoolConfigs(currentFarmPaths('gateway').pool);
-  const runners = ['codex', 'claude', 'cursor', 'grok', 'pi', 'opencode', 'antigravity'] as const;
+  const runners = Object.keys(MACHINE_RUNNER_PATH_FIELDS);
   const resolved: Record<string, string> = {};
   for (const pool of pools) {
     if (
@@ -317,9 +317,12 @@ export async function routeNativeExecution(
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Expected native runner and model strings');
     validateNativeRunner(params.runner, params.model, params.effort);
-    // Cached machine catalogs belong to the ambient account. Named profiles validate
-    // their model inside the profile's own execution environment / ACP session.
-    if (params.profileId === undefined) {
+    // Strict account-catalog runners (Antigravity) validate named-profile models inside
+    // that profile's own launch session rather than against the ambient machine catalog.
+    // Other runners retain their existing placement/ambient model admission.
+    const skipAmbientCatalog =
+      params.profileId !== undefined && runnerRequiresAccountResolvedModel(params.runner);
+    if (!skipAmbientCatalog) {
       const { nativeModelNodeBlocker } = await loadNativeWorkspace();
       const blocker = await nativeModelNodeBlocker(params.runner, params.model, executionNodeId);
       if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
@@ -332,11 +335,7 @@ export async function routeNativeExecution(
         'Native local execution is unavailable for this owner',
       );
     return withMeasuredNativeProcessCensus(() => {
-      if (
-        isNativeObservedRead() &&
-        method === Methods.NATIVE_PROFILE_STATUS &&
-        params.model === undefined
-      ) {
+      if (isNativeObservedRead() && method === Methods.NATIVE_PROFILE_STATUS) {
         validateNativeProfileParams(params);
         if (typeof params.profileId !== 'string' || !params.profileId.trim())
           throw new GatewayMethodError('INVALID_PARAMS', 'Native profile ID required');
@@ -394,7 +393,7 @@ export async function routeNativeExecution(
     method === Methods.NATIVE_PROFILE_STATUS
       ? await resolveTrustedNativeExecutablesForNode(executionNodeId)
       : undefined;
-  const observe = isNativeObservedRead() && params.model === undefined;
+  const observe = isNativeObservedRead();
   const send = (hostRelease?: string[]) => {
     const envelope: NativeNodeSessionEnvelope = {
       owner,

@@ -48,6 +48,7 @@ import {
   runnerDefaultModel,
   runnerModelNodeBlocker,
   runnerModelNodePreference,
+  runnerRequiresAccountResolvedModel,
   runnerSupportsNativeTaskReuse,
   runnerSupportsTmuxNudges,
   runnerSupportsTmuxNudgesForLaunch,
@@ -1630,5 +1631,5 @@ export function resolvePreviewModel(slotInfo: Pick<SlotStatus, 'runner' | 'model
   if (slotModel) return slotModel;
   const defaultModel = runnerDefaultModel(runner);
   if (defaultModel) return defaultModel;
-  return runner === 'claude' ? DEFAULT_CLAUDE_MODEL : 'unknown';
+  return runnerRequiresAccountResolvedModel(runner) ? 'unknown' : DEFAULT_CLAUDE_MODEL;
 }

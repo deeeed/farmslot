@@ -64,13 +64,10 @@ export function nativeWorkerProfileMatches(
 export async function inspectNativeWorkerProfile(
   owner: string,
   profile: NativeProfileReference,
-  model?: string | null,
 ): Promise<NativeProfileInfo> {
-  const requestedModel = model && model !== 'unknown' ? model : undefined;
   const result = (await routeNativeExecution(owner, Methods.NATIVE_PROFILE_STATUS, {
     executionNodeId: profile.executionNodeId,
     profileId: profile.profileId,
-    ...(requestedModel ? { model: requestedModel } : {}),
   })) as NativeProfileStatusResult;
   if (
     result.profile.id !== profile.profileId ||

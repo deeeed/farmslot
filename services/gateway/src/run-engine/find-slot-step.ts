@@ -119,6 +119,7 @@ import {
   runnerDefaultSafetyTier,
   runnerModelNodeBlocker,
   runnerModelNodePreference,
+  runnerRequiresAccountResolvedModel,
 } from '../runners/registry.js';
 import { resolveStrictAccountDispatchModel } from '../runners/visible-models.js';
 import { requestedRunSlotId } from '../runs/slot-pin.js';
@@ -1496,11 +1497,7 @@ async function findSlotAttempt(
     run = updateRun(runId, { metrics: { ...run.metrics, model: strictModel } });
   }
   if (run.nativeProfile) {
-    await inspectNativeWorkerProfile(
-      run.nativeOwnerPrincipalId!,
-      run.nativeProfile,
-      strictModel ?? run.metrics.model,
-    );
+    await inspectNativeWorkerProfile(run.nativeOwnerPrincipalId!, run.nativeProfile);
     const allowedSlots = await nativeProfileAllowedSlots(
       run.nativeProfile,
       run.allowedSlots ?? undefined,
@@ -1586,12 +1583,15 @@ async function findSlotAttempt(
       })
     : undefined;
   const capabilitySelection = { requiredCapabilities, capabilityCatalogs };
-  // Fresh node listings can refuse a model for ambient launches; named profiles validate
-  // their model directly in that profile (never against the ambient machine catalog).
+  // Strict account-catalog runners (Antigravity) validate named-profile models at the
+  // owned launch boundary inside that profile; other runners retain placement-time admission.
+  const skipAmbientModelNodeBlocker = Boolean(
+    run.nativeProfile && runnerRequiresAccountResolvedModel(run.nativeProfile.runner),
+  );
   const modelNodeSelection = {
     ...runExplicitRunnerModel(run),
-    modelNodeBlocker: run.nativeProfile ? undefined : runnerModelNodeBlocker,
-    modelNodePreference: run.nativeProfile ? undefined : runnerModelNodePreference,
+    modelNodeBlocker: skipAmbientModelNodeBlocker ? undefined : runnerModelNodeBlocker,
+    modelNodePreference: skipAmbientModelNodeBlocker ? undefined : runnerModelNodePreference,
   };
   const releasableBranchHolderIds = await inspectReleasableBranchHolders(
     branchFleet.slots,

@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
+import type { NativeProfileStatusResult } from '@farmslot/protocol';
 
 import { NativeNodeSessions } from './native-session.js';
 
@@ -139,4 +149,106 @@ test('a node start still fails on a native error that is not a host-readiness on
   });
   const service = new NativeNodeSessions('node-a', 'owner', '/unused-native-test');
   await assert.rejects(service.prepareRuntime(), /another execution node/);
+});
+
+test('observed remote native.profile.status refreshes with trusted executables outside PATH and serves repeated reads from cache', async (t) => {
+  const { routeNativeProfile } = await import('@farmslot/agent-runtime/native/profile-service');
+  const root = mkdtempSync(path.join(os.tmpdir(), 'native-observed-agy-'));
+  const farmHome = path.join(root, 'farm-home');
+  const stateRoot = path.join(root, 'state');
+  const nodeDir = path.join(stateRoot, 'nodes', 'remote-agy-node');
+  const profileDir = path.join(root, 'work-profile');
+  const probeLog = path.join(root, 'probes.log');
+  const fakeAgy = path.join(root, 'custom-bin', 'agy');
+  mkdirSync(farmHome, { recursive: true });
+  mkdirSync(nodeDir, { recursive: true, mode: 0o700 });
+  chmodSync(nodeDir, 0o700);
+  mkdirSync(profileDir, { recursive: true });
+  mkdirSync(path.dirname(fakeAgy), { recursive: true });
+  writeFileSync(
+    fakeAgy,
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+if (process.argv.includes('--version')) {
+  fs.appendFileSync(${JSON.stringify(probeLog)}, 'version\\n');
+  console.log('1.5.12');
+  process.exit(0);
+}
+const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') {
+    return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: '1.5.12' } } });
+  }
+  if (m.method === 'session/list') {
+    return send({ id: m.id, result: { sessions: [] } });
+  }
+});
+`,
+  );
+  chmodSync(fakeAgy, 0o700);
+
+  const prevFarmHome = process.env.FARMSLOT_HOME;
+  const prevPath = process.env.PATH;
+  const prevAgyEnv = process.env.FARMSLOT_AGY_EXECUTABLE;
+  const service = new NativeNodeSessions('remote-agy-node', 'owner', stateRoot);
+  t.after(() => {
+    service.stopObservation();
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    if (prevAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    else process.env.FARMSLOT_AGY_EXECUTABLE = prevAgyEnv;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  process.env.FARMSLOT_HOME = farmHome;
+  delete process.env.FARMSLOT_AGY_EXECUTABLE;
+  process.env.PATH = `${path.dirname(process.execPath)}:/usr/bin:/bin`;
+
+  await routeNativeProfile({} as never, 'owner', 'native.profile.add', {
+    profileId: 'work',
+    runner: 'antigravity',
+    directory: profileDir,
+  });
+
+  await service.startObservation(() => {});
+  assert.equal(service.observationReceipt()?.ready, true);
+
+  // Without trusted executables, agy is absent from PATH.
+  const withoutExec = (await service.routeObserved({
+    owner: 'owner',
+    method: 'native.profile.status',
+    params: { profileId: 'work' },
+  })) as { value: NativeProfileStatusResult };
+  assert.equal(withoutExec.value.account.installed, false);
+
+  // When gateway supplies trusted executables on observed profile status, the node updates its
+  // retained observation producer and returns authenticated status using the configured binary.
+  const withExec = (await service.routeObserved({
+    owner: 'owner',
+    method: 'native.profile.status',
+    params: { profileId: 'work' },
+    executables: { antigravity: fakeAgy },
+  })) as { value: NativeProfileStatusResult };
+  assert.equal(withExec.value.account.installed, true);
+  assert.equal(withExec.value.account.login, 'authenticated');
+  assert.ok(withExec.value.loginCommand.includes(fakeAgy));
+  const probesAfterFirst = readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length;
+  assert.equal(probesAfterFirst, 1);
+
+  // A repeated observed read with unchanged executables is served from the retained cache without re-probing.
+  const cached = (await service.routeObserved({
+    owner: 'owner',
+    method: 'native.profile.status',
+    params: { profileId: 'work' },
+    executables: { antigravity: fakeAgy },
+  })) as { value: NativeProfileStatusResult };
+  assert.equal(cached.value.account.login, 'authenticated');
+  const probesAfterSecond = readFileSync(probeLog, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean).length;
+  assert.equal(probesAfterSecond, probesAfterFirst);
 });

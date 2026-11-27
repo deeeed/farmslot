@@ -5,9 +5,11 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +30,12 @@ import {
 import { CdpWebPage } from '../../../packages/recipe-runner/src/runtime/cdp.js';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
-const output = path.resolve(process.argv[2] ?? '/tmp/antigravity-copilot-cdp-proof');
+const sourceSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], {
+  encoding: 'utf8',
+}).trim();
+const baseOutput = path.resolve(process.argv[2] ?? '/tmp/antigravity-copilot-cdp-proof');
+const attemptId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${sourceSha.slice(0, 8)}-${crypto.randomUUID().slice(0, 8)}`;
+const output = path.join(baseOutput, `attempt-${attemptId}`);
 const root = await mkdtemp(path.join(tmpdir(), 'antigravity-copilot-proof-'));
 await mkdir(output, { recursive: true });
 
@@ -182,13 +189,46 @@ const until = async <T,>(
   }
 };
 
-const vitePort = Number(process.env.FARMSLOT_PROOF_VITE_PORT ?? 5193);
-const cdpPort = Number(process.env.FARMSLOT_PROOF_CDP_PORT ?? 19229);
-const cdpBase = `http://127.0.0.1:${cdpPort}`;
+const assertPortFree = async (port: number, label: string): Promise<void> => {
+  await new Promise<void>((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', (err: NodeJS.ErrnoException) => {
+      reject(
+        new Error(
+          `${label} port ${port} is already occupied (${err.code ?? err.message}); refusing to attach to a foreign process`,
+        ),
+      );
+    });
+    probe.once('listening', () => {
+      probe.close((closeErr) => (closeErr ? reject(closeErr) : resolve()));
+    });
+    probe.listen(port, '127.0.0.1');
+  });
+};
+
+const requestedVitePort = process.env.FARMSLOT_PROOF_VITE_PORT
+  ? Number(process.env.FARMSLOT_PROOF_VITE_PORT)
+  : 0;
+const requestedCdpPort = process.env.FARMSLOT_PROOF_CDP_PORT
+  ? Number(process.env.FARMSLOT_PROOF_CDP_PORT)
+  : 0;
+if (requestedVitePort > 0) await assertPortFree(requestedVitePort, 'Vite');
+if (requestedCdpPort > 0) await assertPortFree(requestedCdpPort, 'CDP');
+
+let vitePort = requestedVitePort;
+let cdpPort = requestedCdpPort;
+let cdpBase = '';
 const chromeProfileDir = path.join(root, 'chrome-profile');
 await mkdir(chromeProfileDir, { recursive: true });
 
-const result: Record<string, unknown> = { pass: false, root, checks: {} };
+const result: Record<string, unknown> = {
+  pass: false,
+  sourceSha,
+  attemptId,
+  outputDir: output,
+  root,
+  checks: {},
+};
 const checks = result.checks as Record<string, unknown>;
 const sessionsToClose: string[] = [];
 
@@ -198,7 +238,7 @@ let conn: import('../../../packages/cli/src/gateway-client.js').GatewayClient | 
 let chromeProc: ChildProcess | undefined;
 let vite: Awaited<ReturnType<typeof createVite>> | undefined;
 let page: CdpWebPage | undefined;
-let tabId: string | undefined;
+let ownedTabId: string | undefined;
 
 const findInShadow = (selector: string) => `(() => {
   const find = (root) => {
@@ -276,16 +316,16 @@ try {
     effortControlAbsent: true,
   };
 
-  // Start isolated Vite serving Command Center UI
+  // Start isolated Vite serving Command Center UI on a guaranteed-free port
   vite = await createVite({
     configFile: path.join(repo, 'apps/command-center/ui/vite.config.ts'),
     envDir: path.join(root, 'no-env'),
-    cacheDir: path.join(tmpdir(), 'farmslot-antigravity-proof-vite-cache'),
+    cacheDir: path.join(root, 'vite-cache'),
     logLevel: 'error',
     server: {
       host: '127.0.0.1',
-      port: vitePort,
-      strictPort: true,
+      port: requestedVitePort,
+      strictPort: requestedVitePort > 0,
       fs: { allow: [repo, fs.realpathSync(path.join(repo, 'node_modules'))] },
       proxy: {
         '/ws': { target: `http://127.0.0.1:${gatewayPort}`, ws: true },
@@ -294,15 +334,19 @@ try {
     },
   });
   await vite.listen();
+  const viteAddr = vite.httpServer?.address();
+  assert(viteAddr && typeof viteAddr !== 'string', 'Vite server did not bind a TCP port');
+  vitePort = viteAddr.port;
 
-  // Launch isolated headless Chrome on private CDP port
+  // Launch isolated owned headless Chrome bound to our private profile; verify DevToolsActivePort
+  // written by this exact process so an occupied port can never redirect us to a foreign browser.
   const chromeBinary =
     process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   chromeProc = spawn(
     chromeBinary,
     [
       '--headless=new',
-      `--remote-debugging-port=${cdpPort}`,
+      `--remote-debugging-port=${requestedCdpPort}`,
       `--user-data-dir=${chromeProfileDir}`,
       '--no-first-run',
       '--no-default-browser-check',
@@ -315,8 +359,28 @@ try {
     ],
     { stdio: 'ignore' },
   );
+  const activePortFile = path.join(chromeProfileDir, 'DevToolsActivePort');
+  const activePortText = await until(
+    async () => {
+      assert(
+        chromeProc?.exitCode === null,
+        `Owned Chrome exited before binding DevToolsActivePort (exit=${chromeProc?.exitCode})`,
+      );
+      if (!fs.existsSync(activePortFile)) return '';
+      return (await readFile(activePortFile, 'utf8')).trim();
+    },
+    (text) => text.split(/\r?\n/).length >= 2 && Number(text.split(/\r?\n/)[0]) > 0,
+    'owned Chrome DevToolsActivePort ready',
+    20_000,
+  );
+  cdpPort = Number(activePortText.split(/\r?\n/)[0]);
+  if (requestedCdpPort > 0) {
+    assert.equal(cdpPort, requestedCdpPort, 'Owned Chrome did not bind the requested CDP port');
+  }
+  cdpBase = `http://127.0.0.1:${cdpPort}`;
   await until(
     async () => {
+      assert(chromeProc?.exitCode === null, 'Owned Chrome exited before CDP became ready');
       try {
         const res = await fetch(`${cdpBase}/json/version`);
         return res.ok;
@@ -325,29 +389,34 @@ try {
       }
     },
     Boolean,
-    'isolated Chrome CDP ready',
+    'owned Chrome CDP ready',
     20_000,
   );
 
-  const target = await until(
-    async () => {
-      const list = (await (await fetch(`${cdpBase}/json/list`)).json()) as Array<{
-        id: string;
-        type: string;
-        url: string;
-        webSocketDebuggerUrl: string;
-      }>;
-      return list.find((entry) => entry.type === 'page');
-    },
-    (t): t is { id: string; type: string; url: string; webSocketDebuggerUrl: string } => Boolean(t),
-    'initial Chrome page target ready',
-    20_000,
+  // Create a dedicated target owned by this proof run instead of hijacking an existing tab.
+  const createdTargetRes = await fetch(`${cdpBase}/json/new?about:blank`, { method: 'PUT' });
+  assert(
+    createdTargetRes.ok,
+    `Failed to create dedicated CDP target on owned Chrome: HTTP ${createdTargetRes.status}`,
   );
-  tabId = target.id;
-  await fetch(`${cdpBase}/json/activate/${target.id}`);
+  const target = (await createdTargetRes.json()) as {
+    id: string;
+    type: string;
+    url: string;
+    webSocketDebuggerUrl: string;
+  };
+  assert(target.id && target.webSocketDebuggerUrl, 'Created CDP target missing id/wsUrl');
+  ownedTabId = target.id;
+  result.ownedBrowser = {
+    pid: chromeProc.pid,
+    cdpPort,
+    vitePort,
+    targetId: ownedTabId,
+  };
+  await fetch(`${cdpBase}/json/activate/${ownedTabId}`);
   page = await CdpWebPage.connectToTarget({
-    id: target.id,
-    type: 'page',
+    id: ownedTabId,
+    type: target.type || 'page',
     webSocketDebuggerUrl: target.webSocketDebuggerUrl,
   });
   await page.session.call('Page.bringToFront');
@@ -634,38 +703,80 @@ try {
     return before;
   };
 
-  // 1) Observe streaming real response from the UI-launched turn
-  let after = 0;
+  // 1) Wait for the initial launch turn to settle, then send a dedicated streaming prompt via UI
+  //    so we observe and assert real rendered transcript text for that exact commandId BEFORE turn.completed.
+  await until(
+    async () => (await read()).events.some((e) => e.type === 'turn.completed'),
+    Boolean,
+    'initial launch turn settlement',
+  );
+  const streamPrompt =
+    'Write 140 numbered lines where line k is exactly STREAM_ROW_k (starting at STREAM_ROW_1 and ending at STREAM_ROW_140). Do not use any tools or commentary.';
+  let after = await sendViaUi(streamPrompt);
+  const submittedSnap = await read();
+  const streamSubmitted = submittedSnap.events.find(
+    (e) => e.sequence > after && e.type === 'command.submitted' && e.text === streamPrompt,
+  );
+  const streamCommandId = streamSubmitted?.commandId;
+  assert(streamCommandId, 'Submitted streaming turn must record a commandId');
+
   let streamedBeforeComplete = false;
   let visibleBeforeComplete = false;
-  await until(
-    async () => {
-      const snap = await read();
-      const done = snap.events.some((e) => e.sequence > after && e.type === 'turn.completed');
-      const hasDelta = snap.events.some((e) => e.sequence > after && e.type === 'text.delta');
-      if (hasDelta && !done) streamedBeforeComplete = true;
-      if (hasDelta && !done) {
-        const visible = await page!.evaluate<boolean>(
-          `(() => { const v = ${findInShadow('native-session-view')}; return Boolean(v?.shadowRoot?.textContent?.includes('2') && v?.historyObservation?.data?.events?.some(e => e.type === 'text.delta')); })()`,
-        );
-        if (visible) visibleBeforeComplete = true;
+  let capturedMidStreamShot = false;
+  const streamDeadline = Date.now() + 150_000;
+  for (;;) {
+    const snap = await read();
+    const done = snap.events.some(
+      (e) => e.commandId === streamCommandId && e.type === 'turn.completed',
+    );
+    const hasDelta = snap.events.some(
+      (e) => e.commandId === streamCommandId && e.type === 'text.delta' && Boolean(e.text),
+    );
+    if (hasDelta && !done) {
+      streamedBeforeComplete = true;
+      const visible = await page!.evaluate<boolean>(
+        `(() => {
+          const v = ${findInShadow('native-session-view')};
+          const events = v?.historyObservation?.data?.events ?? [];
+          const hasCmdDelta = events.some((e) => e.commandId === ${JSON.stringify(streamCommandId)} && e.type === 'text.delta');
+          const hasCmdDone = events.some((e) => e.commandId === ${JSON.stringify(streamCommandId)} && e.type === 'turn.completed');
+          const text = v?.shadowRoot?.textContent ?? '';
+          // STREAM_ROW_2 and STREAM_ROW_3 never appear in the prompt text itself.
+          const hasAssistantText = text.includes('STREAM_ROW_2') || text.includes('STREAM_ROW_3');
+          return Boolean(hasCmdDelta && !hasCmdDone && hasAssistantText);
+        })()`,
+      );
+      if (visible) {
+        visibleBeforeComplete = true;
+        if (!capturedMidStreamShot) {
+          capturedMidStreamShot = true;
+          await screenshot('copilot-streamed');
+        }
       }
-      return done;
-    },
-    Boolean,
-    'streaming response completion',
-  );
+    }
+    if (done) break;
+    assert(Date.now() < streamDeadline, 'Timed out: streaming response completion');
+    await new Promise((r) => setTimeout(r, 50));
+  }
   const streamReceipt = await read();
   assert(
     streamReceipt.events.some(
-      (e) => e.sequence > after && e.type === 'turn.completed' && e.status === 'completed',
+      (e) =>
+        e.commandId === streamCommandId && e.type === 'turn.completed' && e.status === 'completed',
     ),
+    'Streaming turn must complete with status=completed',
   );
-  assert(
-    streamReceipt.events.some((e) => e.sequence > after && e.type === 'text.delta'),
-    'Copilot must emit streamed text.delta events',
+  assert.equal(
+    streamedBeforeComplete,
+    true,
+    'Copilot must emit text.delta for the submitted command before turn.completed',
   );
-  await screenshot('copilot-streamed');
+  assert.equal(
+    visibleBeforeComplete,
+    true,
+    'Copilot transcript must render assistant text for the submitted command before turn.completed',
+  );
+  if (!capturedMidStreamShot) await screenshot('copilot-streamed');
 
   // 2) Ask + Approve permission decision
   const allowedPath = path.join(workspace, 'copilot-allowed.txt');
@@ -892,11 +1003,11 @@ try {
       // Best-effort cleanup of test-owned session.
     }
   }
-  if (tabId) {
+  if (ownedTabId && cdpBase && chromeProc?.exitCode === null) {
     try {
-      await fetch(`${cdpBase}/json/close/${tabId}`);
+      await fetch(`${cdpBase}/json/close/${ownedTabId}`);
     } catch {
-      // Chrome may already be closing.
+      // Owned Chrome may already be closing.
     }
   }
   page?.close();
@@ -936,11 +1047,37 @@ try {
     );
   }
   result.hostStopped = !fs.existsSync(lock);
+  const manifestEntries = await Promise.all(
+    (await readdir(output))
+      .filter((name) => name !== 'result.json')
+      .sort()
+      .map(async (file) => {
+        const full = path.join(output, file);
+        const bytes = await readFile(full);
+        const info = await stat(full);
+        return {
+          file,
+          bytes: info.size,
+          sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+        };
+      }),
+  );
+  result.manifest = manifestEntries;
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
   await rm(root, { recursive: true, force: true });
   console.log(
     JSON.stringify(
-      { pass: result.pass, hostStopped: result.hostStopped, checks, error: result.error },
+      {
+        pass: result.pass,
+        sourceSha: result.sourceSha,
+        attemptId: result.attemptId,
+        outputDir: result.outputDir,
+        hostStopped: result.hostStopped,
+        ownedBrowser: result.ownedBrowser,
+        manifest: manifestEntries,
+        checks,
+        error: result.error,
+      },
       null,
       2,
     ),

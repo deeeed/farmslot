@@ -416,18 +416,24 @@ export function codexShellEnvironmentPolicy(names: string[]): string {
   return `shell_environment_policy={inherit="all",exclude=[],include_only=[${allowed.map((name) => JSON.stringify(name)).join(',')}],set={ZDOTDIR="/var/empty"}}`;
 }
 
+/** Canonical mapping from runner ID to its machine pool executable field. */
+export const MACHINE_RUNNER_PATH_FIELDS = {
+  codex: 'codex_path',
+  claude: 'claude_path',
+  cursor: 'cursor_path',
+  grok: 'grok_path',
+  pi: 'pi_path',
+  opencode: 'opencode_path',
+  antigravity: 'antigravity_path',
+} as const satisfies Record<string, keyof RawPoolJson>;
+
 /** The machine pool's configured executable for a runner; undefined leaves the runner's own default. */
 export function machineRunnerPath(runner: string, machine?: RawPoolJson): string | undefined {
-  const paths: Record<string, string | undefined> = {
-    codex: machine?.codex_path,
-    claude: machine?.claude_path,
-    cursor: machine?.cursor_path,
-    grok: machine?.grok_path,
-    pi: machine?.pi_path,
-    opencode: machine?.opencode_path,
-    antigravity: machine?.antigravity_path,
-  };
-  return paths[runner.trim()]?.trim() || undefined;
+  const trimmed = runner.trim();
+  if (!Object.hasOwn(MACHINE_RUNNER_PATH_FIELDS, trimmed)) return undefined;
+  const field = MACHINE_RUNNER_PATH_FIELDS[trimmed as keyof typeof MACHINE_RUNNER_PATH_FIELDS];
+  const value = machine?.[field];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 export function interactiveRunnerExecutable(options: {

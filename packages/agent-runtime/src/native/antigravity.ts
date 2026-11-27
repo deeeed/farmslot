@@ -7,10 +7,9 @@ import {
   AccountProbeError,
   accountProtocolProbe,
   observeNativeAccount,
-  resolveNativeAccountExecutable,
   signedOutAccount,
 } from './account-common.js';
-import type { NativeAccountProbeOptions, NativeProfileModelValidation } from './account-types.js';
+import type { NativeAccountProbeOptions } from './account-types.js';
 import { acpRunsToolsUnasked, createAcpAdapter } from './acp.js';
 import {
   acpConfigChoices,
@@ -197,93 +196,4 @@ export function observeAntigravityAccount(options: NativeAccountProbeOptions) {
       );
     },
   );
-}
-
-/**
- * Validate whether `model` is available inside a specific Antigravity profile
- * using ACP (`initialize` + `session/new`), never consulting the ambient machine catalog.
- */
-export async function validateAntigravityProfileModel(
-  options: NativeAccountProbeOptions & { model: string },
-): Promise<NativeProfileModelValidation> {
-  const env = options.env ?? process.env;
-  const executable = await resolveNativeAccountExecutable(
-    options.executable || antigravityBinary(env),
-    options,
-    env,
-  );
-  if (!executable) {
-    return {
-      available: false,
-      detail: 'Antigravity executable is unavailable on this execution node',
-    };
-  }
-  let exited = false;
-  let cleanupConfirmed = false;
-  const child = new AcpRpc(
-    { cwd: options.cwd, executable, env },
-    ['acp'],
-    (message) => {
-      if (message.id !== undefined && message.method) {
-        child.write({
-          id: message.id,
-          error: {
-            code: -32601,
-            message: 'Model validation does not implement client operations',
-          },
-        });
-      }
-    },
-    (_error, stopped) => {
-      exited = true;
-      cleanupConfirmed = stopped;
-    },
-  );
-  try {
-    return await accountProtocolProbe(
-      child,
-      async () => {
-        const init = accountObject(
-          await child.request('initialize', {
-            protocolVersion: 1,
-            clientCapabilities: {},
-            clientInfo: { name: 'farmslot-model-validation', version: '1' },
-          }),
-        );
-        if (init.protocolVersion !== 1) throw new AccountProbeError('malformed-status');
-        const session = acpObject(
-          await child.request('session/new', {
-            cwd: options.cwd,
-            mcpServers: [],
-          }),
-        );
-        const availableModelIds = advertisedAntigravityModelIds(session);
-        const familyIds = acpConfigChoices(session, 'model') ?? [];
-        const advertised = [...new Set([...availableModelIds, ...familyIds])];
-        if (!advertised.length) {
-          return {
-            available: false,
-            detail: 'Antigravity did not advertise available models for the selected profile',
-          };
-        }
-        if (availableModelIds.includes(options.model) || familyIds.includes(options.model)) {
-          return { available: true, models: advertised };
-        }
-        return {
-          available: false,
-          models: advertised,
-          detail: `Antigravity model ${JSON.stringify(options.model)} is not available for the selected profile`,
-        };
-      },
-      () => exited && cleanupConfirmed,
-    );
-  } catch (error) {
-    if (error instanceof AcpRpcError && error.code === ACP_AUTH_REQUIRED_CODE) {
-      return {
-        available: false,
-        detail: 'Selected Antigravity profile is not signed in',
-      };
-    }
-    throw error;
-  }
 }

@@ -40,14 +40,7 @@ export function validateNativeProfileParams(params: Record<string, unknown>): vo
   if (
     Object.keys(params).some(
       (key) =>
-        ![
-          'executionNodeId',
-          'profileId',
-          'runner',
-          'directory',
-          'accountContextId',
-          'model',
-        ].includes(key),
+        !['executionNodeId', 'profileId', 'runner', 'directory', 'accountContextId'].includes(key),
     )
   )
     throw new Error(
@@ -74,37 +67,16 @@ export async function routeNativeProfile(
         ...(params.directory !== undefined ? { directory: string(params, 'directory') } : {}),
       }),
     };
-  if (method === Methods.NATIVE_PROFILE_STATUS) {
-    const requestedModel = params.model !== undefined ? string(params, 'model') : undefined;
+  if (method === Methods.NATIVE_PROFILE_STATUS)
     return inspectNativeProfile(id, async (profile): Promise<NativeProfileStatusResult> => {
       const definition = nativeRunnerDefinitions[profile.runner];
       const configuredExecutable = (await options?.resolveExecutable?.(profile.runner))?.trim();
       const executable = configuredExecutable || definition.binary;
-      const env = nativeProfileEnvironment(profile);
       const account = await definition.account.observe({
         cwd: profile.directory,
         executable,
-        env,
+        env: nativeProfileEnvironment(profile),
       });
-      if (
-        requestedModel &&
-        account.installed &&
-        account.login === 'authenticated' &&
-        definition.account.validateModel
-      ) {
-        const validation = await definition.account.validateModel({
-          cwd: profile.directory,
-          executable: account.executable ?? executable,
-          env,
-          model: requestedModel,
-        });
-        if (!validation.available) {
-          throw new Error(
-            validation.detail ??
-              `${profile.runner} model ${JSON.stringify(requestedModel)} is not available for profile ${profile.id}`,
-          );
-        }
-      }
       const loginCommand = [
         'env',
         ...definition.account.unset.flatMap((name) => ['-u', name]),
@@ -118,7 +90,6 @@ export async function routeNativeProfile(
         .join(' ');
       return { profile, account, loginCommand };
     });
-  }
   if (method === Methods.NATIVE_PROFILE_REMOVE) {
     await removeNativeProfile(id, string(params, 'accountContextId'), async (profile) => {
       const sessions = (await client.list(owner)).filter(

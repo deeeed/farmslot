@@ -10,12 +10,6 @@ export interface NativeAccountProbeOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-export interface NativeProfileModelValidation {
-  available: boolean;
-  detail?: string;
-  models?: string[];
-}
-
 export type NativeAccountState = Pick<
   NativeAccountObservation,
   'login' | 'mode' | 'identity' | 'identityQuality' | 'reason'
