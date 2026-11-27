@@ -8,17 +8,16 @@ import { runBundleRetentionSettings, withRunBundleStoreLock } from '@farmslot/ru
 import { reportGatewayWarning } from '../../chat/copilot-observer.js';
 import { projectTaskRoots } from '../../core/config.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../../core/index.js';
-import {
-  getFamilyRuns,
-  isFollowUpFlow,
-  resolveFamilyIdentity,
-} from '../../family-observability/context.js';
+import { isFollowUpFlow, resolveFamilyIdentity } from '../../family-observability/context.js';
 import { loadProjectConfig } from '../../fleet/state.js';
 import {
   nodeJournalRetentionDeps,
   nodeJournalRetentionPass,
 } from '../../host-services/node-native-journals.js';
-import { nodeTaskPinRetentionPass } from '../../host-services/node-task-pins.js';
+import {
+  NODE_PIN_RETENTION_DEPS,
+  nodeTaskPinRetentionPass,
+} from '../../host-services/node-task-pins.js';
 import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
 import { cleanupReviewWorkspaceCaches } from '../../review-workspaces/cache-cleanup.js';
@@ -43,6 +42,7 @@ import {
   diskBytes,
   exists,
   planRunRetention,
+  readTaskPinPathNow,
   readTaskPins,
   RetentionPathOwners,
   retentionStoreAction,
@@ -54,7 +54,9 @@ import {
   type RunRetentionPlan,
   type RunRetentionRoots,
   type RunRetentionStore,
-  type TaskPinEntry,
+  type TaskPinPathResolution,
+  UNRESOLVED_TASK_PIN_PATH,
+  withRealPaths,
 } from '../../runs/retention.js';
 import {
   assertArchiveRoot,
@@ -69,12 +71,14 @@ import {
   getAllRuns,
   getAllRunsWithArchived,
   getCachedRunWithArchived,
+  getRun,
   getRunWithArchived,
   isTaskDirectoryAdmitting,
   recordRunStorageArchive,
   runsDirectory,
   runSessionArchiveDir,
 } from '../../runs/store.js';
+import { pinTaskDirs, taskPinRelease } from '../../runs/task-pin-owners.js';
 
 type Emit = (event: string, payload: unknown) => void;
 const RUN_RETENTION_FIRST_PASS_MS = 10 * 60 * 1000;
@@ -191,40 +195,90 @@ export async function retentionContext(
   };
 }
 
-/**
- * Runs that unsettled runs among `live` still read, with why: a follow-up inherits task
- * artifacts from its run family (`getFamilyRuns` over `members`), and an in-flight review reads
- * the prior run its repeat-review context recorded.
- */
-export function activeSourceHolds(live: readonly Run[], members: Run[]): Map<string, string> {
-  const holds = new Map<string, string>();
+/** Index the family and explicit prior references made by unsettled runs. */
+function indexActiveSources(live: readonly Run[]) {
+  const followUps = new Map<string, Set<string>>();
+  const reviewPriors = new Map<string, string>();
   for (const run of live) {
     if (runIsSettled(run)) continue;
     if (run.parentRunId && isFollowUpFlow(run.flowType)) {
-      const { parentRun, rootRun, otherFamilyRuns } = getFamilyRuns(run, members);
-      for (const source of [parentRun, rootRun, ...otherFamilyRuns])
-        if (source && source.id !== run.id)
-          holds.set(source.id, 'inherited by an unsettled follow-up');
+      const { familyId } = resolveFamilyIdentity(run);
+      const family = followUps.get(familyId);
+      if (family) family.add(run.id);
+      else followUps.set(familyId, new Set([run.id]));
     }
     if (run.flowType === 'review-pr')
       for (const prior of [
         run.repeatReviewContext?.priorRunId,
         run.repeatReviewContext?.session?.priorRunId,
       ])
-        if (prior && !holds.has(prior)) holds.set(prior, 'prior of an in-flight review');
+        if (prior) reviewPriors.set(prior, 'prior of an in-flight review');
   }
-  return holds;
+  return {
+    followUps,
+    reviewPriors,
+    inherited(run: Run) {
+      const family = followUps.get(resolveFamilyIdentity(run).familyId);
+      return Boolean(family && (family.size > 1 || !family.has(run.id)));
+    },
+  };
+}
+
+/** Runs whose task artifacts an unsettled follow-up or review still reads. */
+export function activeSourceHolds(live: readonly Run[], members: Run[]): Map<string, string> {
+  const { reviewPriors, inherited } = indexActiveSources(live);
+  for (const run of members)
+    if (inherited(run)) reviewPriors.set(run.id, 'inherited by an unsettled follow-up');
+  return reviewPriors;
 }
 
 /**
  * The hold right before a candidate moves: the pass's context, plus what runs dispatched since
  * the pass started now read.
  */
-function currentRetentionHold(run: Run, context: RunRetentionContext): string | undefined {
-  return (
-    runRetentionHold(run, context) ??
-    activeSourceHolds(getAllRuns(), [run, ...getAllRuns()]).get(run.id)
-  );
+function currentRetentionHold(
+  run: Run,
+  context: RunRetentionContext,
+  snapshot?: ReturnType<typeof indexActiveSources>,
+): string | undefined {
+  const hold = runRetentionHold(run, context);
+  if (hold) return hold;
+  const { reviewPriors, inherited } = snapshot ?? indexActiveSources(getAllRuns());
+  return inherited(run) ? 'inherited by an unsettled follow-up' : reviewPriors.get(run.id);
+}
+
+function protectedPinPathsAtStage(
+  owners: readonly Run[],
+  activeAtIndex: ReadonlyMap<string, ReadonlySet<string>>,
+  indexedOwners: ReadonlyMap<string, ReadonlySet<string>>,
+  realPaths: ReadonlyMap<string, TaskPinPathResolution>,
+  isHeld: (run: Run) => boolean,
+): { paths: Set<string>; unresolved: boolean } {
+  const paths = new Set<string>();
+  const fresh = new Map<string, TaskPinPathResolution>();
+  let unresolved = false;
+  for (const run of owners) {
+    let dirs = pinTaskDirs(run);
+    if (runIsSettled(run)) {
+      // The index already rechecks holds for paths with known targets. Refresh missing or newly
+      // recorded paths of settled owners only when they now hold their storage.
+      dirs = dirs.filter(
+        (dir) => typeof realPaths.get(dir) !== 'string' || !indexedOwners.get(dir)?.has(run.id),
+      );
+      if (!dirs.length || !isHeld(run)) continue;
+    }
+    for (const dir of dirs) {
+      let real = activeAtIndex.get(run.id)?.has(dir) ? realPaths.get(dir) : undefined;
+      if (typeof real !== 'string') {
+        if (!fresh.has(dir)) fresh.set(dir, readTaskPinPathNow(dir));
+        real = fresh.get(dir);
+      }
+      paths.add(dir);
+      if (real === UNRESOLVED_TASK_PIN_PATH) unresolved = true;
+      else if (real) paths.add(real);
+    }
+  }
+  return { paths, unresolved };
 }
 
 export async function runHoldsSlot(run: Run): Promise<boolean> {
@@ -262,6 +316,15 @@ export async function runRetentionPass(
     roots?: RunRetentionRoots;
     /** Archive node-hosted journals of the runs this pass released (ADR-039 Amendment 11). */
     nodeJournals?: (released: readonly Run[], held: readonly Run[]) => Promise<void>;
+    /**
+     * Release node task pins with their runs (ADR-039 Amendment 12). `split` re-reads the runs
+     * under this pass's context, so the pin pass decides inside its own admission fence.
+     */
+    nodeTaskPins?: (
+      now: number,
+      ageMs: number,
+      split: () => Promise<RetentionSplit>,
+    ) => Promise<void>;
   },
   deps: RunRetentionDeps = RUN_RETENTION_DEPS,
 ): Promise<RunRetentionPlan> {
@@ -337,8 +400,61 @@ export async function runRetentionPass(
     runs.filter((run) => !live.has(run)),
   );
   // Pins are listed once per pass; each candidate rechecks that a listed pin still exists.
-  let pinList: Promise<TaskPinEntry[]> | undefined;
-  const taskPins = () => (pinList ??= readTaskPins(roots.taskPins));
+  const taskPins = removable.length ? await readTaskPins(roots.taskPins) : [];
+  // ADR-039 Amendment 12: the task dirs held runs' pins serve, resolved once per pass. Held runs
+  // are bounded (live, in the window, on open PRs); each directory resolves once via the cache.
+  const realPaths = new Map<string, TaskPinPathResolution>();
+  // Which runs name each task dir, so the stage re-check can re-read their holds: a settled run
+  // that gains a hold during the pass keeps the pins of every dir it reads.
+  const dirRuns = new Map<string, Set<string>>();
+  const unresolvedOwners = new Set<string>();
+  const missingPathOwners = new Set<string>();
+  const missingOwnersByFamily = new Map<string, string[]>();
+  const activeAtIndex = new Map<string, Set<string>>();
+  if (taskPins.length) {
+    for (const other of runs) {
+      const dirs = pinTaskDirs(other);
+      if (!runIsSettled(other)) activeAtIndex.set(other.id, new Set(dirs));
+      for (const dir of dirs) {
+        const ids = dirRuns.get(dir);
+        if (ids) ids.add(other.id);
+        else dirRuns.set(dir, new Set([other.id]));
+      }
+    }
+    const recordedDirs = [...dirRuns.keys()];
+    await withRealPaths(recordedDirs, realPaths);
+    // The pin stores its canonical path. Match aliases before taking any staging turn.
+    for (const dir of recordedDirs) {
+      const canonical = realPaths.get(dir);
+      const ids = dirRuns.get(dir)!;
+      if (canonical === UNRESOLVED_TASK_PIN_PATH) {
+        for (const id of ids) unresolvedOwners.add(id);
+        continue;
+      }
+      if (canonical === null) {
+        for (const id of ids) missingPathOwners.add(id);
+        continue;
+      }
+      if (!canonical || canonical === dir) continue;
+      const combined = dirRuns.get(canonical);
+      if (combined) for (const id of ids) combined.add(id);
+      else dirRuns.set(canonical, new Set(ids));
+    }
+    for (const run of runs) {
+      if (!missingPathOwners.has(run.id)) continue;
+      const { familyId } = resolveFamilyIdentity(run);
+      const family = missingOwnersByFamily.get(familyId);
+      if (family) family.push(run.id);
+      else missingOwnersByFamily.set(familyId, [run.id]);
+    }
+  }
+  const heldPinDirs = await withRealPaths(
+    taskPinRelease(
+      runs.filter((run) => !removableIds.has(run.id)),
+      removable,
+    ).keptDirs,
+    realPaths,
+  );
   for (const candidate of removable) {
     await turn(async () => {
       try {
@@ -368,13 +484,36 @@ export async function runRetentionPass(
             files.push({ source, store, bytes: await diskBytes(source) });
           }
         const pending = owners.view(keptLive, keeps).keepsTaskDirectory;
-        const pins = await retiredTaskPinsOf(
-          await taskPins(),
-          new Set(files.filter((file) => file.store === 'task-dirs').map((file) => file.source)),
-          context,
-          pending,
-          exists,
+        // ADR-039 Amendment 12, the plan's and the node pass's rule: this run's pins go with it
+        // even while its task dir exists, unless a run held at the pass start (live or archived)
+        // or an unsettled run now reads that dir through any path, compared by real path. Only
+        // the candidate's own dirs and the bounded unsettled set are looked at here.
+        const activeDirs = await withRealPaths(
+          taskPinRelease(
+            getAllRuns().filter((other) => other.id !== run.id && !runIsSettled(other)),
+            [],
+          ).keptDirs,
+          realPaths,
         );
+        const keptPinDirs = new Set([...heldPinDirs.paths, ...activeDirs.paths]);
+        const keepsPin = (dir: string) =>
+          pending(dir) || keptPinDirs.has(dir) || realPaths.get(dir) === UNRESOLVED_TASK_PIN_PATH;
+        const released = await withRealPaths(taskPinRelease([], [run]).releasedDirs, realPaths);
+        const releasedPins = new Set([...released.paths].filter((dir) => !keepsPin(dir)));
+        // Unknown held ownership prevents pin deletion only. Other storage is still appraisable.
+        const pins =
+          heldPinDirs.unresolved || activeDirs.unresolved
+            ? []
+            : await retiredTaskPinsOf(
+                taskPins,
+                new Set(
+                  files.filter((file) => file.store === 'task-dirs').map((file) => file.source),
+                ),
+                context,
+                keepsPin,
+                exists,
+                releasedPins,
+              );
         for (const source of pins)
           files.push({ source, store: 'task-pins', bytes: await diskBytes(source) });
         const deleteFiles: StorageDeletion[] = files.flatMap((file) =>
@@ -403,41 +542,108 @@ export async function runRetentionPass(
         const archiveFiles = files.filter(
           (file) => retentionStoreAction(file.store) === 'archived',
         );
+        const archiveTaskDirs = new Set(
+          archiveFiles.filter((file) => file.store === 'task-dirs').map((file) => file.source),
+        );
+        const keptPaths = new Set<string>();
         await stageStoragePaths(
           roots.archiveRoot,
           run.id,
           archiveFiles,
           () => {
             const latest = getCachedRunWithArchived(run.id);
-            if (!latest || currentRetentionHold(latest, context)) return false;
-            const current = owners.view([...liveAtStart, ...getAllRuns()].filter(keeps), keeps);
+            if (!latest) return false;
+            const liveNow = getAllRuns();
+            const sources = indexActiveSources(liveNow);
+            if (currentRetentionHold(latest, context, sources)) return false;
+            const current = owners.view([...liveAtStart, ...liveNow].filter(keeps), keeps);
             const eligible = current.owned(run);
-            return files.every((file) => {
-              if (file.store === 'task-pins') {
-                const provenance: { taskDir?: unknown } = JSON.parse(
-                  readFileSync(path.join(file.source, 'provenance.json'), 'utf8'),
-                );
-                const taskDir = provenance.taskDir;
-                if (typeof taskDir !== 'string' || isTaskDirectoryAdmitting(taskDir)) return false;
-                if (current.keepsTaskDirectory(path.resolve(taskDir))) return false;
-                return (
-                  !existsSync(taskDir) ||
-                  files.some(
-                    (entry) =>
-                      entry.store === 'task-dirs' && entry.source === path.resolve(taskDir),
-                  )
-                );
+            if (
+              !files.every(
+                (file) =>
+                  file.store === 'task-pins' ||
+                  (eligible[file.store].includes(file.source) &&
+                    (file.store !== 'task-dirs' || !isTaskDirectoryAdmitting(file.source))),
+              )
+            )
+              return false;
+            if (!pins.length) return true;
+
+            const isHeld = (owner: Run) =>
+              Boolean(owner.park || currentRetentionHold(owner, context, sources));
+            // An in-flight review or follow-up can start reading archived work after planning.
+            // Refresh only its missing-path owners, using the same stage lookup as live owners.
+            const sourceIds = new Set(sources.reviewPriors.keys());
+            for (const family of sources.followUps.keys())
+              for (const id of missingOwnersByFamily.get(family) ?? []) sourceIds.add(id);
+            const pinOwners = [...liveNow];
+            for (const id of sourceIds) {
+              if (!missingPathOwners.has(id) || getRun(id)) continue;
+              const owner = getCachedRunWithArchived(id);
+              if (owner) pinOwners.push(owner);
+            }
+            const protection = protectedPinPathsAtStage(
+              pinOwners,
+              activeAtIndex,
+              dirRuns,
+              realPaths,
+              isHeld,
+            );
+            let uncertain = protection.unresolved;
+            for (const id of unresolvedOwners) {
+              if (getRun(id)) continue; // Live owners were refreshed above.
+              const owner = getCachedRunWithArchived(id);
+              if (owner && isHeld(owner)) {
+                uncertain = true;
+                break;
               }
-              return (
-                eligible[file.store].includes(file.source) &&
-                (file.store !== 'task-dirs' || !isTaskDirectoryAdmitting(file.source))
+            }
+            // Share even a rejected check across all pins for that directory.
+            const checked = new Map<string, boolean>();
+            for (const pin of pins) {
+              const provenance: { taskDir?: unknown } = JSON.parse(
+                readFileSync(path.join(pin, 'provenance.json'), 'utf8'),
               );
-            });
+              if (typeof provenance.taskDir !== 'string' || !path.isAbsolute(provenance.taskDir)) {
+                keptPaths.add(pin);
+                continue;
+              }
+              const dir = path.resolve(provenance.taskDir);
+              let deletable = checked.get(dir);
+              if (deletable === undefined) {
+                let held =
+                  isTaskDirectoryAdmitting(dir) ||
+                  current.keepsTaskDirectory(dir) ||
+                  keptPinDirs.has(dir) ||
+                  protection.paths.has(dir);
+                if (!held) {
+                  for (const id of dirRuns.get(dir) ?? []) {
+                    if (id === run.id) continue;
+                    const owner = getCachedRunWithArchived(id);
+                    if (owner && isHeld(owner)) {
+                      held = true;
+                      break;
+                    }
+                  }
+                }
+                if (held && archiveTaskDirs.has(dir)) keptPaths.add(dir);
+                deletable =
+                  !uncertain &&
+                  !held &&
+                  (releasedPins.has(dir) ||
+                    archiveTaskDirs.has(dir) ||
+                    readTaskPinPathNow(dir) === null);
+                checked.set(dir, deletable);
+              }
+              if (!deletable) keptPaths.add(pin);
+            }
+            return { keep: keptPaths };
           },
           deleteFiles,
         );
         processed.add(run.id);
-        stagedRuns.push({ id: run.id, files });
+        const staged = files.filter((file) => !keptPaths.has(file.source));
+        if (staged.length) stagedRuns.push({ id: run.id, files: staged });
       } catch (error) {
         console.error(
           `[run-retention] skipped ${candidate.id}; source/journal retained: ${(error as Error).message}`,
@@ -459,24 +665,49 @@ export async function runRetentionPass(
   }
   if (options.nodeJournals) {
     try {
-      // Read the runs again: one held since the pass began (reopened, or dispatched to resume a
-      // released session) keeps its sessions, and a run created since then is held.
-      const released: Run[] = [];
-      const held: Run[] = [];
-      const fresh = await getAllRunsWithArchived();
-      const live = getAllRuns();
-      // currentRetentionHold for every run at once: the live runs' reads are mapped one time.
-      const sources = activeSourceHolds(live, [...fresh, ...live]);
-      for (const run of fresh) {
-        const hold = runRetentionHold(run, context) ?? sources.get(run.id);
-        (hold || (await deps.holdsSlot(run)) ? held : released).push(run);
-      }
+      const { released, held } = await currentRetentionSplit(context, deps);
       await options.nodeJournals(released, held);
     } catch (error) {
       console.error(`[native-journal retention] pass failed: ${(error as Error).message}`);
     }
   }
+  if (options.nodeTaskPins) {
+    try {
+      await options.nodeTaskPins(Date.now(), context.ageMs, () =>
+        currentRetentionSplit(context, deps),
+      );
+    } catch (error) {
+      console.error(`[task-pin retention] pass failed: ${(error as Error).message}`);
+    }
+  }
   return { runs: archived, held: plan.held, paths, stores };
+}
+
+/** Every run split by the retention rule as it stands now (ADR-039 Amendments 11 and 12). */
+export interface RetentionSplit {
+  released: Run[];
+  held: Run[];
+}
+
+/**
+ * Read the runs again: one held since the pass began (reopened, or dispatched to resume a
+ * released session or task) keeps its storage, and a run created since then is held.
+ */
+export async function currentRetentionSplit(
+  context: RunRetentionContext,
+  deps: Pick<RunRetentionDeps, 'holdsSlot'> = RUN_RETENTION_DEPS,
+): Promise<RetentionSplit> {
+  const released: Run[] = [];
+  const held: Run[] = [];
+  const fresh = await getAllRunsWithArchived();
+  const live = getAllRuns();
+  // currentRetentionHold for every run at once: the live runs' reads are mapped one time.
+  const sources = activeSourceHolds(live, [...fresh, ...live]);
+  for (const run of fresh) {
+    const hold = runRetentionHold(run, context) ?? sources.get(run.id);
+    (hold || (await deps.holdsSlot(run)) ? held : released).push(run);
+  }
+  return { released, held };
 }
 
 /** The review execution caches, as `run.cleanup` and the hourly pass both clean them. */
@@ -585,8 +816,10 @@ export function startRunRetention(emit: Emit): void {
             held,
             nodeJournalRetentionDeps(journalRetentionFile(runArchiveRoot())),
           ),
+        nodeTaskPins: (now, ageMs, split) =>
+          nodeTaskPinRetentionPass(now, ageMs, { ...NODE_PIN_RETENTION_DEPS, split }),
       });
-      await nodeTaskPinRetentionPass(Date.now(), (await retentionContext([])).ageMs);
+
       await parkedWorkRetentionPass();
       if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);
     }).finally(() => {

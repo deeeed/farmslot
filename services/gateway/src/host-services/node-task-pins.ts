@@ -1,18 +1,24 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { isRecord, type Run } from '@farmslot/protocol';
+import { isRecord } from '@farmslot/protocol';
 
 import { execLocal, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { loadPoolConfigs } from '../fleet/state.js';
-import {
-  reclaimReviewWorkspaceStorage,
-  runNeedsExecutionStorage,
-} from '../review-workspaces/storage-use.js';
-import { getAllRunsWithArchived, hasTaskAdmissions, runTaskDirectories } from '../runs/store.js';
-import type { TaskPinProtection, TaskPinStage, TaskPinSweepInput } from '../runs/task-pins.cjs';
+import type { RetentionSplit } from '../methods/run/retention.js';
+import { reclaimReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
+import { hasTaskAdmissions } from '../runs/store.js';
+import { taskDirKey, taskPinRelease } from '../runs/task-pin-owners.js';
+import type {
+  TaskPinInspection,
+  TaskPinProtection,
+  TaskPinShareInput,
+  TaskPinShareResult,
+  TaskPinStage,
+  TaskPinSweepInput,
+} from '../runs/task-pins.cjs';
 
 import { backgroundHost } from './background/client.js';
 import { BACKGROUND_OPERATIONS } from './background/protocol.js';
@@ -25,38 +31,65 @@ export interface NodePinTarget {
   root: string;
 }
 export type NodePinRequest =
+  | { op: 'inspect'; root: string }
   | ({ op: 'stage' } & TaskPinSweepInput)
-  | { op: 'purge'; root: string; result: TaskPinStage };
+  | { op: 'purge'; root: string; result: TaskPinStage }
+  | ({ op: 'share' } & TaskPinShareInput);
+
+/** Pins one pass links into the shared store per node (ADR-039 Amendment 12). */
+export const TASK_PIN_SHARE_LIMIT = 8;
 
 export interface NodePinRetentionDeps {
   targets(): Promise<NodePinTarget[]>;
-  runs(): Promise<Run[]>;
+  /** Every run split by the retention rule, read inside the admission fence. */
+  split(): Promise<RetentionSplit>;
   execute(target: NodePinTarget, payload: NodePinRequest): Promise<unknown>;
   fence(operation: () => Promise<string[]>): Promise<string[]>;
 }
 
-/** Missing task directories do not remove the ownership held by replay or publication. */
-export function taskPinProtection(runs: Run[]): TaskPinProtection {
-  const taskDirs = new Set<string>();
-  for (const run of runs) {
-    // Terminal runs can still reactivate from their original pin until explicitly archived.
-    if (run.archivedAt && !runNeedsExecutionStorage(run) && !run.park) continue;
-    for (const dir of runTaskDirectories(run)) taskDirs.add(path.resolve(dir));
-    if (run.reviewWorkspace?.taskPath) taskDirs.add(path.resolve(run.reviewWorkspace.taskPath));
-    const recovery = run.park?.recoveryHandle;
-    if (recovery?.version === 1 && recovery.taskDir) taskDirs.add(path.resolve(recovery.taskDir));
-  }
+/**
+ * A pin follows its run's retention (ADR-039 Amendment 12), by the shared `taskPinRelease` rule.
+ * Missing task directories do not remove the ownership held by replay or publication.
+ */
+export function taskPinProtection(split: RetentionSplit): {
+  protection: TaskPinProtection;
+  releasedTaskDirs: string[];
+} {
+  const { keptDirs, releasedDirs } = taskPinRelease(split.held, split.released);
   return {
-    taskDirs: [...taskDirs],
-    taskNames: [...new Set([...taskDirs].map((dir) => path.basename(dir)))],
-    pinIds: [],
+    protection: {
+      taskDirs: [...keptDirs],
+      taskNames: [...new Set([...keptDirs].map((dir) => path.basename(dir)))],
+      pinIds: [],
+    },
+    releasedTaskDirs: [...releasedDirs],
+  };
+}
+
+/**
+ * Only the inspected pins' task directories travel to the node: the lists stay bounded by the
+ * 32-pin window, not by run history. Filtering by basename keeps every entry that could match.
+ */
+export function forInspectedPins(
+  decision: ReturnType<typeof taskPinProtection>,
+  inspected: TaskPinInspection,
+): Pick<TaskPinSweepInput, 'protection' | 'releasedTaskDirs' | 'ids'> {
+  // Only the release list grows with run history, and only it is narrowed: by the last two path
+  // segments (e.g. `fix/<run id>`, `<workspace>/task`), so a bare `task` name does not let every
+  // review workspace through. Dropping a released dir only keeps a pin longer. The protection
+  // list is bounded by held runs and travels whole, so no symlinked form of a held dir is lost.
+  const keys = new Set(inspected.pins.map((pin) => taskDirKey(pin.taskDir)));
+  return {
+    protection: decision.protection,
+    releasedTaskDirs: decision.releasedTaskDirs.filter((dir) => keys.has(taskDirKey(dir))),
+    ids: inspected.pins.map((pin) => pin.id),
   };
 }
 
 let program: Promise<string> | undefined;
 async function execute(target: NodePinTarget, payload: NodePinRequest): Promise<unknown> {
   program ??= readFile(new URL('../runs/task-pins.cjs', import.meta.url), 'utf8');
-  const source = `${await program}\nconst input = JSON.parse(process.argv[1]);\n(input.op === 'stage' ? stageTaskPins(input) : purgeTaskPins(input.root,input.result)).then(value => process.stdout.write(JSON.stringify(value))).catch(error => { console.error(error.message); process.exitCode=1; });`;
+  const source = `${await program}\nconst input = JSON.parse(process.argv[1]);\n(input.op === 'inspect' ? inspectTaskPins(input) : input.op === 'stage' ? stageTaskPins(input) : input.op === 'share' ? shareTaskPins(input) : purgeTaskPins(input.root,input.result)).then(value => process.stdout.write(JSON.stringify(value))).catch(error => { console.error(error.message); process.exitCode=1; });`;
   const nodeCommand = `node -e ${shellQuote(source)} ${shellQuote(JSON.stringify(payload))}`;
   const local = isLocal(target.host, target.machine);
   const command = local
@@ -65,7 +98,8 @@ async function execute(target: NodePinTarget, payload: NodePinRequest): Promise<
   const params = {
     command,
     cwd: process.cwd(),
-    timeout: payload.op === 'purge' ? 120_000 : 30_000,
+    // Sharing hashes up to TASK_PIN_SHARE_LIMIT whole pins, about 3 GB on a busy node.
+    timeout: payload.op === 'share' ? 900_000 : payload.op === 'purge' ? 120_000 : 30_000,
     maxBuffer: 1024 * 1024,
   };
   const result = backgroundHost.active()
@@ -78,7 +112,8 @@ async function execute(target: NodePinTarget, payload: NodePinRequest): Promise<
   return JSON.parse(result.stdout);
 }
 
-export const NODE_PIN_RETENTION_DEPS: NodePinRetentionDeps = {
+/** `split` comes from the retention pass, which owns the run context (methods/run/retention). */
+export const NODE_PIN_RETENTION_DEPS: Omit<NodePinRetentionDeps, 'split'> = {
   async targets() {
     const targets = new Map<string, NodePinTarget>();
     for (const pool of await loadPoolConfigs()) {
@@ -94,7 +129,6 @@ export const NODE_PIN_RETENTION_DEPS: NodePinRetentionDeps = {
     }
     return [...targets.values()];
   },
-  runs: getAllRunsWithArchived,
   execute,
   fence: async (operation) => (hasTaskAdmissions() ? [] : reclaimReviewWorkspaceStorage(operation)),
 };
@@ -108,25 +142,101 @@ function decodeStage(value: unknown): TaskPinStage {
     !(value.stage === null || typeof value.stage === 'string') ||
     !Array.isArray(value.staged) ||
     value.staged.length > 8 ||
-    !value.staged.every((id): id is string => typeof id === 'string')
+    !value.staged.every((id): id is string => typeof id === 'string') ||
+    !(
+      value.swept === undefined ||
+      (typeof value.swept === 'number' && Number.isInteger(value.swept) && value.swept >= 0)
+    )
   )
     throw new Error('Invalid node task-pin staging receipt');
-  return { inspected: value.inspected, stage: value.stage, staged: value.staged };
+  return {
+    inspected: value.inspected,
+    stage: value.stage,
+    staged: value.staged,
+    ...(typeof value.swept === 'number' ? { swept: value.swept } : {}),
+  };
+}
+
+function decodeInspection(value: unknown): TaskPinInspection {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.pins) ||
+    value.pins.length > 32 ||
+    !value.pins.every(
+      (pin) => isRecord(pin) && typeof pin.id === 'string' && typeof pin.taskDir === 'string',
+    )
+  )
+    throw new Error('Invalid node task-pin inspection receipt');
+  return {
+    pins: value.pins.flatMap((pin) =>
+      isRecord(pin) && typeof pin.id === 'string' && typeof pin.taskDir === 'string'
+        ? [{ id: pin.id, taskDir: pin.taskDir }]
+        : [],
+    ),
+  };
+}
+
+function decodeShare(value: unknown): TaskPinShareResult {
+  const ids = (list: unknown): list is string[] =>
+    Array.isArray(list) &&
+    list.length <= TASK_PIN_SHARE_LIMIT &&
+    list.every((id) => typeof id === 'string');
+  const count = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+  if (
+    !isRecord(value) ||
+    !ids(value.pins) ||
+    !ids(value.unverified) ||
+    !count(value.shared) ||
+    !count(value.inserted) ||
+    !count(value.savedBytes) ||
+    !count(value.bytesHashed) ||
+    !count(value.seconds) ||
+    !Array.isArray(value.failed) ||
+    value.failed.length > TASK_PIN_SHARE_LIMIT ||
+    !isRecord(value.private) ||
+    !Object.values(value.private).every(count)
+  )
+    throw new Error('Invalid node task-pin share receipt');
+  const failed = value.failed.flatMap((entry) =>
+    isRecord(entry) &&
+    typeof entry.id === 'string' &&
+    typeof entry.code === 'string' &&
+    typeof entry.message === 'string'
+      ? [{ id: entry.id, code: entry.code, message: entry.message }]
+      : [],
+  );
+  const privateFiles: Record<string, number> = {};
+  for (const [reason, files] of Object.entries(value.private))
+    if (count(files)) privateFiles[reason] = files;
+  return {
+    pins: value.pins,
+    unverified: value.unverified,
+    failed,
+    shared: value.shared,
+    inserted: value.inserted,
+    savedBytes: value.savedBytes,
+    bytesHashed: value.bytesHashed,
+    seconds: value.seconds,
+    private: privateFiles,
+  };
 }
 
 /** One bounded node batch per existing hourly retention tick. Purge never holds admission. */
 export async function nodeTaskPinRetentionPass(
   now: number,
   ageMs: number,
-  deps: NodePinRetentionDeps = NODE_PIN_RETENTION_DEPS,
+  deps: NodePinRetentionDeps,
 ): Promise<void> {
   for (const target of await deps.targets()) {
     try {
       let staged: TaskPinStage | undefined;
       await deps.fence(async () => {
-        const protection = taskPinProtection(await deps.runs());
+        const inspected = decodeInspection(
+          await deps.execute(target, { op: 'inspect', root: target.root }),
+        );
+        const decision = forInspectedPins(taskPinProtection(await deps.split()), inspected);
         staged = decodeStage(
-          await deps.execute(target, { op: 'stage', root: target.root, now, ageMs, protection }),
+          await deps.execute(target, { op: 'stage', root: target.root, now, ageMs, ...decision }),
         );
         return [];
       });
@@ -139,8 +249,32 @@ export async function nodeTaskPinRetentionPass(
       )
         throw new Error('Invalid node task-pin purge receipt');
       console.log(
-        `[task-pin retention] ${target.machine} inspected=${staged.inspected} removed=${JSON.stringify(result.removed)}`,
+        `[task-pin retention] ${target.machine} inspected=${staged.inspected} removed=${JSON.stringify(result.removed)} store-swept=${staged.swept ?? 0}`,
       );
+      // Outside the fence: linking never removes anything a task could still be admitted to read.
+      const shared = decodeShare(
+        await deps.execute(target, { op: 'share', root: target.root, limit: TASK_PIN_SHARE_LIMIT }),
+      );
+      if (shared.pins.length || shared.unverified.length || shared.failed.length)
+        console.log(
+          `[task-pin store] ${target.machine} pins=${JSON.stringify(shared.pins)} shared=${shared.shared} new=${shared.inserted} saved=${(shared.savedBytes / 2 ** 20).toFixed(0)}MB hashed=${(shared.bytesHashed / 2 ** 20).toFixed(0)}MB in ${shared.seconds}s`,
+        );
+      for (const failure of shared.failed)
+        console.error(
+          `[task-pin store] ${target.machine} pin ${failure.id} not shared (${failure.code}): ${failure.message}; retried next pass`,
+        );
+      for (const [reason, files] of Object.entries(shared.private))
+        console.warn(
+          reason === 'mismatch'
+            ? `[task-pin store] ${target.machine} ${files} file(s) kept private: their store entry failed re-verification and was quarantined`
+            : reason === 'changed'
+              ? `[task-pin store] ${target.machine} ${files} file(s) kept private: they changed after the pin was fingerprinted`
+              : `[task-pin store] ${target.machine} ${files} file(s) kept as private read-only copies: hard link unavailable (${reason})`,
+        );
+      if (shared.unverified.length)
+        console.error(
+          `[task-pin store] ${target.machine} pins ${JSON.stringify(shared.unverified)} changed while sharing; left unrecorded for the next pass`,
+        );
     } catch (error) {
       // A failed node retains its remaining or staged pins; healthy nodes still get their turn.
       console.error(

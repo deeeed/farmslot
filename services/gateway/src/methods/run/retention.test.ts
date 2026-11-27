@@ -4,6 +4,7 @@ import fsPromises, {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -39,6 +40,9 @@ import { stageStoragePaths, storageArchiveManifest } from '../../runs/storage-ar
 import {
   archiveRun,
   createRun,
+  deleteArchivedRun,
+  deleteRun,
+  getAllRunsWithArchived,
   getRunWithArchived,
   persistRunNow,
   runsDirectory,
@@ -46,6 +50,7 @@ import {
   updateRun,
   withTaskAdmission,
 } from '../../runs/store.js';
+import { pinTaskDirs } from '../../runs/task-pin-owners.js';
 
 import {
   formatRunRetention,
@@ -527,7 +532,10 @@ test('a retention plan lists only storage that removable runs alone own on this 
   const old = RUN_RETENTION_AGE_MS + 60_000;
   const retired = await pin(roots, 'retired', path.join(roots.taskRoots[0], 'gone'), NOW - old);
   await pin(roots, 'fresh', path.join(roots.taskRoots[0], 'gone'), NOW - 60_000);
-  await pin(roots, 'in-use', slotCopy, NOW - old);
+  // ADR-039 Amendment 12: the removable run's slot copy still exists, but its pin follows the
+  // run. A pin on a directory a live run also reads stays.
+  const released = await pin(roots, 'in-use', slotCopy, NOW - old);
+  await pin(roots, 'shared-held', shared, NOW - old);
 
   const removable: Run = {
     ...makeRun({
@@ -581,7 +589,7 @@ test('a retention plan lists only storage that removable runs alone own on this 
     path.join(bundleRoot, 'availability', 'own.json'),
   ]);
   assert.equal(plan.stores['run-bundles'].entries, 1, 'one bundle, not its three paths');
-  assert.deepEqual(plan.paths['task-pins'], [retired]);
+  assert.deepEqual(plan.paths['task-pins'].sort(), [released, retired].sort());
   assert.equal(plan.stores['task-dirs'].entries, 1);
   assert.ok(plan.stores['task-dirs'].bytes >= 4096);
 });
@@ -687,6 +695,7 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
   let slotChecks = 0;
   let created: string | undefined;
   let journals: { released: string[]; held: string[] } | undefined;
+  let pins: { ageMs: number; released: string[]; held: string[] } | undefined;
   const after = await runRetentionPass(
     {
       apply: true,
@@ -694,6 +703,15 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
       now: passNow,
       nodeJournals: async (released, held) => {
         journals = { released: released.map((run) => run.id), held: held.map((run) => run.id) };
+      },
+      // Task pins share the same split (ADR-039 Amendment 12), read again inside their fence.
+      nodeTaskPins: async (_now, ageMs, split) => {
+        const { released, held } = await split();
+        pins = {
+          ageMs,
+          released: released.map((run) => run.id),
+          held: held.map((run) => run.id),
+        };
       },
     },
     {
@@ -718,6 +736,10 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
   assert.ok(journals?.held.includes(heldAgain!));
   assert.ok(!journals?.released.includes(heldAgain!));
   assert.ok(created && journals?.held.includes(created));
+  assert.ok(pins?.released.includes(stays!));
+  assert.ok(pins?.held.includes(heldAgain!) && !pins.released.includes(heldAgain!));
+  assert.ok(pins?.held.includes(created!));
+  assert.equal(pins?.ageMs, RUN_RETENTION_AGE_MS);
   assert.equal(after.stores['task-dirs'].entries, 0);
   for (const record of originals) assert.ok(existsSync(record));
 });
@@ -1047,6 +1069,210 @@ test(
     );
   },
 );
+
+test(
+  'apply deletes a released run’s pin whose task directory still exists in its slot',
+  { timeout: 4500 },
+  async (t) => {
+    // ADR-039 Amendment 12 on the gateway's own pin root: plan and apply agree.
+    const f = await recreatableRun(t);
+    const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', 'temp', 'tasks', f.run.id);
+    await file(path.join(slotTask, 'TASK.md'));
+    updateRun(f.run.id, { activeTaskFile: path.join(slotTask, 'TASK.md') });
+    await persistRunNow(f.run);
+    const slotPin = await pin(
+      f.roots,
+      `${f.run.id}-slot`,
+      slotTask,
+      NOW - RUN_RETENTION_AGE_MS - 60_000,
+    );
+    const plan = await runRetentionPass({ ...f.options, apply: false }, privateDeps);
+    assert.ok(plan.paths['task-pins'].includes(slotPin));
+    await runRetentionPass(f.options, privateDeps);
+    assert.equal(existsSync(slotPin), false, 'the pin follows its released run');
+    assert.ok(existsSync(path.join(slotTask, 'TASK.md')), 'the slot checkout is not retention’s');
+  },
+);
+
+for (const keeper of [
+  'a live run through a symlinked path',
+  'an archived held run’s review workspace',
+])
+  test(
+    `apply keeps a released run’s pin that ${keeper} still reads`,
+    { timeout: 4500 },
+    async (t) => {
+      const f = await recreatableRun(t);
+      const slots = path.join(path.dirname(f.roots.taskPins), 'slot');
+      const slotTask = path.join(slots, 'temp', 'tasks', f.run.id);
+      await file(path.join(slotTask, 'TASK.md'));
+      updateRun(f.run.id, { activeTaskFile: path.join(await realpath(slotTask), 'TASK.md') });
+      await persistRunNow(f.run);
+      const slotPin = await pin(
+        f.roots,
+        `${f.run.id}-slot`,
+        await realpath(slotTask),
+        NOW - RUN_RETENTION_AGE_MS - 60_000,
+      );
+      const holder = createRun({
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        mode: 'autonomous',
+        ticketOrPr: 'RETENTION-HOLDER',
+      });
+      if (keeper.startsWith('a live')) {
+        const linked = path.join(path.dirname(f.roots.taskPins), 'linked-slot');
+        await symlink(slots, linked);
+        updateRun(holder.id, {
+          status: 'monitoring',
+          activeTaskFile: path.join(linked, 'temp', 'tasks', f.run.id, 'TASK.md'),
+        });
+        await persistRunNow(holder);
+      } else {
+        updateRun(holder.id, {
+          status: 'done',
+          completedAt: settled,
+          tags: ['keep'],
+          reviewWorkspace: { ...workspace(path.join(slots, 'review')), taskPath: slotTask },
+        });
+        await persistRunNow(holder);
+        assert.equal(await archiveRun(holder.id), true);
+      }
+      await runRetentionPass(f.options, privateDeps);
+      assert.ok(existsSync(slotPin), 'a kept run still reads this pin’s task directory');
+    },
+  );
+
+test('apply resolves each task dir once per pass, however many runs it weighs', async (t) => {
+  // Performance rule 1: per-candidate work must not grow with run history. Each removable run
+  // is checked against the held runs' dirs, resolved once for the pass.
+  const roots = await retentionRoots(t, runsDirectory());
+  const slots = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks');
+  const dirs: string[] = [];
+  for (const [kind, count] of [
+    ['released', 6],
+    ['held', 6],
+  ] as const)
+    for (let i = 0; i < count; i++) {
+      const run = createRun({
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        mode: 'autonomous',
+        ticketOrPr: `RETENTION-COUNT-${kind}-${i}`,
+      });
+      const dir = path.join(slots, run.id);
+      dirs.push(dir);
+      await file(path.join(dir, 'TASK.md'));
+      updateRun(run.id, {
+        status: 'done',
+        completedAt: settled,
+        activeTaskFile: path.join(dir, 'TASK.md'),
+        ...(kind === 'held' ? { tags: ['keep'] } : {}),
+      });
+      await persistRunNow(run);
+      await pin(roots, run.id, dir, NOW - RUN_RETENTION_AGE_MS - 60_000);
+    }
+  let lookups = 0;
+  const original = fsPromises.realpath;
+  t.mock.method(fsPromises, 'realpath', async (...args: Parameters<typeof fsPromises.realpath>) => {
+    lookups++;
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  await runRetentionPass(
+    { apply: true, roots, now: Date.now() + RUN_RETENTION_AGE_MS + 60_000 },
+    privateDeps,
+  );
+  t.mock.restoreAll();
+  syncBuiltinESMExports();
+  // Every run in the store counts, other tests' runs too: each dir resolves at most once in the
+  // plan and once in apply, never once per candidate.
+  const allDirs = new Set((await getAllRunsWithArchived()).flatMap(pinTaskDirs));
+  assert.ok(
+    lookups <= allDirs.size * 2,
+    `${lookups} real-path lookups for ${allDirs.size} task dirs (plan and apply once each)`,
+  );
+  for (const [i, dir] of dirs.entries())
+    assert.equal(existsSync(path.join(roots.taskPins, path.basename(dir))), i >= 6);
+});
+
+test('the gateway root keeps pins a held run reads through its review workspace, and a parked run’s', async (t) => {
+  const roots = await retentionRoots(t);
+  const shared = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks', 'shared');
+  const parkedTask = path.join(path.dirname(roots.taskPins), 'slot', 'temp', 'tasks', 'parked');
+  for (const dir of [shared, parkedTask]) await file(path.join(dir, 'TASK.md'));
+  const old = NOW - RUN_RETENTION_AGE_MS - 60_000;
+  const sharedPin = await pin(roots, 'shared', shared, old);
+  const parkedPin = await pin(roots, 'parked', parkedTask, old);
+  const released: Run = {
+    ...makeRun({ id: 'released', status: 'done', activeTaskFile: path.join(shared, 'TASK.md') }),
+    updatedAt: settled,
+  };
+  const reviewer: Run = {
+    ...makeRun({ id: 'reviewer', status: 'monitoring' }),
+    reviewWorkspace: { ...workspace(path.dirname(shared)), taskPath: shared },
+  };
+  const parked: Run = {
+    ...makeRun({ id: 'parked', status: 'done', activeTaskFile: path.join(parkedTask, 'TASK.md') }),
+    updatedAt: settled,
+    park: {
+      version: 1,
+      operationId: 'park-op',
+      previewId: 'park-preview',
+      generation: 1,
+      machine: 'macwork',
+      slotId: 'slot-1',
+      mode: 'release',
+      phase: 'parked',
+      prePauseStatus: 'blocked',
+      prePauseCurrentStep: null,
+      resourceManifest: { capturedAt: settled, resources: [], capabilityLeases: [] },
+      recoveryHandle: null,
+      errors: [],
+      residuals: { runner: 'stopped', resources: [] },
+      createdAt: settled,
+      updatedAt: settled,
+      runId: 'parked',
+    },
+  };
+  const { plan } = await planRunRetention(
+    [released, reviewer, parked],
+    context(),
+    roots,
+    async () => false,
+  );
+  assert.equal(plan.paths['task-pins'].includes(sharedPin), false);
+  assert.equal(plan.paths['task-pins'].includes(parkedPin), false);
+});
+
+test('a held run recording a task dir through a symlink keeps the pin a released run also names', async (t) => {
+  const roots = await retentionRoots(t);
+  const real = path.join(path.dirname(roots.taskPins), 'real-tasks', 'task');
+  await file(path.join(real, 'TASK.md'));
+  const linked = path.join(path.dirname(roots.taskPins), 'linked-tasks');
+  await symlink(path.dirname(real), linked);
+  const sharedPin = await pin(
+    roots,
+    'linked',
+    await realpath(real),
+    NOW - RUN_RETENTION_AGE_MS - 60_000,
+  );
+  const released: Run = {
+    ...makeRun({ id: 'released', status: 'done', activeTaskFile: path.join(real, 'TASK.md') }),
+    updatedAt: settled,
+  };
+  const held = makeRun({
+    id: 'held',
+    status: 'monitoring',
+    activeTaskFile: path.join(linked, 'task', 'TASK.md'),
+  });
+  const { plan } = await planRunRetention([released, held], context(), roots, async () => false);
+  assert.equal(plan.paths['task-pins'].includes(sharedPin), false);
+});
 
 test(
   'recreatable pins survive admission, a retention hold and an active run',
@@ -1412,4 +1638,375 @@ test('the hourly turn runs the shared-store pass after the run pass fails', asyn
     },
   );
   assert.equal(shared, 1);
+});
+
+function onPinDeletionIntent(
+  t: test.TestContext,
+  f: Awaited<ReturnType<typeof recreatableRun>>,
+  pinPath: string,
+  effect: () => void | Promise<void>,
+): void {
+  const manifest = storageArchiveManifest(f.roots.archiveRoot, f.run.id);
+  const original = fsPromises.rename;
+  let fired = false;
+  t.mock.method(fsPromises, 'rename', async (...args: Parameters<typeof fsPromises.rename>) => {
+    await original(...args);
+    if (args[1] !== manifest || fired) return;
+    const { entries } = await f.manifest();
+    if (
+      entries.some(
+        (entry: { source: string; state: string }) =>
+          entry.source === pinPath && entry.state === 'deleting',
+      )
+    ) {
+      fired = true;
+      await effect();
+    }
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+}
+
+async function pinInSlot(f: Awaited<ReturnType<typeof recreatableRun>>) {
+  const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', 'temp', 'tasks', f.run.id);
+  await file(path.join(slotTask, 'TASK.md'));
+  const task = await realpath(slotTask);
+  updateRun(f.run.id, { activeTaskFile: path.join(task, 'TASK.md') });
+  await persistRunNow(f.run);
+  const slotPin = await pin(f.roots, `${f.run.id}-slot`, task, NOW - RUN_RETENTION_AGE_MS - 60_000);
+  return { task, slotPin };
+}
+
+for (const kept of [false, true])
+  test(`an unresolved ${kept ? 'held' : 'released'} historical task path leaves independent retention running`, async (t) => {
+    const f = await recreatableRun(t);
+    const parent = path.join(f.roots.taskRoots[0], 'old-file');
+    await file(parent);
+    const broken = path.join(parent, 'task');
+    await assert.rejects(realpath(broken), { code: 'ENOTDIR' });
+    const old = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: 'RETENTION-OLD-BROKEN-PATH',
+    });
+    updateRun(old.id, {
+      status: 'done',
+      completedAt: settled,
+      ...(kept ? { tags: ['keep'] } : {}),
+      taskFile: path.join(broken, 'TASK.md'),
+      reviewWorkspace: { ...workspace(parent, 'mini'), taskPath: broken },
+    });
+    await persistRunNow(old);
+    assert.equal(await archiveRun(old.id), true);
+    let journals = 0;
+    let pins = 0;
+    const result = await runRetentionPass(
+      {
+        ...f.options,
+        nodeJournals: async () => {
+          journals++;
+        },
+        nodeTaskPins: async () => {
+          pins++;
+        },
+      },
+      privateDeps,
+    );
+    assert.ok(result.paths['task-dirs'].includes(f.task));
+    assert.equal(
+      existsSync(f.taskPin),
+      kept,
+      'only unresolved held ownership protects unrelated pins',
+    );
+    assert.equal(journals, 1);
+    assert.equal(pins, 1);
+  });
+
+test('a newly admitted owner protects a pin through an alias that was missing at planning', async (t) => {
+  const f = await recreatableRun(t);
+  const { task, slotPin } = await pinInSlot(f);
+  const alias = path.join(path.dirname(f.roots.taskPins), 'late-task-alias');
+  const old = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'RETENTION-EARLY-MISSING-PATH',
+  });
+  updateRun(old.id, {
+    status: 'done',
+    completedAt: settled,
+    reviewWorkspace: { ...workspace(path.dirname(alias), 'mini'), taskPath: alias },
+  });
+  await persistRunNow(old);
+  await assert.rejects(realpath(alias), { code: 'ENOENT' });
+  let admitted = false;
+  onPinDeletionIntent(t, f, slotPin, async () => {
+    const taskFile = path.join(alias, 'TASK.md');
+    await symlink(task, alias);
+    await withTaskAdmission(taskFile, async () => {
+      const owner = createRun({
+        flowType: 'fix-bug',
+        project: 'farmslot-farm',
+        mode: 'autonomous',
+        ticketOrPr: 'RETENTION-LATE-ADMISSION',
+      });
+      updateRun(owner.id, { status: 'monitoring', taskFile });
+      await persistRunNow(owner);
+    });
+    admitted = true;
+  });
+  await runRetentionPass(f.options, privateDeps);
+  assert.ok(admitted, 'the owner was admitted after the pin was selected');
+  assert.ok(existsSync(slotPin), 'the newly admitted owner keeps the pin');
+  const { entries } = await f.manifest();
+  assert.equal(
+    entries.find((entry: { source: string }) => entry.source === slotPin)?.state,
+    'kept',
+  );
+});
+
+test('an unappraisable canonical pin target leaves independent retention running', async (t) => {
+  const f = await recreatableRun(t);
+  const root = await realpath(path.dirname(f.roots.taskPins));
+  const parent = path.join(root, 'stale-parent');
+  await file(parent);
+  const target = path.join(parent, 'task');
+  await assert.rejects(realpath(target), { code: 'ENOTDIR' });
+  const stalePin = await pin(f.roots, 'stale-pin', target, NOW - RUN_RETENTION_AGE_MS - 60_000);
+  const alias = path.join(root, 'differently-named-alias');
+  await symlink(target, alias);
+  const old = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'RETENTION-STALE-CANONICAL',
+  });
+  updateRun(old.id, {
+    status: 'done',
+    completedAt: settled,
+    reviewWorkspace: { ...workspace(path.dirname(alias), 'mini'), taskPath: alias },
+  });
+  await persistRunNow(old);
+  assert.equal(await archiveRun(old.id), true);
+  const callbacks: string[] = [];
+  const result = await runRetentionPass(
+    {
+      ...f.options,
+      nodeJournals: async () => {
+        callbacks.push('journals');
+      },
+      nodeTaskPins: async () => {
+        callbacks.push('pins');
+      },
+    },
+    privateDeps,
+  );
+  assert.deepEqual(callbacks, ['journals', 'pins']);
+  assert.ok(result.paths['task-dirs'].includes(f.task));
+  assert.ok(result.paths['task-pins'].includes(f.taskPin));
+  assert.ok(existsSync(stalePin), 'uncertain existence retains the stale canonical pin');
+});
+
+for (const form of ['unresolved alias', 'alias created after indexing'] as const)
+  test(`a settled owner with an ${form} can keep its pin without blocking an independent archive`, async (t) => {
+    const f = await recreatableRun(t);
+    const { task, slotPin } = await pinInSlot(f);
+    const parent = path.join(path.dirname(f.roots.taskPins), 'late-parent');
+    const alias = path.join(parent, 'task');
+    if (form === 'unresolved alias') await file(parent);
+    else await mkdir(parent);
+    const code = form === 'unresolved alias' ? 'ENOTDIR' : 'ENOENT';
+    await assert.rejects(realpath(alias), { code });
+    const owner = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: 'RETENTION-LATE-SETTLED-KEEP',
+    });
+    updateRun(owner.id, {
+      status: 'done',
+      completedAt: settled,
+      reviewWorkspace: { ...workspace(parent, 'mini'), taskPath: alias },
+    });
+    await persistRunNow(owner);
+    let tagged = false;
+    onPinDeletionIntent(t, f, slotPin, async () => {
+      if (form === 'alias created after indexing') await symlink(task, alias);
+      updateRun(owner.id, { tags: ['keep'] });
+      tagged = true;
+    });
+    const result = await runRetentionPass(f.options, privateDeps);
+    assert.ok(tagged, 'the owner was held after deletion was journaled');
+    assert.ok(existsSync(slotPin), 'the settled owner keeps its pin');
+    assert.ok(result.paths['task-dirs'].includes(f.task), 'the independent task was archived');
+    assert.ok(
+      !result.paths['task-pins'].includes(slotPin),
+      'the kept pin is excluded from the summary',
+    );
+    const { entries } = await f.manifest();
+    assert.equal(
+      entries.find((entry: { source: string }) => entry.source === slotPin)?.state,
+      'kept',
+    );
+    assert.equal(existsSync(f.taskPin), form === 'unresolved alias');
+  });
+
+test('an archived prior that becomes held through a late alias keeps its pin independently', async (t) => {
+  const f = await recreatableRun(t);
+  const { task, slotPin } = await pinInSlot(f);
+  const parent = path.join(path.dirname(f.roots.taskPins), 'late-archived');
+  await mkdir(parent);
+  const alias = path.join(parent, 'task');
+  await assert.rejects(realpath(alias), { code: 'ENOENT' });
+  const review = {
+    flowType: 'review-pr',
+    project: 'farmslot-farm',
+    mode: 'autonomous',
+    ticketOrPr: 'o/r#9',
+  } as const;
+  const prior = createRun(review);
+  updateRun(prior.id, {
+    status: 'done',
+    completedAt: settled,
+    prState: 'CLOSED',
+    reviewWorkspace: { ...workspace(parent, 'mini'), taskPath: alias },
+  });
+  await persistRunNow(prior);
+  assert.equal(await archiveRun(prior.id), true);
+  t.after(async () => {
+    await deleteArchivedRun(prior.id);
+  });
+  const live = createRun(review);
+  t.after(async () => {
+    await persistRunNow(updateRun(live.id, { status: 'cancelled' }));
+    await deleteRun(live.id);
+  });
+  updateRun(live.id, { status: 'monitoring' });
+  await persistRunNow(live);
+  const deps = { ...privateDeps, openPrs: async () => [] };
+  const plan = await runRetentionPass({ ...f.options, apply: false }, deps);
+  assert.ok(plan.runs.includes(prior.id), 'the archived prior was released in the plan');
+
+  let selected = false;
+  onPinDeletionIntent(t, f, slotPin, async () => {
+    await symlink(task, alias);
+    updateRun(live.id, {
+      repeatReviewContext: {
+        version: 1,
+        chainId: 'chain',
+        generation: 2,
+        priorRunId: prior.id,
+        priorFamilyId: prior.familyId ?? prior.id,
+        repository: 'o/r',
+        prNumber: 9,
+        currentHeadSha: 'cccccccccccccccc',
+        verdict: 'request changes',
+        unresolvedFindings: [],
+        artifactRefs: [],
+        farmslotEvidenceRefs: [],
+        mode: 'warm',
+        validationDepth: 'static-code',
+      },
+    });
+    selected = true;
+  });
+  const result = await runRetentionPass(f.options, deps);
+  assert.ok(selected, 'the live review selected its archived prior after the intent');
+  assert.ok(result.paths['task-dirs'].includes(f.task), 'the independent task was archived');
+  assert.ok(result.paths['task-pins'].includes(f.taskPin), 'the independent pin was deleted');
+  assert.ok(existsSync(slotPin), 'the newly held archived prior retains its canonical pin');
+  assert.ok(!result.paths['task-pins'].includes(slotPin));
+  const { entries } = await f.manifest();
+  assert.equal(
+    entries.find((entry: { source: string }) => entry.source === slotPin)?.state,
+    'kept',
+  );
+});
+
+for (const form of ['canonical path', 'symlink alias'] as const)
+  test(`a review owner using its ${form} can keep a pin at staging`, async (t) => {
+    const f = await recreatableRun(t);
+    const { task: canonicalTask, slotPin } = await pinInSlot(f);
+    const alias = path.join(path.dirname(f.roots.taskPins), 'review-task-alias');
+    await symlink(canonicalTask, alias);
+    const reviewer = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: 'RETENTION-LATE-HOLD',
+    });
+    const taskPath = form === 'canonical path' ? canonicalTask : alias;
+    assert.equal(await realpath(taskPath), canonicalTask);
+    updateRun(reviewer.id, {
+      status: 'done',
+      completedAt: settled,
+      reviewWorkspace: { ...workspace(path.dirname(canonicalTask)), taskPath },
+    });
+    await persistRunNow(reviewer);
+    let tagged = false;
+    onPinDeletionIntent(t, f, slotPin, () => {
+      tagged = true;
+      updateRun(reviewer.id, { tags: ['keep'] });
+    });
+    await runRetentionPass(f.options, privateDeps);
+    assert.ok(tagged, 'the pin was selected for deletion before the keep arrived');
+    assert.ok(existsSync(slotPin), 'the late hold keeps the pin');
+    const { entries } = await f.manifest();
+    assert.equal(
+      entries.find((entry: { source: string }) => entry.source === slotPin)?.state,
+      'kept',
+    );
+  });
+
+test('multiple pins of one task directory share the stage owner check', async (t) => {
+  const f = await recreatableRun(t);
+  const slotTask = path.join(path.dirname(f.roots.taskPins), 'slot', f.run.id);
+  await file(path.join(slotTask, 'TASK.md'));
+  const task = await realpath(slotTask);
+  updateRun(f.run.id, { activeTaskFile: path.join(task, 'TASK.md') });
+  await persistRunNow(f.run);
+  let ownerChecks = 0;
+  let measuring = false;
+  const ownerCount = 12;
+  for (let i = 0; i < ownerCount; i++) {
+    const owner = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      mode: 'autonomous',
+      ticketOrPr: `RETENTION-SHARED-${i}`,
+    });
+    updateRun(owner.id, {
+      status: 'done',
+      completedAt: settled,
+      reviewWorkspace: { ...workspace(path.dirname(task), 'mini'), taskPath: task },
+    });
+    await persistRunNow(owner);
+    const tags: string[] = [];
+    tags.includes = () => {
+      if (measuring) ownerChecks++;
+      return false;
+    };
+    owner.tags = tags;
+  }
+  const pins: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    pins.push(await pin(f.roots, `${f.run.id}-${i}`, task, NOW - RUN_RETENTION_AGE_MS - 60_000));
+  }
+  let producerChecks = 0;
+  await runRetentionPass(f.options, {
+    ...privateDeps,
+    holdsSlot: async (run) => {
+      measuring = run.id === f.run.id && ++producerChecks === 2;
+      return false;
+    },
+  });
+  assert.ok(
+    pins.every((entry) => !existsSync(entry)),
+    'all unheld pins are removed',
+  );
+  assert.equal(ownerChecks, ownerCount, 'stage checks each owner once across all eight pins');
 });
