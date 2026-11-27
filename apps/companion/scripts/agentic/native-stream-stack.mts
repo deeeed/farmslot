@@ -90,7 +90,12 @@ interface FixtureTerminals {
 
 const runner = process.env.NATIVE_STREAM_RUNNER ?? 'claude';
 const fixture = process.env.NATIVE_STREAM_FIXTURE ?? 'native-stream-latency-claude.cjs';
-const binaries: Record<string, string> = { claude: 'claude', opencode: 'opencode', codex: 'codex' };
+const binaries: Record<string, string> = {
+  claude: 'claude',
+  opencode: 'opencode',
+  codex: 'codex',
+  antigravity: 'agy',
+};
 const realRunner = fixture === 'none';
 /**
  * NATIVE_STREAM_WIRE_LOG, a new path: one JSON line per frame the gateway sends to a client, with
