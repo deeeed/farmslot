@@ -159,7 +159,7 @@ export async function loadGatewayMedia(
 interface LoadedGatewayMedia {
   url: string;
   dispose(): void;
-  signedVideo?: boolean;
+  renewalUrl?: string;
 }
 
 async function loadGatewayVideo(url: string, signal: AbortSignal): Promise<LoadedGatewayMedia> {
@@ -192,7 +192,17 @@ async function loadGatewayVideo(url: string, signal: AbortSignal): Promise<Loade
   )
     throw new Error('Gateway returned an invalid playback URL.');
   playback.hash = resource.hash;
-  return { url: sameOriginGatewayHttpUrl(playback.toString()), signedVideo: true, dispose() {} };
+  const urlForPlayer = sameOriginGatewayHttpUrl(playback.toString());
+  playback.searchParams.delete(RUN_ARTIFACT_MEDIA_GRANT_PARAM);
+  return {
+    url: urlForPlayer,
+    renewalUrl:
+      playback.searchParams.has('bundleDigest') &&
+      /^[a-f0-9]{64}$/u.test(playback.searchParams.get('v') ?? '')
+        ? playback.toString()
+        : undefined,
+    dispose() {},
+  };
 }
 
 type GatewayMediaFormat = 'url' | 'html' | 'video';
@@ -248,7 +258,8 @@ export class GatewayMedia extends AsyncDirective {
           return;
         }
         this.media = media;
-        if (media.signedVideo && this.video) this.watchVideo(this.video, url, abort.signal);
+        if (media.renewalUrl && this.video)
+          this.watchVideo(this.video, media.renewalUrl, abort.signal);
         this.setValue(this.value(media.url, format));
       })
       .catch((error: unknown) => {
@@ -266,7 +277,7 @@ export class GatewayMedia extends AsyncDirective {
     return this.initial;
   }
 
-  private watchVideo(video: HTMLVideoElement, artifactUrl: string, signal: AbortSignal): void {
+  private watchVideo(video: HTMLVideoElement, renewalUrl: string, signal: AbortSignal): void {
     let requestedTime: number | undefined;
     let canRenew = true;
     let renewing = false;
@@ -312,18 +323,22 @@ export class GatewayMedia extends AsyncDirective {
     video.addEventListener(
       'error',
       (event) => {
-        if (!renewing && (!canRenew || !this.media?.signedVideo)) return;
+        if (!renewing && (!canRenew || this.media?.renewalUrl !== renewalUrl)) return;
         event.stopImmediatePropagation();
         if (renewing) return;
         canRenew = false;
         renewing = true;
         const position = requestedTime ?? video.currentTime;
         const resume = playing;
-        void loadGatewayVideo(artifactUrl, signal)
+        void loadGatewayVideo(renewalUrl, signal)
           .then((media) => {
             if (signal.aborted) {
               media.dispose();
               return;
+            }
+            if (media.renewalUrl !== renewalUrl) {
+              media.dispose();
+              throw new Error('The retained recording is unavailable.');
             }
             video.addEventListener(
               'loadedmetadata',

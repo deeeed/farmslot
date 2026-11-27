@@ -435,7 +435,12 @@ test('retained video grants require header authorization and constrain reads to 
     const { url } = (await issued.json()) as { url: string };
     assert.ok(!url.includes(token));
     const playback = new URL(url, source);
-    assert.equal(playback.searchParams.get('path'), relativePath);
+    assert.equal(playback.searchParams.get('path'), 'artifacts/recipe-runs/live-run/video.mp4');
+    assert.equal(playback.searchParams.get('recipeRunId'), 'current-artifacts');
+    assert.equal(
+      playback.searchParams.get('bundleDigest'),
+      getRun(runId)?.artifactBundle?.bundleDigest,
+    );
 
     const range = await fetch(playback, { headers: { Range: 'bytes=7-' } });
     assert.equal(range.status, 206);
@@ -457,7 +462,7 @@ test('retained video grants require header authorization and constrain reads to 
     assert.equal(otherRange.headers.get('content-type'), 'video/quicktime');
     assert.equal(await otherRange.text(), 'other');
     const changedGroup = new URL(playback);
-    changedGroup.searchParams.set('recipeRunId', 'current-artifacts');
+    changedGroup.searchParams.set('recipeRunId', liveGroupId);
     await rejectRequest(changedGroup, 401, { headers: authorizedHeaders });
     const changedByteIdentity = new URL(playback);
     const [expires, , mac] = changedByteIdentity.searchParams.get('mediaGrant')!.split('.');

@@ -955,6 +955,29 @@ export async function resolveRetainedRunArtifact(
   return { entry, ref, artifactPath };
 }
 
+/** Used only after grant verification. The manifest still proves run ownership and byte identity. */
+async function resolveGrantedRunArtifact(
+  runId: string,
+  artifactPath: string,
+  selectors: URLSearchParams,
+) {
+  const storeId = selectors.get('mediaStoreId');
+  const taskKey = selectors.get('mediaTaskKey');
+  const bundleDigest = selectors.get('bundleDigest');
+  const manifestDigest = selectors.get('mediaManifestDigest');
+  if (!storeId || !taskKey || !bundleDigest || !manifestDigest)
+    throw new Error('Playback URL is missing its retained snapshot.');
+  const ref: RunArtifactBundleRef = { storeId, taskKey, bundleDigest, manifestDigest };
+  const { runBundleStore } = await loadRetainedArtifacts();
+  const entry = await resolveRunBundleEntry({
+    store: await runBundleStore(),
+    ref,
+    runId,
+    path: artifactPath,
+  });
+  return { entry, ref, artifactPath };
+}
+
 type RunArtifactMediaAccess = 'issue' | { sha256: string };
 
 export async function serveRunArtifactRequest(
@@ -1051,12 +1074,11 @@ export async function serveRunArtifact(
       }
       return;
     }
-    const { entry, ref, artifactPath } = await resolveRetainedRunArtifact(
-      run,
-      requested,
-      url.searchParams,
-      media === 'issue',
-    );
+    const resolved =
+      media && media !== 'issue'
+        ? await resolveGrantedRunArtifact(runId, requested, url.searchParams)
+        : await resolveRetainedRunArtifact(run, requested, url.searchParams, media === 'issue');
+    const { entry, ref, artifactPath } = resolved;
     const mime = mimeForPath(artifactPath);
     if (media) {
       if (!mime.startsWith('video/') || (media !== 'issue' && media.sha256 !== entry.sha256)) {
@@ -1065,6 +1087,18 @@ export async function serveRunArtifact(
         return;
       }
       if (media === 'issue') {
+        // Convert a mutable selection or group-relative path into one retained entry. The
+        // signature covers the store identity and direct task-relative lookup on every GET.
+        url.search = new URLSearchParams({
+          runId,
+          path: artifactPath,
+          recipeRunId: 'current-artifacts',
+          bundleDigest: ref.bundleDigest,
+          v: entry.sha256,
+          mediaStoreId: ref.storeId,
+          mediaTaskKey: ref.taskKey,
+          mediaManifestDigest: ref.manifestDigest,
+        }).toString();
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(grants.issue(url, entry.sha256)));
         return;
