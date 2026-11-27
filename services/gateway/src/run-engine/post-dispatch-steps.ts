@@ -96,6 +96,7 @@ import {
   takeSendBackReview,
 } from '../run-completion/result-decision.js';
 import { retainRunArtifacts } from '../run-completion/retained-artifacts.js';
+import { prepareDebriefForAcceptedResult } from '../run-completion/task-debrief.js';
 import { readRunProgress } from '../runners/run-progress.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
@@ -2000,6 +2001,7 @@ async function executeCompleteStepUnmeasured(
         requireArtifactMirror: true,
       }),
     );
+    await prepareDebriefForAcceptedResult(getRun(runId) ?? current);
     await holdSlotForPublicationGate(current.slotId, broadcastFn);
     const cliCommand = `farmslot slot check ${current.slotId}`;
     return {
@@ -2036,6 +2038,7 @@ async function executeCompleteStepUnmeasured(
       inheritedAcceptance,
     }),
   );
+  await prepareDebriefForAcceptedResult(getRun(runId) ?? current);
   await timeCompletePhase('links', () => refreshRunLinks(runId));
   if (completion.prNumber && current.flowType !== 'review-pr') {
     await timeCompletePhase('reviewInputs', () =>

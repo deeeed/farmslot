@@ -33,6 +33,7 @@ export interface ExecutionTemplateSource {
 }
 
 export interface ExecutionTemplateFrontmatter {
+  postRunDebrief?: boolean;
   firstSubtask?: 'derive-acceptance';
   id?: string;
   title?: string;

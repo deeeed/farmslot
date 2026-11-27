@@ -1,5 +1,6 @@
 import { runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
+  type ArtifactRef,
   attachRunListSummaries,
   type LiveRecipeContext,
   type RecipeRunArtifactGroup,
@@ -16,6 +17,7 @@ import {
   type RunRecipeRunsForSlotParams,
   type RunRecipeRunsForSlotResult,
   runRecoveryHints,
+  TASK_DIRECTORY_LAYOUT,
 } from '@farmslot/protocol';
 
 import {
@@ -35,6 +37,11 @@ import {
   retainedRunBundleRef,
   selectedRetainedRecipeGroup,
 } from '../../run-completion/retained-artifacts.js';
+import {
+  presentTaskDebriefHistory,
+  readTaskDebriefSidecar,
+  taskDebriefEvidenceBundle,
+} from '../../run-completion/task-debrief.js';
 import { inspectedRun } from '../../run-engine/gate-inspection.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
 import { readCostAccountingRevision } from '../../runs/cost-accounting-revision.js';
@@ -57,7 +64,7 @@ import { readRunRecordedEvidence } from './evidence-review.js';
 
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
 async function presentRun(run: Run): Promise<Run> {
-  run = inspectedRun(run);
+  run = presentTaskDebriefHistory(inspectedRun(run));
   if (run.repeatReviewContext) {
     const chain = reviewChainForRun(run);
     const records: Run[] = [];
@@ -113,7 +120,12 @@ export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   // The first paint must not wait for worker/source/evidence I/O. The ordinary read
   // serves the last gate check and asks for a new one; command handlers retain their guards.
   if (params.view === 'snapshot')
-    return { run: { ...run, costAccountingRevision: readCostAccountingRevision(run, run) } };
+    return {
+      run: {
+        ...presentTaskDebriefHistory(run),
+        costAccountingRevision: readCostAccountingRevision(run, run),
+      },
+    };
   const listVersion = runListVersion(run);
   const view = await presentRun(run);
   return {
@@ -290,12 +302,37 @@ export async function runRecipeRunsForRun(
     const payload = params.decisionId
       ? run.decisions.find(({ id }) => id === params.decisionId)?.payload
       : undefined;
+    let debrief: ArtifactRef | undefined;
+    if (
+      run.taskDebrief?.status === 'settled' ||
+      (params.decisionId && (run.taskDebrief || run.priorTaskDebriefBundles))
+    ) {
+      try {
+        debrief = readTaskDebriefSidecar(
+          run,
+          taskDebriefEvidenceBundle(run, ref, Boolean(params.decisionId)),
+        )?.artifact;
+      } catch (error) {
+        // Report the sidecar as unavailable without invalidating the recorded recipe package.
+        console.warn(
+          `[debrief] recorded evidence read failed for ${run.id}: ${(error as Error).message}`,
+        );
+        debrief = {
+          path: TASK_DIRECTORY_LAYOUT.debrief.relativePath,
+          purpose: 'evidence',
+          availability: 'missing',
+          label: 'The retained task debrief could not be read.',
+        };
+      }
+    }
     recordedEvidence.report = {
       reportPath: payload?.kind === 'output-review' ? payload.reportPath : run.output?.reportPath,
       manifestDigest: outputManifestDigest(
         reportManifest.filter((artifact) => artifact.path.startsWith('artifacts/')),
       ),
-      artifactManifest: reportManifest,
+      artifactManifest: debrief
+        ? [...reportManifest.filter(({ path }) => path !== debrief.path), debrief]
+        : reportManifest,
       artifactBundle: ref,
     };
   }

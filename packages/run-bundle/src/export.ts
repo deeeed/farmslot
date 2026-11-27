@@ -1,17 +1,24 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  canonicalRecipeJson,
   isRunBundleManifest,
+  isTaskDebrief,
+  type Run,
   RUN_BUNDLE_VERSION,
+  type RunArtifactBundleRef,
+  type RunBundleDebriefEvidence,
   type RunBundleEntryMeta,
   type RunBundleExportRequest,
   type RunBundleExportResult,
   type RunBundleManifest,
   type RunBundleProfile,
   type RunBundleRunEntry,
+  TASK_DIRECTORY_LAYOUT,
+  type TaskDebrief,
 } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import {
@@ -25,7 +32,14 @@ import { copyDirectoryRecursive, registerDirectoryEntries } from './copy-tree.js
 import { captureDecisionHistoryPrefix, decisionHistoryFile } from './decision-history.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir, sanitizeBundleRunId } from './paths.js';
-import { openRunBundleStore, readRetainedRunBundle, resolveRunBundleEntry } from './retained.js';
+import {
+  openRunBundleStore,
+  readRetainedRunBundle,
+  readRunBundleDebrief,
+  resolveRetainedRunBundleRef,
+  resolveRunBundleEntry,
+  type RunBundleStore,
+} from './retained.js';
 
 const PACKAGE_FILENAMES = [
   'reference.result-package.json',
@@ -70,6 +84,92 @@ function addFileEntry(
     sha256: sha256File(destPath),
     bytes: content.byteLength,
     path: relativePath,
+  };
+}
+
+function currentDebriefBytes(
+  storeRoot: string,
+  run: Run,
+):
+  | { file: string; bytes: Buffer; record: TaskDebrief; accepted: RunArtifactBundleRef }
+  | undefined {
+  const journal = run.taskDebrief;
+  if (journal?.status !== 'settled') return undefined;
+  const accepted = resolveRetainedRunBundleRef(run, journal.bundle);
+  const debrief = readRunBundleDebrief(storeRoot, run.id, accepted.bundleDigest);
+  if (!debrief) return undefined;
+  const { file, bytes } = debrief;
+  const value: unknown = JSON.parse(bytes.toString('utf8'));
+  if (
+    !isTaskDebrief(value) ||
+    value.debriefId !== journal.debriefId ||
+    value.identity.runId !== run.id ||
+    value.identity.attemptId !== journal.attemptId
+  )
+    throw new Error('Retained debrief does not match the exported attempt.');
+  const { recordDigest, ...body } = value;
+  if (sha256Text(canonicalRecipeJson(body)) !== recordDigest)
+    throw new Error('Retained debrief failed its recorded digest.');
+  return { file, bytes, record: value, accepted };
+}
+
+async function addAcceptedDebriefEvidence(
+  bundleDir: string,
+  taskBundleDir: string,
+  entries: Record<string, RunBundleEntryMeta>,
+  store: RunBundleStore,
+  debrief: NonNullable<ReturnType<typeof currentDebriefBytes>>,
+  journal: NonNullable<Run['taskDebrief']>,
+): Promise<RunBundleDebriefEvidence> {
+  const { record, accepted } = debrief;
+  const snapshot = await readRetainedRunBundle(store, accepted, record.identity.runId!);
+  const layout = TASK_DIRECTORY_LAYOUT;
+  const alternates = new Map<string, string>([
+    [layout.checklist.relativePath, layout.checklistWorkerMirror.relativePath],
+    [layout.signal.relativePath, layout.workerSignalMirror.relativePath],
+  ]);
+  const digests = new Map<string, string>();
+  const remember = (file: string, sha256: string) => {
+    const previous = digests.get(file);
+    if (previous !== undefined && previous !== sha256)
+      throw new Error('Accepted debrief has conflicting evidence digests.');
+    digests.set(file, sha256);
+  };
+  for (const item of Object.values(record.collection.coverage)) {
+    if (item.status === 'present' && item.path && item.sha256) remember(item.path, item.sha256);
+  }
+  // A receipt can contain a malformed event alongside valid cited events.
+  for (const { evidence } of record.observations)
+    for (const { path, sha256 } of evidence) remember(path, sha256);
+  for (const { evidence } of record.optionalSkips) remember(evidence.path, evidence.sha256);
+  for (const { counterEvidence } of record.answers)
+    for (const { path, sha256 } of counterEvidence ?? []) remember(path, sha256);
+
+  const files: Record<string, string> = Object.create(null);
+  for (const [file, sha256] of digests) {
+    const prefix = `tasks/${accepted.taskKey}/`;
+    const mirror = alternates.get(file);
+    const actual =
+      mirror && snapshot.manifest.entries[prefix + mirror]?.sha256 === sha256 ? mirror : file;
+    if (snapshot.manifest.entries[prefix + actual]?.sha256 !== sha256)
+      throw new Error('Accepted debrief evidence does not match the retained manifest.');
+    const current = `${taskBundleDir}/${actual}`;
+    if (entries[current]?.sha256 === sha256) {
+      files[file] = current;
+      continue;
+    }
+    const retained = await snapshot.resolveEntry(actual);
+    const bytes = readFileSync(retained.path);
+    if (createHash('sha256').update(bytes).digest('hex') !== sha256)
+      throw new Error('Accepted debrief evidence changed before export.');
+    const target = `${taskBundleDir}/inputs/accepted-debrief/${accepted.bundleDigest}/${actual}`;
+    addFileEntry(bundleDir, target, retained.path, entries, bytes);
+    files[file] = target;
+  }
+  return {
+    acceptedBundleDigest: accepted.bundleDigest,
+    manifestDigest: journal.manifestDigest,
+    files,
   };
 }
 
@@ -141,6 +241,19 @@ export async function exportRunsToBundle(
         const taskBundleDir = `tasks/${taskKey}`;
         copyDirectoryRecursive(retained.taskDir, path.join(bundleDir, taskBundleDir));
         registerDirectoryEntries(bundleDir, taskBundleDir, entries);
+        const debrief = currentDebriefBytes(store.root, run);
+        if (debrief) {
+          const relative = `${taskBundleDir}/${TASK_DIRECTORY_LAYOUT.debrief.relativePath}`;
+          addFileEntry(bundleDir, relative, debrief.file, entries, debrief.bytes);
+          entry.taskDebriefEvidence = await addAcceptedDebriefEvidence(
+            bundleDir,
+            taskBundleDir,
+            entries,
+            store,
+            debrief,
+            run.taskDebrief!,
+          );
+        }
         entry.taskKey = taskKey;
         entry.artifactBundleDigests = [
           ref.bundleDigest,

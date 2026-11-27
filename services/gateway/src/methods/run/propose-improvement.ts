@@ -160,10 +160,15 @@ async function routeThenAnalyze(
       `[learnings-router] draft card emission failed for ${runId.slice(0, 8)}: ${emissionError}; unrecovered payload: ${JSON.stringify({ drafts: routed.drafts, holds: routed.holds })}`,
     );
   }
-  if (routed.systemContent) {
+  const debriefContent = await router.admitDebriefWorkflowContent(
+    getRun(runId) ?? run,
+    placeholderId,
+  );
+  const systemContent = [routed.systemContent, debriefContent].filter(Boolean).join('\n\n');
+  if (systemContent) {
     await analyze(
       runId,
-      composeImprovementAnalysisContent(rationale, routed.systemContent) +
+      composeImprovementAnalysisContent(rationale, systemContent) +
         `\n\nDomain curation: ${routed.drafts.length} drafts, ${routed.holds.length} eligible holds, ${routed.drops?.length ?? 0} drops recorded in the feedback ledger.`,
       placeholderId,
     );
@@ -235,7 +240,7 @@ export async function resumeInterruptedImprovementAnalyses(): Promise<void> {
       const analyzer = improvementAnalyzer ?? engine.analyzeAndPropose;
       void (async () => {
         const content = await composeFamilyLearnings(run);
-        if (!content.trim()) {
+        if (!content.trim() && getRun(run.id)?.taskDebrief?.status !== 'settled') {
           engine.markImprovementTerminal(
             run.id,
             decision.id,
@@ -285,7 +290,7 @@ export async function triggerImprovementAnalysis(runId: string, run: Run): Promi
       return;
     }
     const content = await composeFamilyLearnings(run);
-    if (!content.trim()) {
+    if (!content.trim() && getRun(run.id)?.taskDebrief?.status !== 'settled') {
       if (placeholderId) {
         engine.markImprovementTerminal(
           runId,
@@ -341,7 +346,12 @@ export async function runProposeImprovement(
   }
 
   const learningsContent = await readRunLearnings(existing);
-  if (!learningsContent.trim()) {
+  if (
+    !learningsContent.trim() &&
+    !(await (
+      await import('../../run-completion/task-debrief.js')
+    ).currentTaskDebriefForCuration(existing))
+  ) {
     throw new Error(
       `Cannot propose improvement: no learnings.md content for run ${params.runId.slice(0, 8)}`,
     );

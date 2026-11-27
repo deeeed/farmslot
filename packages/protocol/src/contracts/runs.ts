@@ -1453,6 +1453,8 @@ export interface ImprovementDiffPayload {
    * re-runs an interrupted `analyzing` placeholder only while below the cap.
    */
   analysisAttempts?: number;
+  /** Candidate ownership is committed together with the accepted debrief's admission keys. */
+  debriefAdmission?: import('./task-debrief.js').TaskDebriefAdmission;
 }
 
 export interface CommentsTriageSummary {
@@ -3213,6 +3215,11 @@ export interface Run {
   executionTemplateId?: string;
   /** Portable snapshot selected and revalidated by the gateway. */
   executionTemplate?: import('./execution-templates.js').ExecutionTemplateReference;
+  /** Optional accepted-attempt debrief receipt. Its artifact is stored beside the sealed bundle. */
+  taskDebrief?: import('./task-debrief.js').ManagedTaskDebrief;
+  priorTaskDebriefBundles?: Record<string, RunArtifactBundleRef>;
+  /** Superseded accepted debriefs projected by the gateway run view. */
+  priorTaskDebriefs?: import('./task-debrief.js').StaleTaskDebrief[];
   /** Frozen workflow migration provenance and farm-selected QA skill inputs. */
   reviewQaContract?: import('./qa.js').ReviewQaContract;
   qa?: import('./qa.js').QaProfileSelection;

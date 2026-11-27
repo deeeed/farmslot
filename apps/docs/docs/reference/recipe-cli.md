@@ -699,6 +699,7 @@ Options:
   -h, --help                                  display help for command
 
 Commands:
+  debrief                                     Prepare and read a local task debrief
   init [options] <task-dir>                   Create a task from an execution template
   verify <task-dir>                           Verify retained task tooling without
                                               running it
@@ -707,6 +708,62 @@ Commands:
   mark [options] <task-dir> <step> [args...]  Mark task progress through provider gates
   closeout [options] <task-dir>               Stage task closeout under project policy
   help [command]                              display help for command
+```
+
+## farmslot task debrief
+
+```text
+Usage: farmslot task debrief [options] [command]
+
+Prepare and read a local task debrief
+
+Options:
+  -h, --help                     display help for command
+
+Commands:
+  prepare <task-dir>
+  finalize <task-dir>
+  validate [options] <task-dir>
+  show [options] <task-dir>
+  help [command]                 display help for command
+```
+
+## farmslot task debrief prepare
+
+```text
+Usage: farmslot task debrief prepare [options] <task-dir>
+
+Options:
+  -h, --help  display help for command
+```
+
+## farmslot task debrief finalize
+
+```text
+Usage: farmslot task debrief finalize [options] <task-dir>
+
+Options:
+  -h, --help  display help for command
+```
+
+## farmslot task debrief validate
+
+```text
+Usage: farmslot task debrief validate [options] <task-dir>
+
+Options:
+  --bound     Verify against the current task evidence
+  -h, --help  display help for command
+```
+
+## farmslot task debrief show
+
+```text
+Usage: farmslot task debrief show [options] <task-dir>
+
+Options:
+  --export <file>  Write the Markdown view to a new file
+  -h, --help       display help for command
 ```
 
 ## farmslot task init

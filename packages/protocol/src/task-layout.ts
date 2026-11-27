@@ -463,6 +463,12 @@ export const TASK_DIRECTORY_LAYOUT = Object.freeze({
     'file',
     'Worker execution status written by the marker.',
   ),
+  workerSignalMirror: entry(
+    `${WORKER_SIGNAL_FILE}.worker`,
+    'signal',
+    'file',
+    'Mirrored worker signal.',
+  ),
   checklistTarget: entry(
     CHECKLIST_TARGET_MANIFEST,
     'target',
@@ -688,6 +694,7 @@ export const TASK_DIRECTORY_LAYOUT = Object.freeze({
     'Recorded output of a task operation.',
   ),
   report: entry('artifacts/report.md', 'task', 'file', 'Worker outcome or review report.'),
+  debrief: entry('artifacts/debrief.json', 'artifact', 'file', 'Optional task debrief.'),
   prDescription: entry(
     'artifacts/pr-description.md',
     'task',

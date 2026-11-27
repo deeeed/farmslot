@@ -171,7 +171,7 @@ export interface TerminalTransitionRequest {
    * The patch the caller already built. Applied as the router's single
    * mutation, unchanged: this module owns ORDERING, never the run's content.
    */
-  patch: Partial<Run>;
+  patch: Partial<Run> | ((run: Run) => Partial<Run>);
   /**
    * The terminal status a previous writer already put on the run, when this
    * transition only settles it.
@@ -210,10 +210,12 @@ export function terminalPlan(
     // standing forever, and `archiveRun`/`deleteRun` refuse a marked run. The
     // load-time sweep clears any that predate this rule or arrive by another
     // path.
-    mutate: (run) =>
-      (run.backlogItemId ?? request.patch.backlogItemId)
-        ? { ...request.patch, backlogReconcilePending: true }
-        : request.patch,
+    mutate: (run) => {
+      const patch = typeof request.patch === 'function' ? request.patch(run) : request.patch;
+      return (run.backlogItemId ?? patch.backlogItemId)
+        ? { ...patch, backlogReconcilePending: true }
+        : patch;
+    },
     after: terminalEffects(request.collaborators),
   });
 }

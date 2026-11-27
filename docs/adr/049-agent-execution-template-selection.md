@@ -358,3 +358,12 @@ by the gateway. No dispatch-time Git mutation or weaker digest check is needed.
 Add catalog snapshot descriptors to `@farmslot/agent-runtime`, consumed by the
 gateway bundle builder and shared source resolver. No CLI or RPC change;
 existing source-lock bindings and standalone catalog resolution remain intact.
+
+## Post-run debrief opt-in
+
+Set `postRunDebrief: true` in execution-template frontmatter to collect a
+debrief for an accepted worker attempt. The gateway freezes the setting with
+the selected template reference. Once the slot is free, it can ask for one
+text response using the retained conversation and its verified model route.
+Runs without actionable observations skip the provider call. The retained
+debrief is available under `artifacts/debrief.json` in run evidence.

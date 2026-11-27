@@ -560,6 +560,10 @@ async function main(): Promise<void> {
   initCIMonitor(observedBroadcast);
   initAutoRecycle(observedBroadcast);
   initAutoRecovery(observedBroadcast);
+  if (ENABLE_ORCHESTRATION) {
+    const { resumeAcceptedTaskDebriefs } = await import('./run-completion/task-debrief.js');
+    resumeAcceptedTaskDebriefs();
+  }
 
   // Co-pilot: store + workspace bootstrap + observer
   initChatStore();
