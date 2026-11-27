@@ -892,6 +892,7 @@ export async function resolveRetainedRunArtifact(
   run: Run,
   requested: string,
   selectors: URLSearchParams,
+  metadataOnly = false,
 ) {
   if (
     path.isAbsolute(requested) ||
@@ -942,6 +943,7 @@ export async function resolveRetainedRunArtifact(
     ref,
     runId,
     path: artifactPath,
+    metadataOnly,
   });
   const expected = selectors.get('v');
   if (
@@ -1053,8 +1055,9 @@ export async function serveRunArtifact(
       run,
       requested,
       url.searchParams,
+      media === 'issue',
     );
-    const mime = mimeForPath(entry.path);
+    const mime = mimeForPath(artifactPath);
     if (media) {
       if (!mime.startsWith('video/') || (media !== 'issue' && media.sha256 !== entry.sha256)) {
         res.writeHead(403);

@@ -1,6 +1,6 @@
 import { noChange, nothing } from 'lit';
 import { AsyncDirective } from 'lit/async-directive.js';
-import { directive } from 'lit/directive.js';
+import { directive, type Part, PartType } from 'lit/directive.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import {
@@ -156,7 +156,13 @@ export async function loadGatewayMedia(
   return objectMedia(await fetchGatewayMedia(url, signal));
 }
 
-async function loadGatewayVideo(url: string, signal: AbortSignal) {
+interface LoadedGatewayMedia {
+  url: string;
+  dispose(): void;
+  signedVideo?: boolean;
+}
+
+async function loadGatewayVideo(url: string, signal: AbortSignal): Promise<LoadedGatewayMedia> {
   if (!isGatewayMediaUrl(url)) return loadGatewayMedia(url, signal);
   const resource = new URL(url, gatewayHttpOrigin());
   if (
@@ -186,7 +192,7 @@ async function loadGatewayVideo(url: string, signal: AbortSignal) {
   )
     throw new Error('Gateway returned an invalid playback URL.');
   playback.hash = resource.hash;
-  return { url: sameOriginGatewayHttpUrl(playback.toString()), dispose() {} };
+  return { url: sameOriginGatewayHttpUrl(playback.toString()), signedVideo: true, dispose() {} };
 }
 
 type GatewayMediaFormat = 'url' | 'html' | 'video';
@@ -197,8 +203,17 @@ export class GatewayMedia extends AsyncDirective {
   private lastFormat: GatewayMediaFormat = 'url';
   private onError?: () => void;
   private abort: AbortController | undefined;
-  private media: Awaited<ReturnType<typeof loadGatewayMedia>> | undefined;
+  private media: LoadedGatewayMedia | undefined;
+  private video?: HTMLVideoElement;
   private initial: ReturnType<typeof unsafeHTML> | typeof nothing = nothing;
+
+  override update(part: Part, [url, format, onError]: Parameters<GatewayMedia['render']>) {
+    this.video =
+      format === 'video' && part.type === PartType.ATTRIBUTE && part.element.localName === 'video'
+        ? (part.element as HTMLVideoElement)
+        : undefined;
+    return this.render(url, format, onError);
+  }
 
   render(url: string, format: GatewayMediaFormat = 'url', onError?: () => void) {
     this.lastUrl = url;
@@ -222,7 +237,7 @@ export class GatewayMedia extends AsyncDirective {
     this.source = source;
     const abort = new AbortController();
     this.abort = abort;
-    const loading =
+    const loading: Promise<LoadedGatewayMedia> =
       format === 'html'
         ? this.loadDocument(url)
         : (format === 'video' ? loadGatewayVideo : loadGatewayMedia)(url, abort.signal);
@@ -233,6 +248,7 @@ export class GatewayMedia extends AsyncDirective {
           return;
         }
         this.media = media;
+        if (media.signedVideo && this.video) this.watchVideo(this.video, url, abort.signal);
         this.setValue(this.value(media.url, format));
       })
       .catch((error: unknown) => {
@@ -248,6 +264,97 @@ export class GatewayMedia extends AsyncDirective {
         console.error('Gateway media could not be loaded.', error);
       });
     return this.initial;
+  }
+
+  private watchVideo(video: HTMLVideoElement, artifactUrl: string, signal: AbortSignal): void {
+    let requestedTime: number | undefined;
+    let canRenew = true;
+    let renewing = false;
+    let playing = !video.paused;
+    video.addEventListener(
+      'play',
+      () => {
+        playing = true;
+      },
+      { signal },
+    );
+    video.addEventListener(
+      'pause',
+      () => {
+        playing = false;
+      },
+      { signal },
+    );
+    video.addEventListener(
+      'seeking',
+      () => {
+        requestedTime = video.currentTime;
+      },
+      { signal },
+    );
+    video.addEventListener(
+      'seeked',
+      () => {
+        requestedTime = undefined;
+        if (!renewing) canRenew = true;
+      },
+      { signal },
+    );
+    video.addEventListener(
+      'loadeddata',
+      () => {
+        if (!renewing && !video.seeking) canRenew = true;
+      },
+      { signal },
+    );
+    // Capture before the lightbox's error listener can replace the player. The browser does
+    // not expose the media response status, so retry one failed signed source per decoded load.
+    video.addEventListener(
+      'error',
+      (event) => {
+        if (!renewing && (!canRenew || !this.media?.signedVideo)) return;
+        event.stopImmediatePropagation();
+        if (renewing) return;
+        canRenew = false;
+        renewing = true;
+        const position = requestedTime ?? video.currentTime;
+        const resume = playing;
+        void loadGatewayVideo(artifactUrl, signal)
+          .then((media) => {
+            if (signal.aborted) {
+              media.dispose();
+              return;
+            }
+            video.addEventListener(
+              'loadedmetadata',
+              () => {
+                const time = requestedTime ?? position;
+                video.currentTime = Number.isFinite(video.duration)
+                  ? Math.min(time, video.duration)
+                  : time;
+                if (resume)
+                  void video.play().catch((error: unknown) => {
+                    // Renewing a source can lose user activation. Leave the native player paused.
+                    if (!(error instanceof DOMException) || error.name !== 'NotAllowedError')
+                      console.error('Could not resume gateway recording.', error);
+                  });
+              },
+              { once: true, signal },
+            );
+            this.media?.dispose();
+            this.media = media;
+            renewing = false;
+            this.setValue(media.url);
+          })
+          .catch((error: unknown) => {
+            if (signal.aborted) return;
+            renewing = false;
+            console.error('Could not renew gateway recording.', error);
+            video.dispatchEvent(new Event('error'));
+          });
+      },
+      { capture: true, signal },
+    );
   }
 
   private retryOnReconnect(signal: AbortSignal): void {
