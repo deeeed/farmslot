@@ -1,0 +1,1 @@
+- mm-harness 0.96.51 uses the existing recipe-runner 0.52.5 cohort. Recipe help shows how to bind registered acceptance criteria and index JSON proof. The Core guide documents HIP-3 setup. Locked Mobile and Extension actions point back to the selected checkout and runtime.
