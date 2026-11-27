@@ -446,13 +446,16 @@ export class NodeModelCatalogs {
     return this.listings.get(runner)?.get(machine)?.nativeIds;
   }
 
-  /** Display names recorded by nodes for this runner, optionally scoped to one machine. */
-  labels(runner: string, machine?: string): Record<string, string> {
+  /** Display names recorded by nodes for this runner, optionally scoped to specific machines. */
+  labels(runner: string, machines?: string | Iterable<string>): Record<string, string> {
     const byNode = this.listings.get(runner);
     if (!byNode) return {};
-    if (machine !== undefined) return { ...(byNode.get(machine)?.labels ?? {}) };
+    if (typeof machines === 'string') return { ...(byNode.get(machines)?.labels ?? {}) };
+    const allowed = machines ? new Set(machines) : undefined;
+    if (allowed && !allowed.size) return {};
     const merged: Record<string, string> = {};
-    for (const [, entry] of [...byNode].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [machine, entry] of [...byNode].sort(([a], [b]) => a.localeCompare(b))) {
+      if (allowed && !allowed.has(machine)) continue;
       for (const [id, label] of Object.entries(entry.labels)) {
         if (!merged[id]) merged[id] = label;
       }

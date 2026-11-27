@@ -131,10 +131,10 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             value = await manager.setApprovalMode(p.owner, p.id, p.approvalMode);
             break;
           case 'create':
-            value = await manager.create(p.owner, p.params, undefined, p.requester);
+            value = await manager.create(p.owner, p.params, undefined, p.requester, p.executable);
             break;
           case 'ensure':
-            value = await manager.ensure(p.owner, p.params, undefined, p.requester);
+            value = await manager.ensure(p.owner, p.params, undefined, p.requester, p.executable);
             break;
           case NATIVE_WORKER_ENSURE:
             value = await manager.ensure(p.owner, p.params, p.launch);

@@ -200,12 +200,31 @@ export class NativeNodeSessions {
         value.method,
         value.params,
       );
+    const executable =
+      typeof value.executable === 'string' && value.executable.trim()
+        ? value.executable.trim()
+        : undefined;
+    const executables =
+      value.executables &&
+      typeof value.executables === 'object' &&
+      !Array.isArray(value.executables)
+        ? (value.executables as Record<string, unknown>)
+        : undefined;
+    const resolveExecutable =
+      executable || executables
+        ? (runner: string) => {
+            if (executable) return executable;
+            const candidate = executables?.[runner];
+            return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : undefined;
+          }
+        : undefined;
     return routeNativeSession(
       this.client,
       this.declaration.ownerPrincipalId,
       value.method,
       value.params,
       parseNativeSessionRequester(value.requester),
+      executable || resolveExecutable ? { executable, resolveExecutable } : undefined,
     );
   }
 }

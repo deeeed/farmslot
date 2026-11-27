@@ -116,6 +116,7 @@ import {
   runnerModelNodeBlocker,
   runnerModelNodePreference,
 } from '../runners/registry.js';
+import { resolveStrictAccountDispatchModel } from '../runners/visible-models.js';
 import { requestedRunSlotId } from '../runs/slot-pin.js';
 import {
   getAllRuns,
@@ -1285,8 +1286,18 @@ async function findSlotAttempt(
       throw new BlockedRunError(error.message, 'review-qa-needs-configuration');
     }
   }
+  const strictModel = resolveStrictAccountDispatchModel(run.metrics.runner, run.metrics.model, {
+    hasNativeProfile: Boolean(run.nativeProfile),
+  });
+  if (strictModel && strictModel !== run.metrics.model) {
+    run = updateRun(runId, { metrics: { ...run.metrics, model: strictModel } });
+  }
   if (run.nativeProfile) {
-    await inspectNativeWorkerProfile(run.nativeOwnerPrincipalId!, run.nativeProfile);
+    await inspectNativeWorkerProfile(
+      run.nativeOwnerPrincipalId!,
+      run.nativeProfile,
+      strictModel ?? run.metrics.model,
+    );
     const allowedSlots = await nativeProfileAllowedSlots(
       run.nativeProfile,
       run.allowedSlots ?? undefined,
@@ -1372,11 +1383,12 @@ async function findSlotAttempt(
       })
     : undefined;
   const capabilitySelection = { requiredCapabilities, capabilityCatalogs };
-  // Fresh node listings can refuse a model; last successful listings guide placement.
+  // Fresh node listings can refuse a model for ambient launches; named profiles validate
+  // their model directly in that profile (never against the ambient machine catalog).
   const modelNodeSelection = {
     ...runExplicitRunnerModel(run),
-    modelNodeBlocker: runnerModelNodeBlocker,
-    modelNodePreference: runnerModelNodePreference,
+    modelNodeBlocker: run.nativeProfile ? undefined : runnerModelNodeBlocker,
+    modelNodePreference: run.nativeProfile ? undefined : runnerModelNodePreference,
   };
   const releasableBranchHolderIds = await inspectReleasableBranchHolders(
     branchFleet.slots,

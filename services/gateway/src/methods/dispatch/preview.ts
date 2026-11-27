@@ -1622,5 +1622,8 @@ export function resolvePreviewRunner(slotInfo: Pick<SlotStatus, 'runner'>): stri
 export function resolvePreviewModel(slotInfo: Pick<SlotStatus, 'runner' | 'model'>): string {
   const slotModel = slotInfo.model && slotInfo.model !== 'unknown' ? slotInfo.model : null;
   const runner = resolvePreviewRunner(slotInfo);
-  return slotModel || runnerDefaultModel(runner) || DEFAULT_CLAUDE_MODEL;
+  if (slotModel) return slotModel;
+  const defaultModel = runnerDefaultModel(runner);
+  if (defaultModel) return defaultModel;
+  return runner === 'claude' ? DEFAULT_CLAUDE_MODEL : 'unknown';
 }

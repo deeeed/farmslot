@@ -1169,6 +1169,23 @@ export function runnerDefaultModel(runnerId?: string | null): string | null {
   return getRunnerDefinition(runnerId).defaultModel;
 }
 
+/**
+ * Runners with a strict per-account catalog and no static default model (such as Antigravity)
+ * must resolve a concrete model for the selected account rather than falling back to another runner's default.
+ */
+export function runnerRequiresAccountResolvedModel(runnerId?: string | null): boolean {
+  if (!isKnownRunner(runnerId)) return false;
+  const def = getRunnerDefinition(runnerId);
+  return (
+    def.defaultModel === null &&
+    Boolean(
+      def.modelCatalog &&
+      'nodeCommand' in def.modelCatalog &&
+      def.modelCatalog.strictAccountCatalog,
+    )
+  );
+}
+
 export function runnerAppliesOwnSandbox(runnerId: string, tier?: SafetyTier): boolean {
   if (!isKnownRunner(runnerId)) return false;
   const def = getRunnerDefinition(runnerId);

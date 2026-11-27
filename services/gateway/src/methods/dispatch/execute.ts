@@ -131,6 +131,7 @@ import {
 } from '../../runners/session-record.js';
 import { resolveRunnerAccountForDispatch } from '../../runners/status-provider.js';
 import { createProviderUsageLimitError } from '../../runners/usage-limit-error.js';
+import { resolveStrictAccountDispatchModel } from '../../runners/visible-models.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { clearWorkerSignalsForDispatch } from '../../tasks/checklist-target.js';
 import { initializeAuthoredTaskOnSlot } from '../../tasks/existing-runtime.js';
@@ -1243,12 +1244,16 @@ export async function dispatchExecute(
     'claude';
   assertSupportedRunnerSpelling(requestedRunner);
   const runner = normalizeRunner(requestedRunner);
-  const model =
+  const rawModel =
     params.model ||
     extractField(taskContent, /^\*\*Model:\*\*\s*`?([^`\n]+)/m) ||
     (defaultFlowKey ? getProjectField(projectJson, `defaults.${defaultFlowKey}.model`) : '') ||
-    runnerDefaultModel(runner) ||
-    DEFAULT_CLAUDE_MODEL;
+    runnerDefaultModel(runner);
+  const resolvedStrictModel = resolveStrictAccountDispatchModel(runner, rawModel, {
+    hasNativeProfile: Boolean(currentRun?.nativeProfile),
+    machine: vars.machine,
+  });
+  const model = resolvedStrictModel || (runner === 'claude' ? DEFAULT_CLAUDE_MODEL : 'unknown');
   const effort =
     params.effort ||
     extractField(taskContent, /^\*\*Effort:\*\*\s*`?([^`\n]+)/m) ||

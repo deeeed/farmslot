@@ -11,12 +11,17 @@ import { cursorProfileEnvironment, observeCursorAccount } from './account-cursor
 import { observeGrokAccount } from './account-grok.js';
 import { observeOpenCodeAccount, opencodeProfileEnvironment } from './account-opencode.js';
 import { observePiAccount, piProfileEnvironment } from './account-pi.js';
-import type { NativeAccountObservation, NativeAccountProbeOptions } from './account-types.js';
+import type {
+  NativeAccountObservation,
+  NativeAccountProbeOptions,
+  NativeProfileModelValidation,
+} from './account-types.js';
 import {
   antigravityBinary,
   antigravityNativeAdapter,
   antigravityProfileEnvironment,
   observeAntigravityAccount,
+  validateAntigravityProfileModel,
 } from './antigravity.js';
 import { claudeNativeAdapter } from './claude.js';
 import { claudeAcpBinary, claudeAcpNativeAdapter, observeClaudeAcpAccount } from './claude-acp.js';
@@ -117,6 +122,9 @@ export interface NativeRunnerDefinition {
     unset: readonly string[];
     loginArgs: readonly string[];
     observe(options: NativeAccountProbeOptions): Promise<NativeAccountObservation>;
+    validateModel?: (
+      options: NativeAccountProbeOptions & { model: string },
+    ) => Promise<NativeProfileModelValidation>;
   };
 }
 
@@ -263,6 +271,7 @@ export const nativeRunnerDefinitions: Record<string, NativeRunnerDefinition> = {
       unset: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
       loginArgs: ['acp', '--login'],
       observe: observeAntigravityAccount,
+      validateModel: validateAntigravityProfileModel,
     },
   },
 };

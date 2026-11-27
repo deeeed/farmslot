@@ -240,7 +240,10 @@ export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
   cwd: string;
   executable: string;
   version: string;
+  /** Original requested model configuration; kept stable for idempotent retries. */
   model?: string;
+  /** Effective model confirmed by the runner (e.g. ACP default when model was omitted). */
+  observedModel?: string;
   mode: 'default' | 'plan';
   accountMode: 'native';
   /** Absent on older journals, whose policy is ask. Workers keep their launch policy. */

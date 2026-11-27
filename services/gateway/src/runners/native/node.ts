@@ -26,7 +26,10 @@ import {
   type NativeSessionReadResult,
   type NativeSessionRequester,
 } from '@farmslot/protocol';
+import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
+import { loadMachinePool } from '../../core/config.js';
+import { isLocal } from '../../core/index.js';
 import { lazyImport } from '../../core/lazy-import.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../../fleet/machine-registry.js';
@@ -37,6 +40,7 @@ import {
   resolveAfterNodeReconnect,
   sendNodeRequest,
 } from '../../fleet/node-rpc.js';
+import { loadPoolConfigs } from '../../fleet/state.js';
 import { withMeasuredNativeProcessCensus } from '../../host-services/native-process.js';
 import { readCredentialStoreSnapshot } from '../../security/credential-store.js';
 import {
@@ -44,6 +48,8 @@ import {
   requireGenerationZeroOwner,
 } from '../../security/native-node.js';
 import { ownsLocalNativeProfile } from '../../security/native-owner.js';
+import { machineRunnerPath } from '../launch-command.js';
+import { normalizeRunner } from '../registry.js';
 
 import { knownNativeExecutionNodes } from './execution-nodes.js';
 import { nativeSessionManager, validateNativeRunner } from './manager.js';
@@ -196,6 +202,50 @@ export async function execNativeNodeArgv(
   )) as ExecResult;
 }
 
+/**
+ * Resolve a runner's trusted executable path from the execution node's pool config,
+ * matching worker launch and discovery. Never accepts caller-supplied executables.
+ */
+export async function resolveTrustedNativeExecutable(
+  runner: string,
+  executionNodeId: string,
+): Promise<string | undefined> {
+  const normalized = normalizeRunner(runner);
+  const pools = await loadPoolConfigs(currentFarmPaths('gateway').pool);
+  for (const pool of pools) {
+    if (
+      pool.machine === executionNodeId ||
+      (executionNodeId === 'local' && isLocal(pool.host, pool.machine))
+    ) {
+      const configured = machineRunnerPath(normalized, await loadMachinePool(pool.machine));
+      if (configured) return configured;
+    }
+  }
+  return undefined;
+}
+
+async function resolveTrustedNativeExecutablesForNode(
+  executionNodeId: string,
+): Promise<Record<string, string> | undefined> {
+  const pools = await loadPoolConfigs(currentFarmPaths('gateway').pool);
+  const runners = ['codex', 'claude', 'cursor', 'grok', 'pi', 'opencode', 'antigravity'] as const;
+  const resolved: Record<string, string> = {};
+  for (const pool of pools) {
+    if (
+      pool.machine === executionNodeId ||
+      (executionNodeId === 'local' && isLocal(pool.host, pool.machine))
+    ) {
+      const machinePool = await loadMachinePool(pool.machine);
+      for (const runner of runners) {
+        if (resolved[runner]) continue;
+        const configured = machineRunnerPath(runner, machinePool);
+        if (configured) resolved[runner] = configured;
+      }
+    }
+  }
+  return Object.keys(resolved).length ? resolved : undefined;
+}
+
 export async function routeNativeExecution(
   owner: string,
   method: string,
@@ -225,9 +275,13 @@ export async function routeNativeExecution(
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Expected native runner and model strings');
     validateNativeRunner(params.runner, params.model, params.effort);
-    const { nativeModelNodeBlocker } = await loadNativeWorkspace();
-    const blocker = await nativeModelNodeBlocker(params.runner, params.model, executionNodeId);
-    if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
+    // Cached machine catalogs belong to the ambient account. Named profiles validate
+    // their model inside the profile's own execution environment / ACP session.
+    if (params.profileId === undefined) {
+      const { nativeModelNodeBlocker } = await loadNativeWorkspace();
+      const blocker = await nativeModelNodeBlocker(params.runner, params.model, executionNodeId);
+      if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
+    }
   }
   if (executionNodeId === 'local') {
     if (!ownsLocalNativeProfile(owner))
@@ -236,7 +290,11 @@ export async function routeNativeExecution(
         'Native local execution is unavailable for this owner',
       );
     return withMeasuredNativeProcessCensus(() => {
-      if (isNativeObservedRead() && method === Methods.NATIVE_PROFILE_STATUS) {
+      if (
+        isNativeObservedRead() &&
+        method === Methods.NATIVE_PROFILE_STATUS &&
+        params.model === undefined
+      ) {
         validateNativeProfileParams(params);
         if (typeof params.profileId !== 'string' || !params.profileId.trim())
           throw new GatewayMethodError('INVALID_PARAMS', 'Native profile ID required');
@@ -244,7 +302,9 @@ export async function routeNativeExecution(
       }
       return worker
         ? routeNativeWorkerSession(nativeSessionManager, owner, method, params)
-        : routeNativeSession(nativeSessionManager, owner, method, params, requester);
+        : routeNativeSession(nativeSessionManager, owner, method, params, requester, {
+            resolveExecutable: (runner) => resolveTrustedNativeExecutable(runner, 'local'),
+          });
     });
   }
   const resolved = resolveAfterNodeReconnect(executionNodeId, () =>
@@ -283,6 +343,15 @@ export async function routeNativeExecution(
       'NATIVE_SESSION_ERROR',
       'Native execution node upgrade required for worker launch configuration',
     );
+  const remoteExecutable =
+    (method === Methods.NATIVE_SESSION_CREATE || method === Methods.NATIVE_SESSION_ENSURE) &&
+    typeof params.runner === 'string'
+      ? await resolveTrustedNativeExecutable(params.runner, executionNodeId)
+      : undefined;
+  const remoteExecutables =
+    method === Methods.NATIVE_PROFILE_STATUS
+      ? await resolveTrustedNativeExecutablesForNode(executionNodeId)
+      : undefined;
   let result: unknown;
   try {
     result = await sendNodeRequest(
@@ -293,7 +362,9 @@ export async function routeNativeExecution(
         method,
         params,
         ...(requester ? { requester } : {}),
-        ...(isNativeObservedRead() ? { observe: true } : {}),
+        ...(remoteExecutable ? { executable: remoteExecutable } : {}),
+        ...(remoteExecutables ? { executables: remoteExecutables } : {}),
+        ...(isNativeObservedRead() && params.model === undefined ? { observe: true } : {}),
       },
       { timeout: method === NATIVE_WORKER_COMPACT ? 185_000 : 60_000, requireSameConnection: true },
     );

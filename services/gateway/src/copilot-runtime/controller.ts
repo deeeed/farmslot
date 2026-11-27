@@ -26,6 +26,7 @@ import { onNativeSessionChange } from '../resources/native-session-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
 import { workspaceObservations, workspaceSourceId } from '../resources/workspace-observations.js';
 import { nativeSessionManager } from '../runners/native/manager.js';
+import { resolveTrustedNativeExecutable } from '../runners/native/node.js';
 import { getAllRuns } from '../runs/store.js';
 import { requireGenerationZeroOwner } from '../security/native-node.js';
 import { currentSessionOriginator } from '../security/work-originator.js';
@@ -448,6 +449,7 @@ export class CopilotRuntimeController {
         : undefined;
     authorize();
     if (this.hasStopIntent(attempt)) throw new Error('Co-Pilot start was stopped');
+    const trustedExecutable = await resolveTrustedNativeExecutable(runner, 'local');
     const info =
       continuation ??
       (await this.native.ensure(
@@ -455,7 +457,7 @@ export class CopilotRuntimeController {
         {
           sessionId: attempt,
           runner,
-          model,
+          ...(model && model !== 'unknown' ? { model } : {}),
           effort,
           executionNodeId: 'local',
           cwd: session.checkout.path,
@@ -463,6 +465,7 @@ export class CopilotRuntimeController {
           approvalMode: safetyTier === 'dangerous' ? 'bypass' : 'ask',
         },
         requester,
+        trustedExecutable,
       ));
     if (
       info.workerManaged ||

@@ -14,7 +14,10 @@ import { GatewayMethodError } from '../core/method-error.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 import { nativeSessionManager } from '../runners/native/manager.js';
-import { resolveNativeExecutionNode } from '../runners/native/node.js';
+import {
+  resolveNativeExecutionNode,
+  resolveTrustedNativeExecutable,
+} from '../runners/native/node.js';
 import { authorizeNativeWorkerHistory } from '../runners/native/worker-history.js';
 import {
   type NativeCatalogPreferenceLease,
@@ -404,10 +407,17 @@ export class GatewayNativeObservations {
     if (!ownsLocalNativeProfile(ownerId))
       throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native local source is unavailable');
     this.local?.stop();
-    this.local = new NativeHostObservation(this.localClient, ownerId, (receipt) => {
-      this.localReceipt = receipt;
-      this.invalidateSource(receipt.nodeId, receipt.ownerId, receipt.changed);
-    });
+    this.local = new NativeHostObservation(
+      this.localClient,
+      ownerId,
+      (receipt) => {
+        this.localReceipt = receipt;
+        this.invalidateSource(receipt.nodeId, receipt.ownerId, receipt.changed);
+      },
+      undefined,
+      undefined,
+      (runner) => resolveTrustedNativeExecutable(runner, 'local'),
+    );
     await this.local.start();
   }
 

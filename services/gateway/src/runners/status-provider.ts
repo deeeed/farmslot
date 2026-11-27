@@ -599,11 +599,31 @@ const antigravityStatusProvider: RunnerStatusProvider = {
       };
     }
     const binary = vars.antigravityPath?.trim() || 'agy';
-    const result = await execOnSlot(
-      vars,
-      withMachineEnv(`${shellExpressionForRemotePath(binary)} models </dev/null`, vars),
-      { cwd: '/', timeout: 15_000, maxBuffer: 1024 * 1024 },
-    );
+    let result: Awaited<ReturnType<typeof execOnSlot>>;
+    try {
+      result = await execOnSlot(
+        vars,
+        withMachineEnv(`${shellExpressionForRemotePath(binary)} models </dev/null`, vars),
+        { cwd: '/', timeout: 15_000, maxBuffer: 1024 * 1024 },
+      );
+    } catch (err) {
+      // Isolate expected remote SSH/transport/timeout failures so peer runner status stays available.
+      const error = err instanceof Error && err.message ? err.message : 'probe-failed';
+      return {
+        runner: 'antigravity',
+        accountLabel: null,
+        accountEmail: null,
+        remainingPercent: null,
+        usedPercent: null,
+        resetsAt: null,
+        loginMethod: null,
+        source: 'error',
+        supportsAccountBinding: false,
+        codexBarProviderId: null,
+        error,
+        outcome: { identity: probeOutcome(error), quota: 'absent' },
+      };
+    }
     if (result.exitCode === 0) {
       return {
         runner: 'antigravity',

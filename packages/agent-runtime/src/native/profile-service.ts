@@ -32,11 +32,22 @@ function sessionStopped(session: NativeSessionInfo): boolean {
   );
 }
 
+export interface NativeProfileRouteOptions {
+  resolveExecutable?: (runner: string) => Promise<string | undefined> | string | undefined;
+}
+
 export function validateNativeProfileParams(params: Record<string, unknown>): void {
   if (
     Object.keys(params).some(
       (key) =>
-        !['executionNodeId', 'profileId', 'runner', 'directory', 'accountContextId'].includes(key),
+        ![
+          'executionNodeId',
+          'profileId',
+          'runner',
+          'directory',
+          'accountContextId',
+          'model',
+        ].includes(key),
     )
   )
     throw new Error(
@@ -50,6 +61,7 @@ export async function routeNativeProfile(
   owner: string,
   method: string,
   params: Record<string, unknown>,
+  options?: NativeProfileRouteOptions,
 ): Promise<unknown> {
   validateNativeProfileParams(params);
   if (method === Methods.NATIVE_PROFILE_LIST) return { profiles: listNativeProfiles() };
@@ -62,27 +74,51 @@ export async function routeNativeProfile(
         ...(params.directory !== undefined ? { directory: string(params, 'directory') } : {}),
       }),
     };
-  if (method === Methods.NATIVE_PROFILE_STATUS)
+  if (method === Methods.NATIVE_PROFILE_STATUS) {
+    const requestedModel = params.model !== undefined ? string(params, 'model') : undefined;
     return inspectNativeProfile(id, async (profile): Promise<NativeProfileStatusResult> => {
       const definition = nativeRunnerDefinitions[profile.runner];
+      const configuredExecutable = (await options?.resolveExecutable?.(profile.runner))?.trim();
+      const executable = configuredExecutable || definition.binary;
+      const env = nativeProfileEnvironment(profile);
       const account = await definition.account.observe({
         cwd: profile.directory,
-        executable: definition.binary,
-        env: nativeProfileEnvironment(profile),
+        executable,
+        env,
       });
+      if (
+        requestedModel &&
+        account.installed &&
+        account.login === 'authenticated' &&
+        definition.account.validateModel
+      ) {
+        const validation = await definition.account.validateModel({
+          cwd: profile.directory,
+          executable: account.executable ?? executable,
+          env,
+          model: requestedModel,
+        });
+        if (!validation.available) {
+          throw new Error(
+            validation.detail ??
+              `${profile.runner} model ${JSON.stringify(requestedModel)} is not available for profile ${profile.id}`,
+          );
+        }
+      }
       const loginCommand = [
         'env',
         ...definition.account.unset.flatMap((name) => ['-u', name]),
         ...Object.entries(definition.account.environment(profile.directory)).map(
           ([key, value]) => `${key}=${value}`,
         ),
-        account.executable ?? definition.binary,
+        account.executable ?? executable,
         ...definition.account.loginArgs,
       ]
         .map(quote)
         .join(' ');
       return { profile, account, loginCommand };
     });
+  }
   if (method === Methods.NATIVE_PROFILE_REMOVE) {
     await removeNativeProfile(id, string(params, 'accountContextId'), async (profile) => {
       const sessions = (await client.list(owner)).filter(

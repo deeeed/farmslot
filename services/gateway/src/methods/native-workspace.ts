@@ -97,7 +97,19 @@ export async function nativeCatalog(
         if (!definition.nativeTransport || !definition.nativeChoices) return [];
         const defaultModel = definition.nativeChoices.defaultModel ?? definition.defaultModel;
         const nodeModels = nativeNodeModels(definition.id, defaultModel, contextMachines);
-        const modelLabels = nodeModelCatalogs.labels(definition.id);
+        const preferences = nativeModelPreferences(
+          definition.id,
+          definition.nativeChoices.models,
+          defaultModel,
+        );
+        const visibleModelSet = new Set<string>([
+          ...preferences.models,
+          ...Object.values(nodeModels ?? {}).flat(),
+        ]);
+        const scopedLabels = nodeModelCatalogs.labels(definition.id, contextMachines.values());
+        const modelLabels = Object.fromEntries(
+          Object.entries(scopedLabels).filter(([id]) => visibleModelSet.has(id)),
+        );
         return [
           {
             runner: definition.id,
@@ -109,7 +121,7 @@ export async function nativeCatalog(
               runnerSupportsNativeTaskReuse(definition.id) &&
               runnerSupportsReadonlyReviewWorkspace(definition.id),
             ...definition.nativeChoices,
-            ...nativeModelPreferences(definition.id, definition.nativeChoices.models, defaultModel),
+            ...preferences,
             ...(nodeModels ? { nodeModels } : {}),
             ...(Object.keys(modelLabels).length ? { modelLabels } : {}),
           },

@@ -84,12 +84,18 @@ function string(params: Record<string, unknown>, key: string): string {
   return value;
 }
 
+export interface NativeSessionRouteOptions {
+  executable?: string;
+  resolveExecutable?: (runner: string) => Promise<string | undefined> | string | undefined;
+}
+
 export async function routeNativeSession(
   client: NativeSessionClient,
   principal: string,
   method: string,
   value: unknown,
   requester?: NativeSessionRequester,
+  options?: NativeSessionRouteOptions,
 ): Promise<unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new NativeSessionMethodError('INVALID_PARAMS', 'Expected native session parameters');
@@ -108,6 +114,8 @@ export async function routeNativeSession(
         'INVALID_PARAMS',
         'Native owner and requester are server-derived',
       );
+  if ('executable' in p)
+    throw new NativeSessionMethodError('INVALID_PARAMS', 'Runner executable is server-derived');
   if ('launch' in p)
     throw new NativeSessionMethodError(
       'INVALID_PARAMS',
@@ -122,7 +130,9 @@ export async function routeNativeSession(
     // Public standalone access is fenced by the gateway; trusted farm callers also read here.
     // The host still requires a current worker lease for every worker mutation.
     if (NATIVE_PROFILE_METHODS.includes(method))
-      return await routeNativeProfile(client, principal, method, p);
+      return await routeNativeProfile(client, principal, method, p, {
+        resolveExecutable: options?.resolveExecutable,
+      });
     switch (method) {
       case Methods.NATIVE_SESSION_WORKSPACE_LIST:
       case Methods.NATIVE_SESSION_WORKSPACE_READ:
@@ -196,6 +206,8 @@ export async function routeNativeSession(
             throw new NativeSessionMethodError('INVALID_PARAMS', 'Unknown native interaction mode');
           params.mode = p.mode;
         }
+        const resolvedExecutable =
+          options?.executable ?? (await options?.resolveExecutable?.(params.runner))?.trim();
         if (method === Methods.NATIVE_SESSION_ENSURE) {
           if (p.resumeSessionId !== undefined)
             throw new NativeSessionMethodError(
@@ -210,11 +222,19 @@ export async function routeNativeSession(
                 sessionId: string(p, 'sessionId'),
               },
               requester,
+              resolvedExecutable || undefined,
             ),
           };
         }
         if (p.resumeSessionId !== undefined) params.resumeSessionId = string(p, 'resumeSessionId');
-        return { session: await client.create(principal, params, requester) };
+        return {
+          session: await client.create(
+            principal,
+            params,
+            requester,
+            resolvedExecutable || undefined,
+          ),
+        };
       }
       case Methods.NATIVE_SESSION_SET_APPROVAL_MODE:
         if (p.approvalMode !== 'ask' && p.approvalMode !== 'bypass')

@@ -118,13 +118,22 @@ export class NativeHostObservation {
       for (const profile of await listNativeProfilesAsync(home)) {
         if (profile.state === 'active')
           statuses.push(
-            (await routeNativeProfile(client, ownerId, Methods.NATIVE_PROFILE_STATUS, {
-              profileId: profile.id,
-            })) as NativeProfileStatusResult,
+            (await routeNativeProfile(
+              client,
+              ownerId,
+              Methods.NATIVE_PROFILE_STATUS,
+              {
+                profileId: profile.id,
+              },
+              { resolveExecutable: this.resolveExecutable },
+            )) as NativeProfileStatusResult,
           );
       }
       return statuses;
     },
+    private readonly resolveExecutable?: (
+      runner: string,
+    ) => Promise<string | undefined> | string | undefined,
   ) {
     this.receipt = {
       version: 1,

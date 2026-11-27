@@ -150,22 +150,22 @@ const grant = await auth.writer.exchangePersonCredential(credential.secret, {
 });
 process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
 
-await new NativeSessionClient(path.join(root, 'native')).warm();
-
-const server = createServer();
-const wss = createWebSocketServer(server, auth);
-initServerGlobals();
-await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-const address = server.address();
-assert(address && typeof address !== 'string');
-const gatewayPort = address.port;
-const gatewayUrl = `ws://127.0.0.1:${gatewayPort}/ws`;
-
-const conn = await new GatewayClient({
-  url: gatewayUrl,
-  credential: { token: grant.accessToken },
-  timeout: 60_000,
-}).connect();
+// Finding 7: Register native-host supervisor cleanup before warming.
+const nativeStateDir = path.join(root, 'native');
+const killSupervisorSync = () => {
+  const lock = path.join(nativeStateDir, 'lock/owner.json');
+  if (fs.existsSync(lock)) {
+    try {
+      const supervisor = JSON.parse(fs.readFileSync(lock, 'utf8')) as { pid: number };
+      process.kill(supervisor.pid, 'SIGTERM');
+    } catch {
+      // Best-effort process kill on signal/exit
+    }
+  }
+};
+process.on('SIGINT', killSupervisorSync);
+process.on('SIGTERM', killSupervisorSync);
+process.on('exit', killSupervisorSync);
 
 const until = async <T,>(
   check: () => Promise<T> | T,
@@ -184,15 +184,9 @@ const until = async <T,>(
 
 const vitePort = Number(process.env.FARMSLOT_PROOF_VITE_PORT ?? 5193);
 const cdpPort = Number(process.env.FARMSLOT_PROOF_CDP_PORT ?? 19229);
-const cdpBase = `http://127.0.0.1:${cdpPort}`;
+cdpBase = `http://127.0.0.1:${cdpPort}`;
 const chromeProfileDir = path.join(root, 'chrome-profile');
 await mkdir(chromeProfileDir, { recursive: true });
-
-let chromeProc: ChildProcess | undefined;
-let vite: Awaited<ReturnType<typeof createVite>> | undefined;
-let page: CdpWebPage | undefined;
-let tabId: string | undefined;
-const sessionsToClose: string[] = [];
 
 const findInShadow = (selector: string) => `(() => {
   const find = (root) => {
@@ -209,10 +203,23 @@ const findInShadow = (selector: string) => `(() => {
   return find(document);
 })()`;
 
-const result: Record<string, unknown> = { pass: false, root, checks: {} };
-const checks = result.checks as Record<string, unknown>;
-
 try {
+  await new NativeSessionClient(nativeStateDir).warm();
+
+  server = createServer();
+  wss = createWebSocketServer(server, auth);
+  initServerGlobals();
+  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const gatewayPort = address.port;
+  const gatewayUrl = `ws://127.0.0.1:${gatewayPort}/ws`;
+
+  conn = await new GatewayClient({
+    url: gatewayUrl,
+    credential: { token: grant.accessToken },
+    timeout: 60_000,
+  }).connect();
   // Warm Antigravity node model catalog before opening UI
   const modelCatalog = await conn.call<RunnerModelCatalogResult>('runner.modelCatalog', {
     runner: 'antigravity',
