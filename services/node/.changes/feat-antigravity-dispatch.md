@@ -1,0 +1,1 @@
+- Forward gateway-resolved trusted runner executables on remote native session and profile requests so configured Antigravity paths outside `PATH` work consistently across workers, Copilot, and profile checks.

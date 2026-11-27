@@ -124,6 +124,10 @@ export const antigravityNativeAdapter = createAcpAdapter({
       (autonomousWorker && (Boolean(options.processSandbox) || options.safetyTier === 'full-auto'));
     return [
       'acp',
+      // Isolate approval-gated ACP sessions from personal CLI settings.json (for example
+      // toolPermission: "always-proceed") so Farmslot's ask/bypass approval gate stays
+      // authoritative while sharing account auth and conversation history under app_data_dir.
+      ...(!autonomousWorker ? ['--cli_dir_name', 'farmslot-acp'] : []),
       ...addDirs,
       ...(useSandbox ? ['--sandbox'] : []),
       ...(autonomousWorker ? ['--dangerously-skip-permissions'] : []),

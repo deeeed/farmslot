@@ -260,7 +260,11 @@ test('antigravityNativeAdapter confirms model, enforces permissions, cancels, an
       assert.deepEqual(session.capabilities?.modes, ['default', 'plan']);
       assert.deepEqual(session.capabilities?.approvalModes, ['ask', 'bypass']);
       assert.equal(session.capabilities?.questions, false);
-      assert.deepEqual(JSON.parse(readFileSync(join(fixture.cwd, 'argv.json'), 'utf8')), ['acp']);
+      assert.deepEqual(JSON.parse(readFileSync(join(fixture.cwd, 'argv.json'), 'utf8')), [
+        'acp',
+        '--cli_dir_name',
+        'farmslot-acp',
+      ]);
       assert.equal(
         events.find((e) => e.type === 'session.started')?.data?.model,
         'gemini-3.8-flash-low',
@@ -337,6 +341,26 @@ test('antigravityNativeAdapter confirms model, enforces permissions, cancels, an
       );
     } finally {
       await resumed.close();
+    }
+
+    // Autonomous worker passes sandbox + skip-permissions without interactive cli_dir_name isolation
+    const worker = await antigravityNativeAdapter.start(
+      {
+        cwd: fixture.cwd,
+        executable: fixture.executable,
+        model: 'gemini-3.8-flash-low',
+        safetyTier: 'full-auto',
+      },
+      () => {},
+    );
+    try {
+      assert.deepEqual(JSON.parse(readFileSync(join(fixture.cwd, 'argv.json'), 'utf8')), [
+        'acp',
+        '--sandbox',
+        '--dangerously-skip-permissions',
+      ]);
+    } finally {
+      await worker.close();
     }
 
     // Reject unavailable model without falling back to default

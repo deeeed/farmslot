@@ -11,7 +11,17 @@ import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -28,18 +38,67 @@ import type {
 const execFileAsync = promisify(execFile);
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const output = path.resolve(process.argv[2] ?? '/tmp/antigravity-worker-proof');
-const root = await mkdtemp(path.join(tmpdir(), 'antigravity-worker-proof-'));
+const root = await realpath(await mkdtemp(path.join(tmpdir(), 'antigravity-worker-proof-')));
 await mkdir(output, { recursive: true });
 
 for (const directory of [
-  'scripts',
   'services/gateway',
   'pool',
   'projects/agy-proof/templates/worker',
+  'projects/agy-proof/templates/prompts',
   'repo',
 ]) {
   await mkdir(path.join(root, directory), { recursive: true });
 }
+await symlink(path.join(repo, 'scripts'), path.join(root, 'scripts'));
+await symlink(path.join(repo, 'packages'), path.join(root, 'packages'));
+await symlink(path.join(repo, 'node_modules'), path.join(root, 'node_modules'));
+
+// Build a minimal isolated CLI distribution (matching task-runtime.test-support.ts) so
+// hosted task-init pins our checkout-local CLI in <1s without invoking global ~/.local/bin/farmslot.
+const cliDistribution = path.join(root, 'installation');
+const distCli = path.join(cliDistribution, 'packages/cli');
+await mkdir(distCli, { recursive: true });
+await writeFile(path.join(cliDistribution, 'yarn.lock'), '');
+await writeFile(path.join(cliDistribution, 'DEPLOYED-REVISION.json'), '{}');
+await mkdir(path.join(cliDistribution, 'packages/agent-runtime'), { recursive: true });
+await copyFile(
+  path.join(repo, 'packages/agent-runtime/package.json'),
+  path.join(cliDistribution, 'packages/agent-runtime/package.json'),
+);
+for (const subdir of ['src', 'scripts', 'bin']) {
+  await cp(
+    path.join(repo, 'packages/agent-runtime', subdir),
+    path.join(cliDistribution, 'packages/agent-runtime', subdir),
+    { recursive: true, filter: (file) => !file.endsWith('.test.ts') },
+  );
+}
+await cp(path.join(repo, 'packages/cli/src'), path.join(distCli, 'src'), {
+  recursive: true,
+  filter: (file) => !file.endsWith('.test.ts'),
+});
+await cp(path.join(repo, 'packages/cli/bin'), path.join(distCli, 'bin'), { recursive: true });
+await writeFile(
+  path.join(distCli, 'package.json'),
+  JSON.stringify({ name: '@farmslot/cli', version: '1.0.0', type: 'module' }),
+);
+const distCliTsconfig = JSON.parse(
+  await readFile(path.join(repo, 'packages/cli/tsconfig.json'), 'utf8'),
+) as { extends?: string; compilerOptions: { paths: Record<string, string[]> } };
+distCliTsconfig.extends = path.join(repo, 'apps/command-center/tsconfig.base.json');
+for (const key of Object.keys(distCliTsconfig.compilerOptions.paths)) {
+  distCliTsconfig.compilerOptions.paths[key] = distCliTsconfig.compilerOptions.paths[key].map(
+    (entry) => path.resolve(repo, 'packages/cli', entry),
+  );
+}
+distCliTsconfig.compilerOptions.paths['@farmslot/agent-runtime'] = [
+  path.join(cliDistribution, 'packages/agent-runtime/src/index.ts'),
+];
+distCliTsconfig.compilerOptions.paths['@farmslot/agent-runtime/*'] = [
+  path.join(cliDistribution, 'packages/agent-runtime/src/*'),
+];
+await writeFile(path.join(distCli, 'tsconfig.json'), JSON.stringify(distCliTsconfig));
+const isolatedFarmslotCli = path.join(distCli, 'bin/farmslot.mjs');
 const workRepo = path.join(root, 'repo');
 const git = (...args: string[]) =>
   execFileSync('git', ['-C', workRepo, ...args], { encoding: 'utf8' }).trim();
@@ -61,16 +120,25 @@ git(
 const slotId = 'macwork-agy-proof-1';
 const project = 'agy-proof';
 await writeFile(path.join(root, 'CLAUDE.md'), '# Isolated Antigravity proof\n');
-await writeFile(path.join(root, 'scripts/dev.sh'), '#!/bin/sh\n');
 await writeFile(path.join(root, 'services/gateway/package.json'), '{}');
 await writeFile(
   path.join(root, 'projects', project, 'templates/worker/dev.md'),
-  '# Isolated Antigravity proof worker task\n',
+  '# Isolated Antigravity proof worker task\n\n- [ ] Proof step\n',
+);
+await writeFile(
+  path.join(root, 'projects', project, 'templates/prompts/worker-dispatch.md'),
+  'Read {{TASK_FILE}} and follow its instructions.\n',
+);
+await writeFile(
+  path.join(root, 'projects', project, 'templates/prompts/worker-nudge.md'),
+  'Read {{TASK_FILE}} and follow its instructions.\n',
 );
 await writeFile(
   path.join(root, 'projects', project, 'project.json'),
   JSON.stringify({
     name: project,
+    task_dir: 'tasks',
+    execution_templates: { sources: [] },
     hooks: {},
     review: { enabled: false },
   }),
@@ -118,6 +186,7 @@ await writeFile(
 Object.assign(process.env, {
   NODE_TEST_CONTEXT: '1',
   FARMSLOT_ROOT: root,
+  FARMSLOT_CLI: isolatedFarmslotCli,
   FARMSLOT_HOME: path.join(root, 'home'),
   FARMSLOT_POOL_DIR: path.join(root, 'pool'),
   FARMSLOT_PROJECTS_DIR: path.join(root, 'projects'),
@@ -162,48 +231,112 @@ const grant = await auth.writer.exchangePersonCredential(personCred.secret, {
 });
 process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
 
-const privateNative = new NativeSessionClient(path.join(root, 'native'));
-await privateNative.warm();
+// Finding 7: Register native-host supervisor cleanup before warming.
+const nativeStateDir = path.join(root, 'native');
+const killSupervisorSync = () => {
+  const lock = path.join(nativeStateDir, 'lock/owner.json');
+  if (fs.existsSync(lock)) {
+    try {
+      const supervisor = JSON.parse(fs.readFileSync(lock, 'utf8')) as { pid: number };
+      process.kill(supervisor.pid, 'SIGTERM');
+    } catch {
+      // Best-effort process kill on signal/exit
+    }
+  }
+};
+process.on('SIGINT', killSupervisorSync);
+process.on('SIGTERM', killSupervisorSync);
+process.on('exit', killSupervisorSync);
 
-const server = createServer();
-const wss = createWebSocketServer(server, auth);
-initServerGlobals();
-await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-const address = server.address();
-assert(address && typeof address !== 'string');
-const gatewayUrl = `ws://127.0.0.1:${address.port}/ws`;
+const result: Record<string, unknown> = {
+  pass: false,
+  root,
+  gatewayUrl: '',
+  checks: {},
+};
+const checks = result.checks as Record<string, unknown>;
+const cleanupWorkers: Array<{ sessionId: string; generation: string; leaseId: string }> = [];
+const cleanupRuns: string[] = [];
 
-const conn = await new GatewayClient({
-  url: gatewayUrl,
-  credential: { token: grant.accessToken },
-  timeout: 60_000,
-}).connect();
+let server: import('node:http').Server | undefined;
+let wss: import('ws').WebSocketServer | undefined;
+let conn: import('../../../packages/cli/src/gateway-client.js').GatewayClient | undefined;
+let privateNative:
+  | import('../../../packages/agent-runtime/src/native/client.js').NativeSessionClient
+  | undefined;
 
 const until = async <T,>(
   read: () => Promise<T>,
   check: (value: T) => boolean,
   label: string,
   timeoutMs = 120_000,
+  intervalMs = 150,
 ): Promise<T> => {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = await read();
     if (check(value)) return value;
     assert(Date.now() < deadline, `Timed out: ${label}`);
-    await new Promise((r) => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, intervalMs));
   }
 };
 
-const result: Record<string, unknown> = {
-  pass: false,
-  root,
-  gatewayUrl,
-  checks: {},
-};
-const checks = result.checks as Record<string, unknown>;
-const cleanupWorkers: Array<{ sessionId: string; generation: string; leaseId: string }> = [];
-
 try {
+  // ─── Finding 7: Prove startup failure leaves no owned supervisor ───
+  const failRoot = await mkdtemp(path.join(tmpdir(), 'agy-supervisor-fail-'));
+  try {
+    const marker = path.join(failRoot, 'fail-lstart');
+    await writeFile(
+      path.join(failRoot, 'ps'),
+      `#!/bin/sh\ncase "$*" in *lstart=*) if [ -f '${marker}' ]; then rm -f '${marker}'; exit 1; fi;; esac\nexec /bin/ps "$@"\n`,
+      { mode: 0o700 },
+    );
+    await writeFile(marker, '');
+    const supervisorEntry = fileURLToPath(
+      new URL('../../../packages/agent-runtime/src/native/supervisor.ts', import.meta.url),
+    );
+    const failedProc = execFileSync(
+      process.execPath,
+      ['--import', import.meta.resolve('tsx'), supervisorEntry, failRoot],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${failRoot}:${process.env.PATH}` },
+        timeout: 15_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    assert.fail(`Expected supervisor startup to fail, got output: ${failedProc}`);
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    assert(status !== undefined && status !== 0, 'Supervisor must exit non-zero on failure');
+    const lockRemaining = fs.existsSync(path.join(failRoot, 'lock'));
+    assert.equal(lockRemaining, false, 'Failed supervisor startup must leave no lock directory');
+  } finally {
+    await rm(failRoot, { recursive: true, force: true });
+  }
+  checks.startupFailureLeavesNoSupervisor = {
+    verified: true,
+    noLockRemaining: true,
+  };
+
+  privateNative = new NativeSessionClient(nativeStateDir);
+  await privateNative.warm();
+
+  server = createServer();
+  wss = createWebSocketServer(server, auth);
+  initServerGlobals();
+  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const gatewayUrl = `ws://127.0.0.1:${address.port}/ws`;
+  result.gatewayUrl = gatewayUrl;
+
+  conn = await new GatewayClient({
+    url: gatewayUrl,
+    credential: { token: grant.accessToken },
+    timeout: 60_000,
+  }).connect();
+
   // ─── AC1a: Shared catalog on macwork exposes stable model IDs & display names ───
   const catalog = await conn.call<RunnerModelCatalogResult>('runner.modelCatalog', {
     runner: 'antigravity',
@@ -420,7 +553,7 @@ try {
     owner.id,
     target1,
     cmd1,
-    `Create the file ${proofFile} containing exactly ${token} and then reply with WORKER_DONE.`,
+    `Use your file-writing tool to create the file ${proofFile} containing exactly ${token} and then reply with WORKER_DONE.`,
   );
   const completed1 = await until(
     () => privateNative.readWorker(owner.id, worker1.id, lease1, undefined, 500),
@@ -612,6 +745,224 @@ try {
     processStopped: cancelled.session?.processStopped,
   };
 
+  checks.acpBoundaryEvidence = {
+    workerExecution: checks.workerExecution,
+    retainedHandoff: checks.retainedHandoff,
+    cancellation: checks.cancellation,
+  };
+
+  // ─── Finding 6: Real Gateway Run Dispatch, Retained Handoff, and Cancellation ───
+  delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = person.id;
+
+  const findPrimaryContext = (r: Run) =>
+    r.agentContexts?.find((c) => c.role === 'dev' || c.role === 'primary');
+
+  const gwTask1 = await makeCliTask('agy-gw-smoke-1');
+  await writeFile(
+    gwTask1,
+    `# Isolated Gateway Proof agy-gw-smoke-1\n\nReply with GATEWAY_RUN_1_READY and stop. Do not run shell commands or edit files.\n`,
+  );
+  const gwCreate1 = await conn.call<{ run: Run }>('run.create', {
+    project,
+    taskFile: gwTask1,
+    ticketOrPr: 'AGY-GW-1',
+    flowType: 'dev',
+    mode: 'interactive',
+    safetyTier: 'full-auto',
+    runner: 'antigravity',
+    model: nonDefaultModel,
+    slotId,
+    skipPrepare: true,
+  });
+  const gwRun1 = gwCreate1.run;
+  cleanupRuns.push(gwRun1.id);
+  assert.equal(gwRun1.transport, 'native');
+  assert.equal(gwRun1.metrics.runner, 'antigravity');
+  assert.equal(gwRun1.metrics.model, nonDefaultModel);
+
+  const gwRun1Active = await until(
+    async () => (await conn.call<{ run: Run }>('run.get', { runId: gwRun1.id })).run,
+    (r) => {
+      if (
+        r.status === 'failed' ||
+        r.status === 'blocked' ||
+        r.status === 'reconciling' ||
+        r.status === 'cancelled'
+      ) {
+        throw new Error(
+          `Gateway run 1 entered unexpected state ${r.status}: ${r.error ?? JSON.stringify(r.steps.find((s) => s.status === 'failed'))}`,
+        );
+      }
+      const primary = findPrimaryContext(r);
+      return Boolean(primary?.nativeSession?.sessionId && primary?.nativeSession?.acceptedAt);
+    },
+    'gateway run 1 native dispatch acceptance',
+    150_000,
+    1_000,
+  );
+  const gwRun1Primary = findPrimaryContext(gwRun1Active);
+  assert(
+    gwRun1Primary?.nativeSession?.sessionId,
+    'Gateway run 1 must record active native session',
+  );
+  assert(gwRun1Primary?.nativeSession?.acceptedAt, 'Gateway run 1 must record prompt acceptedAt');
+  const gwRun1NativeSessionId = gwRun1Primary.runnerSessionId;
+  assert(gwRun1NativeSessionId, 'Gateway run 1 must record runnerSessionId');
+
+  // Wait for run 1's native turn to settle before handing the warm session to run 2
+  await until(
+    async () =>
+      privateNative!.readWorker(
+        person.id,
+        gwRun1Primary.nativeSession!.sessionId,
+        gwRun1Primary.nativeSession!.leaseId,
+        undefined,
+        200,
+      ),
+    (snap) =>
+      snap.events.some(
+        (e) =>
+          e.commandId === gwRun1Primary.nativeSession!.commandId && e.type === 'turn.completed',
+      ),
+    'gateway run 1 initial turn completion',
+    90_000,
+  );
+
+  const gwTask2 = await makeCliTask('agy-gw-smoke-2');
+  await writeFile(
+    gwTask2,
+    `# Isolated Gateway Proof agy-gw-smoke-2\n\nWrite a detailed 2000-word essay explaining the history of distributed consensus algorithms. Do not use any tools.\n`,
+  );
+  const gwCreate2 = await conn.call<{ run: Run }>('run.create', {
+    project,
+    taskFile: gwTask2,
+    ticketOrPr: 'AGY-GW-2',
+    flowType: 'dev',
+    mode: 'interactive',
+    safetyTier: 'full-auto',
+    runner: 'antigravity',
+    model: nonDefaultModel,
+    slotId,
+    parentRunId: gwRun1.id,
+    familyId: gwRun1.familyId,
+    familyRootTicketOrPr: gwRun1.ticketOrPr,
+    skipPrepare: true,
+    engineState: {
+      flags: {
+        warmSessionReuse: true,
+        skipPrepare: true,
+      },
+    },
+  });
+  const gwRun2 = gwCreate2.run;
+  cleanupRuns.push(gwRun2.id);
+  const gwRun2Active = await until(
+    async () => (await conn.call<{ run: Run }>('run.get', { runId: gwRun2.id })).run,
+    (r) => {
+      if (
+        r.status === 'failed' ||
+        r.status === 'blocked' ||
+        r.status === 'reconciling' ||
+        r.status === 'cancelled'
+      ) {
+        throw new Error(
+          `Gateway run 2 entered unexpected state ${r.status}: ${r.error ?? JSON.stringify(r.steps.find((s) => s.status === 'failed'))}`,
+        );
+      }
+      const primary = findPrimaryContext(r);
+      return Boolean(
+        primary?.nativeSession?.sessionId &&
+        primary?.nativeSession?.acceptedAt &&
+        r.engineState?.flags?.warmHandoffSucceeded === true,
+      );
+    },
+    'gateway run 2 retained handoff acceptance',
+    150_000,
+    1_000,
+  );
+  const gwRun2Primary = findPrimaryContext(gwRun2Active);
+  assert(gwRun2Primary?.nativeSession?.sessionId, 'Gateway run 2 must record native session');
+  assert.equal(
+    gwRun2Active.engineState?.flags?.warmHandoffSucceeded,
+    true,
+    'Gateway run 2 must confirm warmHandoffSucceeded',
+  );
+  assert.equal(
+    gwRun2Primary.nativeSession.sessionId,
+    gwRun1Primary.nativeSession.sessionId,
+    'Chained run retained handoff must reuse the parent native worker session ID',
+  );
+  assert.equal(
+    gwRun2Primary?.runnerSessionId,
+    gwRun1NativeSessionId,
+    'Chained run retained handoff must preserve native conversation session ID',
+  );
+
+  const cancelGw2 = await conn.call<{ run: Run }>('run.cancel', {
+    runId: gwRun2.id,
+    reason: 'Gateway run lifecycle proof cancellation',
+  });
+  assert.equal(cancelGw2.run.status, 'cancelled');
+  const afterGwCancel = await privateNative!.readWorker(
+    person.id,
+    gwRun2Primary.nativeSession.sessionId,
+    gwRun2Primary.nativeSession.leaseId,
+    undefined,
+    200,
+  );
+  const gw2SubmittedCount = afterGwCancel.events.filter(
+    (e) => e.type === 'command.submitted' && e.commandId === gwRun2Primary.nativeSession!.commandId,
+  ).length;
+  assert.equal(
+    gw2SubmittedCount,
+    1,
+    'Gateway retained handoff must deliver follow-up exactly once',
+  );
+  assert.equal(
+    afterGwCancel.session.processStopped,
+    true,
+    'Cancelling gateway run 2 must stop its underlying native worker process',
+  );
+  const gwRun1After = (await conn.call<{ run: Run }>('run.get', { runId: gwRun1.id })).run;
+  if (!['cancelled', 'done', 'failed'].includes(gwRun1After.status)) {
+    await conn.call('run.cancel', {
+      runId: gwRun1.id,
+      reason: 'Parent cleanup',
+    });
+  }
+  await conn.call('run.archive', { runId: gwRun2.id });
+  await conn.call('run.archive', { runId: gwRun1.id });
+  cleanupRuns.length = 0;
+  await writeFile(
+    path.join(output, 'gateway-lifecycle-receipt.json'),
+    JSON.stringify(
+      { run1: gwRun1Active, run2: gwRun2Active, cancelledRun2: cancelGw2.run },
+      null,
+      2,
+    ),
+  );
+
+  checks.gatewayRunLifecycle = {
+    run1Id: gwRun1.id,
+    run1Status: gwRun1Active.status,
+    run1SessionId: gwRun1Primary.nativeSession.sessionId,
+    run1NativeSessionId: gwRun1NativeSessionId,
+    run2Id: gwRun2.id,
+    run2Status: gwRun2Active.status,
+    run2SessionId: gwRun2Primary.nativeSession.sessionId,
+    run2NativeSessionId: gwRun2Primary?.runnerSessionId,
+    warmHandoffSucceeded: gwRun2Active.engineState?.flags?.warmHandoffSucceeded === true,
+    retainedSessionPreserved: gwRun2Primary?.runnerSessionId === gwRun1NativeSessionId,
+    followUpSubmittedCount: gw2SubmittedCount,
+    cancelled: cancelGw2.run.status === 'cancelled',
+    cancelledProcessStopped: afterGwCancel.session.processStopped,
+  };
+
+  // Restore test flags for remaining checks
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = owner.id;
+
   // ─── AC4: Unavailability (missing install, signed-out login) & unavailable model error ───
   const missingObs = await observeAntigravityAccount({
     cwd: workRepo,
@@ -681,18 +1032,29 @@ try {
   result.error = String(error);
   throw error;
 } finally {
+  for (const runId of [...cleanupRuns].reverse()) {
+    try {
+      await conn?.call('run.cancel', { runId, reason: 'Proof cleanup' });
+    } catch {
+      // Best-effort cleanup of test-owned runs on failure path.
+    }
+  }
   for (const target of cleanupWorkers) {
     try {
-      await privateNative.closeWorker(owner.id, target);
+      await privateNative?.closeWorker(owner.id, target);
     } catch {
       // Best-effort cleanup of test-owned workers on failure path.
     }
   }
-  conn.close();
+  conn?.close();
   resetServerGlobalsForTests();
-  for (const socket of wss.clients) socket.terminate();
-  await new Promise<void>((resolve) => wss.close(() => resolve()));
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (wss) {
+    for (const socket of wss.clients) socket.terminate();
+    await new Promise<void>((resolve) => wss!.close(() => resolve()));
+  }
+  if (server) {
+    await new Promise<void>((resolve) => server!.close(() => resolve()));
+  }
   const lock = path.join(root, 'native/lock/owner.json');
   if (fs.existsSync(lock)) {
     const supervisor = JSON.parse(fs.readFileSync(lock, 'utf8')) as { pid: number };
@@ -718,6 +1080,10 @@ try {
     );
   }
   result.hostStopped = !fs.existsSync(lock);
+  const hostLogPath = path.join(root, 'native/host.log');
+  if (fs.existsSync(hostLogPath)) {
+    await copyFile(hostLogPath, path.join(output, 'host.log'));
+  }
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
   await rm(root, { recursive: true, force: true });
   console.log(

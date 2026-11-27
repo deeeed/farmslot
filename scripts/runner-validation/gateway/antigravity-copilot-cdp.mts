@@ -184,9 +184,21 @@ const until = async <T,>(
 
 const vitePort = Number(process.env.FARMSLOT_PROOF_VITE_PORT ?? 5193);
 const cdpPort = Number(process.env.FARMSLOT_PROOF_CDP_PORT ?? 19229);
-cdpBase = `http://127.0.0.1:${cdpPort}`;
+const cdpBase = `http://127.0.0.1:${cdpPort}`;
 const chromeProfileDir = path.join(root, 'chrome-profile');
 await mkdir(chromeProfileDir, { recursive: true });
+
+const result: Record<string, unknown> = { pass: false, root, checks: {} };
+const checks = result.checks as Record<string, unknown>;
+const sessionsToClose: string[] = [];
+
+let server: ReturnType<typeof createServer> | undefined;
+let wss: ReturnType<typeof createWebSocketServer> | undefined;
+let conn: import('../../../packages/cli/src/gateway-client.js').GatewayClient | undefined;
+let chromeProc: ChildProcess | undefined;
+let vite: Awaited<ReturnType<typeof createVite>> | undefined;
+let page: CdpWebPage | undefined;
+let tabId: string | undefined;
 
 const findInShadow = (selector: string) => `(() => {
   const find = (root) => {
@@ -268,7 +280,7 @@ try {
   vite = await createVite({
     configFile: path.join(repo, 'apps/command-center/ui/vite.config.ts'),
     envDir: path.join(root, 'no-env'),
-    cacheDir: path.join(root, 'vite-cache'),
+    cacheDir: path.join(tmpdir(), 'farmslot-antigravity-proof-vite-cache'),
     logLevel: 'error',
     server: {
       host: '127.0.0.1',
@@ -294,6 +306,10 @@ try {
       `--user-data-dir=${chromeProfileDir}`,
       '--no-first-run',
       '--no-default-browser-check',
+      '--disable-gpu',
+      '--disable-features=CalculateNativeWinOcclusion',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
       '--window-size=1280,960',
       'about:blank',
     ],
@@ -313,23 +329,36 @@ try {
     20_000,
   );
 
-  const target = (await (
-    await fetch(`${cdpBase}/json/new?${encodeURIComponent(`http://127.0.0.1:${vitePort}/`)}`, {
-      method: 'PUT',
-    })
-  ).json()) as { id: string; webSocketDebuggerUrl: string };
+  const target = await until(
+    async () => {
+      const list = (await (await fetch(`${cdpBase}/json/list`)).json()) as Array<{
+        id: string;
+        type: string;
+        url: string;
+        webSocketDebuggerUrl: string;
+      }>;
+      return list.find((entry) => entry.type === 'page');
+    },
+    (t): t is { id: string; type: string; url: string; webSocketDebuggerUrl: string } => Boolean(t),
+    'initial Chrome page target ready',
+    20_000,
+  );
   tabId = target.id;
+  await fetch(`${cdpBase}/json/activate/${target.id}`);
   page = await CdpWebPage.connectToTarget({
     id: target.id,
     type: 'page',
     webSocketDebuggerUrl: target.webSocketDebuggerUrl,
   });
+  await page.session.call('Page.bringToFront');
+  await page.session.call('Emulation.setFocusEmulationEnabled', { enabled: true });
   await page.session.call('Emulation.setDeviceMetricsOverride', {
     width: 1280,
     height: 960,
     deviceScaleFactor: 1,
     mobile: false,
   });
+  await page.session.call('Page.navigate', { url: `http://127.0.0.1:${vitePort}/` });
   const browserErrors: unknown[] = [];
   page.session.on('Runtime.exceptionThrown', (event) => browserErrors.push(event.exceptionDetails));
 
@@ -341,26 +370,63 @@ try {
     await writeFile(path.join(output, `${name}.png`), Buffer.from(shot.data, 'base64'));
   };
 
+  const clickStable = async (selector: string) => {
+    assert(page);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await page.waitForSelector(selector, { timeoutMs: 30_000 });
+      try {
+        await page.click(selector);
+        return;
+      } catch (err) {
+        if (attempt === 5) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  };
+
   // Sign in to Command Center
-  await page.waitForSelector('.auth-input', { timeoutMs: 30_000 });
+  try {
+    await page.waitForSelector('.auth-input', { timeoutMs: 30_000 });
+  } catch (err) {
+    const pageDiag = await page.evaluate(
+      `({ href: location.href, readyState: document.readyState, title: document.title, body: document.body?.innerHTML?.slice(0, 800), errors: ${JSON.stringify(browserErrors)} })`,
+    );
+    throw new Error(`Auth screen did not render: ${JSON.stringify(pageDiag)}`, { cause: err });
+  }
   await page.setInput('.auth-input', credential.secret);
   await page.click('.auth-submit');
   await page.waitForSelector('[data-testid=copilot-target]', { timeoutMs: 30_000 });
   if (
     await page.evaluate("[...document.querySelectorAll('whats-new-modal')].some(view => view.open)")
   ) {
-    await page.clickText('Got it');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await page.clickText('Got it');
+        break;
+      } catch (err) {
+        if (attempt === 2) throw err;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
   }
 
   // ─── AC1 + AC4 (Command Center Dispatch Wizard): select antigravity + non-default model + verify disabled controls ───
   await page.session.call('Page.navigate', {
     url: `http://127.0.0.1:${vitePort}/#dispatch`,
   });
+  await page.waitForExpression(`window.location.hash === '#dispatch'`, { timeoutMs: 15_000 });
   await page.waitForSelector('[data-testid=dispatch-execution-options]', { timeoutMs: 30_000 });
-  await page.waitForSelector('[data-testid=review-dispatch-runner-antigravity]', {
-    timeoutMs: 30_000,
-  });
-  await page.click('[data-testid=review-dispatch-runner-antigravity]');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.waitForSelector('[data-testid=review-dispatch-runner-antigravity]', {
+      timeoutMs: 30_000,
+    });
+    try {
+      await page.click('[data-testid=review-dispatch-runner-antigravity]');
+      break;
+    } catch (err) {
+      if (attempt === 2) throw err;
+    }
+  }
 
   // Wait for model catalog buttons with display names to appear
   const modelButtonSelector = `[data-testid="review-dispatch-model-${nonDefaultModel}"]`;
@@ -372,7 +438,7 @@ try {
     modelButtonText.includes(expectedLabel),
     `Expected model picker display name "${expectedLabel}", got "${modelButtonText}"`,
   );
-  await page.click(modelButtonSelector);
+  await clickStable(modelButtonSelector);
 
   // Verify unsupported controls are disabled/absent in Dispatch Wizard
   const dispatchControlState = await page.evaluate<{
@@ -433,7 +499,7 @@ try {
     copilotModelLabel.includes(expectedLabel),
     `Expected Copilot model display name "${expectedLabel}", got "${copilotModelLabel}"`,
   );
-  await page.click(modelButtonSelector);
+  await clickStable(modelButtonSelector);
   const copilotEffortDisabledOrAbsent = await page.evaluate<boolean>(
     `(() => { const grp = ${findInShadow('[data-testid=review-dispatch-effort]')}; return grp ? [...grp.querySelectorAll('button')].every((b) => b.disabled) : true; })()`,
   );
@@ -461,11 +527,22 @@ try {
   const firstPrompt =
     'List the first 25 prime numbers, one per line, with no commentary and no tool calls.';
   await page.setInput('[data-testid=native-prompt]', firstPrompt);
-  await page.waitForExpression(
-    `(() => { const btn = ${findInShadow('[data-testid=native-create]')}; return Boolean(btn && !btn.disabled); })()`,
-    { timeoutMs: 30_000 },
-  );
-  await page.click('[data-testid=native-create]');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await page.waitForExpression(
+        `(() => { const btn = ${findInShadow('[data-testid=native-create]')}; return Boolean(btn && !btn.disabled); })()`,
+        { timeoutMs: 20_000 },
+      );
+      await page.click('[data-testid=native-create]');
+      break;
+    } catch (err) {
+      if (attempt < 2 && String(err).includes('Target is disabled')) continue;
+      const diag = await page.evaluate(
+        `(() => { const v = ${findInShadow('native-session-view')}; return v ? { fixedTarget: v.fixedTarget, connected: v.connected, catalogCurrent: v.catalogCurrent, busy: v.busy, launchReady: v.launchReady, prompt: v.prompt, cwd: v.cwd, runner: v.runner, profileReady: v.profileReady, executionNodeId: v.executionNodeId, nodes: v.catalog?.executionNodes, error: v.error } : null; })()`,
+      );
+      throw new Error(`native-create click failed: ${JSON.stringify(diag)}`, { cause: err });
+    }
+  }
 
   // Wait for the created Antigravity session to finish starting in gateway
   const session = await until(
@@ -507,10 +584,31 @@ try {
   );
 
   await page.waitForSelector('[data-testid=native-message]', { timeoutMs: 30_000 });
-  await page.waitForExpression(
-    `(${findInShadow('native-session-view')})?.historyObservation?.status === 'ready'`,
-    { timeoutMs: 30_000 },
-  );
+  try {
+    await page.waitForExpression(
+      `(${findInShadow('native-session-view')})?.historyObservation?.status === 'ready'`,
+      { timeoutMs: 30_000 },
+    );
+  } catch (err) {
+    let directSub: unknown;
+    try {
+      directSub = await conn!.call('native.session.subscribe', {
+        sessionId: session.id,
+        executionNodeId: 'local',
+      });
+    } catch (subErr) {
+      directSub = { error: String(subErr) };
+    }
+    const diag = await page.evaluate(
+      `(() => { const v = ${findInShadow('native-session-view')}; return { visibilityState: document.visibilityState, view: v ? { selectedId: v.selectedId, selectedNodeId: v.selectedNodeId, historyObservation: v.historyObservation, hasSession: Boolean(v.session), transcriptLen: v.transcript?.events?.length, hasHistoryStop: Boolean(v.historyStop), pollError: v.pollError, inventoryError: v.inventoryError, error: v.error } : null }; })()`,
+    );
+    throw new Error(
+      `historyObservation did not become ready: ${JSON.stringify({ diag, directSubKind: directSub && typeof directSub === 'object' ? Object.keys(directSub) : directSub, directSubErr: directSub && typeof directSub === 'object' && 'error' in directSub ? directSub.error : undefined, browserErrors })}`,
+      {
+        cause: err,
+      },
+    );
+  }
 
   const sendViaUi = async (text: string) => {
     const before = (await read()).cursor;
@@ -572,10 +670,26 @@ try {
   // 2) Ask + Approve permission decision
   const allowedPath = path.join(workspace, 'copilot-allowed.txt');
   after = await sendViaUi(
-    `Create the file ${allowedPath} with exact contents COPILOT_APPROVE_OK followed by a newline. Use no other tools and do not retry if denied.`,
+    `Use your file-writing tool to create the file ${allowedPath} with exact contents COPILOT_APPROVE_OK followed by a newline. Use no other tools and do not retry if denied.`,
   );
   await until(
-    async () => (await read()).pendingRequests.length > 0,
+    async () => {
+      const snap = await read();
+      if (snap.pendingRequests.length > 0) return true;
+      const done = snap.events.find((e) => e.sequence > after && e.type === 'turn.completed');
+      if (done) {
+        const text = snap.events
+          .filter((e) => e.sequence > after && e.type === 'text.delta')
+          .map((e) => e.text ?? '')
+          .join('');
+        throw new Error(
+          `Ask approve turn completed without requesting approval: events=${JSON.stringify(
+            snap.events.filter((e) => e.sequence > after).map((e) => e.type),
+          )} text=${JSON.stringify(text.slice(0, 300))}`,
+        );
+      }
+      return false;
+    },
     Boolean,
     'Ask approve request',
   );
@@ -593,7 +707,7 @@ try {
   // 3) Ask + Deny permission decision
   const deniedPath = path.join(workspace, 'copilot-denied.txt');
   after = await sendViaUi(
-    `Create the file ${deniedPath} containing DENIED_TEST. I will deny permission; after denial stop immediately and reply DENIED without retrying.`,
+    `Use your file-writing tool to create the file ${deniedPath} containing DENIED_TEST. I will deny permission; after denial stop immediately and reply DENIED without retrying.`,
   );
   await until(async () => (await read()).pendingRequests.length > 0, Boolean, 'Ask deny request');
   await page.waitForSelector('[data-testid=native-deny]', { timeoutMs: 30_000 });
@@ -773,7 +887,7 @@ try {
 } finally {
   for (const id of sessionsToClose) {
     try {
-      await conn.call('native.session.close', { sessionId: id, executionNodeId: 'local' });
+      await conn?.call('native.session.close', { sessionId: id, executionNodeId: 'local' });
     } catch {
       // Best-effort cleanup of test-owned session.
     }
@@ -788,11 +902,15 @@ try {
   page?.close();
   chromeProc?.kill('SIGTERM');
   await vite?.close();
-  conn.close();
+  conn?.close();
   resetServerGlobalsForTests();
-  for (const socket of wss.clients) socket.terminate();
-  await new Promise<void>((resolve) => wss.close(() => resolve()));
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (wss) {
+    for (const socket of wss.clients) socket.terminate();
+    await new Promise<void>((resolve) => wss!.close(() => resolve()));
+  }
+  if (server) {
+    await new Promise<void>((resolve) => server!.close(() => resolve()));
+  }
   const lock = path.join(root, 'native/lock/owner.json');
   if (fs.existsSync(lock)) {
     const supervisor = JSON.parse(fs.readFileSync(lock, 'utf8')) as { pid: number };
