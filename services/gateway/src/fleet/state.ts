@@ -908,6 +908,67 @@ function loadNewestFleetStatus(): Promise<FleetStatus> {
   return newestFleetRead;
 }
 
+export const NATIVE_POOL_CHANGE_COALESCE_MS = 50;
+
+export interface PoolWatcherHandlers {
+  onAll: (event: string, file: string) => void;
+  onRaw: (_event: string, filename: unknown, details: unknown) => void;
+  dispose: () => void;
+}
+
+/**
+ * Coalesces native observation pool notices across paired Chokidar `raw` and `all` deliveries for
+ * the same pool edit so one edit produces one shared snapshot read, while preserving immediate
+ * delivery to other fleet/config/worker watchers.
+ */
+export function createPoolWatcherHandlers(options: {
+  directory: string;
+  onPoolFileChanged: (file: string) => void;
+  onNativePoolChanged: () => void;
+  coalesceMs?: number;
+}): PoolWatcherHandlers {
+  const {
+    directory,
+    onPoolFileChanged,
+    onNativePoolChanged,
+    coalesceMs = NATIVE_POOL_CHANGE_COALESCE_MS,
+  } = options;
+  let nativePoolTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  const handleFile = (file: string) => {
+    if (
+      path.dirname(file) !== directory ||
+      !file.endsWith('.json') ||
+      isIgnoredPoolFile(path.basename(file))
+    )
+      return;
+    onPoolFileChanged(file);
+    if (disposed) return;
+    clearTimeout(nativePoolTimer);
+    nativePoolTimer = setTimeout(() => {
+      nativePoolTimer = undefined;
+      if (!disposed) onNativePoolChanged();
+    }, coalesceMs);
+    nativePoolTimer.unref();
+  };
+
+  return {
+    onAll(event: string, file: string) {
+      if (['add', 'change', 'unlink'].includes(event)) handleFile(file);
+    },
+    onRaw(_event: string, filename: unknown, details: unknown) {
+      const file = watchedEventPath(filename, details);
+      if (file) handleFile(file);
+    },
+    dispose() {
+      disposed = true;
+      clearTimeout(nativePoolTimer);
+      nativePoolTimer = undefined;
+    },
+  };
+}
+
 export function startFileWatcher() {
   // A file watch can lose an unlink immediately after a change on macOS.
   // Keep watching its directory across atomic replacements and recreation.
@@ -951,43 +1012,37 @@ export function startFileWatcher() {
       file !== poolDirectory() &&
       (!file.endsWith('.json') || isIgnoredPoolFile(path.basename(file))),
   });
-  const poolChanged = (file: string) => {
-    if (
-      path.dirname(file) !== poolDirectory() ||
-      !file.endsWith('.json') ||
-      isIgnoredPoolFile(path.basename(file))
-    )
-      return;
-    publishConfigurationResources();
-    capabilityResourceChanges.catalogChanged();
-    nativeCatalogChanges.poolChanged();
-    publishWorkerResources();
-    clearTimeout(poolDebounce);
-    poolDebounce = setTimeout(async () => {
-      try {
-        console.log('[state] pool config changed — triggering fleet refresh');
-        // The device inventory labels each device with the slots that configure
-        // it, which is read straight from pool JSON. Keeping a snapshot taken
-        // before this edit would show an operator the OLD wiring for up to the
-        // whole TTL, on the one surface whose job is telling them which slot
-        // owns a device. Imported lazily to keep the fleet module out of the
-        // inventory's import graph.
-        const { clearDeviceInventoryCache } = await loadDeviceInventory();
-        clearDeviceInventoryCache();
-        const { fleetHealthRefresh } = await loadFleetMethods();
-        await fleetHealthRefresh();
-      } catch (err) {
-        console.error('[state] pool refresh failed:', (err as Error).message);
-      }
-    }, 2000);
-  };
-  poolWatcher.on('all', (event, file) => {
-    if (['add', 'change', 'unlink'].includes(event)) poolChanged(file);
+  const poolHandlers = createPoolWatcherHandlers({
+    directory: poolDirectory(),
+    onPoolFileChanged: () => {
+      publishConfigurationResources();
+      capabilityResourceChanges.catalogChanged();
+      publishWorkerResources();
+      clearTimeout(poolDebounce);
+      poolDebounce = setTimeout(async () => {
+        try {
+          console.log('[state] pool config changed — triggering fleet refresh');
+          // The device inventory labels each device with the slots that configure
+          // it, which is read straight from pool JSON. Keeping a snapshot taken
+          // before this edit would show an operator the OLD wiring for up to the
+          // whole TTL, on the one surface whose job is telling them which slot
+          // owns a device. Imported lazily to keep the fleet module out of the
+          // inventory's import graph.
+          const { clearDeviceInventoryCache } = await loadDeviceInventory();
+          clearDeviceInventoryCache();
+          const { fleetHealthRefresh } = await loadFleetMethods();
+          await fleetHealthRefresh();
+        } catch (err) {
+          console.error('[state] pool refresh failed:', (err as Error).message);
+        }
+      }, 2000);
+    },
+    onNativePoolChanged: () => {
+      nativeCatalogChanges.poolChanged();
+    },
   });
-  poolWatcher.on('raw', (_event, filename: unknown, details: unknown) => {
-    const file = watchedEventPath(filename, details);
-    if (file) poolChanged(file);
-  });
+  poolWatcher.on('all', poolHandlers.onAll);
+  poolWatcher.on('raw', poolHandlers.onRaw);
   const selectedHome = farmslotHome();
   const runtimeSettingsDir = path.join(selectedHome, 'sources', 'runtime-settings');
   // Watch only each project's config and the bounded runtime settings directory.
@@ -1152,6 +1207,7 @@ export function startFileWatcher() {
     assertTriagePilotObserved: (directory: string) => triagePilotObservation.assertReady(directory),
     async close(): Promise<void> {
       clearTimeout(poolDebounce);
+      poolHandlers.dispose();
       storageBindingHandlers.delete(refreshStorageBindings);
       volumesWatcher.close();
       await Promise.all([

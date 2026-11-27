@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -27,6 +35,7 @@ import {
 import { computeCandidateStrategyFingerprint } from '../evals/package-store.js';
 import { getNode, registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse, sendNodeRequest } from '../fleet/node-rpc.js';
+import { createPoolWatcherHandlers } from '../fleet/state.js';
 import { resolvePreviewExecution, resolvePreviewModel } from '../methods/dispatch/preview.js';
 import { axesForTrialTransport } from '../methods/eval/candidate-setup.js';
 import {
@@ -325,6 +334,74 @@ test('resolveTrustedNativeExecutable and resolveTrustedNativeExecutablesForNode 
       resolveTrustedNativeExecutablesForNode('ambiguous-node'),
       /ambiguous pool settings/,
     );
+
+    // Canonical pool determines local classification BEFORE selecting executables:
+    // 1) Canonical remote + auxiliary localhost for the same machine must NOT classify as local.
+    const remoteOnlyPoolRoot = join(root, 'pool-canonical-remote');
+    mkdirSync(remoteOnlyPoolRoot, { recursive: true });
+    writeFileSync(
+      join(remoteOnlyPoolRoot, 'review-node.json'),
+      JSON.stringify({
+        machine: 'review-node',
+        project: 'primary',
+        host: 'review-node.example',
+        ssh_user: 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: primaryBin,
+        slots: [{ id: 'r1', enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
+      }),
+    );
+    writeFileSync(
+      join(remoteOnlyPoolRoot, 'canary-review-node.json'),
+      JSON.stringify({
+        machine: 'review-node',
+        project: 'canary',
+        host: 'localhost',
+        ssh_user: 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: canaryBin,
+        slots: [{ id: 'r2', enabled: true, mode: 'dispatch', repo: root, session: 's2' }],
+      }),
+    );
+    process.env.FARMSLOT_POOL_DIR = remoteOnlyPoolRoot;
+    assert.equal(await resolveTrustedNativeExecutable('antigravity', 'local'), undefined);
+    assert.equal(await resolveTrustedNativeExecutablesForNode('local'), undefined);
+    assert.equal(await resolveTrustedNativeExecutable('antigravity', 'review-node'), primaryBin);
+
+    // 2) Converse: canonical localhost + auxiliary remote for the same machine MUST classify as local.
+    const localCanonPoolRoot = join(root, 'pool-canonical-local');
+    mkdirSync(localCanonPoolRoot, { recursive: true });
+    writeFileSync(
+      join(localCanonPoolRoot, 'local-box.json'),
+      JSON.stringify({
+        machine: 'local-box',
+        project: 'primary',
+        host: 'localhost',
+        ssh_user: process.env.USER || 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: primaryBin,
+        slots: [{ id: 'l1', enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
+      }),
+    );
+    writeFileSync(
+      join(localCanonPoolRoot, 'canary-local-box.json'),
+      JSON.stringify({
+        machine: 'local-box',
+        project: 'canary',
+        host: 'local-box.example',
+        ssh_user: 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: canaryBin,
+        slots: [{ id: 'l2', enabled: true, mode: 'dispatch', repo: root, session: 's2' }],
+      }),
+    );
+    process.env.FARMSLOT_POOL_DIR = localCanonPoolRoot;
+    assert.equal(await resolveTrustedNativeExecutable('antigravity', 'local'), primaryBin);
+    assert.equal(await resolveTrustedNativeExecutable('antigravity', 'local-box'), primaryBin);
   } finally {
     if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
     else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
@@ -1235,6 +1312,259 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       'sampling 3 active local profiles must reuse retained local map with zero extra pool scans',
     );
   } finally {
+    observations?.dispose();
+    if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    if (prevAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    else process.env.FARMSLOT_AGY_EXECUTABLE = prevAgyEnv;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ambiguous local pool fails closed at startup without PATH fallback, caches error until pool edit, and coalesces paired watcher events', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-local-ambig-coalesce-'));
+  const farmHome = join(root, 'farm-home');
+  const tempPoolRoot = join(root, 'pool');
+  const localStateRoot = join(root, 'local-state');
+  const profileDir = join(root, 'profile-work');
+  const pathBinDir = join(root, 'path-bin');
+  const pathProbeLog = join(root, 'path-fallback-called.log');
+  const canonicalAgy = join(root, 'canonical-bin', 'agy');
+  const canonicalAgyV2 = join(root, 'canonical-bin-v2', 'agy');
+  mkdirSync(farmHome, { recursive: true });
+  mkdirSync(tempPoolRoot, { recursive: true });
+  mkdirSync(localStateRoot, { recursive: true, mode: 0o700 });
+  chmodSync(localStateRoot, 0o700);
+  mkdirSync(profileDir, { recursive: true });
+  mkdirSync(pathBinDir, { recursive: true });
+  mkdirSync(dirname(canonicalAgy), { recursive: true });
+  mkdirSync(dirname(canonicalAgyV2), { recursive: true });
+
+  const writeFakeAgy = (target: string, version: string, logFile?: string) => {
+    writeFileSync(
+      target,
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+${logFile ? `fs.appendFileSync(${JSON.stringify(logFile)}, 'called\\n');` : ''}
+if (process.argv.includes('--version')) {
+  console.log(${JSON.stringify(version)});
+  process.exit(0);
+}
+const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') {
+    return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} } } });
+  }
+  if (m.method === 'session/list') {
+    return send({ id: m.id, result: { sessions: [] } });
+  }
+});
+`,
+    );
+    chmodSync(target, 0o700);
+  };
+  // Put an executable named `agy` on PATH to prove ambiguous startup NEVER falls back to PATH.
+  writeFakeAgy(join(pathBinDir, 'agy'), '0.0.0-path-fallback', pathProbeLog);
+  writeFakeAgy(canonicalAgy, '1.5.14');
+  writeFakeAgy(canonicalAgyV2, '1.5.15');
+
+  // Two auxiliary local pools for the same machine and NO canonical `local-ambig.json`.
+  for (const name of ['aux-local-a.json', 'aux-local-b.json']) {
+    writeFileSync(
+      join(tempPoolRoot, name),
+      JSON.stringify({
+        machine: 'local-ambig',
+        project: name,
+        host: 'localhost',
+        ssh_user: process.env.USER || 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: canonicalAgy,
+        slots: [{ id: `slot-${name}`, enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
+      }),
+    );
+  }
+
+  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
+  const prevFarmHome = process.env.FARMSLOT_HOME;
+  const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  const prevPath = process.env.PATH;
+  const prevAgyEnv = process.env.FARMSLOT_AGY_EXECUTABLE;
+  let observations: GatewayNativeObservations | undefined;
+  let poolHandlers: ReturnType<typeof createPoolWatcherHandlers> | undefined;
+  try {
+    process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
+    process.env.FARMSLOT_HOME = farmHome;
+    delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    process.env.PATH = `${pathBinDir}:${dirname(process.execPath)}:/usr/bin:/bin`;
+
+    const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
+    const ownerRecord = auth.writer.createPrincipal(
+      { type: 'person', displayName: 'Ambig Owner' },
+      [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+      'ambig-owner',
+    );
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerRecord.id;
+
+    const localClient = new NativeSessionClient(localStateRoot, 'local');
+    await routeNativeProfile(localClient, ownerRecord.id, Methods.NATIVE_PROFILE_ADD, {
+      profileId: 'work',
+      runner: 'antigravity',
+      directory: profileDir,
+    });
+
+    let poolSnapshotReads = 0;
+    const localInvalidations: Array<{ family: string; nodeId?: string }> = [];
+    observations = new GatewayNativeObservations(
+      (key) => {
+        localInvalidations.push({
+          family: key.family,
+          ...('nodeId' in key ? { nodeId: key.nodeId } : {}),
+        });
+      },
+      localClient,
+      () => {
+        poolSnapshotReads++;
+        return loadTrustedNativeExecutableSnapshot();
+      },
+    );
+
+    const clientConn = {};
+    const principal: Principal = {
+      id: ownerRecord.id,
+      subject: { type: 'person', displayName: 'Ambig Owner' },
+      roles: [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+    };
+    observations.attachClient(clientConn, () => principal);
+
+    // 1) Startup succeeds (gateway stays healthy), does NOT execute PATH fallback, and reads once.
+    await observations.startLocal(ownerRecord.id);
+    assert.equal(poolSnapshotReads, 1);
+    assert.equal(
+      existsSync(pathProbeLog),
+      false,
+      'ambiguous local pool must not fall back to PATH executable at startup',
+    );
+
+    const readLocalProfile = async (): Promise<NativeProfileStatusResult> => {
+      const params = { executionNodeId: 'local', profileId: 'work' };
+      const interests = nativeReadInterests(Methods.NATIVE_PROFILE_STATUS, params, ownerRecord.id);
+      assert.ok(interests);
+      const { payload } = await observations!.read(
+        clientConn,
+        interests,
+        async () =>
+          (await observations!.localProfileStatus(
+            ownerRecord.id,
+            'work',
+          )) as NativeProfileStatusResult,
+        () => null,
+      );
+      return payload;
+    };
+
+    // 2) Repeated passive profile reads fail closed with NATIVE_PROFILES_UNAVAILABLE + reason,
+    //    reusing the cached ambiguity failure with ZERO extra pool rescans.
+    for (let i = 0; i < 2; i++) {
+      await assert.rejects(readLocalProfile(), (error: unknown) => {
+        const err = error as { code?: string; message?: string };
+        assert.equal(err.code, 'NATIVE_PROFILES_UNAVAILABLE');
+        assert.match(err.message ?? '', /ambiguous pool settings/);
+        return true;
+      });
+    }
+    assert.equal(
+      poolSnapshotReads,
+      1,
+      'ambiguous failure must be cached until the next real pool edit',
+    );
+    assert.equal(existsSync(pathProbeLog), false);
+
+    // 3) Coalesce paired Chokidar raw + all delivery for one canonical pool fix into ONE snapshot read,
+    //    preserving immediate delivery to other watchers, then handle a second distinct edit.
+    let otherWatcherDeliveries = 0;
+    poolHandlers = createPoolWatcherHandlers({
+      directory: tempPoolRoot,
+      onPoolFileChanged: () => {
+        otherWatcherDeliveries++;
+      },
+      onNativePoolChanged: () => {
+        observations!.catalogChanged({ scope: 'all', reason: 'pool' });
+      },
+      coalesceMs: 25,
+    });
+
+    const canonicalFile = join(tempPoolRoot, 'local-ambig.json');
+    const writeCanonical = (agyPath: string) => {
+      writeFileSync(
+        canonicalFile,
+        JSON.stringify({
+          machine: 'local-ambig',
+          project: 'canonical',
+          host: 'localhost',
+          ssh_user: process.env.USER || 'operator',
+          os: process.platform,
+          platform: 'cli',
+          antigravity_path: agyPath,
+          slots: [{ id: 'slot-canon', enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
+        }),
+      );
+    };
+
+    const invBeforeEdit1 = localInvalidations.length;
+    writeCanonical(canonicalAgy);
+    poolHandlers.onRaw('change', 'local-ambig.json', { watchedPath: tempPoolRoot });
+    poolHandlers.onAll('change', canonicalFile);
+    assert.equal(otherWatcherDeliveries, 2, 'other watchers keep existing paired behavior');
+
+    const waitForLocalInvalidation = async (since: number, label: string) => {
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        if (
+          localInvalidations
+            .slice(since)
+            .some((k) => k.family === 'profiles' && k.nodeId === 'local')
+        ) {
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      throw new Error(`Timed out waiting for ${label}`);
+    };
+
+    await waitForLocalInvalidation(invBeforeEdit1, 'first coalesced pool edit');
+    assert.equal(
+      poolSnapshotReads,
+      2,
+      'paired raw + all delivery for one edit must read the pool snapshot exactly once',
+    );
+    const recovered = await readLocalProfile();
+    assert.equal(recovered.account.version, '1.5.14');
+    assert.ok(recovered.loginCommand.includes(canonicalAgy));
+
+    // Second distinct edit after the first coalesced notice flushes triggers one more snapshot read.
+    const invBeforeEdit2 = localInvalidations.length;
+    writeCanonical(canonicalAgyV2);
+    poolHandlers.onRaw('change', 'local-ambig.json', { watchedPath: tempPoolRoot });
+    poolHandlers.onAll('change', canonicalFile);
+    await waitForLocalInvalidation(invBeforeEdit2, 'second coalesced pool edit');
+    assert.equal(
+      poolSnapshotReads,
+      3,
+      'second distinct pool edit must trigger exactly one additional snapshot read',
+    );
+    const afterEdit2 = await readLocalProfile();
+    assert.equal(afterEdit2.account.version, '1.5.15');
+    assert.ok(afterEdit2.loginCommand.includes(canonicalAgyV2));
+  } finally {
+    poolHandlers?.dispose();
     observations?.dispose();
     if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
     else process.env.FARMSLOT_POOL_DIR = prevPoolDir;

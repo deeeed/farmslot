@@ -680,8 +680,15 @@ try {
     label: string;
     phase: string;
     historyStatus: string | null;
-    historyFreshness: string | null;
+    historyObservedAt: number | null;
+    hasResourceStateOrConversation: boolean;
+    hasHistoryData: boolean;
+    historyHasMore: boolean;
+    metadataOmittedPendingRequests: boolean;
+    historyErrorCode: string | null;
     sessionMatch: boolean;
+    observedSessionId: string | null;
+    currentSessionId: string | null;
     sessionState: string | null;
     approvalMode: string | null;
     approvalModePending: string | null;
@@ -705,8 +712,15 @@ try {
       const session = view?.session;
       return {
         historyStatus: obs?.status ?? null,
-        historyFreshness: obs?.freshness ?? null,
+        historyObservedAt: typeof obs?.observedAt === 'number' ? obs.observedAt : null,
+        hasResourceStateOrConversation: Boolean(obs?.resourceState || obs?.conversation),
+        hasHistoryData: Boolean(obs?.data),
+        historyHasMore: Boolean(obs?.data?.hasMore),
+        metadataOmittedPendingRequests: Boolean(obs?.data?.metadataOmitted?.pendingRequests),
+        historyErrorCode: obs?.error?.code ?? null,
         sessionMatch: Boolean(session && obs?.data?.session === session),
+        observedSessionId: obs?.data?.session?.id ?? null,
+        currentSessionId: session?.id ?? null,
         sessionState: session?.state ?? null,
         approvalMode: session?.approvalMode ?? null,
         approvalModePending: session?.approvalModePending ?? null,
@@ -729,27 +743,39 @@ try {
     const modeCheck = expectedApprovalMode
       ? `view?.session?.approvalMode === ${JSON.stringify(expectedApprovalMode)} &&`
       : '';
-    await page!.waitForExpression(
-      `(() => {
-        const view = ${findInShadow('native-session-view')};
-        const el = ${findInShadow('[data-testid=native-message]')};
-        const obs = view?.historyObservation;
-        const session = view?.session;
-        return Boolean(
-          view &&
-          el &&
-          ${modeCheck}
-          obs?.status === 'ready' &&
-          session &&
-          obs?.data?.session === session &&
-          !session.approvalModePending &&
-          !view.busy &&
-          !el.disabled &&
-          !el.closest?.('fieldset:disabled,[aria-disabled="true"]')
-        );
-      })()`,
-      { timeoutMs: 30_000 },
-    );
+    try {
+      await page!.waitForExpression(
+        `(() => {
+          const view = ${findInShadow('native-session-view')};
+          const el = ${findInShadow('[data-testid=native-message]')};
+          const obs = view?.historyObservation;
+          const session = view?.session;
+          return Boolean(
+            view &&
+            el &&
+            ${modeCheck}
+            obs?.status === 'ready' &&
+            (obs?.resourceState || obs?.conversation) &&
+            obs?.data &&
+            !obs.data.hasMore &&
+            !obs.data.metadataOmitted?.pendingRequests &&
+            session &&
+            obs.data.session === session &&
+            !session.approvalModePending &&
+            !view.busy &&
+            !el.disabled &&
+            !el.closest?.('fieldset:disabled,[aria-disabled="true"]')
+          );
+        })()`,
+        { timeoutMs: 30_000 },
+      );
+    } catch (waitError) {
+      const timeoutDiag = await readComposerDiagnostics(label, 'ready-timeout');
+      throw new Error(
+        `Composer readiness timed out during ${label}: ${waitError instanceof Error ? waitError.message : String(waitError)} | diag=${JSON.stringify(timeoutDiag)}`,
+        { cause: waitError },
+      );
+    }
     return readComposerDiagnostics(label, 'ready');
   };
 
@@ -761,13 +787,14 @@ try {
     } catch (inputError) {
       const failureDiag = await readComposerDiagnostics(label, 'setInput-failed');
       let recoveredDiag: ComposerReadinessDiag | null = null;
+      let recoveryError: string | null = null;
       try {
         recoveredDiag = await waitForComposerReady(label);
-      } catch {
-        // Did not recover within timeout; attach diagnostics below.
+      } catch (err) {
+        recoveryError = err instanceof Error ? err.message : String(err);
       }
       throw new Error(
-        `setInput failed during ${label}: ${inputError instanceof Error ? inputError.message : String(inputError)} | diag=${JSON.stringify({ readyDiag, failureDiag, recoveredDiag })}`,
+        `setInput failed during ${label}: ${inputError instanceof Error ? inputError.message : String(inputError)} | diag=${JSON.stringify({ readyDiag, failureDiag, recoveredDiag, recoveryError })}`,
         { cause: inputError },
       );
     }
