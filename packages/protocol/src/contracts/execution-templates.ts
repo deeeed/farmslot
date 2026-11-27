@@ -49,6 +49,8 @@ export interface ProjectExecutionTemplatesConfig {
  * Absolute source paths and environment values intentionally do not belong here.
  */
 export interface ExecutionTemplateReference {
+  /** Opt in to a text-only debrief after the accepted worker attempt releases its slot. */
+  postRunDebrief?: boolean;
   /** Explicit first child unit; only PR-completion templates may declare it. */
   firstSubtask?: 'derive-acceptance';
   id: string;

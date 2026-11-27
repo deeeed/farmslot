@@ -1,0 +1,1 @@
+- Add local task debrief commands to prepare, validate and read a receipt-bound debrief.

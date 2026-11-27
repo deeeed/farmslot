@@ -20,6 +20,7 @@ import {
   writeLearningPackage,
   type WriteResult,
 } from '../learning-package/index.js';
+import type { ScrubOptions } from '../scrub/index.js';
 import type { ManifestTask, ResolutionSource, RunOutcome, SourceDocument } from '../spec/types.js';
 import { validateLearningPackage } from '../validate/index.js';
 
@@ -163,6 +164,39 @@ function parseConfig(file: string): LearningConfig {
     ...(value.destination === undefined
       ? {}
       : { destination: requireString(value.destination, 'learning config.destination') }),
+  };
+}
+
+/** Resolve the configured debrief redaction policy in the existing Handoff config. */
+export function resolveDebriefScrubOptions(): ScrubOptions | undefined {
+  const file = defaultConfigPath();
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const value = requireObject(JSON.parse(raw), 'learning config');
+  requireSchemaVersion(value.schemaVersion, 'learning config');
+  if (value.scrub === undefined) return undefined;
+  const policy = requireObject(value.scrub, 'learning config.scrub');
+  const { extraDenyPatterns, allowWalletAddresses } = policy;
+  if (
+    (allowWalletAddresses !== undefined && typeof allowWalletAddresses !== 'boolean') ||
+    (extraDenyPatterns !== undefined && !Array.isArray(extraDenyPatterns)) ||
+    Object.keys(policy).some((key) => key !== 'extraDenyPatterns' && key !== 'allowWalletAddresses')
+  )
+    throw new Error('Invalid learning config scrub policy.');
+  return {
+    allowWalletAddresses,
+    extraDenyPatterns: extraDenyPatterns?.map((entry: unknown) => {
+      const pattern = requireObject(entry, 'learning config scrub deny pattern');
+      const kind = requireString(pattern.kind, 'scrub deny pattern kind');
+      const source = requireString(pattern.pattern, 'scrub deny pattern');
+      if (!/^[a-z0-9-]+$/u.test(kind)) throw new Error('Invalid scrub deny pattern kind.');
+      return { kind, pattern: new RegExp(source, 'gu') };
+    }),
   };
 }
 

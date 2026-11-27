@@ -43,6 +43,7 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionPrincipal, runWithSystemOriginator } from '../security/work-originator.js';
 
 import { retainFinalRunArtifacts } from './output.js';
+import { acceptedTaskDebriefPatch } from './task-debrief.js';
 
 export type ResultDecisionStop = ResultDecisionPayload['stoppedAt'];
 
@@ -600,7 +601,10 @@ export async function resolveResultDecision(
           kind: actionId,
           runId: params.runId,
           actor: 'operator',
-          patch,
+          patch:
+            actionId === 'accept-result'
+              ? (latest) => ({ ...patch, ...acceptedTaskDebriefPatch(latest) })
+              : patch,
           settlingStatus: 'needs-decision',
           // An adoption-bound acceptance rechecks its receipt at the mutation boundary.
           ...(options.adoptedPublication
@@ -624,10 +628,13 @@ export async function resolveResultDecision(
                 ],
               }
             : {}),
-          persist: (next) => persistRunNow(next, `result decision ${actionId}`),
-          collaborators: operatorCompletionCollaborators(async (next) => {
-            await publishCompletedRun(next);
-          }),
+          persist: (next) =>
+            persistRunNow(
+              next,
+              `result decision ${actionId}`,
+              actionId === 'accept-result' && next.executionTemplate?.postRunDebrief === true,
+            ),
+          collaborators: operatorCompletionCollaborators(publishCompletedRun),
         }),
       );
       return result.run;
@@ -641,8 +648,14 @@ export async function resolveResultDecision(
     await sendBack(settled, stoppedAt, reasonOfHold, params.decisionId, workerFeedback, reason);
   else {
     // Released outside the run lock, like other operator terminal actions; the episode follows.
-    if (settled.slotId && options.releaseSlot !== false)
-      await releaseSettledSlot(settled, stoppedAt !== 'review');
+    const releaseSlot = settled.slotId && options.releaseSlot !== false;
+    const discard = stoppedAt !== 'review';
+    if (releaseSlot) await releaseSettledSlot(settled, discard);
+    // A normal completed-slot release schedules the journal itself. The discard path uses slot.release.
+    if (actionId === 'accept-result' && (!releaseSlot || discard) && settled.taskDebrief) {
+      const { continueTaskDebriefAfterRelease } = await import('./task-debrief.js');
+      continueTaskDebriefAfterRelease(settled.id);
+    }
     await captureEpisodeAfterRelease(params.runId);
   }
   return getRun(params.runId) ?? settled;

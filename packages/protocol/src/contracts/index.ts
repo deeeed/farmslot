@@ -50,6 +50,7 @@ export * from './slot-recovery.js';
 export * from './slot-selection.js';
 export * from './slots.js';
 export * from './task.js';
+export * from './task-debrief.js';
 export * from './template-placeholders.js';
 export * from './terminal.js';
 export * from './validation-plan.js';

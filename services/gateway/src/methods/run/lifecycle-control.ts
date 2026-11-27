@@ -365,7 +365,7 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
   // COMPLETE, the deferred terminal release, ci-watch and finalize free a finished run's slot
   // here, not through slot.release: time it on the run the same way.
   let timing: CompleteStepTiming | undefined;
-  return timeRunSlotRelease(
+  const result = await timeRunSlotRelease(
     run.id,
     slotId,
     async () => {
@@ -382,6 +382,12 @@ export async function releaseCompletedRunSlot(run: Run): Promise<SlotReleaseResu
         ...(timing.bundleLock.acquisitions ? { bundleLock: timing.bundleLock } : {}),
       },
   );
+  if (getRun(run.id)?.taskDebrief) {
+    const { continueTaskDebriefAfterRelease } =
+      await import('../../run-completion/task-debrief.js');
+    continueTaskDebriefAfterRelease(run.id);
+  }
+  return result;
 }
 
 async function releaseCompletedRunSlotOnce(run: Run): Promise<SlotReleaseResult> {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { closeoutLearningPackage } from '../closeout/index.js';
+import { runTaskDebriefCli, TASK_DEBRIEF_CLI_USAGE } from '../debrief/cli.js';
 
 interface CliOptions {
   taskDir?: string;
@@ -13,6 +14,7 @@ interface CliOptions {
 
 function usage(): string {
   return `Usage:
+  ${TASK_DEBRIEF_CLI_USAGE}
   handoff closeout <task-dir> [--config <file>] [--destination <dir>] [--metadata <file>] [--json]
   handoff closeout <task-dir> --share [--config <file>] [--destination <dir>] [--json]
 
@@ -89,10 +91,14 @@ function printHuman(result: ReturnType<typeof closeoutLearningPackage>): void {
   );
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let options: CliOptions | undefined;
   const jsonRequested = process.argv.slice(2).includes('--json');
   try {
+    if (process.argv[2] === 'debrief') {
+      await runTaskDebriefCli(process.argv.slice(3));
+      return;
+    }
     options = parseArgs(process.argv.slice(2));
     const result = closeoutLearningPackage({
       taskDir: options.taskDir!,
@@ -115,7 +121,10 @@ function main(): void {
           {
             status: 'error',
             error: {
-              code: 'HANDOFF_CLOSEOUT_FAILED',
+              code:
+                process.argv[2] === 'debrief'
+                  ? 'HANDOFF_DEBRIEF_FAILED'
+                  : 'HANDOFF_CLOSEOUT_FAILED',
               message,
               userAction: message.includes('Next:')
                 ? message.split('Next:').at(-1)?.trim()
@@ -127,10 +136,12 @@ function main(): void {
         )}\n`,
       );
     } else {
-      process.stderr.write(`handoff closeout failed: ${message}\n`);
+      process.stderr.write(
+        `handoff ${process.argv[2] === 'debrief' ? 'debrief' : 'closeout'} failed: ${message}\n`,
+      );
     }
     process.exitCode = 1;
   }
 }
 
-main();
+await main();

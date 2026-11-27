@@ -419,9 +419,13 @@ function persistRunBackground(run: Run, reason: string): void {
  * claim handoff so createRun is on disk before the queue row is dropped.
  * Serialized per run id with background persists.
  */
-export async function persistRunNow(run: Run, reason = 'explicit'): Promise<void> {
+export async function persistRunNow(
+  run: Run,
+  reason = 'explicit',
+  requireDurable = false,
+): Promise<void> {
   try {
-    await enqueueRunPersist(run);
+    await enqueueRunWrite(run.id, () => persistBody(run, run, requireDurable));
   } catch (err) {
     console.warn(
       `[run-store] failed to persist run ${run.id} after ${reason}: ${err instanceof Error ? err.message : String(err)}`,
@@ -2361,11 +2365,14 @@ export interface RunPublicationMutation {
   decisions?: Run['decisions'];
 }
 
+class RetainedRunWriteConflict extends Error {}
+
 /** Narrow callers share the existing per-run durable mutation queue. */
 async function commitRetainedRunMutation(
   id: string,
   build: (run: Run) => Run,
   assertCurrent: (run: Run) => void,
+  validateActivation = true,
 ): Promise<Run> {
   let committed!: Run;
   await enqueueRunWrite(id, async () => {
@@ -2379,7 +2386,7 @@ async function commitRetainedRunMutation(
     assertCurrent(authority);
     const previousResources = captureRunResources(run);
     const snapshot = build(run);
-    if (live && !isTerminalRunStatus(snapshot.status))
+    if (live && validateActivation && !isTerminalRunStatus(snapshot.status))
       assertPRRunActivation(snapshot, getAllRuns());
     const retired = retainDecisionHistory(run, snapshot.decisions);
     appendDecisionHistoryFile(
@@ -2397,7 +2404,7 @@ async function commitRetainedRunMutation(
       try {
         assertCurrent(live);
         if (getRun(id) !== live || !isDeepStrictEqual(live, baseline))
-          throw new Error('Run changed during publication persistence');
+          throw new RetainedRunWriteConflict('Run changed during publication persistence');
       } catch (error) {
         // Keep the current execution authoritative if a runtime/auth change raced the write.
         await persistBody(live, live, true);
@@ -2432,6 +2439,28 @@ async function commitRetainedRunMutation(
     }
   });
   return committed;
+}
+
+/** Use the run store's durable transaction for debrief dispatch and candidate admission. */
+export async function commitRunTaskDebrief(
+  id: string,
+  build: (run: Run) => Partial<Pick<Run, 'taskDebrief' | 'priorTaskDebriefBundles' | 'decisions'>>,
+  assertCurrent: (run: Run) => void,
+): Promise<Run> {
+  // Completion and provider usage can update unrelated run fields during fsync.
+  // Rebuild against the new live run and recheck the accepted attempt on every retry.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await commitRetainedRunMutation(
+        id,
+        (run) => ({ ...run, ...build(run) }),
+        assertCurrent,
+        false,
+      );
+    } catch (error) {
+      if (!(error instanceof RetainedRunWriteConflict) || attempt === 4) throw error;
+    }
+  }
 }
 
 /** Publication-only transaction. Archived execution is never loaded into the live map. */

@@ -17,6 +17,7 @@ import {
 } from '@farmslot/protocol';
 import {
   isRunBundleMedia,
+  OPTIONAL_RECEIPT_UNAVAILABLE,
   parseRunBundleMissingData,
   waitForRunBundleQueueTurn,
 } from '@farmslot/run-bundle';
@@ -456,9 +457,10 @@ async function captureRunOutputNow(
     }),
   );
   if (purpose === 'final-result') {
-    const missing = retained.missingData.filter(
-      (entry) => parseRunBundleMissingData(entry).reason !== 'excluded',
-    );
+    const missing = retained.missingData.filter((entry) => {
+      const { reason } = parseRunBundleMissingData(entry);
+      return reason !== 'excluded' && reason !== OPTIONAL_RECEIPT_UNAVAILABLE;
+    });
     if (missing.length)
       throw new Error(`Final result artifacts were not retained: ${missing.join(', ')}`);
   }

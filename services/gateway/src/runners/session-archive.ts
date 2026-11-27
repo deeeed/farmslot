@@ -128,7 +128,7 @@ function refArchiveDir(runId: string, contextId: string, ref: RunnerSessionArchi
     : contextDir;
 }
 
-async function confinedArchiveTranscript(
+export async function confinedArchiveTranscript(
   runId: string,
   contextId: string,
   ref: RunnerSessionArchiveRef,

@@ -4,6 +4,12 @@ import { claudeCompactionArgs } from '@farmslot/agent-runtime/scripts/context-co
 
 import { piProviderEnvironment } from '../../../../scripts/runners/pi-farmslot-providers.mjs';
 
+import {
+  codexDebriefRoute,
+  type DebriefModelRoute,
+  piDebriefRoute,
+  projectPiDebriefText,
+} from './debrief-context.js';
 import { resolvePiBinary, resolvePiModel } from './launch-command.js';
 import {
   liveComposerHoldsInstruction,
@@ -275,6 +281,9 @@ function blindProviderEnvironment(model: string): readonly string[] {
 }
 
 export interface RunnerDefinition {
+  /** Exact provider/model route recoverable from a retained session. */
+  debriefText?: typeof projectPiDebriefText;
+  debriefModelRoute?: (lines: readonly string[]) => DebriefModelRoute | undefined;
   /** Configuration and endpoint variables that affect a retained native reviewer. */
   reviewResumeEnvironment?: (environment: NodeJS.ProcessEnv) => readonly string[];
   /** Environment required by this runner's selected model, for blind workers only. */
@@ -568,6 +577,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     reviewResumeEnvironment: () => ['CODEX_HOME'],
     usesObservabilityBundle: true,
     id: 'codex',
+    debriefModelRoute: codexDebriefRoute,
     blindModelEnvironment: () => [
       'OPENAI_API_KEY',
       'OPENAI_BASE_URL',
@@ -778,6 +788,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     usesObservabilityBundle: true,
     reviewObservabilityDir: (taskDir) => path.posix.join(taskDir, '.observability'),
     id: 'pi',
+    debriefModelRoute: piDebriefRoute,
+    debriefText: projectPiDebriefText,
     blindModelEnvironment: (model, environment) => {
       const selected = resolvePiModel(model);
       return [
