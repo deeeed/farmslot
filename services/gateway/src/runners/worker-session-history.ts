@@ -202,23 +202,11 @@ function projectGrok(records: readonly JsonRecord[]): WorkerSessionHistoryMessag
   return compactMessages(messages);
 }
 
-function projectPi(records: readonly JsonRecord[]): WorkerSessionHistoryMessage[] {
-  return records.flatMap((row) => {
-    const message = row.message;
-    if (row.type !== 'message' || !isObject(message)) return [];
-    const role = message.role;
-    if (role !== 'user' && role !== 'assistant') return [];
-    const text = textFromContent(message.content, ['text']);
-    return text ? [{ id: stableRecordId('pi', row), role, text }] : [];
-  });
-}
-
 const PROVIDERS: Record<string, (records: readonly JsonRecord[]) => WorkerSessionHistoryMessage[]> =
   {
     claude: projectClaude,
     codex: projectCodex,
     grok: projectGrok,
-    pi: projectPi,
   };
 
 export function getRunnerSessionHistoryProvider(

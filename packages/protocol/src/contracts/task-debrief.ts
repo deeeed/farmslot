@@ -278,4 +278,6 @@ export interface ManagedTaskDebrief {
   reportPath?: string;
   status: 'prepared' | 'submitted' | 'settled' | 'stale';
   outcome?: TaskDebrief['outcome']['status'];
+  /** Candidate source keys already admitted by the improvement workflow. */
+  admittedCandidateKeys?: string[];
 }

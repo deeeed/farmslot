@@ -36,6 +36,7 @@ import {
   readBoundedFile,
 } from './evidence.js';
 
+export { resolveDebriefScrubOptions } from '../closeout/index.js';
 export {
   collectTaskDebrief,
   scrubDebriefText,

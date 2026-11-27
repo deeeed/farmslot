@@ -1,8 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 
 import { type AgentContext, isRecord, type ManagedTaskDebrief, type Run } from '@farmslot/protocol';
 
-import { verifiedRunnerSessionArchivePath } from './session-archive.js';
+import { confinedArchiveTranscript, SESSION_ARCHIVE_MAX_BYTES } from './session-archive.js';
 import {
   getRunnerSessionHistoryProvider,
   runnerHistorySessionFilePath,
@@ -57,6 +59,29 @@ export function codexDebriefRoute(lines: readonly string[]): DebriefModelRoute |
   return undefined;
 }
 
+export function projectPiDebriefText(lines: readonly string[]): { role: string; text: string }[] {
+  return lines.flatMap((line) => {
+    const row = record(line);
+    const message = row?.message;
+    if (row?.type !== 'message' || !isRecord(message)) return [];
+    const role = message.role;
+    if (role !== 'user' && role !== 'assistant') return [];
+    const text =
+      typeof message.content === 'string'
+        ? message.content
+        : Array.isArray(message.content)
+          ? message.content
+              .flatMap((block: unknown) =>
+                isRecord(block) && block.type === 'text' && typeof block.text === 'string'
+                  ? [block.text]
+                  : [],
+              )
+              .join('\n')
+          : '';
+    return text.trim() ? [{ role, text }] : [];
+  });
+}
+
 export async function readRetainedDebriefConversation(
   run: Run,
   context: AgentContext,
@@ -80,17 +105,39 @@ export async function readRetainedDebriefConversation(
     archive.originalPath !== runnerHistorySessionFilePath(context.runnerSessionPath, journal.runner)
   )
     return undefined;
-  const file = await verifiedRunnerSessionArchivePath(run, context.id);
-  if (!file) return undefined;
-  const lines = (await readFile(file, 'utf8')).split('\n');
+  const file = await confinedArchiveTranscript(run.id, context.id, archive);
+  if (!file) throw new Error('Retained runner transcript is missing.');
+  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const bytes = await (async () => {
+    try {
+      const info = await handle.stat();
+      if (!info.isFile() || info.size > SESSION_ARCHIVE_MAX_BYTES)
+        throw new Error('Retained runner transcript exceeds its file limits.');
+      const buffer = Buffer.alloc(info.size + 1);
+      let offset = 0;
+      while (offset < buffer.length) {
+        const read = await handle.read(buffer, offset, buffer.length - offset, offset);
+        if (read.bytesRead === 0) break;
+        offset += read.bytesRead;
+      }
+      if (offset !== info.size)
+        throw new Error('Retained runner transcript changed while reading.');
+      return buffer.subarray(0, offset);
+    } finally {
+      await handle.close();
+    }
+  })();
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (sha256 !== archive.sha256) throw new Error('Retained runner transcript digest changed.');
+  const lines = bytes.toString('utf8').split('\n');
   const provider = getRunnerSessionHistoryProvider(journal.runner);
-  const route = getRunnerDefinition(journal.runner).debriefModelRoute?.(lines);
+  const definition = getRunnerDefinition(journal.runner);
+  const route = definition.debriefModelRoute?.(lines);
   const tail = lines.slice(-64).filter((line) => line.length <= 12_000);
-  const excerpts =
-    provider
-      ?.project(tail)
-      .messages.filter(({ text }) => text)
-      .slice(-8)
-      .map(({ role, text }) => JSON.stringify({ role, text: text.slice(-900) })) ?? [];
-  return { sha256: archive.sha256, lines: excerpts, ...(route && { route }) };
+  const messages = definition.debriefText?.(tail) ?? provider?.project(tail).messages ?? [];
+  const excerpts = messages
+    .filter(({ text }) => text)
+    .slice(-8)
+    .map(({ role, text }) => JSON.stringify({ role, text: text.slice(-900) }));
+  return { sha256, lines: excerpts, ...(route && { route }) };
 }

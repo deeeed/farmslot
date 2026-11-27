@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-import { lstatSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -8,13 +6,12 @@ import {
   collectTaskDebrief,
   completeTaskDebrief,
   debriefPath,
-  readTaskDebrief,
+  resolveDebriefScrubOptions,
   scrubDebriefText,
   settleTaskDebrief,
   type TaskDebriefOptions,
   type TaskDebriefRequest,
   validateTaskDebrief,
-  writeTaskDebrief,
 } from '@farmslot/handoff';
 import {
   type AgentContext,
@@ -28,8 +25,9 @@ import {
 } from '@farmslot/protocol';
 import {
   readRetainedRunBundle,
+  readRunBundleDebrief,
   resolveRetainedRunBundleRef,
-  runBundleDebriefDirectory,
+  retainRunBundleDebrief,
 } from '@farmslot/run-bundle';
 
 import { selectAgentContext } from '../agents/contexts.js';
@@ -38,9 +36,9 @@ import { ownsRunSlotCleanup, readSlotRow } from '../core/index.js';
 import { resolveAuth } from '../llm/auth-resolve.js';
 import { callLLM, piModels } from '../llm/index.js';
 import { readRetainedDebriefConversation } from '../runners/debrief-context.js';
-import { getAllRuns, getRun, persistRunNow, updateRun } from '../runs/store.js';
+import { commitRunTaskDebrief, getAllRuns, getRun } from '../runs/store.js';
 
-import { runBundleStore, runBundleStoreRoot } from './retained-artifacts.js';
+import { retentionPolicy, runBundleStore, runBundleStoreRoot } from './retained-artifacts.js';
 
 const TIMEOUT_MS = 60_000;
 const active = new Set<string>();
@@ -53,14 +51,24 @@ const acceptedFiles = [
   layout.noChangeReport.relativePath,
 ];
 
-function sameSubject(run: Run, journal: ManagedTaskDebrief): boolean {
-  const context = selectAgentContext(run, { contextId: journal.contextId });
-  return context?.runId === run.id && context.signalAttemptId === journal.attemptId;
+function sameSubject(run: Run | undefined, journal: ManagedTaskDebrief): boolean {
+  const accepted = run?.taskDebrief;
+  return (
+    accepted?.debriefId === journal.debriefId &&
+    accepted.attemptId === journal.attemptId &&
+    accepted.contextId === journal.contextId &&
+    accepted.generation === journal.generation &&
+    accepted.bundle.bundleDigest === journal.bundle.bundleDigest
+  );
+}
+
+function assertSubject(run: Run | undefined, journal: ManagedTaskDebrief): void {
+  if (!sameSubject(run, journal))
+    throw new Error('A later accepted worker result superseded the debrief.');
 }
 
 export function taskDebriefRunStatus(run: Run): ManagedTaskDebrief['status'] | undefined {
-  const journal = run.taskDebrief;
-  return journal && (sameSubject(run, journal) ? journal.status : 'stale');
+  return run.taskDebrief?.status;
 }
 
 export function taskDebriefEvidenceBundle(
@@ -69,21 +77,14 @@ export function taskDebriefEvidenceBundle(
   pinned: boolean,
 ): RunArtifactBundleRef {
   const journal = run.taskDebrief;
-  return !pinned && journal && sameSubject(run, journal)
+  return !pinned && journal?.status === 'settled'
     ? resolveRetainedRunBundleRef(run, journal.bundle)
     : selected;
 }
 
 function readSidecar(run: Run, ref: RunArtifactBundleRef): TaskDebrief | undefined {
-  try {
-    const directory = runBundleDebriefDirectory(runBundleStoreRoot(), run.id, ref.bundleDigest);
-    lstatSync(path.join(directory, debriefPath));
-    return readTaskDebrief(directory);
-  } catch (error) {
-    // A first-time or opted-out run has no sidecar.
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
-    throw error;
-  }
+  const sidecar = readRunBundleDebrief(runBundleStoreRoot(), run.id, ref.bundleDigest);
+  return sidecar && validateTaskDebrief(JSON.parse(sidecar.bytes.toString('utf8')));
 }
 
 export function readTaskDebriefSidecar(
@@ -139,6 +140,7 @@ async function retainedRequest(
     }
   }
   const options: TaskDebriefOptions = {
+    scrub: resolveDebriefScrubOptions(),
     retained: {
       runId: run.id,
       attemptId: subject.attemptId,
@@ -157,18 +159,6 @@ async function retainedRequest(
   return { request: collectTaskDebrief(bundle.taskDir, options), options };
 }
 
-async function patchJournal(run: Run, journal: ManagedTaskDebrief, reason: string): Promise<void> {
-  const previous = run.taskDebrief;
-  const archived =
-    previous && previous.bundle.bundleDigest !== journal.bundle.bundleDigest
-      ? { ...run.priorTaskDebriefBundles, [previous.bundle.bundleDigest]: previous.bundle }
-      : run.priorTaskDebriefBundles;
-  await persistRunNow(
-    updateRun(run.id, { taskDebrief: journal, priorTaskDebriefBundles: archived })!,
-    reason,
-  );
-}
-
 export async function prepareAcceptedTaskDebrief(run: Run): Promise<void> {
   if (
     run.executionTemplate?.postRunDebrief !== true ||
@@ -181,35 +171,47 @@ export async function prepareAcceptedTaskDebrief(run: Run): Promise<void> {
   const context = selectAgentContext(run);
   if (!context?.signalAttemptId) return;
   const prior = run.taskDebrief;
-  if (prior && sameSubject(run, prior)) return;
+  const generation = run.engineState?.generation ?? 0;
   const subject = {
     bundle: run.output.artifactBundle,
     manifestDigest: run.output.manifestDigest,
     attemptId: context.signalAttemptId,
     reportPath: run.output.reportPath,
   };
+  if (prior?.attemptId === subject.attemptId && prior.contextId === context.id) return;
   const { request } = await retainedRequest(run, subject);
-  const latest = getRun(run.id);
-  if (
-    !latest ||
-    latest.output?.manifestDigest !== subject.manifestDigest ||
-    selectAgentContext(latest)?.signalAttemptId !== subject.attemptId ||
-    (latest.engineState?.generation ?? 0) !== (run.engineState?.generation ?? 0)
-  )
-    return;
-  if (latest.taskDebrief && sameSubject(latest, latest.taskDebrief)) return;
-  await patchJournal(
-    latest,
-    {
-      ...subject,
-      debriefId: request.requestId,
-      generation: latest.engineState?.generation ?? 0,
-      contextId: context.id,
-      runner: context.runner ?? undefined,
-      sessionId: context.runnerSessionId ?? undefined,
-      status: 'prepared',
-    },
-    'accepted task debrief prepared',
+  const assertAcceptance = (latest: Run) => {
+    const current = selectAgentContext(latest);
+    if (
+      !latest.output?.workerFinished ||
+      latest.output.captureError ||
+      latest.output.manifestDigest !== subject.manifestDigest ||
+      latest.output.artifactBundle?.bundleDigest !== subject.bundle.bundleDigest ||
+      current?.id !== context.id ||
+      current.signalAttemptId !== subject.attemptId ||
+      (latest.engineState?.generation ?? 0) !== generation ||
+      (prior ? !sameSubject(latest, prior) : latest.taskDebrief !== undefined)
+    )
+      throw new Error('Accepted worker result changed during debrief preparation.');
+  };
+  await commitRunTaskDebrief(
+    run.id,
+    (latest) => ({
+      taskDebrief: {
+        ...subject,
+        debriefId: request.requestId,
+        generation,
+        contextId: context.id,
+        runner: context.runner ?? undefined,
+        sessionId: context.runnerSessionId ?? undefined,
+        status: 'prepared',
+      },
+      priorTaskDebriefBundles:
+        prior && prior.bundle.bundleDigest !== subject.bundle.bundleDigest
+          ? { ...latest.priorTaskDebriefBundles, [prior.bundle.bundleDigest]: prior.bundle }
+          : latest.priorTaskDebriefBundles,
+    }),
+    assertAcceptance,
   );
 }
 
@@ -249,23 +251,19 @@ async function awaitAnswer(
       'unsupported',
       'The original model is unavailable through an authorized text provider.',
     );
-  const latest = getRun(run.id);
-  if (
-    !latest ||
-    latest.taskDebrief?.debriefId !== journal.debriefId ||
-    !sameSubject(latest, journal)
-  ) {
-    return settleTaskDebrief(request, 'failed', 'A later worker attempt superseded the request.');
-  }
-
-  await patchJournal(latest, { ...journal, status: 'submitted' }, 'task debrief dispatch intent');
+  await commitRunTaskDebrief(
+    run.id,
+    (current) => ({ taskDebrief: { ...current.taskDebrief!, status: 'submitted' } }),
+    (current) => {
+      assertSubject(current, journal);
+      if (current.taskDebrief?.status !== 'prepared')
+        throw new Error('Task debrief dispatch intent already exists.');
+    },
+  );
   const dispatch = getRun(run.id);
-  if (
-    !dispatch ||
-    dispatch.taskDebrief?.debriefId !== journal.debriefId ||
-    !sameSubject(dispatch, journal)
-  )
-    return settleTaskDebrief(request, 'failed', 'A later worker attempt superseded the request.');
+  assertSubject(dispatch, journal);
+  if (dispatch?.taskDebrief?.status !== 'submitted')
+    throw new Error('Task debrief dispatch intent was superseded.');
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -330,21 +328,16 @@ async function settleAfterRelease(run: Run, journal: ManagedTaskDebrief): Promis
         'Provider dispatch was uncertain after restart.',
       );
     else record = await awaitAnswer(run, journal, request, options, context);
-    const directory = runBundleDebriefDirectory(runBundleStoreRoot(), run.id, ref.bundleDigest);
-    await assertHeavyWriteRoom(directory);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    writeTaskDebrief(directory, record);
+    await assertHeavyWriteRoom(runBundleStoreRoot());
+    await retainRunBundleDebrief(await runBundleStore(), ref, record, await retentionPolicy(), () =>
+      assertSubject(getRun(run.id), journal),
+    );
   }
-  const latest = getRun(run.id);
-  if (latest?.taskDebrief?.debriefId !== journal.debriefId) return;
-  await patchJournal(
-    latest,
-    {
-      ...journal,
-      status: sameSubject(latest, journal) ? 'settled' : 'stale',
-      outcome: record.outcome.status,
-    },
-    'task debrief settled',
+  const outcome = record.outcome.status;
+  await commitRunTaskDebrief(
+    run.id,
+    (current) => ({ taskDebrief: { ...current.taskDebrief!, status: 'settled', outcome } }),
+    (current) => assertSubject(current, journal),
   );
   const { broadcastEvent } = await import('../server.js');
   broadcastEvent(Events.RUN_UPDATED, { run: getRun(run.id) });
@@ -366,12 +359,7 @@ export function continueTaskDebriefAfterRelease(runId: string): void {
     const slot = run.slotId && (await readSlotRow(run.slotId));
     if (run.slotId && (!slot || ownsRunSlotCleanup(slot, run.id) || slot.handoff_run_id === run.id))
       return;
-    if (!sameSubject(run, journal)) {
-      const current = getRun(runId);
-      if (current?.taskDebrief?.debriefId === journal.debriefId)
-        await patchJournal(current, { ...journal, status: 'stale' }, 'task debrief superseded');
-      return;
-    }
+    if (!sameSubject(getRun(runId), journal)) return;
     await settleAfterRelease(run, journal);
   })()
     .catch((error: unknown) => {
@@ -391,16 +379,57 @@ export function resumeAcceptedTaskDebriefs(): void {
 
 export async function currentTaskDebriefForCuration(run: Run): Promise<TaskDebrief | undefined> {
   const journal = run.taskDebrief;
-  if (!journal || taskDebriefRunStatus(run) !== 'settled') return undefined;
-  const acceptedRef = resolveRetainedRunBundleRef(run, journal.bundle);
-  const record = readSidecar(run, acceptedRef);
-  if (
-    !record ||
-    record.identity.binding !== 'hosted' ||
-    !record.identity.template ||
-    !record.workflowCandidates.length
-  )
+  if (journal?.status !== 'settled') return undefined;
+  try {
+    const acceptedRef = resolveRetainedRunBundleRef(run, journal.bundle);
+    const record = readSidecar(run, acceptedRef);
+    if (!record) throw new Error('Settled task debrief is missing.');
+    if (
+      record.identity.binding !== 'hosted' ||
+      !record.identity.template ||
+      !record.workflowCandidates.length
+    )
+      return undefined;
+    const { request } = await retainedRequest(run, journal);
+    if (!sameSubject(getRun(run.id), journal)) return undefined;
+    return validateTaskDebrief(record, request);
+  } catch (error) {
+    // Optional evidence must never suppress the established Learnings path.
+    console.warn(`[debrief] invalid curation evidence for ${run.id}: ${(error as Error).name}`);
     return undefined;
-  const { request } = await retainedRequest(run, journal);
-  return validateTaskDebrief(record, request);
+  }
+}
+
+export async function admitTaskDebriefCandidates(
+  runId: string,
+  debriefId: string,
+  keys: readonly string[],
+): Promise<ReadonlySet<string>> {
+  const journal = getRun(runId)?.taskDebrief;
+  const admitted = new Set<string>();
+  if (
+    journal?.status !== 'settled' ||
+    journal.debriefId !== debriefId ||
+    !keys.length ||
+    keys.every((key) => journal.admittedCandidateKeys?.includes(key))
+  )
+    return admitted;
+  try {
+    await commitRunTaskDebrief(
+      runId,
+      (current) => {
+        const accepted = current.taskDebrief!;
+        const previous = new Set(accepted.admittedCandidateKeys);
+        for (const key of keys) if (!previous.has(key)) admitted.add(key);
+        return { taskDebrief: { ...accepted, admittedCandidateKeys: [...previous, ...admitted] } };
+      },
+      (current) => assertSubject(current, journal),
+    );
+  } catch (error) {
+    // Preserve legacy curation even if an acceptance or durable admission raced this call.
+    console.warn(`[debrief] curation admission refused for ${runId}: ${(error as Error).name}`);
+    admitted.clear();
+  }
+  if (!sameSubject(getRun(runId), journal)) admitted.clear();
+  return admitted;
 }

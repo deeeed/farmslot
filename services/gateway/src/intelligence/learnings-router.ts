@@ -577,15 +577,19 @@ function ownPullRequests(run: Run | undefined): string[] {
   ];
 }
 
+interface DebriefWorkflowEntry extends LearningsEntry {
+  sourceKey: string;
+}
+
 /** A debrief contributes workflow suggestions with receipt provenance, never review confirmations. */
-function debriefWorkflowEntries(record: TaskDebrief | undefined): LearningsEntry[] {
+function debriefWorkflowEntries(record: TaskDebrief | undefined): DebriefWorkflowEntry[] {
   const template = record?.identity.template;
   if (!record || record.identity.binding === 'advisory' || !template) return [];
   const observations = new Map(
     record.observations.map((observation) => [observation.id, observation]),
   );
   const seen = new Set<string>();
-  const entries: LearningsEntry[] = [];
+  const entries: DebriefWorkflowEntry[] = [];
   for (const candidate of record.workflowCandidates) {
     if (candidate.templateId && candidate.templateId !== template.id) continue;
     const cited = candidate.observationIds.flatMap((id) => {
@@ -607,6 +611,7 @@ function debriefWorkflowEntries(record: TaskDebrief | undefined): LearningsEntry
     if (seen.has(sourceKey)) continue;
     seen.add(sourceKey);
     entries.push({
+      sourceKey,
       section: 'Task debrief workflow suggestions',
       text: [
         `- ${candidate.lesson}`,
@@ -620,6 +625,21 @@ function debriefWorkflowEntries(record: TaskDebrief | undefined): LearningsEntry
     });
   }
   return entries;
+}
+
+export async function admitDebriefWorkflowContent(run: Run): Promise<string | null> {
+  const { admitTaskDebriefCandidates, currentTaskDebriefForCuration } =
+    await import('../run-completion/task-debrief.js');
+  const debrief = await currentTaskDebriefForCuration(run);
+  if (!debrief) return null;
+  const entries = debriefWorkflowEntries(debrief);
+  const admitted = await admitTaskDebriefCandidates(
+    run.id,
+    debrief.debriefId,
+    entries.map(({ sourceKey }) => sourceKey),
+  );
+  if (getRun(run.id)?.taskDebrief?.debriefId !== debrief.debriefId || !admitted.size) return null;
+  return reconstructSections(entries.filter(({ sourceKey }) => admitted.has(sourceKey)));
 }
 
 export async function routeLearnings(

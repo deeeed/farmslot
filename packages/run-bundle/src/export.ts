@@ -1,14 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -18,7 +9,6 @@ import {
   isTaskDebrief,
   type Run,
   RUN_BUNDLE_VERSION,
-  type RunArtifactBundleRef,
   type RunBundleEntryMeta,
   type RunBundleExportRequest,
   type RunBundleExportResult,
@@ -42,8 +32,9 @@ import { resolveRunsDir, sanitizeBundleRunId } from './paths.js';
 import {
   openRunBundleStore,
   readRetainedRunBundle,
+  readRunBundleDebrief,
+  resolveRetainedRunBundleRef,
   resolveRunBundleEntry,
-  runBundleDebriefDirectory,
 } from './retained.js';
 
 const PACKAGE_FILENAMES = [
@@ -95,31 +86,13 @@ function addFileEntry(
 function currentDebriefBytes(
   storeRoot: string,
   run: Run,
-  ref: RunArtifactBundleRef,
 ): { file: string; bytes: Buffer } | undefined {
   const journal = run.taskDebrief;
-  if (
-    journal?.status !== 'settled' ||
-    journal.bundle.bundleDigest !== ref.bundleDigest ||
-    !run.agentContexts?.some(
-      ({ id, signalAttemptId }) =>
-        id === journal.contextId && signalAttemptId === journal.attemptId,
-    )
-  )
-    return undefined;
-  const file = path.join(
-    runBundleDebriefDirectory(storeRoot, run.id, ref.bundleDigest),
-    TASK_DIRECTORY_LAYOUT.debrief.relativePath,
-  );
-  if (!existsSync(file)) return undefined;
-  const stat = lstatSync(file);
-  if (
-    !stat.isFile() ||
-    stat.size > 4 * 1024 * 1024 ||
-    !realpathSync(file).startsWith(realpathSync(storeRoot) + path.sep)
-  )
-    throw new Error('Retained debrief lies outside its bundle or exceeds its size limit.');
-  const bytes = readFileSync(file);
+  if (journal?.status !== 'settled') return undefined;
+  const accepted = resolveRetainedRunBundleRef(run, journal.bundle);
+  const debrief = readRunBundleDebrief(storeRoot, run.id, accepted.bundleDigest);
+  if (!debrief) return undefined;
+  const { file, bytes } = debrief;
   const value: unknown = JSON.parse(bytes.toString('utf8'));
   if (
     !isTaskDebrief(value) ||
@@ -202,7 +175,7 @@ export async function exportRunsToBundle(
         const taskBundleDir = `tasks/${taskKey}`;
         copyDirectoryRecursive(retained.taskDir, path.join(bundleDir, taskBundleDir));
         registerDirectoryEntries(bundleDir, taskBundleDir, entries);
-        const debrief = currentDebriefBytes(store.root, run, ref);
+        const debrief = currentDebriefBytes(store.root, run);
         if (debrief) {
           const relative = `${taskBundleDir}/${TASK_DIRECTORY_LAYOUT.debrief.relativePath}`;
           addFileEntry(bundleDir, relative, debrief.file, entries, debrief.bytes);

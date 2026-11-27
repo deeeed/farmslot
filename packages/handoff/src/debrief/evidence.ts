@@ -6,6 +6,7 @@ import {
   fstatSync,
   lstatSync,
   openSync,
+  readlinkSync,
   readSync,
   realpathSync,
 } from 'node:fs';
@@ -15,6 +16,8 @@ import {
   canonicalRecipeJson,
   isTaskDebriefRelativePath,
   reviewDiffHash,
+  type ReviewDiffSnapshot,
+  reviewSnapshotIdentityText,
   TASK_DIRECTORY_LAYOUT,
   type TaskDebriefCoverage,
   type TaskDebriefEvidenceReference,
@@ -150,13 +153,20 @@ function git(root: string, args: string[]) {
 }
 
 export function taskGitIdentity(root: string): { head: string; diffHash: string } | null {
-  const identity = git(root, ['rev-parse', '--show-toplevel', 'HEAD']);
+  const identity = git(root, ['rev-parse', '--show-toplevel', 'HEAD', '--show-object-format']);
   if (identity.status === 128 && identity.stderr.includes('not a git repository')) return null;
   if (identity.error || identity.status !== 0)
     throw new Error('Cannot bind the task checkout HEAD.');
-  const [, head] = identity.stdout.trimEnd().split('\n');
-  if (!head || !/^[a-f0-9]{40,64}$/u.test(head)) throw new Error('Invalid task checkout HEAD.');
-  const diff = git(root, [
+  const [checkout, head, algorithm] = identity.stdout.trimEnd().split('\n');
+  if (
+    !checkout ||
+    !head ||
+    !/^[a-f0-9]{40,64}$/u.test(head) ||
+    (algorithm !== 'sha1' && algorithm !== 'sha256')
+  )
+    throw new Error('Invalid task checkout identity.');
+  const excluded = `:(top,exclude,literal)${path.relative(checkout, path.join(root, debriefPath))}`;
+  const diff = git(checkout, [
     '-c',
     'diff.orderFile=/dev/null',
     '-c',
@@ -176,7 +186,40 @@ export function taskGitIdentity(root: string): { head: string; diffHash: string 
     '--ignore-submodules=none',
     head,
     '--',
+    excluded,
   ]);
   if (diff.error || diff.status !== 0) throw new Error('Cannot bind the task checkout diff.');
-  return { head, diffHash: reviewDiffHash(diff.stdout) };
+  const listed = git(checkout, [
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+    '-z',
+    '--',
+    excluded,
+  ]);
+  if (listed.error || listed.status !== 0) throw new Error('Cannot bind untracked checkout files.');
+  const paths = listed.stdout.split('\0').filter(Boolean).sort();
+  if (paths.length > 4096) throw new Error('Too many untracked files for task checkout binding.');
+  const files: NonNullable<ReviewDiffSnapshot['untrackedFiles']> = [];
+  let remaining = MAX_GIT_BYTES;
+  for (const relative of paths) {
+    const parent = path.posix.dirname(relative);
+    const directory = parent === '.' ? checkout : evidencePath(checkout, parent);
+    if (realpathSync(directory) !== directory)
+      throw new Error('Untracked checkout file escaped the repository.');
+    const file = path.join(directory, path.posix.basename(relative));
+    const stat = lstatSync(file);
+    const mode = stat.isSymbolicLink() ? '120000' : stat.mode & 0o111 ? '100755' : '100644';
+    const bytes = stat.isSymbolicLink()
+      ? readlinkSync(file, { encoding: 'buffer' })
+      : readBoundedFile(checkout, relative, remaining);
+    remaining -= bytes.length;
+    if (remaining < 0) throw new Error('Untracked checkout files exceed the task binding limit.');
+    const blobSha = createHash(algorithm)
+      .update(`blob ${bytes.length}\0`)
+      .update(bytes)
+      .digest('hex');
+    files.push({ path: relative, blobSha, mode });
+  }
+  return { head, diffHash: reviewDiffHash(reviewSnapshotIdentityText(diff.stdout, files)) };
 }

@@ -145,9 +145,7 @@ async function routeThenAnalyze(
 ): Promise<void> {
   const router = await import('../../intelligence/learnings-router.js');
   const engine = await import('../../intelligence/improvement-engine.js');
-  const { currentTaskDebriefForCuration } = await import('../../run-completion/task-debrief.js');
-  const debrief = await currentTaskDebriefForCuration(getRun(runId) ?? run);
-  const routed = await router.routeLearnings(run.project, learnings, { runId, debrief });
+  const routed = await router.routeLearnings(run.project, learnings, { runId });
   let emissionError: string | null = null;
   try {
     await router.emitLearningsDraftDecision(runId, routed, {
@@ -162,10 +160,12 @@ async function routeThenAnalyze(
       `[learnings-router] draft card emission failed for ${runId.slice(0, 8)}: ${emissionError}; unrecovered payload: ${JSON.stringify({ drafts: routed.drafts, holds: routed.holds })}`,
     );
   }
-  if (routed.systemContent) {
+  const debriefContent = await router.admitDebriefWorkflowContent(getRun(runId) ?? run);
+  const systemContent = [routed.systemContent, debriefContent].filter(Boolean).join('\n\n');
+  if (systemContent) {
     await analyze(
       runId,
-      composeImprovementAnalysisContent(rationale, routed.systemContent) +
+      composeImprovementAnalysisContent(rationale, systemContent) +
         `\n\nDomain curation: ${routed.drafts.length} drafts, ${routed.holds.length} eligible holds, ${routed.drops?.length ?? 0} drops recorded in the feedback ledger.`,
       placeholderId,
     );
@@ -237,7 +237,7 @@ export async function resumeInterruptedImprovementAnalyses(): Promise<void> {
       const analyzer = improvementAnalyzer ?? engine.analyzeAndPropose;
       void (async () => {
         const content = await composeFamilyLearnings(run);
-        if (!content.trim()) {
+        if (!content.trim() && getRun(run.id)?.taskDebrief?.status !== 'settled') {
           engine.markImprovementTerminal(
             run.id,
             decision.id,
@@ -287,7 +287,7 @@ export async function triggerImprovementAnalysis(runId: string, run: Run): Promi
       return;
     }
     const content = await composeFamilyLearnings(run);
-    if (!content.trim()) {
+    if (!content.trim() && getRun(run.id)?.taskDebrief?.status !== 'settled') {
       if (placeholderId) {
         engine.markImprovementTerminal(
           runId,

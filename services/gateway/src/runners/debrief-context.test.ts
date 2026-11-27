@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { codexDebriefRoute, piDebriefRoute } from './debrief-context.js';
+import { codexDebriefRoute, piDebriefRoute, projectPiDebriefText } from './debrief-context.js';
 import { getRunnerSessionHistoryProvider } from './worker-session-history.js';
 
 test('a retained Pi model change supplies its exact provider and latest model', () => {
@@ -13,11 +13,10 @@ test('a retained Pi model change supplies its exact provider and latest model', 
   ].map((row) => JSON.stringify(row));
   assert.deepEqual(piDebriefRoute(lines), { provider: 'anthropic', model: 'current' });
   assert.deepEqual(
-    getRunnerSessionHistoryProvider('pi')
-      ?.project(lines)
-      .messages.map(({ text }) => text),
+    projectPiDebriefText(lines).map(({ text }) => text),
     ['Why was proof rerun?'],
   );
+  assert.equal(getRunnerSessionHistoryProvider('pi'), undefined);
   assert.equal(
     piDebriefRoute([...lines, '{"type":"model_change","modelId":"unknown"}']),
     undefined,

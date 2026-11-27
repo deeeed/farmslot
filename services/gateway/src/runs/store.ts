@@ -2357,6 +2357,7 @@ async function commitRetainedRunMutation(
   id: string,
   build: (run: Run) => Run,
   assertCurrent: (run: Run) => void,
+  validateActivation = true,
 ): Promise<Run> {
   let committed!: Run;
   await enqueueRunWrite(id, async () => {
@@ -2370,7 +2371,7 @@ async function commitRetainedRunMutation(
     assertCurrent(authority);
     const previousResources = captureRunResources(run);
     const snapshot = build(run);
-    if (live && !isTerminalRunStatus(snapshot.status))
+    if (live && validateActivation && !isTerminalRunStatus(snapshot.status))
       assertPRRunActivation(snapshot, getAllRuns());
     const retired = retainDecisionHistory(run, snapshot.decisions);
     appendDecisionHistoryFile(
@@ -2423,6 +2424,15 @@ async function commitRetainedRunMutation(
     }
   });
   return committed;
+}
+
+/** Use the run store's durable transaction for debrief dispatch and candidate admission. */
+export function commitRunTaskDebrief(
+  id: string,
+  build: (run: Run) => Pick<Run, 'taskDebrief' | 'priorTaskDebriefBundles'>,
+  assertCurrent: (run: Run) => void,
+): Promise<Run> {
+  return commitRetainedRunMutation(id, (run) => ({ ...run, ...build(run) }), assertCurrent, false);
 }
 
 /** Publication-only transaction. Archived execution is never loaded into the live map. */

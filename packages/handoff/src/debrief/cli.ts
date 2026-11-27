@@ -8,6 +8,7 @@ import {
   debriefPath,
   readTaskDebrief,
   renderTaskDebrief,
+  resolveDebriefScrubOptions,
   type TaskDebriefOptions,
   writeTaskDebrief,
 } from './index.js';
@@ -46,6 +47,7 @@ export async function runTaskDebriefCli(argv: readonly string[]): Promise<void> 
   )
     throw new Error(TASK_DEBRIEF_CLI_USAGE);
   const options: TaskDebriefOptions = {
+    scrub: resolveDebriefScrubOptions(),
     tokens: {
       workspace: path.resolve(directory),
       home: homedir(),

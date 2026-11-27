@@ -5,7 +5,9 @@ import {
   createWriteStream,
   type Dirent,
   existsSync,
+  lstatSync,
   readFileSync,
+  realpathSync,
   type Stats,
   statSync,
 } from 'node:fs';
@@ -42,6 +44,8 @@ import {
   type RunBundleManifest,
   type RunBundleRetentionPolicy,
   type RunDecision,
+  TASK_DIRECTORY_LAYOUT,
+  type TaskDebrief,
 } from '@farmslot/protocol';
 import {
   listProjectTaskRoots,
@@ -203,6 +207,8 @@ export interface MaterializeRunBundleRequest {
   /** Gateway-written files read from this directory instead of `taskDir`. */
   gatewayFiles?: { taskDir: string; paths: readonly string[] };
   artifacts: readonly ArtifactRef[];
+  /** Optional receipts already read from the task. They are never fetched again. */
+  optionalReceipts?: ReadonlyMap<string, Buffer>;
   manifestDigest: string;
   /** Persisted identity of this acquisition, including task and generation. */
   captureKey: string;
@@ -1198,7 +1204,7 @@ const stampTimesNs = (stamp: string): bigint[] =>
         .slice(1)
         .map((part) => BigInt(part));
 
-const STAMPED_STORE_DIRS = ['', 'sha256', 'usage', 'availability'] as const;
+const STAMPED_STORE_DIRS = ['', 'sha256', 'usage', 'availability', 'task-debrief'] as const;
 const stableStoreCharges = new Map<string, StableStoreCharge>();
 let stableStoreWalks = 0;
 
@@ -1669,7 +1675,78 @@ export interface RunBundleReference {
   decision?: RunDecision;
 }
 
-/** Directory for an accepted attempt's debrief, beside the immutable bundle. */
+function runBundleDebriefPath(root: string, runId: string, digest: string): string {
+  if (!BUNDLE_DIGEST.test(digest)) throw new Error('Invalid debrief bundle digest.');
+  const file = path.join(root, 'task-debrief', `${digest}.json`);
+  return existsSync(file)
+    ? file
+    : path.join(
+        runBundleDebriefDirectory(root, runId, digest),
+        TASK_DIRECTORY_LAYOUT.debrief.relativePath,
+      );
+}
+
+export function readRunBundleDebrief(
+  root: string,
+  runId: string,
+  digest: string,
+): { file: string; bytes: Buffer } | undefined {
+  const file = runBundleDebriefPath(root, runId, digest);
+  try {
+    const info = lstatSync(file);
+    if (
+      !info.isFile() ||
+      info.size > 4 * 1024 * 1024 ||
+      realpathSync(file) !== path.join(realpathSync(root), path.relative(root, file))
+    )
+      throw new Error('Retained debrief lies outside its bundle or exceeds its size limit.');
+    return { file, bytes: readFileSync(file) };
+  } catch (error) {
+    if (hasCode(error, 'ENOENT')) return undefined;
+    throw error;
+  }
+}
+
+/** Seal the optional sidecar under the same lock and capacity accounting as its bundle. */
+export async function retainRunBundleDebrief(
+  store: RunBundleStore,
+  ref: RunArtifactBundleRef,
+  record: TaskDebrief,
+  policy: RunBundleRetentionPolicy,
+  assertCurrent: () => void,
+): Promise<void> {
+  await assertStorePairing(store);
+  assertPolicy(policy);
+  await withRunBundleStoreLock(store, async () => {
+    const runId = record.identity.runId;
+    if (!runId || ref.storeId !== store.id || !BUNDLE_DIGEST.test(ref.bundleDigest))
+      throw new Error('Invalid retained debrief identity.');
+    const { manifest } = await readRetainedManifest(store, ref.bundleDigest);
+    if (!manifest.runs.some(({ originalRunId }) => originalRunId === runId))
+      throw new Error('Debrief does not belong to this retained bundle.');
+    const file = path.join(store.root, 'task-debrief', `${ref.bundleDigest}.json`);
+    const raw = `${JSON.stringify(record, null, 2)}\n`;
+    const existing = await readOptional(file);
+    if (existing !== undefined) {
+      if (existing !== raw) throw new Error('Retained debrief already has different bytes.');
+      return;
+    }
+    const bytes = Buffer.byteLength(raw);
+    const bundleBytes =
+      (await readBundleRecord(store, ref.bundleDigest)) ??
+      (await physicalBytes(bundleDirectory(store, ref.bundleDigest)));
+    // The accepted capture already passed acquisition admission. Charge the new
+    // retained bytes here without rescanning the farm's task trees.
+    const charged = (await chargedStoreBytes(store)) + (await reservedMetadataBytes(store));
+    if (bytes + bundleBytes > policy.maxBundleBytes || bytes + charged > policy.maxStoreBytes)
+      throw new RunBundleCapacityError('Run bundle capacity exhausted while retaining debrief.');
+    const stamps = await storeStamps(store);
+    assertCurrent();
+    await atomicJson(file, record);
+    await adjustStableStoreCharge(store, 'task-debrief', stamps, bytes);
+  });
+}
+
 export function runBundleDebriefDirectory(
   root: string,
   runId: string,
@@ -2277,7 +2354,9 @@ const ORPHAN_RECORDS_PER_PASS = 200;
 
 /** A bundle's usage and availability records, which leave the store with its directory. */
 export function runBundleRecordPaths(storeRoot: string, digest: string): string[] {
-  return ['usage', 'availability'].map((dir) => path.join(storeRoot, dir, `${digest}.json`));
+  return ['usage', 'availability', 'task-debrief'].map((dir) =>
+    path.join(storeRoot, dir, `${digest}.json`),
+  );
 }
 
 /** What the housekeeping inventory takes from one run record and its decision journal. */
@@ -2505,7 +2584,7 @@ async function runBundleHousekeepingInventoryUntimed(store: RunBundleStore, now:
   await mkdir(digestRoot, { recursive: true });
   const digests = await readdir(digestRoot);
   const records = new Set<string>();
-  for (const dir of ['usage', 'availability']) {
+  for (const dir of ['usage', 'availability', 'task-debrief']) {
     await mkdir(path.join(store.root, dir), { recursive: true });
     for (const name of await readdir(path.join(store.root, dir)))
       records.add(path.join(store.root, dir, name));
@@ -2536,6 +2615,22 @@ async function runBundleHousekeepingInventoryUntimed(store: RunBundleStore, now:
   const present = new Set(digests);
   const runId = `bundle-records-${new Date(now).toISOString().slice(0, 13).replace(/\D/gu, '')}`;
   let orphans = 0;
+  const legacyRoot = path.join(store.root, 'sidecars', 'task-debrief');
+  for (const owner of await readdir(legacyRoot, { withFileTypes: true }).catch((error) => {
+    if (hasCode(error, 'ENOENT')) return [];
+    throw error;
+  })) {
+    if (!owner.isDirectory()) continue;
+    const directory = path.join(legacyRoot, owner.name);
+    for (const digest of await readdir(directory)) {
+      if (!BUNDLE_DIGEST.test(digest) || referenced.has(digest) || pinned.has(digest)) continue;
+      archivable.push({
+        path: path.join(directory, digest),
+        runId: owner.name,
+        store: 'bundle-records',
+      });
+    }
+  }
   for (const record of records) {
     const digest = path.basename(record, '.json');
     if (!record.endsWith('.json') || !BUNDLE_DIGEST.test(digest)) continue;
@@ -2788,10 +2883,8 @@ export async function collectRunBundleGarbage(
   assertPolicy(policy);
   const acquisition = archive ? (await acquisitionBytes(archive.farmslotRoot)).bytes : 0;
   return withBundleLock(store, STORE_LOCK, { label: 'bundle garbage collection' }, async () => {
-    const { cleanup, referenced, pinned, committedIntents } = await runBundleHousekeepingInventory(
-      store,
-      now,
-    );
+    const { cleanup, archivable, referenced, pinned, committedIntents } =
+      await runBundleHousekeepingInventory(store, now);
     let housekeepingBytes = 0;
     for (const entry of cleanup) {
       if (entry.store === 'bundle-staging') housekeepingBytes += await physicalBytes(entry.path);
@@ -2808,8 +2901,11 @@ export async function collectRunBundleGarbage(
         reclaimedBytes +=
           (await readBundleRecord(store, digest)) ?? (await physicalBytes(directory));
         await rm(directory, { recursive: true });
-        for (const record of runBundleRecordPaths(store.root, digest))
+        for (const record of runBundleRecordPaths(store.root, digest)) {
+          if (path.basename(path.dirname(record)) === 'task-debrief' && existsSync(record))
+            reclaimedBytes += await physicalBytes(record);
           await rm(record, { force: true });
+        }
         stableStoreCharges.delete(stableChargeKey(store));
         // A reclaimed payload cannot satisfy its old retry intent. Future explicit
         // acquisition of these bytes starts a new capture instead of a lost stage.
@@ -2817,6 +2913,20 @@ export async function collectRunBundleGarbage(
         manifestCache.delete(`${store.id}:${digest}`);
         continue;
       }
+    }
+    for (const entry of archivable) {
+      if (
+        entry.store !== 'bundle-records' ||
+        !(
+          entry.path.startsWith(path.join(store.root, 'sidecars', 'task-debrief') + path.sep) ||
+          path.dirname(entry.path) === path.join(store.root, 'task-debrief')
+        ) ||
+        !existsSync(entry.path)
+      )
+        continue;
+      reclaimedBytes += await physicalBytes(entry.path);
+      await rm(entry.path, { recursive: true, force: true });
+      stableStoreCharges.delete(stableChargeKey(store));
     }
     if (archive) {
       const moved = await archiveRunBundleMediaLocked(
@@ -3051,7 +3161,10 @@ export async function materializeRunBundle(
         );
         manifest.entries[key] = { path: key, ...copied };
       }
-      for (const artifact of ordered) {
+      for (const artifact of [
+        ...ordered.filter(({ path }) => !request.optionalReceipts?.has(path)),
+        ...ordered.filter(({ path }) => request.optionalReceipts?.has(path)),
+      ]) {
         assertSafeBundleRelativePath(artifact.path);
         if (
           shouldSkipBundleFile(path.posix.basename(artifact.path)) ||
@@ -3061,6 +3174,30 @@ export async function materializeRunBundle(
             .some((segment) => shouldSkipBundleFilesystemEntry(segment, false))
         ) {
           missingData.push(`excluded:${artifact.path}`);
+          continue;
+        }
+        const receipt = request.optionalReceipts?.get(artifact.path);
+        if (receipt) {
+          if (
+            receipt.byteLength >
+            Math.min(
+              policy.maxBundleBytes - bundleBytes - manifestReserve,
+              policy.maxStoreBytes - storeBytes - manifestReserve,
+            )
+          )
+            continue;
+          const key = `tasks/${taskKey}/${artifact.path}`;
+          const destination = path.join(stage, key);
+          await mkdir(path.dirname(destination), { recursive: true });
+          await writeFile(destination, receipt, { mode: 0o400, flush: true });
+          manifest.entries[key] = {
+            path: key,
+            sha256: artifact.sha256!,
+            bytes: receipt.byteLength,
+          };
+          bundleBytes += receipt.byteLength;
+          stagedBytes += receipt.byteLength;
+          storeBytes += receipt.byteLength;
           continue;
         }
         const source = resolvePathInsideRoot(
