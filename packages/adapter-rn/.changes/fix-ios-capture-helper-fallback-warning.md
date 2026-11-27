@@ -1,0 +1,1 @@
+- Report why iOS recording falls back to simctl. The warning uses the recorder's existing fallback reason and appears once per recording.
