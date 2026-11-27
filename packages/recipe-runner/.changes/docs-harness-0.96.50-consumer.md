@@ -1,0 +1,1 @@
+- mm-harness 0.96.50 pins adapter-rn 0.31.38 so iOS recording reports its simctl fallback reason. The other Farmslot pins match mm-harness 0.96.49.
