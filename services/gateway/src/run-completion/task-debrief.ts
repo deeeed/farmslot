@@ -138,7 +138,7 @@ async function retainedRequest(
   const fileDigests = new Map<string, string>();
   const mirroredPaths = new Map<string, string>();
   const mirrors = new Map<string, string>([
-    [layout.checklist.relativePath, layout.workerChecklistMirror.relativePath],
+    [layout.checklist.relativePath, layout.checklistWorkerMirror.relativePath],
     [layout.signal.relativePath, layout.workerSignalMirror.relativePath],
   ]);
   for (const relative of files) {

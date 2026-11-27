@@ -463,12 +463,6 @@ export const TASK_DIRECTORY_LAYOUT = Object.freeze({
     'file',
     'Worker execution status written by the marker.',
   ),
-  workerChecklistMirror: entry(
-    `${INTERACTIVE_CHECKLIST_MARKDOWN}.worker`,
-    'checklist',
-    'file',
-    'Mirrored worker checklist.',
-  ),
   workerSignalMirror: entry(
     `${WORKER_SIGNAL_FILE}.worker`,
     'signal',
