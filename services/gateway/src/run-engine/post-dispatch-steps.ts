@@ -96,6 +96,7 @@ import {
   takeSendBackReview,
 } from '../run-completion/result-decision.js';
 import { retainRunArtifacts } from '../run-completion/retained-artifacts.js';
+import { prepareDebriefForAcceptedResult } from '../run-completion/task-debrief.js';
 import { readRunProgress } from '../runners/run-progress.js';
 import { getRun, persistRunNow, updateRun, updateRunStep } from '../runs/store.js';
 import { collectRunSubtaskMetrics, withSubtaskMetrics } from '../tasks/subtask-metrics.js';
@@ -1811,18 +1812,6 @@ export function isFlowTerminalStep(flowType: Run['flowType'], step: string): boo
   return steps[steps.length - 1] === step;
 }
 
-async function prepareDebriefForCompletion(runId: string): Promise<void> {
-  const run = getRun(runId);
-  if (run?.executionTemplate?.postRunDebrief !== true) return;
-  try {
-    const { prepareAcceptedTaskDebrief } = await import('../run-completion/task-debrief.js');
-    await prepareAcceptedTaskDebrief(run);
-  } catch (error) {
-    // Optional evidence collection must not change the accepted completion or its release.
-    console.warn(`[debrief] collection failed for ${runId}: ${(error as Error).message}`);
-  }
-}
-
 /** Retry only the release once the no-change completion has been persisted. */
 async function releaseNoChangeCompletion(
   run: Run,
@@ -2012,7 +2001,7 @@ async function executeCompleteStepUnmeasured(
         requireArtifactMirror: true,
       }),
     );
-    await prepareDebriefForCompletion(runId);
+    await prepareDebriefForAcceptedResult(getRun(runId) ?? current);
     await holdSlotForPublicationGate(current.slotId, broadcastFn);
     const cliCommand = `farmslot slot check ${current.slotId}`;
     return {
@@ -2049,7 +2038,7 @@ async function executeCompleteStepUnmeasured(
       inheritedAcceptance,
     }),
   );
-  await prepareDebriefForCompletion(runId);
+  await prepareDebriefForAcceptedResult(getRun(runId) ?? current);
   await timeCompletePhase('links', () => refreshRunLinks(runId));
   if (completion.prNumber && current.flowType !== 'review-pr') {
     await timeCompletePhase('reviewInputs', () =>

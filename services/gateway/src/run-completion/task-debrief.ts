@@ -166,9 +166,18 @@ async function retainedRequest(
   return { request: collectTaskDebrief(bundle.taskDir, options), options };
 }
 
-export async function prepareAcceptedTaskDebrief(run: Run): Promise<void> {
+export async function prepareDebriefForAcceptedResult(run: Run): Promise<void> {
+  if (run.executionTemplate?.postRunDebrief !== true) return;
+  try {
+    await prepareAcceptedTaskDebrief(run);
+  } catch (error) {
+    // Optional collection can fail independently of acceptance and slot release.
+    console.warn(`[debrief] collection failed for ${run.id}: ${(error as Error).message}`);
+  }
+}
+
+async function prepareAcceptedTaskDebrief(run: Run): Promise<void> {
   if (
-    run.executionTemplate?.postRunDebrief !== true ||
     !run.output?.workerFinished ||
     !run.output.artifactBundle ||
     run.output.captureError ||

@@ -1,5 +1,6 @@
 import { runEvidencePending } from '@farmslot/adapter-sdk/evidence';
 import {
+  type ArtifactRef,
   attachRunListSummaries,
   type LiveRecipeContext,
   type RecipeRunArtifactGroup,
@@ -16,6 +17,7 @@ import {
   type RunRecipeRunsForSlotParams,
   type RunRecipeRunsForSlotResult,
   runRecoveryHints,
+  TASK_DIRECTORY_LAYOUT,
 } from '@farmslot/protocol';
 
 import {
@@ -300,10 +302,26 @@ export async function runRecipeRunsForRun(
     const payload = params.decisionId
       ? run.decisions.find(({ id }) => id === params.decisionId)?.payload
       : undefined;
-    const debrief = run.taskDebrief
-      ? readTaskDebriefSidecar(run, taskDebriefEvidenceBundle(run, ref, Boolean(params.decisionId)))
-          ?.artifact
-      : undefined;
+    let debrief: ArtifactRef | undefined;
+    if (run.taskDebrief) {
+      try {
+        debrief = readTaskDebriefSidecar(
+          run,
+          taskDebriefEvidenceBundle(run, ref, Boolean(params.decisionId)),
+        )?.artifact;
+      } catch (error) {
+        // Report the sidecar as unavailable without invalidating the recorded recipe package.
+        console.warn(
+          `[debrief] recorded evidence read failed for ${run.id}: ${(error as Error).message}`,
+        );
+        debrief = {
+          path: TASK_DIRECTORY_LAYOUT.debrief.relativePath,
+          purpose: 'evidence',
+          availability: 'missing',
+          label: 'The retained task debrief could not be read.',
+        };
+      }
+    }
     recordedEvidence.report = {
       reportPath: payload?.kind === 'output-review' ? payload.reportPath : run.output?.reportPath,
       manifestDigest: outputManifestDigest(

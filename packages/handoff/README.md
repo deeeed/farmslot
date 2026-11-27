@@ -238,11 +238,13 @@ header). Gitleaks' generic high-entropy rules are deliberately excluded.
 
 Prepare a question for the worker conversation that produced the task. Send the
 prompt from the JSON output to that conversation, then pass its JSON response
-to the finalizer.
+to the finalizer. Pipe the response to standard input or save it outside the
+checkout. A response file created inside the checkout changes its fingerprint
+after preparation.
 
 ```bash
 handoff debrief prepare <task-dir>
-handoff debrief finalize <task-dir> < response.json
+handoff debrief finalize <task-dir> < /tmp/response.json
 handoff debrief validate <task-dir> --bound
 handoff debrief show <task-dir>
 ```

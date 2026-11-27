@@ -626,6 +626,11 @@ export async function resolveResultDecision(
             : {}),
           persist: (next) => persistRunNow(next, `result decision ${actionId}`),
           collaborators: operatorCompletionCollaborators(async (next) => {
+            // This terminal transition skips COMPLETE. Bind the accepted output before publishing.
+            if (actionId === 'accept-result' && next.executionTemplate?.postRunDebrief === true) {
+              const { prepareDebriefForAcceptedResult } = await import('./task-debrief.js');
+              await prepareDebriefForAcceptedResult(next);
+            }
             await publishCompletedRun(next);
           }),
         }),
@@ -641,8 +646,14 @@ export async function resolveResultDecision(
     await sendBack(settled, stoppedAt, reasonOfHold, params.decisionId, workerFeedback, reason);
   else {
     // Released outside the run lock, like other operator terminal actions; the episode follows.
-    if (settled.slotId && options.releaseSlot !== false)
-      await releaseSettledSlot(settled, stoppedAt !== 'review');
+    const releaseSlot = settled.slotId && options.releaseSlot !== false;
+    const discard = stoppedAt !== 'review';
+    if (releaseSlot) await releaseSettledSlot(settled, discard);
+    // A normal completed-slot release schedules the journal itself. The discard path uses slot.release.
+    if (actionId === 'accept-result' && (!releaseSlot || discard) && settled.taskDebrief) {
+      const { continueTaskDebriefAfterRelease } = await import('./task-debrief.js');
+      continueTaskDebriefAfterRelease(settled.id);
+    }
     await captureEpisodeAfterRelease(params.runId);
   }
   return getRun(params.runId) ?? settled;
