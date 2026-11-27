@@ -121,6 +121,8 @@ export interface NativeExecutionNodeDeclaration {
   supportsStandaloneDelegation?: boolean;
   /** Source-backed journal/account receipts on the authenticated node connection. */
   supportsObservations?: boolean;
+  /** Node accepts explicit trusted executable configuration before admitting profile reads. */
+  supportsObservationConfiguration?: boolean;
   ownerPrincipalId: string;
   /** The node routes reserved creation; its retained host is checked separately at invocation. */
   supportsEnsure?: boolean;

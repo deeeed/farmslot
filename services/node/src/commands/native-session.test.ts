@@ -32,6 +32,7 @@ test('node native execution rejects other owners and conflicting execution ident
     supportsHostRefresh: true,
     supportsSessionArchive: true,
     supportsObservations: true,
+    supportsObservationConfiguration: true,
   });
   await assert.rejects(
     service.route({
@@ -199,11 +200,14 @@ process.exit(127);
   );
   chmodSync(launcherExit127, 0o700);
 
-  const auth = await observeNodeNativeAccount({
-    runner: 'antigravity',
-    cwd: root,
-    executable: fakeAgy,
-  });
+  const auth = await observeNodeNativeAccount(
+    {
+      runner: 'antigravity',
+      cwd: '/',
+      executable: fakeAgy,
+    },
+    async () => ({ PATH: process.env.PATH }),
+  );
   assert.equal(auth.installed, true);
   assert.equal(auth.login, 'authenticated');
   assert.equal(auth.version, '1.5.12');
@@ -212,30 +216,67 @@ process.exit(127);
   assert.ok(Number.isInteger(childPid) && childPid > 0);
   assert.throws(() => process.kill(childPid, 0), { code: 'ESRCH' });
 
-  const signedOut = await observeNodeNativeAccount({
-    runner: 'antigravity',
-    cwd: root,
-    executable: fakeAgy,
-    env: { AGY_TEST_SIGNED_OUT: '1' },
-  });
+  // Binary reachable ONLY via the node's login PATH (absent from daemon process.env.PATH and
+  // with no explicit executable override) must still authenticate cleanly with host cwd '/'.
+  const prevPath = process.env.PATH;
+  const prevAgyEnv = process.env.FARMSLOT_AGY_EXECUTABLE;
+  try {
+    delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    process.env.PATH = `${path.dirname(process.execPath)}:/usr/bin:/bin`;
+    const loginPathOnly = await observeNodeNativeAccount(
+      {
+        runner: 'antigravity',
+        cwd: '/',
+      },
+      async () => ({
+        PATH: `${root}${path.delimiter}${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      }),
+    );
+    assert.equal(loginPathOnly.installed, true);
+    assert.equal(loginPathOnly.login, 'authenticated');
+    assert.equal(loginPathOnly.version, '1.5.12');
+    const loginChildPid = Number(readFileSync(pidFile, 'utf8').trim());
+    assert.throws(() => process.kill(loginChildPid, 0), { code: 'ESRCH' });
+  } finally {
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    if (prevAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    else process.env.FARMSLOT_AGY_EXECUTABLE = prevAgyEnv;
+  }
+
+  const signedOut = await observeNodeNativeAccount(
+    {
+      runner: 'antigravity',
+      cwd: '/',
+      executable: fakeAgy,
+      env: { AGY_TEST_SIGNED_OUT: '1' },
+    },
+    async () => ({ PATH: process.env.PATH }),
+  );
   assert.equal(signedOut.installed, true);
   assert.equal(signedOut.login, 'signed-out');
 
   // An existing executable exiting 127 is a launcher failure, never not-installed or signed-out.
-  const exit127 = await observeNodeNativeAccount({
-    runner: 'antigravity',
-    cwd: root,
-    executable: launcherExit127,
-  });
+  const exit127 = await observeNodeNativeAccount(
+    {
+      runner: 'antigravity',
+      cwd: '/',
+      executable: launcherExit127,
+    },
+    async () => ({ PATH: process.env.PATH }),
+  );
   assert.equal(exit127.installed, true);
   assert.equal(exit127.login, 'unavailable');
   assert.notEqual(exit127.reason, 'not-installed');
 
-  const missing = await observeNodeNativeAccount({
-    runner: 'antigravity',
-    cwd: root,
-    executable: path.join(root, 'no-such-agy'),
-  });
+  const missing = await observeNodeNativeAccount(
+    {
+      runner: 'antigravity',
+      cwd: '/',
+      executable: path.join(root, 'no-such-agy'),
+    },
+    async () => ({ PATH: process.env.PATH }),
+  );
   assert.equal(missing.installed, false);
   assert.equal(missing.reason, 'not-installed');
 });
@@ -370,4 +411,18 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
     probesAfterFirst + 1,
   );
+
+  // Reconnecting preserves the node's last digest until the gateway explicitly configures {} (removed override).
+  await service.startObservation(() => {});
+  const clearedReceipt = await service.configureObservation({
+    owner: 'owner',
+    executables: {},
+  });
+  assert.equal(clearedReceipt.ready, true);
+  const afterClear = (await service.routeObserved({
+    owner: 'owner',
+    method: 'native.profile.status',
+    params: { profileId: 'work' },
+  })) as { value: NativeProfileStatusResult };
+  assert.equal(afterClear.value.account.installed, false);
 });

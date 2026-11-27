@@ -139,7 +139,9 @@ export class NativeHostObservation {
     private readonly resolveExecutable?: (
       runner: string,
     ) => Promise<string | undefined> | string | undefined,
+    initialExecutableConfigDigest = '{}',
   ) {
+    this.executableConfigDigest = initialExecutableConfigDigest;
     this.receipt = {
       version: 1,
       nodeId: client.executionNodeId,

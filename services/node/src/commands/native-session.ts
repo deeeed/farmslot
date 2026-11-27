@@ -52,7 +52,7 @@ export class NativeNodeSessions {
         supportsProfiles: true,
         supportsHostRefresh: true,
         supportsSessionArchive: true,
-        ...{ supportsObservations: true },
+        ...{ supportsObservations: true, supportsObservationConfiguration: true },
       };
     }
     // Only fenced idle stops, few enough to finish within the gateway's launch timeout.
@@ -179,6 +179,7 @@ export class NativeNodeSessions {
       undefined,
       undefined,
       (runner) => this.resolveTrustedExecutable(runner),
+      this.trustedExecutablesDigest,
     );
     await this.observation.start();
   }

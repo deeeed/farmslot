@@ -28,13 +28,18 @@ import {
 import { CdpWebPage } from '../../../packages/recipe-runner/src/runtime/cdp.js';
 
 import {
-  assertCleanTrackedSource,
   buildProofManifest,
   createAttemptOutputDir,
+  ensureFrozenProofExecution,
 } from './antigravity-proof-utils.mts';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
-const { sourceSha, sourceTreeSha, trackedWorkingTreeClean } = assertCleanTrackedSource(repo);
+const frozenSource = ensureFrozenProofExecution(
+  repo,
+  'scripts/runner-validation/gateway/antigravity-copilot-cdp.mts',
+  process.argv[2],
+);
+const { sourceSha, sourceTreeSha, trackedWorkingTreeClean } = frozenSource;
 const baseOutput = path.resolve(process.argv[2] ?? '/tmp/antigravity-copilot-cdp-proof');
 const { attemptId, outputDir: output } = await createAttemptOutputDir(baseOutput, sourceSha);
 const root = await mkdtemp(path.join(tmpdir(), 'antigravity-copilot-proof-'));
@@ -1039,6 +1044,9 @@ try {
     );
   }
   result.hostStopped = !fs.existsSync(lock);
+  frozenSource.verifyBeforeSeal();
+  result.isolatedCheckoutVerifiedBeforeLaunch = true;
+  result.isolatedCheckoutVerifiedBeforeSeal = true;
   const manifestEntries = await buildProofManifest(output);
   result.manifest = manifestEntries;
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
@@ -1050,6 +1058,8 @@ try {
         sourceSha: result.sourceSha,
         sourceTreeSha: result.sourceTreeSha,
         trackedWorkingTreeClean: result.trackedWorkingTreeClean,
+        isolatedCheckoutVerifiedBeforeLaunch: result.isolatedCheckoutVerifiedBeforeLaunch,
+        isolatedCheckoutVerifiedBeforeSeal: result.isolatedCheckoutVerifiedBeforeSeal,
         attemptId: result.attemptId,
         outputDir: result.outputDir,
         hostStopped: result.hostStopped,

@@ -660,7 +660,7 @@ const antigravityStatusProvider: RunnerStatusProvider = {
   async getActiveSubscription(vars) {
     if (isLocal(vars.host, vars.machine)) {
       const obs = await observeAntigravityAccount({
-        cwd: vars.remoteRepo || '/',
+        cwd: '/',
         ...(vars.antigravityPath ? { executable: vars.antigravityPath } : {}),
         env: { ...process.env, ...vars.machineEnv },
       });
@@ -677,7 +677,7 @@ const antigravityStatusProvider: RunnerStatusProvider = {
         'native.account.observe',
         {
           runner: 'antigravity',
-          cwd: vars.remoteRepo || '/',
+          cwd: '/',
           ...(vars.antigravityPath ? { executable: vars.antigravityPath } : {}),
           ...(vars.machineEnv ? { env: vars.machineEnv } : {}),
         },

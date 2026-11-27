@@ -378,6 +378,7 @@ export class GatewayNativeObservations {
     if (change.scope === 'all') {
       this.poolCatalogRevision++;
       this.executableCache.clear();
+      this.triggerAllExecutableSyncs();
     }
     const interests = [];
     for (const client of this.clients.values()) {
@@ -463,17 +464,26 @@ export class GatewayNativeObservations {
       receipt.revision < previous.receipt.revision
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Native source revision went backwards');
+    const isNewConnection = previous?.connection !== connection;
     this.remote.set(receipt.nodeId, {
       connection,
       current,
       receipt: { ...receipt },
-      ...(previous?.connection === connection
+      ...(!isNewConnection
         ? { configuredDigest: previous.configuredDigest, configuring: previous.configuring }
         : {}),
     });
     if (previous && previous.connection !== connection)
       this.invalidateSource(previous.receipt.nodeId, previous.receipt.ownerId);
     this.invalidateSource(receipt.nodeId, receipt.ownerId, receipt.changed);
+    if (
+      receipt.ready &&
+      registered.nativeSessions.supportsObservationConfiguration &&
+      this.remote.get(receipt.nodeId)?.configuredDigest === undefined &&
+      !this.remote.get(receipt.nodeId)?.configuring
+    ) {
+      this.triggerRemoteExecutableSync(receipt.nodeId, receipt.ownerId);
+    }
   }
   /** Existing node registration owner calls this even for old/unsupported replacement nodes. */
   registrationChanged(nodeId: string, ownerId?: string, previousConnection?: object): void {
@@ -844,40 +854,57 @@ export class GatewayNativeObservations {
     await run;
   }
 
+  private triggerAllExecutableSyncs(): void {
+    if (this.local) {
+      void this.syncLocalExecutables().catch((error: unknown) => {
+        console.warn(
+          `[native-observation] background local executable sync failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    }
+    for (const [nodeId, source] of this.remote) {
+      if (!source.current()) continue;
+      this.triggerRemoteExecutableSync(nodeId, source.receipt.ownerId);
+    }
+  }
+
+  private triggerRemoteExecutableSync(nodeId: string, ownerId: string): void {
+    void this.syncRemoteExecutables(nodeId, ownerId).catch((error: unknown) => {
+      console.warn(
+        `[native-observation] background remote executable sync failed for ${nodeId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }
+
   private async syncRemoteExecutables(nodeId: string, ownerId: string): Promise<void> {
     const source = this.remote.get(nodeId);
     if (!source || !source.current()) return;
     const executables = await this.resolveCachedNodeExecutables(nodeId);
     const digest = canonicalExecutablesDigest(executables);
-    if ((source.configuredDigest ?? '{}') === digest && !source.configuring) return;
-    if (source.configuring?.digest === digest) return source.configuring.promise;
     const node = resolveNativeExecutionNode(ownerId, nodeId);
     if (node.ws !== source.connection) return;
-    const run = (async () => {
-      let receipt: unknown;
-      try {
-        receipt = await sendNodeRequest(
-          node,
-          'native.observation.configure',
-          {
-            owner: ownerId,
-            ...(executables ? { executables } : {}),
-          },
-          { timeout: 20_000, requireSameConnection: true },
+    if (!node.nativeSessions.supportsObservationConfiguration) {
+      if (digest !== '{}') {
+        throw new GatewayMethodError(
+          'NATIVE_SOURCE_UNAVAILABLE',
+          'Execution node upgrade required for configured runner executables',
         );
-      } catch (error) {
-        // Older nodes that do not implement native.observation.configure can still serve
-        // default PATH-based profile status when no custom runner executable is configured.
-        if (
-          !executables &&
-          error instanceof Error &&
-          /Unknown method:\s*native\.observation\.configure/.test(error.message)
-        ) {
-          if (this.remote.get(nodeId) === source) source.configuredDigest = digest;
-          return;
-        }
-        throw error;
       }
+      source.configuredDigest = digest;
+      return;
+    }
+    if (source.configuredDigest === digest && !source.configuring) return;
+    if (source.configuring?.digest === digest) return source.configuring.promise;
+    const run = (async () => {
+      const receipt = await sendNodeRequest(
+        node,
+        'native.observation.configure',
+        {
+          owner: ownerId,
+          executables: executables ?? {},
+        },
+        { timeout: 20_000, requireSameConnection: true },
+      );
       const currentSource = this.remote.get(nodeId);
       if (!currentSource || currentSource.connection !== node.ws || !currentSource.current())
         return;

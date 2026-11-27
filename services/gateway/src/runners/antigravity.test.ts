@@ -354,13 +354,15 @@ process.exit(127);
     assert.equal(frame.method, 'native.account.observe');
     const p = (frame.params ?? {}) as Record<string, unknown>;
     assert.equal(p.runner, 'antigravity');
+    // Host-level account probes must use stable host cwd '/' rather than an unprepared slot checkout.
+    assert.equal(p.cwd, '/');
     if (transportMode === 'rpc-error') throw new Error('node connection reset');
     const extraEnv =
       p.env && typeof p.env === 'object' && !Array.isArray(p.env)
         ? (p.env as Record<string, string>)
         : {};
     return observeAntigravityAccount({
-      cwd: typeof p.cwd === 'string' ? p.cwd : root,
+      cwd: '/',
       executable: typeof p.executable === 'string' ? p.executable : undefined,
       env: { ...process.env, ...extraEnv },
     });
@@ -372,7 +374,7 @@ process.exit(127);
       host: 'remote-agy.example',
       sshUser: 'operator',
       sshTarget: 'operator@remote-agy.example',
-      remoteRepo: root,
+      remoteRepo: join(root, 'unprepared-slot-checkout-does-not-exist'),
       antigravityPath: fakeAgy,
     });
 
@@ -479,7 +481,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   const prevPath = process.env.PATH;
   const prevAgyEnv = process.env.FARMSLOT_AGY_EXECUTABLE;
   const machine = 'remote-fenced-agy';
-  const writePool = (agyPath: string) => {
+  const writePool = (agyPath?: string) => {
     writeFileSync(
       join(tempPoolRoot, `${machine}.json`),
       JSON.stringify({
@@ -489,7 +491,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
         ssh_user: 'operator',
         os: process.platform,
         platform: 'cli',
-        antigravity_path: agyPath,
+        ...(agyPath ? { antigravity_path: agyPath } : {}),
         slots: [{ id: `${machine}-1`, enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
       }),
     );
@@ -533,22 +535,30 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
 
   const observations = new GatewayNativeObservations(() => {});
   let nodeExecutables: Record<string, string> = {};
+  let nodeExecutablesDigest = '{}';
   let configureCalls = 0;
+  const configuredPayloads: Array<Record<string, string>> = [];
   let lastReceipt: NativeSourceReceipt | undefined;
-  const nodeObs = new NativeHostObservation(
-    nodeClient,
-    ownerRecord.id,
-    (receipt) => {
-      lastReceipt = receipt;
-      if (registeredWs) observations.acceptRemote(registeredWs, receipt, () => true);
-    },
-    undefined,
-    undefined,
-    (runner) => nodeExecutables[runner],
-  );
-
   let registeredWs: WebSocket | undefined;
-  const transport = await createTypedNodeTransport(async (frame) => {
+  let nodeObs!: NativeHostObservation;
+  const startNodeObservation = () => {
+    nodeObs?.stop();
+    nodeObs = new NativeHostObservation(
+      nodeClient,
+      ownerRecord.id,
+      (receipt) => {
+        lastReceipt = receipt;
+        if (registeredWs) observations.acceptRemote(registeredWs, receipt, () => true);
+      },
+      undefined,
+      undefined,
+      (runner) => nodeExecutables[runner],
+      nodeExecutablesDigest,
+    );
+    return nodeObs.start();
+  };
+
+  const makeNodeHandler = () => async (frame: RequestFrame) => {
     const p = (frame.params ?? {}) as Record<string, unknown>;
     if (frame.method === 'native.observation.configure') {
       configureCalls++;
@@ -556,13 +566,14 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
         p.executables && typeof p.executables === 'object' && !Array.isArray(p.executables)
           ? (p.executables as Record<string, string>)
           : {};
+      configuredPayloads.push({ ...incoming });
       nodeExecutables = { ...incoming };
-      const digest = JSON.stringify(
+      nodeExecutablesDigest = JSON.stringify(
         Object.keys(nodeExecutables)
           .sort()
           .map((k) => [k, nodeExecutables[k]]),
       );
-      return nodeObs.setExecutableConfig(digest);
+      return nodeObs.setExecutableConfig(nodeExecutablesDigest);
     }
     if (frame.method === 'native.session') {
       assert.equal(p.observe, true);
@@ -571,14 +582,16 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       return nodeObs.read(() => nodeObs.profileStatus(profileId));
     }
     throw new Error(`Unexpected node method: ${frame.method}`);
-  });
-  registeredWs = transport.ws;
+  };
+
+  let activeTransport = await createTypedNodeTransport(makeNodeHandler());
+  registeredWs = activeTransport.ws;
 
   const clientConn = {};
   registerNode(
     machine,
     1,
-    transport.ws,
+    activeTransport.ws,
     undefined,
     undefined,
     {
@@ -586,12 +599,13 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       supportsStandaloneDelegation: true,
       supportsProfiles: true,
       supportsObservations: true,
+      supportsObservationConfiguration: true,
     },
     { principalId: 'node-fenced', valid: () => true },
   );
   observations.attachClient(clientConn, () => principal);
   try {
-    await nodeObs.start();
+    await startNodeObservation();
     assert.ok(lastReceipt?.ready);
 
     const readThroughGateway = async (): Promise<NativeProfileStatusResult> => {
@@ -616,7 +630,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
             { requireSameConnection: true },
           );
           return observations.unwrapRemote<NativeProfileStatusResult>(
-            transport.ws,
+            registeredNode.ws,
             machine,
             envelope,
           );
@@ -665,12 +679,78 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
       probesAfterFirst + 1,
     );
-  } finally {
+
+    // Disconnect the node, remove the antigravity_path override from pool while disconnected,
+    // then reconnect the same node (which still holds fakeAgyV2 in memory): gateway must
+    // explicitly configure {} on reconnect before admitting reads so the removed binary is not returned.
     nodeObs.stop();
+    unregisterByWs(activeTransport.ws);
+    observations.disconnectRemote(activeTransport.ws);
+    await activeTransport.close();
+    registeredWs = undefined;
+
+    writePool(undefined);
+    observations.catalogChanged({ scope: 'all', reason: 'catalog' });
+
+    activeTransport = await createTypedNodeTransport(makeNodeHandler());
+    registeredWs = activeTransport.ws;
+    registerNode(
+      machine,
+      1,
+      activeTransport.ws,
+      undefined,
+      undefined,
+      {
+        ownerPrincipalId: ownerRecord.id,
+        supportsStandaloneDelegation: true,
+        supportsProfiles: true,
+        supportsObservations: true,
+        supportsObservationConfiguration: true,
+      },
+      { principalId: 'node-fenced', valid: () => true },
+    );
+    await startNodeObservation();
+
+    const afterReconnect = await readThroughGateway();
+    assert.equal(afterReconnect.account.installed, false);
+    assert.equal(configureCalls, 3);
+    assert.deepEqual(configuredPayloads.at(-1), {});
+
+    // Older node without supportsObservationConfiguration fails closed when a custom path is configured.
+    nodeObs.stop();
+    unregisterByWs(activeTransport.ws);
+    observations.disconnectRemote(activeTransport.ws);
+    await activeTransport.close();
+    registeredWs = undefined;
+    writePool(fakeAgyV1);
+    observations.catalogChanged({ scope: 'all', reason: 'catalog' });
+    activeTransport = await createTypedNodeTransport(makeNodeHandler());
+    registeredWs = activeTransport.ws;
+    registerNode(
+      machine,
+      1,
+      activeTransport.ws,
+      undefined,
+      undefined,
+      {
+        ownerPrincipalId: ownerRecord.id,
+        supportsStandaloneDelegation: true,
+        supportsProfiles: true,
+        supportsObservations: true,
+      },
+      { principalId: 'node-fenced', valid: () => true },
+    );
+    await startNodeObservation();
+    await assert.rejects(
+      readThroughGateway(),
+      /Execution node upgrade required for configured runner executables/,
+    );
+  } finally {
+    nodeObs?.stop();
     observations.detachClient(clientConn);
     observations.dispose();
-    unregisterByWs(transport.ws);
-    await transport.close();
+    unregisterByWs(activeTransport.ws);
+    await activeTransport.close();
     if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
     else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
     if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;

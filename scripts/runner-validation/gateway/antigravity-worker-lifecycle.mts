@@ -35,14 +35,19 @@ import type {
 } from '@farmslot/protocol';
 
 import {
-  assertCleanTrackedSource,
   buildProofManifest,
   createAttemptOutputDir,
+  ensureFrozenProofExecution,
 } from './antigravity-proof-utils.mts';
 
 const execFileAsync = promisify(execFile);
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
-const { sourceSha, sourceTreeSha, trackedWorkingTreeClean } = assertCleanTrackedSource(repo);
+const frozenSource = ensureFrozenProofExecution(
+  repo,
+  'scripts/runner-validation/gateway/antigravity-worker-lifecycle.mts',
+  process.argv[2],
+);
+const { sourceSha, sourceTreeSha, trackedWorkingTreeClean } = frozenSource;
 const baseOutput = path.resolve(process.argv[2] ?? '/tmp/antigravity-worker-proof');
 const { attemptId, outputDir: output } = await createAttemptOutputDir(baseOutput, sourceSha);
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'antigravity-worker-proof-')));
@@ -1086,9 +1091,12 @@ try {
     );
   }
   result.hostStopped = !fs.existsSync(lock);
+  frozenSource.verifyBeforeSeal();
   result.sourceSha = sourceSha;
   result.sourceTreeSha = sourceTreeSha;
   result.trackedWorkingTreeClean = trackedWorkingTreeClean;
+  result.isolatedCheckoutVerifiedBeforeLaunch = true;
+  result.isolatedCheckoutVerifiedBeforeSeal = true;
   result.attemptId = attemptId;
   result.outputDir = output;
   const hostLogPath = path.join(root, 'native/host.log');
@@ -1106,6 +1114,8 @@ try {
         sourceSha: result.sourceSha,
         sourceTreeSha: result.sourceTreeSha,
         trackedWorkingTreeClean: result.trackedWorkingTreeClean,
+        isolatedCheckoutVerifiedBeforeLaunch: result.isolatedCheckoutVerifiedBeforeLaunch,
+        isolatedCheckoutVerifiedBeforeSeal: result.isolatedCheckoutVerifiedBeforeSeal,
         attemptId: result.attemptId,
         outputDir: result.outputDir,
         hostStopped: result.hostStopped,

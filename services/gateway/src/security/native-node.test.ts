@@ -85,6 +85,7 @@ test('native node declarations keep every declared boolean capability', () => {
     supportsWorkerStopAttestation: true,
     supportsProfiles: true,
     supportsObservations: true,
+    supportsObservationConfiguration: true,
     supportsStructuredResults: true,
     supportsHostRefresh: true,
     supportsSessionArchive: true,
