@@ -3188,8 +3188,32 @@ export async function materializeRunBundle(
             continue;
           const key = `tasks/${taskKey}/${artifact.path}`;
           const destination = path.join(stage, key);
-          await mkdir(path.dirname(destination), { recursive: true });
-          await writeFile(destination, receipt, { mode: 0o400, flush: true });
+          // Stage outside the bundle so a partial optional payload cannot become
+          // visible even when the failure also prevents removing it immediately.
+          const temporary = `${stage}.receipt-${randomUUID()}`;
+          try {
+            await mkdir(temporary);
+            const staged = path.join(temporary, 'receipt');
+            await writeFile(staged, receipt, { mode: 0o400, flush: true });
+            await mkdir(path.dirname(destination), { recursive: true });
+            await rename(staged, destination);
+          } catch (error) {
+            // A failed optional receipt reduces debrief coverage only.
+            missingData.push(`optional-receipt-unavailable:${artifact.path}`);
+            console.warn(
+              `[run-bundle] optional receipt refused for ${run.id}: ${(error as Error).name}`,
+            );
+            continue;
+          } finally {
+            try {
+              await rm(temporary, { recursive: true, force: true });
+            } catch (error) {
+              // Bundle housekeeping reclaims abandoned staging directories.
+              console.warn(
+                `[run-bundle] optional receipt staging cleanup deferred: ${(error as Error).name}`,
+              );
+            }
+          }
           manifest.entries[key] = {
             path: key,
             sha256: artifact.sha256!,

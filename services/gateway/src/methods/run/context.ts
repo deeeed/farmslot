@@ -36,9 +36,9 @@ import {
   selectedRetainedRecipeGroup,
 } from '../../run-completion/retained-artifacts.js';
 import {
+  presentTaskDebriefHistory,
   readTaskDebriefSidecar,
   taskDebriefEvidenceBundle,
-  taskDebriefRunStatus,
 } from '../../run-completion/task-debrief.js';
 import { inspectedRun } from '../../run-engine/gate-inspection.js';
 import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
@@ -60,17 +60,9 @@ import {
 
 import { readRunRecordedEvidence } from './evidence-review.js';
 
-function presentTaskDebriefStatus(run: Run): Run {
-  const taskDebrief = run.taskDebrief;
-  const status = taskDebriefRunStatus(run);
-  return taskDebrief && status && status !== taskDebrief.status
-    ? { ...run, taskDebrief: { ...taskDebrief, status } }
-    : run;
-}
-
 /** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
 async function presentRun(run: Run): Promise<Run> {
-  run = presentTaskDebriefStatus(inspectedRun(run));
+  run = presentTaskDebriefHistory(inspectedRun(run));
   if (run.repeatReviewContext) {
     const chain = reviewChainForRun(run);
     const records: Run[] = [];
@@ -128,7 +120,7 @@ export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   if (params.view === 'snapshot')
     return {
       run: {
-        ...presentTaskDebriefStatus(run),
+        ...presentTaskDebriefHistory(run),
         costAccountingRevision: readCostAccountingRevision(run, run),
       },
     };

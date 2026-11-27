@@ -281,3 +281,13 @@ export interface ManagedTaskDebrief {
   /** Candidate source keys already admitted by the improvement workflow. */
   admittedCandidateKeys?: string[];
 }
+
+export interface TaskDebriefAdmission {
+  debriefId: string;
+  candidateKeys: string[];
+}
+
+export interface StaleTaskDebrief {
+  bundle: import('./run-bundles.js').RunArtifactBundleRef;
+  status: 'stale';
+}

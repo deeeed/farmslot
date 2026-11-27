@@ -138,12 +138,38 @@ export function completeTaskDebrief(
   for (const answer of value.answers) {
     for (const ref of answer.counterEvidence ?? []) assertReference(request, ref);
   }
-  const { requestId: _requestId, ...body } = value;
-  const clean = scrubDebriefText(JSON.stringify(body), options);
-  if (clean === undefined)
+  let refused = false;
+  const scrub = (text: string): string => {
+    const clean = scrubDebriefText(text, options);
+    if (clean !== undefined) return clean;
+    refused = true;
+    return text;
+  };
+  const response: TaskDebriefResponse = {
+    requestId: value.requestId,
+    answers: value.answers.map((answer) => ({
+      ...answer,
+      explanation: scrub(answer.explanation),
+      ...(answer.missingInputs && { missingInputs: answer.missingInputs.map(scrub) }),
+      ...(answer.counterEvidence && {
+        counterEvidence: answer.counterEvidence.map((ref) => ({
+          ...ref,
+          path: scrub(ref.path),
+          locator: scrub(ref.locator),
+        })),
+      }),
+    })),
+    workflowCandidates: value.workflowCandidates.map((candidate) => ({
+      ...candidate,
+      lesson: scrub(candidate.lesson),
+      instruction: scrub(candidate.instruction),
+      measure: scrub(candidate.measure),
+      ...(candidate.templateId !== undefined && { templateId: scrub(candidate.templateId) }),
+    })),
+    ...(value.friction !== undefined && { friction: scrub(value.friction) }),
+  };
+  if (refused)
     return settleTaskDebrief(request, 'redacted', 'The worker response did not clear redaction.');
-  const sanitized: unknown = JSON.parse(clean);
-  const response = { ...(asRecord(sanitized) ?? {}), requestId: request.requestId };
   if (!isTaskDebriefResponse(response))
     return settleTaskDebrief(request, 'redacted', 'Redaction exceeded the worker response limits.');
   // A redaction may touch a path or locator. Losing its identity invalidates the response.
@@ -164,6 +190,12 @@ export function completeTaskDebrief(
         );
     }
   }
+  if (
+    response.workflowCandidates.some(
+      (candidate, index) => candidate.templateId !== value.workflowCandidates[index]?.templateId,
+    )
+  )
+    return settleTaskDebrief(request, 'redacted', 'Redaction removed a template identity.');
   const { requestId: _sanitizedId, ...scrubbed } = response;
   return seal(request, scrubbed, missing.length ? 'partial' : 'answered');
 }

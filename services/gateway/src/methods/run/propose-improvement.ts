@@ -160,7 +160,10 @@ async function routeThenAnalyze(
       `[learnings-router] draft card emission failed for ${runId.slice(0, 8)}: ${emissionError}; unrecovered payload: ${JSON.stringify({ drafts: routed.drafts, holds: routed.holds })}`,
     );
   }
-  const debriefContent = await router.admitDebriefWorkflowContent(getRun(runId) ?? run);
+  const debriefContent = await router.admitDebriefWorkflowContent(
+    getRun(runId) ?? run,
+    placeholderId,
+  );
   const systemContent = [routed.systemContent, debriefContent].filter(Boolean).join('\n\n');
   if (systemContent) {
     await analyze(

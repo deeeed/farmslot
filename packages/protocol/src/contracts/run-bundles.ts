@@ -52,11 +52,19 @@ export interface RunBundleEntryMeta {
   path: string;
 }
 
+export interface RunBundleDebriefEvidence {
+  acceptedBundleDigest: string;
+  manifestDigest: string;
+  /** Task-relative evidence locators in the debrief mapped to verified archive entries. */
+  files: Record<string, string>;
+}
+
 export interface RunBundleRunEntry {
   originalRunId: string;
   runPath: string;
   taskKey?: string;
   artifactBundleDigests?: string[];
+  taskDebriefEvidence?: RunBundleDebriefEvidence;
   taskRelativePath?: string;
   packagePaths?: string[];
   missingData?: string[];

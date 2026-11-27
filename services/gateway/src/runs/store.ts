@@ -2352,6 +2352,8 @@ export interface RunPublicationMutation {
   decisions?: Run['decisions'];
 }
 
+class RetainedRunWriteConflict extends Error {}
+
 /** Narrow callers share the existing per-run durable mutation queue. */
 async function commitRetainedRunMutation(
   id: string,
@@ -2389,7 +2391,7 @@ async function commitRetainedRunMutation(
       try {
         assertCurrent(live);
         if (getRun(id) !== live || !isDeepStrictEqual(live, baseline))
-          throw new Error('Run changed during publication persistence');
+          throw new RetainedRunWriteConflict('Run changed during publication persistence');
       } catch (error) {
         // Keep the current execution authoritative if a runtime/auth change raced the write.
         await persistBody(live, live, true);
@@ -2427,12 +2429,25 @@ async function commitRetainedRunMutation(
 }
 
 /** Use the run store's durable transaction for debrief dispatch and candidate admission. */
-export function commitRunTaskDebrief(
+export async function commitRunTaskDebrief(
   id: string,
-  build: (run: Run) => Pick<Run, 'taskDebrief' | 'priorTaskDebriefBundles'>,
+  build: (run: Run) => Partial<Pick<Run, 'taskDebrief' | 'priorTaskDebriefBundles' | 'decisions'>>,
   assertCurrent: (run: Run) => void,
 ): Promise<Run> {
-  return commitRetainedRunMutation(id, (run) => ({ ...run, ...build(run) }), assertCurrent, false);
+  // Completion and provider usage can update unrelated run fields during fsync.
+  // Rebuild against the new live run and recheck the accepted attempt on every retry.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await commitRetainedRunMutation(
+        id,
+        (run) => ({ ...run, ...build(run) }),
+        assertCurrent,
+        false,
+      );
+    } catch (error) {
+      if (!(error instanceof RetainedRunWriteConflict) || attempt === 4) throw error;
+    }
+  }
 }
 
 /** Publication-only transaction. Archived execution is never loaded into the live map. */

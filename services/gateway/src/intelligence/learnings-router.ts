@@ -627,7 +627,10 @@ function debriefWorkflowEntries(record: TaskDebrief | undefined): DebriefWorkflo
   return entries;
 }
 
-export async function admitDebriefWorkflowContent(run: Run): Promise<string | null> {
+export async function admitDebriefWorkflowContent(
+  run: Run,
+  decisionId: string,
+): Promise<string | null> {
   const { admitTaskDebriefCandidates, currentTaskDebriefForCuration } =
     await import('../run-completion/task-debrief.js');
   const debrief = await currentTaskDebriefForCuration(run);
@@ -635,6 +638,7 @@ export async function admitDebriefWorkflowContent(run: Run): Promise<string | nu
   const entries = debriefWorkflowEntries(debrief);
   const admitted = await admitTaskDebriefCandidates(
     run.id,
+    decisionId,
     debrief.debriefId,
     entries.map(({ sourceKey }) => sourceKey),
   );

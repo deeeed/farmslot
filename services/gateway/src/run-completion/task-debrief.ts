@@ -3,17 +3,6 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import {
-  collectTaskDebrief,
-  completeTaskDebrief,
-  debriefPath,
-  resolveDebriefScrubOptions,
-  scrubDebriefText,
-  settleTaskDebrief,
-  type TaskDebriefOptions,
-  type TaskDebriefRequest,
-  validateTaskDebrief,
-} from '@farmslot/handoff';
-import {
   type AgentContext,
   type ArtifactRef,
   Events,
@@ -30,6 +19,17 @@ import {
   retainRunBundleDebrief,
 } from '@farmslot/run-bundle';
 
+import {
+  collectTaskDebrief,
+  completeTaskDebrief,
+  debriefPath,
+  resolveDebriefScrubOptions,
+  scrubDebriefText,
+  settleTaskDebrief,
+  type TaskDebriefOptions,
+  type TaskDebriefRequest,
+  validateTaskDebrief,
+} from '../../../../packages/handoff/src/debrief/index.js';
 import { selectAgentContext } from '../agents/contexts.js';
 import { assertHeavyWriteRoom } from '../core/heavy-write-room.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/index.js';
@@ -67,8 +67,15 @@ function assertSubject(run: Run | undefined, journal: ManagedTaskDebrief): void 
     throw new Error('A later accepted worker result superseded the debrief.');
 }
 
-export function taskDebriefRunStatus(run: Run): ManagedTaskDebrief['status'] | undefined {
-  return run.taskDebrief?.status;
+export function presentTaskDebriefHistory(run: Run): Run {
+  if (!run.priorTaskDebriefBundles) return run;
+  return {
+    ...run,
+    priorTaskDebriefs: Object.values(run.priorTaskDebriefBundles).map((bundle) => ({
+      bundle: resolveRetainedRunBundleRef(run, bundle),
+      status: 'stale',
+    })),
+  };
 }
 
 export function taskDebriefEvidenceBundle(
@@ -402,34 +409,63 @@ export async function currentTaskDebriefForCuration(run: Run): Promise<TaskDebri
 
 export async function admitTaskDebriefCandidates(
   runId: string,
+  decisionId: string,
   debriefId: string,
   keys: readonly string[],
 ): Promise<ReadonlySet<string>> {
+  const none: ReadonlySet<string> = new Set();
   const journal = getRun(runId)?.taskDebrief;
-  const admitted = new Set<string>();
-  if (
-    journal?.status !== 'settled' ||
-    journal.debriefId !== debriefId ||
-    !keys.length ||
-    keys.every((key) => journal.admittedCandidateKeys?.includes(key))
-  )
-    return admitted;
+  if (journal?.status !== 'settled' || journal.debriefId !== debriefId || !keys.length) return none;
+  const decisionAdmission = (run: Run) => {
+    const payload = run.decisions.find(({ id }) => id === decisionId)?.payload;
+    return payload?.kind === 'improvement' && payload.analysisStatus === 'analyzing'
+      ? payload
+      : undefined;
+  };
+  const run = getRun(runId)!;
+  const job = decisionAdmission(run);
+  if (!job) return none;
+  if (job.debriefAdmission)
+    return job.debriefAdmission.debriefId === debriefId
+      ? new Set(job.debriefAdmission.candidateKeys)
+      : none;
+  if (keys.every((key) => journal.admittedCandidateKeys?.includes(key))) return none;
   try {
-    await commitRunTaskDebrief(
+    const committed = await commitRunTaskDebrief(
       runId,
       (current) => {
+        const payload = decisionAdmission(current)!;
+        if (payload.debriefAdmission) return {};
         const accepted = current.taskDebrief!;
         const previous = new Set(accepted.admittedCandidateKeys);
-        for (const key of keys) if (!previous.has(key)) admitted.add(key);
-        return { taskDebrief: { ...accepted, admittedCandidateKeys: [...previous, ...admitted] } };
+        const candidateKeys = keys.filter((key) => !previous.has(key));
+        if (!candidateKeys.length) return {};
+        return {
+          taskDebrief: { ...accepted, admittedCandidateKeys: [...previous, ...candidateKeys] },
+          decisions: current.decisions.map((decision) =>
+            decision.id === decisionId
+              ? {
+                  ...decision,
+                  payload: { ...payload, debriefAdmission: { debriefId, candidateKeys } },
+                }
+              : decision,
+          ),
+        };
       },
-      (current) => assertSubject(current, journal),
+      (current) => {
+        assertSubject(current, journal);
+        if (!decisionAdmission(current)) throw new Error('Improvement decision stopped analyzing.');
+      },
     );
+    const latest = getRun(runId);
+    const receipt =
+      latest && sameSubject(latest, journal)
+        ? decisionAdmission(committed)?.debriefAdmission
+        : undefined;
+    return receipt?.debriefId === debriefId ? new Set(receipt.candidateKeys) : none;
   } catch (error) {
-    // Preserve legacy curation even if an acceptance or durable admission raced this call.
+    // Keep the established Learnings path available if ownership changed during admission.
     console.warn(`[debrief] curation admission refused for ${runId}: ${(error as Error).name}`);
-    admitted.clear();
+    return none;
   }
-  if (!sameSubject(getRun(runId), journal)) admitted.clear();
-  return admitted;
 }

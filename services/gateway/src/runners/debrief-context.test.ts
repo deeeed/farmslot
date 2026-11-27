@@ -16,7 +16,7 @@ test('a retained Pi model change supplies its exact provider and latest model', 
     projectPiDebriefText(lines).map(({ text }) => text),
     ['Why was proof rerun?'],
   );
-  assert.equal(getRunnerSessionHistoryProvider('pi'), undefined);
+  assert.equal(getRunnerSessionHistoryProvider('pi'), null);
   assert.equal(
     piDebriefRoute([...lines, '{"type":"model_change","modelId":"unknown"}']),
     undefined,
