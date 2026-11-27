@@ -971,6 +971,8 @@ function repairLockName(digest: string): string {
   return `bundle-repair-${digest}.lock`;
 }
 
+export const OPTIONAL_RECEIPT_UNAVAILABLE = 'optional-receipt-unavailable';
+
 /** A `missingData` entry is `<reason>:<task-relative path>`, e.g. `media-capacity:artifacts/a.mp4`. */
 export function parseRunBundleMissingData(entry: string): { reason: string; path: string } {
   const split = entry.indexOf(':');
@@ -3199,7 +3201,7 @@ export async function materializeRunBundle(
             await rename(staged, destination);
           } catch (error) {
             // A failed optional receipt reduces debrief coverage only.
-            missingData.push(`optional-receipt-unavailable:${artifact.path}`);
+            missingData.push(`${OPTIONAL_RECEIPT_UNAVAILABLE}:${artifact.path}`);
             console.warn(
               `[run-bundle] optional receipt refused for ${run.id}: ${(error as Error).name}`,
             );

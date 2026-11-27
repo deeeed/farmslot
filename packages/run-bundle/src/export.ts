@@ -128,26 +128,43 @@ async function addAcceptedDebriefEvidence(
     [layout.checklist.relativePath, layout.workerChecklistMirror.relativePath],
     [layout.signal.relativePath, layout.workerSignalMirror.relativePath],
   ]);
-  const files: Record<string, string> = Object.create(null);
+  const digests = new Map<string, string>();
+  const remember = (file: string, sha256: string) => {
+    const previous = digests.get(file);
+    if (previous !== undefined && previous !== sha256)
+      throw new Error('Accepted debrief has conflicting evidence digests.');
+    digests.set(file, sha256);
+  };
   for (const item of Object.values(record.collection.coverage)) {
-    if (item.status !== 'present' || !item.path || !item.sha256) continue;
-    const mirror = alternates.get(item.path);
-    const matchingMirror =
-      mirror &&
-      snapshot.manifest.entries[`tasks/${accepted.taskKey}/${mirror}`]?.sha256 === item.sha256;
-    const actual = matchingMirror ? mirror : item.path;
+    if (item.status === 'present' && item.path && item.sha256) remember(item.path, item.sha256);
+  }
+  // A receipt can contain a malformed event alongside valid cited events.
+  for (const { evidence } of record.observations)
+    for (const { path, sha256 } of evidence) remember(path, sha256);
+  for (const { evidence } of record.optionalSkips) remember(evidence.path, evidence.sha256);
+  for (const { counterEvidence } of record.answers)
+    for (const { path, sha256 } of counterEvidence ?? []) remember(path, sha256);
+
+  const files: Record<string, string> = Object.create(null);
+  for (const [file, sha256] of digests) {
+    const prefix = `tasks/${accepted.taskKey}/`;
+    const mirror = alternates.get(file);
+    const actual =
+      mirror && snapshot.manifest.entries[prefix + mirror]?.sha256 === sha256 ? mirror : file;
+    if (snapshot.manifest.entries[prefix + actual]?.sha256 !== sha256)
+      throw new Error('Accepted debrief evidence does not match the retained manifest.');
     const current = `${taskBundleDir}/${actual}`;
-    if (entries[current]?.sha256 === item.sha256) {
-      files[item.path] = current;
+    if (entries[current]?.sha256 === sha256) {
+      files[file] = current;
       continue;
     }
     const retained = await snapshot.resolveEntry(actual);
     const bytes = readFileSync(retained.path);
-    if (createHash('sha256').update(bytes).digest('hex') !== item.sha256)
+    if (createHash('sha256').update(bytes).digest('hex') !== sha256)
       throw new Error('Accepted debrief evidence changed before export.');
     const target = `${taskBundleDir}/inputs/accepted-debrief/${accepted.bundleDigest}/${actual}`;
     addFileEntry(bundleDir, target, retained.path, entries, bytes);
-    files[item.path] = target;
+    files[file] = target;
   }
   return {
     acceptedBundleDigest: accepted.bundleDigest,
