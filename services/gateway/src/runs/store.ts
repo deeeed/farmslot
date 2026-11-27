@@ -418,9 +418,13 @@ function persistRunBackground(run: Run, reason: string): void {
  * claim handoff so createRun is on disk before the queue row is dropped.
  * Serialized per run id with background persists.
  */
-export async function persistRunNow(run: Run, reason = 'explicit'): Promise<void> {
+export async function persistRunNow(
+  run: Run,
+  reason = 'explicit',
+  requireDurable = false,
+): Promise<void> {
   try {
-    await enqueueRunPersist(run);
+    await enqueueRunWrite(run.id, () => persistBody(run, run, requireDurable));
   } catch (err) {
     console.warn(
       `[run-store] failed to persist run ${run.id} after ${reason}: ${err instanceof Error ? err.message : String(err)}`,

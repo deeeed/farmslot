@@ -303,7 +303,10 @@ export async function runRecipeRunsForRun(
       ? run.decisions.find(({ id }) => id === params.decisionId)?.payload
       : undefined;
     let debrief: ArtifactRef | undefined;
-    if (run.taskDebrief) {
+    if (
+      run.taskDebrief?.status === 'settled' ||
+      (params.decisionId && (run.taskDebrief || run.priorTaskDebriefBundles))
+    ) {
       try {
         debrief = readTaskDebriefSidecar(
           run,

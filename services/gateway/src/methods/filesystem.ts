@@ -1075,20 +1075,18 @@ export async function serveRunArtifact(
       return;
     }
     const recipeRunId = url.searchParams.get('recipeRunId');
+    const pinned = url.searchParams.has('bundleDigest') || url.searchParams.has('decisionId');
     if (
       !media &&
-      run.taskDebrief &&
+      (run.taskDebrief?.status === 'settled' ||
+        (pinned && (run.taskDebrief || run.priorTaskDebriefBundles))) &&
       requested === 'artifacts/debrief.json' &&
       (!recipeRunId || ['current-artifacts', 'decision-evidence'].includes(recipeRunId))
     ) {
       const { readTaskDebriefSidecar, taskDebriefEvidenceBundle } =
         await import('../run-completion/task-debrief.js');
       const selected = await retainedRunArtifactRef(run, url.searchParams);
-      const ref = taskDebriefEvidenceBundle(
-        run,
-        selected,
-        url.searchParams.has('bundleDigest') || url.searchParams.has('decisionId'),
-      );
+      const ref = taskDebriefEvidenceBundle(run, selected, pinned);
       const sidecar = readTaskDebriefSidecar(run, ref);
       if (sidecar) {
         const expected = url.searchParams.get('v');

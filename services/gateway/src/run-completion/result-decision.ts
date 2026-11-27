@@ -43,6 +43,7 @@ import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 import { currentSessionPrincipal, runWithSystemOriginator } from '../security/work-originator.js';
 
 import { retainFinalRunArtifacts } from './output.js';
+import { acceptedTaskDebriefPatch } from './task-debrief.js';
 
 export type ResultDecisionStop = ResultDecisionPayload['stoppedAt'];
 
@@ -600,7 +601,10 @@ export async function resolveResultDecision(
           kind: actionId,
           runId: params.runId,
           actor: 'operator',
-          patch,
+          patch:
+            actionId === 'accept-result'
+              ? (latest) => ({ ...patch, ...acceptedTaskDebriefPatch(latest) })
+              : patch,
           settlingStatus: 'needs-decision',
           // An adoption-bound acceptance rechecks its receipt at the mutation boundary.
           ...(options.adoptedPublication
@@ -624,15 +628,13 @@ export async function resolveResultDecision(
                 ],
               }
             : {}),
-          persist: (next) => persistRunNow(next, `result decision ${actionId}`),
-          collaborators: operatorCompletionCollaborators(async (next) => {
-            // This terminal transition skips COMPLETE. Bind the accepted output before publishing.
-            if (actionId === 'accept-result' && next.executionTemplate?.postRunDebrief === true) {
-              const { prepareDebriefForAcceptedResult } = await import('./task-debrief.js');
-              await prepareDebriefForAcceptedResult(next);
-            }
-            await publishCompletedRun(next);
-          }),
+          persist: (next) =>
+            persistRunNow(
+              next,
+              `result decision ${actionId}`,
+              actionId === 'accept-result' && next.executionTemplate?.postRunDebrief === true,
+            ),
+          collaborators: operatorCompletionCollaborators(publishCompletedRun),
         }),
       );
       return result.run;

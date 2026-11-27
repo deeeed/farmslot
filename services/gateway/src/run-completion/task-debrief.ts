@@ -40,6 +40,10 @@ import { commitRunTaskDebrief, getAllRuns, getRun } from '../runs/store.js';
 
 import { retentionPolicy, runBundleStore, runBundleStoreRoot } from './retained-artifacts.js';
 
+type TaskDebriefPreparation = Extract<ManagedTaskDebrief, { status: 'preparing' }>;
+type PreparedTaskDebrief = Exclude<ManagedTaskDebrief, TaskDebriefPreparation>;
+type TaskDebriefAcceptancePatch = Pick<Run, 'taskDebrief' | 'priorTaskDebriefBundles'>;
+
 const TIMEOUT_MS = 60_000;
 const active = new Set<string>();
 const acceptedFiles = [
@@ -54,10 +58,12 @@ const acceptedFiles = [
 function sameSubject(run: Run | undefined, journal: ManagedTaskDebrief): boolean {
   const accepted = run?.taskDebrief;
   return (
-    accepted?.debriefId === journal.debriefId &&
+    accepted !== undefined &&
+    accepted.debriefId === journal.debriefId &&
     accepted.attemptId === journal.attemptId &&
     accepted.contextId === journal.contextId &&
     accepted.generation === journal.generation &&
+    accepted.manifestDigest === journal.manifestDigest &&
     accepted.bundle.bundleDigest === journal.bundle.bundleDigest
   );
 }
@@ -166,74 +172,85 @@ async function retainedRequest(
   return { request: collectTaskDebrief(bundle.taskDir, options), options };
 }
 
+export function acceptedTaskDebriefPatch(run: Run): TaskDebriefAcceptancePatch {
+  if (run.executionTemplate?.postRunDebrief !== true || run.readOnly) return {};
+  const context = selectAgentContext(run);
+  const output = run.output;
+  const prior = run.taskDebrief;
+  const bundle = output?.workerFinished && !output.captureError ? output.artifactBundle : undefined;
+  const attemptId = context?.signalAttemptId;
+  if (
+    bundle &&
+    attemptId &&
+    prior?.attemptId === attemptId &&
+    prior.contextId === context?.id &&
+    prior.bundle.bundleDigest === bundle.bundleDigest &&
+    prior.manifestDigest === output?.manifestDigest
+  )
+    return {};
+  const taskDebrief: TaskDebriefPreparation | undefined =
+    bundle && output && context && attemptId
+      ? {
+          status: 'preparing',
+          bundle,
+          manifestDigest: output.manifestDigest,
+          reportPath: output.reportPath,
+          attemptId,
+          generation: run.engineState?.generation ?? 0,
+          contextId: context.id,
+          runner: context.runner ?? undefined,
+          sessionId: context.runnerSessionId ?? undefined,
+        }
+      : undefined;
+  if (!taskDebrief && !prior) return {};
+  return {
+    taskDebrief,
+    priorTaskDebriefBundles:
+      prior && prior.bundle.bundleDigest !== taskDebrief?.bundle.bundleDigest
+        ? { ...run.priorTaskDebriefBundles, [prior.bundle.bundleDigest]: prior.bundle }
+        : run.priorTaskDebriefBundles,
+  };
+}
+
 export async function prepareDebriefForAcceptedResult(run: Run): Promise<void> {
-  if (run.executionTemplate?.postRunDebrief !== true) return;
+  const patch = acceptedTaskDebriefPatch(run);
+  const subject = patch.taskDebrief;
+  if (subject?.status !== 'preparing') return;
+  const prior = run.taskDebrief;
   try {
-    await prepareAcceptedTaskDebrief(run);
+    const { request } = await retainedRequest(run, subject);
+    const prepared: PreparedTaskDebrief = {
+      ...subject,
+      status: 'prepared',
+      debriefId: request.requestId,
+    };
+    await commitRunTaskDebrief(
+      run.id,
+      () => ({ ...patch, taskDebrief: prepared }),
+      (latest) => {
+        const current = selectAgentContext(latest);
+        if (
+          !latest.output?.workerFinished ||
+          latest.output.captureError ||
+          latest.output.manifestDigest !== subject.manifestDigest ||
+          latest.output.artifactBundle?.bundleDigest !== subject.bundle.bundleDigest ||
+          current?.id !== subject.contextId ||
+          current.signalAttemptId !== subject.attemptId ||
+          (latest.engineState?.generation ?? 0) !== subject.generation ||
+          (prior ? !sameSubject(latest, prior) : latest.taskDebrief !== undefined)
+        )
+          throw new Error('Accepted worker result changed during debrief preparation.');
+      },
+    );
   } catch (error) {
     // Optional collection can fail independently of acceptance and slot release.
     console.warn(`[debrief] collection failed for ${run.id}: ${(error as Error).message}`);
   }
 }
 
-async function prepareAcceptedTaskDebrief(run: Run): Promise<void> {
-  if (
-    !run.output?.workerFinished ||
-    !run.output.artifactBundle ||
-    run.output.captureError ||
-    run.readOnly
-  )
-    return;
-  const context = selectAgentContext(run);
-  if (!context?.signalAttemptId) return;
-  const prior = run.taskDebrief;
-  const generation = run.engineState?.generation ?? 0;
-  const subject = {
-    bundle: run.output.artifactBundle,
-    manifestDigest: run.output.manifestDigest,
-    attemptId: context.signalAttemptId,
-    reportPath: run.output.reportPath,
-  };
-  if (prior?.attemptId === subject.attemptId && prior.contextId === context.id) return;
-  const { request } = await retainedRequest(run, subject);
-  const assertAcceptance = (latest: Run) => {
-    const current = selectAgentContext(latest);
-    if (
-      !latest.output?.workerFinished ||
-      latest.output.captureError ||
-      latest.output.manifestDigest !== subject.manifestDigest ||
-      latest.output.artifactBundle?.bundleDigest !== subject.bundle.bundleDigest ||
-      current?.id !== context.id ||
-      current.signalAttemptId !== subject.attemptId ||
-      (latest.engineState?.generation ?? 0) !== generation ||
-      (prior ? !sameSubject(latest, prior) : latest.taskDebrief !== undefined)
-    )
-      throw new Error('Accepted worker result changed during debrief preparation.');
-  };
-  await commitRunTaskDebrief(
-    run.id,
-    (latest) => ({
-      taskDebrief: {
-        ...subject,
-        debriefId: request.requestId,
-        generation,
-        contextId: context.id,
-        runner: context.runner ?? undefined,
-        sessionId: context.runnerSessionId ?? undefined,
-        status: 'prepared',
-      },
-      priorTaskDebriefBundles:
-        prior && prior.bundle.bundleDigest !== subject.bundle.bundleDigest
-          ? { ...latest.priorTaskDebriefBundles, [prior.bundle.bundleDigest]: prior.bundle }
-          : latest.priorTaskDebriefBundles,
-    }),
-    assertAcceptance,
-  );
-}
-
 async function awaitAnswer(
   run: Run,
-  journal: ManagedTaskDebrief,
+  journal: PreparedTaskDebrief,
   request: TaskDebriefRequest,
   options: TaskDebriefOptions,
   context: AgentContext,
@@ -269,7 +286,7 @@ async function awaitAnswer(
     );
   await commitRunTaskDebrief(
     run.id,
-    (current) => ({ taskDebrief: { ...current.taskDebrief!, status: 'submitted' } }),
+    () => ({ taskDebrief: { ...journal, status: 'submitted' } }),
     (current) => {
       assertSubject(current, journal);
       if (current.taskDebrief?.status !== 'prepared')
@@ -318,9 +335,12 @@ async function awaitAnswer(
   }
 }
 
-async function settleAfterRelease(run: Run, journal: ManagedTaskDebrief): Promise<void> {
+async function settleAfterRelease(
+  run: Run,
+  journal: PreparedTaskDebrief,
+  { request, options }: Awaited<ReturnType<typeof retainedRequest>>,
+): Promise<void> {
   const ref = resolveRetainedRunBundleRef(run, journal.bundle);
-  const { request, options } = await retainedRequest(run, journal);
   if (request.requestId !== journal.debriefId)
     throw new Error('Accepted task evidence changed before debrief settlement.');
   let record = readSidecar(run, ref);
@@ -352,7 +372,7 @@ async function settleAfterRelease(run: Run, journal: ManagedTaskDebrief): Promis
   const outcome = record.outcome.status;
   await commitRunTaskDebrief(
     run.id,
-    (current) => ({ taskDebrief: { ...current.taskDebrief!, status: 'settled', outcome } }),
+    () => ({ taskDebrief: { ...journal, status: 'settled', outcome } }),
     (current) => assertSubject(current, journal),
   );
   const { broadcastEvent } = await import('../server.js');
@@ -360,23 +380,57 @@ async function settleAfterRelease(run: Run, journal: ManagedTaskDebrief): Promis
 }
 
 export function continueTaskDebriefAfterRelease(runId: string): void {
+  continueTaskDebrief(runId, false);
+}
+
+function continueTaskDebrief(runId: string, recoverRelease: boolean): void {
   const run = getRun(runId);
-  const journal = run?.taskDebrief;
+  const initial = run?.taskDebrief;
   if (
     !run ||
-    !journal ||
-    journal.status === 'settled' ||
-    journal.status === 'stale' ||
+    !initial ||
+    initial.status === 'settled' ||
+    initial.status === 'stale' ||
     active.has(runId)
   )
     return;
   active.add(runId);
+  let journal = initial;
   void (async () => {
-    const slot = run.slotId && (await readSlotRow(run.slotId));
+    let slot = run.slotId && (await readSlotRow(run.slotId));
+    if (!sameSubject(getRun(runId), journal)) return;
+    if (
+      recoverRelease &&
+      journal.status === 'preparing' &&
+      run.status === 'done' &&
+      run.resultDecisionReceipt?.action === 'accept-result' &&
+      ownsRunSlotCleanup(slot || null, runId)
+    ) {
+      // Acceptance can be durable before its owner-bound teardown starts.
+      const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
+      if (!sameSubject(getRun(runId), journal)) return;
+      await releaseCompletedRunSlot(run);
+      slot = run.slotId && (await readSlotRow(run.slotId));
+    }
     if (run.slotId && (!slot || ownsRunSlotCleanup(slot, run.id) || slot.handoff_run_id === run.id))
       return;
     if (!sameSubject(getRun(runId), journal)) return;
-    await settleAfterRelease(run, journal);
+    const preparedInput = await retainedRequest(run, journal);
+    if (journal.status === 'preparing') {
+      const pending = journal;
+      const prepared: PreparedTaskDebrief = {
+        ...pending,
+        debriefId: preparedInput.request.requestId,
+        status: 'prepared',
+      };
+      await commitRunTaskDebrief(
+        runId,
+        () => ({ taskDebrief: prepared }),
+        (latest) => assertSubject(latest, pending),
+      );
+      journal = prepared;
+    }
+    await settleAfterRelease(run, journal, preparedInput);
   })()
     .catch((error: unknown) => {
       // Keep the durable intent available for reconciliation and leave completion alone.
@@ -384,13 +438,14 @@ export function continueTaskDebriefAfterRelease(runId: string): void {
     })
     .finally(() => {
       active.delete(runId);
-      const next = getRun(runId)?.taskDebrief;
-      if (next && next.debriefId !== journal.debriefId) continueTaskDebriefAfterRelease(runId);
+      const latest = getRun(runId);
+      if (latest?.taskDebrief && !sameSubject(latest, journal))
+        continueTaskDebriefAfterRelease(runId);
     });
 }
 
 export function resumeAcceptedTaskDebriefs(): void {
-  for (const run of getAllRuns()) if (run.taskDebrief) continueTaskDebriefAfterRelease(run.id);
+  for (const run of getAllRuns()) if (run.taskDebrief) continueTaskDebrief(run.id, true);
 }
 
 export async function currentTaskDebriefForCuration(run: Run): Promise<TaskDebrief | undefined> {
@@ -445,7 +500,8 @@ export async function admitTaskDebriefCandidates(
       (current) => {
         const payload = decisionAdmission(current)!;
         if (payload.debriefAdmission) return {};
-        const accepted = current.taskDebrief!;
+        const accepted = current.taskDebrief;
+        if (accepted?.status !== 'settled') return {};
         const previous = new Set(accepted.admittedCandidateKeys);
         const candidateKeys = keys.filter((key) => !previous.has(key));
         if (!candidateKeys.length) return {};

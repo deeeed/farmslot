@@ -265,9 +265,8 @@ export function isTaskDebriefRelativePath(value: unknown): value is string {
   return matches(taskPath, value);
 }
 
-/** Write-ahead state for the optional continuation of an accepted worker turn. */
-export interface ManagedTaskDebrief {
-  debriefId: string;
+/** The accepted evidence and worker context are frozen before preparing a request. */
+interface AcceptedTaskDebriefSubject {
   attemptId: string;
   generation: number;
   contextId: string;
@@ -276,11 +275,24 @@ export interface ManagedTaskDebrief {
   bundle: import('./run-bundles.js').RunArtifactBundleRef;
   manifestDigest: string;
   reportPath?: string;
+}
+
+interface PendingTaskDebrief extends AcceptedTaskDebriefSubject {
+  status: 'preparing';
+  debriefId?: never;
+  admittedCandidateKeys?: never;
+}
+
+interface PreparedTaskDebrief extends AcceptedTaskDebriefSubject {
+  debriefId: string;
   status: 'prepared' | 'submitted' | 'settled' | 'stale';
   outcome?: TaskDebrief['outcome']['status'];
   /** Candidate source keys already admitted by the improvement workflow. */
   admittedCandidateKeys?: string[];
 }
+
+/** Write-ahead state for the optional continuation of an accepted worker turn. */
+export type ManagedTaskDebrief = PendingTaskDebrief | PreparedTaskDebrief;
 
 export interface TaskDebriefAdmission {
   debriefId: string;
