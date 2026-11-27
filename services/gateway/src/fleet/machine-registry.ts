@@ -41,11 +41,143 @@ export interface ConnectedNode extends PeerVersionDeclaration {
   terminalInputSequence?: boolean;
   observationCapabilities?: NodeObservationCapabilities;
   observationAuthority?: () => boolean;
+  /** The last connection refused because this node already held the machine. */
+  lastRefusedDuplicate?: { pid: number; at: string };
+  /** When a refusal was last logged and published, and for which pid. */
+  lastRefusalWarned?: { pid: number; at: number };
 }
 
 const nodes = new Map<string, ConnectedNode>();
 setNodeFarmPathsLookup((machine) => nodes.get(machine)?.farmPaths);
 const nodeConnectListeners = new Set<() => void>();
+/** Machines with a node.connect admission probe in progress. */
+const admissions = new Set<string>();
+/** When each node socket last sent the gateway a frame: a busy node is alive even if a probe is slow. */
+const lastFrameAt = new WeakMap<WebSocket, number>();
+const REFUSAL_WARN_INTERVAL_MS = 60_000;
+export const NODE_ADMISSION_PROBE_MS = 3_000;
+
+export function noteNodeFrame(ws: WebSocket): void {
+  lastFrameAt.set(ws, Date.now());
+}
+
+/**
+ * How the connected node answered a health check on its own socket: `answered` (any reply,
+ * including a node error), `stopping` (NODE_SHUTTING_DOWN), or `silent` (no reply in time).
+ */
+export type NodeProbeVerdict = 'answered' | 'stopping' | 'silent';
+
+export interface NodeAdmissionDeps {
+  probe: (incumbent: ConnectedNode) => Promise<NodeProbeVerdict>;
+  /** The connected node already said it is shutting down (node-rpc's stopping set). */
+  isStopping: (ws: WebSocket) => boolean;
+  budgetMs?: number;
+}
+
+export type NodeAdmission =
+  | {
+      kind: 'admitted';
+      release: () => void;
+      /** The connected node this one replaces after a probe; logged once registration succeeds. */
+      replaced?: { pid: number; verdict: 'stopping' | 'silent' };
+      terminateAfterRegister?: WebSocket;
+    }
+  | {
+      kind: 'refused';
+      code: 'NODE_ALREADY_CONNECTED' | 'NODE_ADMISSION_IN_PROGRESS';
+      incumbentPid?: number;
+      message: string;
+    };
+
+/**
+ * One live node per machine. A second process for a connected machine is refused while the
+ * connected one still answers, or each would evict the other on every reconnect. The same process
+ * reconnecting, a connected node whose socket is closed or that is shutting down, and one that
+ * stays silent are replaced as before; only a silent one's socket is closed afterwards. The caller
+ * registers the node and then calls `release`.
+ */
+export async function admitNodeConnection(
+  machine: string,
+  pid: number,
+  ws: WebSocket,
+  deps: NodeAdmissionDeps,
+): Promise<NodeAdmission> {
+  const none = () => undefined;
+  const existing = nodes.get(machine);
+  if (
+    !existing ||
+    existing.ws === ws ||
+    existing.pid === pid ||
+    existing.ws.readyState !== existing.ws.OPEN ||
+    deps.isStopping(existing.ws)
+  )
+    return { kind: 'admitted', release: none };
+  if (admissions.has(machine))
+    return {
+      kind: 'refused',
+      code: 'NODE_ADMISSION_IN_PROGRESS',
+      message: `Another connection for node ${machine} is being admitted; refused pid ${pid}`,
+    };
+  admissions.add(machine);
+  const release = () => void admissions.delete(machine);
+  try {
+    const budgetMs = deps.budgetMs ?? NODE_ADMISSION_PROBE_MS;
+    const started = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let verdict = await Promise.race([
+      deps.probe(existing).catch((): NodeProbeVerdict => 'silent'),
+      new Promise<NodeProbeVerdict>((resolve) => {
+        timer = setTimeout(() => resolve('silent'), budgetMs);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    // A reply already received but not yet read must not lose to the timer.
+    await new Promise((resolve) => setImmediate(resolve));
+    if (deps.isStopping(existing.ws)) verdict = 'stopping';
+    else if (verdict === 'silent' && (lastFrameAt.get(existing.ws) ?? 0) >= started)
+      verdict = 'answered';
+    // The connected node left during the probe: nothing to replace.
+    if (!nodes.has(machine)) return { kind: 'admitted', release };
+    if (nodes.get(machine) !== existing) {
+      release();
+      return {
+        kind: 'refused',
+        code: 'NODE_ADMISSION_IN_PROGRESS',
+        message: `Node ${machine} changed while pid ${pid} was being admitted; retry`,
+      };
+    }
+    if (verdict === 'answered') {
+      release();
+      const now = Date.now();
+      existing.lastRefusedDuplicate = { pid, at: new Date(now).toISOString() };
+      const warned = existing.lastRefusalWarned;
+      // Throttled per pid: a different duplicate is logged and published at once.
+      if (!warned || warned.pid !== pid || now - warned.at >= REFUSAL_WARN_INTERVAL_MS) {
+        existing.lastRefusalWarned = { pid, at: now };
+        console.warn(
+          `[node] refused a second connection for ${machine}: pid ${pid} while pid ${existing.pid} is connected and answering`,
+        );
+        resourceRevisions.advance({ family: 'node', scope: 'farm' });
+        resourceRevisions.advance({ family: 'node', nodeId: machine });
+      }
+      return {
+        kind: 'refused',
+        code: 'NODE_ALREADY_CONNECTED',
+        incumbentPid: existing.pid,
+        message: `Node ${machine} is already connected (pid ${existing.pid}); refused pid ${pid}`,
+      };
+    }
+    return {
+      kind: 'admitted',
+      release,
+      replaced: { pid: existing.pid, verdict },
+      ...(verdict === 'silent' ? { terminateAfterRegister: existing.ws } : {}),
+    };
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
 
 export function onNodeConnected(listener: () => void): () => void {
   nodeConnectListeners.add(listener);
@@ -99,9 +231,20 @@ export function registerNode(
   );
   const previous = nodes.get(machine);
   if (previous) revokeNodeFileObservations(previous.ws);
+  // The same process reconnecting keeps the record of the duplicates it refused.
+  const refusals =
+    previous?.pid === pid
+      ? {
+          ...(previous.lastRefusedDuplicate
+            ? { lastRefusedDuplicate: previous.lastRefusedDuplicate }
+            : {}),
+          ...(previous.lastRefusalWarned ? { lastRefusalWarned: previous.lastRefusalWarned } : {}),
+        }
+      : {};
   nodes.set(machine, {
     machine,
     pid,
+    ...refusals,
     ...(versions?.nodeLink ? { nodeLink: versions.nodeLink } : {}),
     ...(versions?.nodePrincipal ? { nodePrincipal: versions.nodePrincipal } : {}),
     ...(versions?.taskRuntime === 1 ? { taskRuntime: 1 } : {}),
@@ -165,6 +308,12 @@ export function getAllNodes(): NodeInfo[] {
     ...(node.taskRuntime === 1 ? { taskRuntime: 1 } : {}),
     ...(node.conditionalWrites ? { conditionalWrites: true } : {}),
     ...(node.terminalInputSequence ? { terminalInputSequence: true } : {}),
+    ...(node.observationCapabilities
+      ? { observationCapabilities: { ...node.observationCapabilities } }
+      : {}),
+    ...(node.lastRefusedDuplicate
+      ? { lastRefusedDuplicate: { ...node.lastRefusedDuplicate } }
+      : {}),
     uptime: (Date.now() - new Date(node.connectedAt).getTime()) / 1000,
   }));
 }

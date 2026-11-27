@@ -86,13 +86,20 @@ for (const existingServer of [false, true]) {
       );
       tmux('new-window', '-d', '-t', 'fixture', '-n', 'prepare', 'sleep 60');
       tmux('respawn-pane', '-k', '-t', 'fixture:prepare', 'bash', script);
-      const waitFor = async (file: string) => {
+      // `printf ... > file` creates the file before it writes the line, so a file
+      // can exist and still be empty; wait for the content the writer finishes with.
+      const waitFor = async (file: string, done: (content: string) => boolean = () => true) => {
         const until = Date.now() + 3000;
-        while (!existsSync(file) && Date.now() < until) await setTimeout(10);
-        assert.ok(existsSync(file), `missing ${path.basename(file)}`);
-        return readFileSync(file, 'utf8');
+        const read = () => (existsSync(file) ? readFileSync(file, 'utf8') : undefined);
+        let content = read();
+        while ((content === undefined || !done(content)) && Date.now() < until) {
+          await setTimeout(10);
+          content = read();
+        }
+        assert.ok(content !== undefined, `missing ${path.basename(file)}`);
+        return content;
       };
-      assert.equal((await waitFor(sentinel)).trim(), '0');
+      assert.equal((await waitFor(sentinel, (content) => content.endsWith('\n'))).trim(), '0');
       const worker = path.join(root, 'worker.out');
       tmux(
         'new-window',

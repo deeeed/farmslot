@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import '../core/hermetic-git.test-support.js';
+import '../core/private-pool.test-support.js';
+
 // The shared fixture calls mock.module(...) and needs the module-mock test lane.
 import {
   git,

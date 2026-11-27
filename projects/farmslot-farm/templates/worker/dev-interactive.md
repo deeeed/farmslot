@@ -77,7 +77,7 @@ bash {{recipe_validate_wrapper}} \
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
-- The engine retains recipe media in the selected attempt; the gateway publishes it after approval.
+- The engine retains recipe media in the selected attempt, named in `artifacts/latest-valid-recipe-run.json`; the gateway publishes it after approval. Completion refuses attempts nothing selects; a task-root `evidence-manifest.json` is optional and only declares extra evidence.
 - Write `recipe-coverage.md` when a recipe exists (gateway computes recipe-quality).
 - Never inject UI state — use `ui.navigate`, `ui.wait_for`, and `ui.screenshot` through the runner.
 
@@ -91,7 +91,7 @@ When the operator says the interactive session is complete:
    ```bash
    node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe --require-learnings
    ```
-4. Write `{{TASK_DIR}}/artifacts/learnings.md` — required packaged evidence. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
+4. Write `{{TASK_DIR}}/artifacts/learnings.md` — required packaged evidence. Write it in Learnings v1: first line `# Learnings v1`, then `- None` when there is none, or one entry per failure in this run that is likely to recur: `- <kind>: <one-line lesson>` with two-space-indented fields. Kinds: `add`, `edit` or `retire` for a review rule (`evidence: <repo> <path>:<line>`; `family: <file>.md#<section>`, or `examined: <file>.md#<section>, ...` for an add; `confirmation: run <other run id> <path>:<line>`, `fix <owner/repo#n>` or `none`, where this run's own report or review is `none`), `recipe-broken` or `recipe-missing` for a recipe, `workflow` for a template, tool or setup step. `./mark` prints the full format and warns on a malformed file.
 5. If the operator explicitly approved publication, run repo hygiene before creating the PR:
    ```bash
    cd {{REPO}}

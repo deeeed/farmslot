@@ -53,12 +53,21 @@ import {
   type NodeSupportRetentionReferences,
   nodeSupportRetentionReferences,
 } from './activation.js';
-import { collectSupportFiles, type NodeSupportFile, supportHash } from './files.js';
+import {
+  collectSupportFiles,
+  nodeSupportBundleBytes,
+  type NodeSupportFile,
+  supportHash,
+} from './files.js';
 import { resolveNodeSupportPaths } from './paths.js';
 import {
   buildNodeSupportPublishCommand,
   buildNodeSupportVerifyCommand,
 } from './publish-command.js';
+import {
+  notifyNodeSupportSelectionEnded,
+  notifyNodeSupportSelectionStarted,
+} from './selection-events.js';
 
 export interface NodeSupportBundleState {
   /** Directory the slot's hook and installer commands resolve against. */
@@ -73,6 +82,23 @@ export interface NodeSupportBundleState {
 
 export type NodeSupportStep = (name: string, detail: string) => void;
 
+/**
+ * Where a delivery stands, updated as it runs: what a caller that stops waiting
+ * reports. Bytes count the bundle's file contents, the part the upload sends.
+ */
+export interface NodeSupportDeliveryProgress {
+  phase: string;
+  sentBytes: number;
+  totalBytes: number;
+}
+
+/**
+ * Bundle contents per `fs.writeFiles` request. Sent in pieces so a delivery
+ * can say how much is left; each piece lands in the private incoming
+ * directory, which is only published once every piece arrived and verified.
+ */
+export const NODE_SUPPORT_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
+
 /** Slot I/O the sync runs through; injectable so tests can pin the protocol. */
 export interface NodeSupportIo {
   exec: typeof execOnSlot;
@@ -82,6 +108,8 @@ export interface NodeSupportIo {
   writeFiles: typeof slotWriteFiles;
   /** The same selected-slot and live-run inventory, injectable with the node I/O. */
   retentionReferences?: (vars: SlotVars) => Promise<NodeSupportRetentionReferences>;
+  /** Test seam: how long a delivery through this I/O may take (remote-command's deadline). */
+  deliveryDeadlineMs?: number;
 }
 
 const defaultIo: NodeSupportIo = {
@@ -269,6 +297,10 @@ export async function ensureNodeSupportBundle(
     selectSlot?: boolean;
     /** The bundle already read for this project; reused when its paths still match. */
     collected?: Pick<Awaited<ReturnType<typeof collectNodeSupportBundle>>, 'files' | 'manifest'>;
+    /** Updated with the delivery's phase and bytes sent. */
+    progress?: NodeSupportDeliveryProgress;
+    /** Contents per upload request; NODE_SUPPORT_UPLOAD_CHUNK_BYTES unless a test needs pieces. */
+    uploadChunkBytes?: number;
   } = {},
 ): Promise<NodeSupportBundleState | null> {
   if (currentProjectSources() ?? options.projectVars?.sourceContext) {
@@ -287,6 +319,8 @@ export async function ensureNodeSupportBundle(
   }
   const step = options.step ?? (() => {});
   const io = options.io ?? defaultIo;
+  const progress = options.progress ?? { phase: '', sentBytes: 0, totalBytes: 0 };
+  progress.phase = 'reading the bundle';
   const verifyMode = options.verify ?? 'presence';
   const projectVars = options.projectVars ?? (await loadProjectVarsIfAny(vars.projectName));
   if (!projectVars) return null;
@@ -312,6 +346,8 @@ export async function ensureNodeSupportBundle(
     throw new Error(
       'RUNNER_OBSERVABILITY_BUNDLE_MISMATCH: gateway source changed. Restart the gateway before preparing or launching a worker.',
     );
+  progress.totalBytes = nodeSupportBundleBytes(files);
+  progress.phase = 'resolving the support directory';
   // Resolve on the execution node: quoting a literal ~/ path in a hook
   // suppresses shell expansion, and the gateway's home belongs to another host.
   const resolved = await io.exec(
@@ -365,7 +401,8 @@ export async function ensureNodeSupportBundle(
 
   // Always rewritten: another gateway or a prepare may have repointed the slot
   // since this process last looked, and the write is one small file.
-  const activateBundle = async (how: 'published' | 'current', publishCommand?: string) => {
+  const activateOnNode = async (how: 'published' | 'current', publishCommand?: string) => {
+    progress.phase = publishCommand ? 'publishing' : 'activating';
     const selection = nodeSupportHashPath(vars.remoteRepo, runtimeDir);
     const readOnly = options.selectSlot === false;
     let references: NodeSupportRetentionReferences | null = { selectionPaths: [], runHashes: [] };
@@ -402,6 +439,20 @@ export async function ensureNodeSupportBundle(
     );
     return true;
   };
+  // A selecting activation is reported from its start: the node selects and may
+  // prune the slot's earlier bundle before the gateway hears back, and a failed
+  // activation may still have moved the slot.
+  const activateBundle = async (how: 'published' | 'current', publishCommand?: string) => {
+    if (options.selectSlot === false) return activateOnNode(how, publishCommand);
+    notifyNodeSupportSelectionStarted(vars.slotId);
+    let selected: string | null = null;
+    try {
+      if (await activateOnNode(how, publishCommand)) selected = supportDir;
+      return selected !== null;
+    } finally {
+      notifyNodeSupportSelectionEnded(vars.slotId, selected);
+    }
+  };
   const verifyChecksums = async (dir: string, manifestFile: string): Promise<boolean> => {
     const result = await execSupport(
       buildNodeSupportVerifyCommand({ manifestPath: manifestFile, supportDir: dir, files }),
@@ -424,9 +475,13 @@ export async function ensureNodeSupportBundle(
   const verifyCurrent = (dir: string, manifestFile: string) =>
     verifyMode === 'full' ? verifyChecksums(dir, manifestFile) : verifyPresence(dir, manifestFile);
 
+  progress.phase = 'checking the node copy';
   if (await io.fileExists(vars, manifestPath)) {
     const current = JSON.parse(await io.readFile(vars, manifestPath)) as { hash?: string };
     if (current.hash === manifest.hash) {
+      // Nothing left to send: the node already holds these bytes.
+      progress.sentBytes = progress.totalBytes;
+      progress.phase = 'verifying the current bundle';
       if (!(await verifyCurrent(supportDir, manifestPath))) {
         throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
       }
@@ -459,15 +514,31 @@ export async function ensureNodeSupportBundle(
     io.exec(vars, `rm -rf ${shellExpressionForRemotePath(incomingDir)}`);
 
   try {
-    await io.writeFiles(
-      vars,
-      incomingDir,
-      files.map((file) => ({
-        path: file.relativePath,
-        content: file.contentBase64,
-        mode: file.mode,
-      })),
-    );
+    progress.phase = 'uploading';
+    progress.sentBytes = 0;
+    const chunkBytes = options.uploadChunkBytes ?? NODE_SUPPORT_UPLOAD_CHUNK_BYTES;
+    for (let start = 0; start < files.length; ) {
+      // At least one file per request, so a file larger than a chunk still goes.
+      let end = start + 1;
+      let bytes = nodeSupportBundleBytes([files[start]]);
+      while (end < files.length) {
+        const next = nodeSupportBundleBytes([files[end]]);
+        if (bytes + next > chunkBytes) break;
+        bytes += next;
+        end += 1;
+      }
+      await io.writeFiles(
+        vars,
+        incomingDir,
+        files.slice(start, end).map((file) => ({
+          path: file.relativePath,
+          content: file.contentBase64,
+          mode: file.mode,
+        })),
+      );
+      progress.sentBytes += bytes;
+      start = end;
+    }
     await io.writeFile(
       vars,
       path.posix.join(incomingDir, 'manifest.json'),
@@ -477,6 +548,7 @@ export async function ensureNodeSupportBundle(
     await discardIncoming();
     throw error;
   }
+  progress.phase = 'verifying the upload';
   if (!(await verifyChecksums(incomingDir, path.posix.join(incomingDir, 'manifest.json')))) {
     await discardIncoming();
     throw new Error(`Node support incoming verification failed for ${manifest.hash}`);
@@ -502,6 +574,7 @@ export async function ensureNodeSupportBundle(
   if (published.hash !== manifest.hash) {
     throw new Error(`Node support publish hash mismatch for ${manifest.hash}`);
   }
+  progress.phase = 'verifying the published bundle';
   if (!(await verifyChecksums(supportDir, manifestPath))) {
     throw new Error(`Node support publish verification failed for ${manifest.hash}`);
   }

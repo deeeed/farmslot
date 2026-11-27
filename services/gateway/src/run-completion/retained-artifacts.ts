@@ -265,10 +265,21 @@ export function retainedRunBundleRef(
       throw new Error('The requested retained snapshot does not match this decision.');
     selected = requested;
   }
-  if (!selected)
-    throw new GatewayMethodError('RUN_ARTIFACTS_NOT_RETAINED', 'Run artifacts are not retained.', {
-      userAction: `farmslot runs bundle retain ${run.id}`,
-    });
+  if (!selected) {
+    // A failed capture is the usual reason there is nothing retained, and its
+    // message names the cause (an unmounted bundle volume, no write room), which
+    // retaining again cannot fix. A run that retained something and then failed a
+    // later refresh keeps that bundle, so a lookup for a replaced digest is not
+    // the capture failure and must not quote it.
+    const retainedNothing = runBundleRefs(run).length === 0;
+    throw new GatewayMethodError(
+      'RUN_ARTIFACTS_NOT_RETAINED',
+      run.output?.captureError && retainedNothing
+        ? `Run artifacts are not retained: ${run.output.captureError}`
+        : 'Run artifacts are not retained.',
+      { userAction: `farmslot runs bundle retain ${run.id}` },
+    );
+  }
   return localBundleRef(run, selected);
 }
 
@@ -430,11 +441,18 @@ export async function archiveRunArtifactHousekeeping(includeReferencedMedia = tr
     const entries = await runBundleHousekeepingPaths(store);
     if (!entries.length) return;
     await assertArchiveRoot(root);
-    for (const entry of entries) {
-      if (await getRunWithArchived(entry.runId))
-        await recordRunStorageArchive(entry.runId, storageArchiveManifest(root, entry.runId));
-      await stageStoragePaths(root, entry.runId, [{ source: entry.path, store: entry.store }]);
-      staged.add(entry.runId);
+    // One staging call per archive key, in selection order: one journal write for its entries.
+    const byRun = new Map<string, { source: string; store: string }[]>();
+    for (const entry of entries)
+      byRun.set(entry.runId, [
+        ...(byRun.get(entry.runId) ?? []),
+        { source: entry.path, store: entry.store },
+      ]);
+    for (const [runId, files] of byRun) {
+      if (await getRunWithArchived(runId))
+        await recordRunStorageArchive(runId, storageArchiveManifest(root, runId));
+      await stageStoragePaths(root, runId, files);
+      staged.add(runId);
     }
   });
   for (const id of staged) {
@@ -623,8 +641,6 @@ export async function retainCapturedRunArtifacts(input: {
   if (!input.run.taskFile) throw new Error('Run has no captured task artifacts.');
   const store = await runBundleStore(true);
   await assertRunBundleWriteRoom(store.root);
-  // The materializer protects this run and its source snapshot while moving referenced media.
-  await tryArchiveRunArtifactHousekeeping(false);
   const artifacts = [...input.artifacts];
   // Task-local inputs are the frozen control metadata consumed by review and QA readers.
   // The materializer checks containment and hashes each file while copying it.
@@ -712,6 +728,11 @@ export async function retainCapturedRunArtifacts(input: {
   );
   return materializeRunBundle({
     store,
+    // Only near capacity: housekeeping walks every run and intent under the store lock, which
+    // cost captures up to a minute each when it ran on every one. The hourly retention pass
+    // and admission refusals still run it. The materializer protects this run and its source
+    // snapshot while moving referenced media.
+    housekeepBeforeCapture: () => tryArchiveRunArtifactHousekeeping(false),
     farmslotRoot: farmslotRoot(),
     acquisitionTaskDirs: acquisitionTaskDirToken,
     archiveRoot: (await import('../runs/storage-archive.js')).runArchiveRoot(),

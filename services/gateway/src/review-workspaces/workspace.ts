@@ -53,6 +53,12 @@ interface AllocateOptions extends WorkspaceOptions {
   repositoryUrl: string;
 }
 
+export interface ReviewTaskStart {
+  pr: number;
+  command: string;
+  boundFolder?: string;
+}
+
 function ownedRun(runId: string): Run {
   const run = getRun(runId);
   if (
@@ -66,7 +72,7 @@ function ownedRun(runId: string): Run {
     throw new Error('Review workspace requires an owned native review run without a slot');
   assertNativeRunOwner(run);
   if (run.reviewWorkspace?.transferredTo)
-    throw new Error('Review workspace belongs to its successor');
+    throw new Error(`Review workspace belongs to run ${run.reviewWorkspace.transferredTo.runId}`);
   return run;
 }
 
@@ -102,9 +108,12 @@ function identityFor(run: Run, binding: ReviewWorkspaceBinding, subject: Allocat
 
 async function executeWorkspace(
   run: Run,
-  action: 'allocate' | 'cleanup' | 'cancel' | 'purge',
-  subject: AllocateOptions & { session?: ReviewWorkspaceSessionCleanup },
-): Promise<void> {
+  action: 'allocate' | 'cleanup' | 'cancel' | 'purge' | 'start-review-task',
+  subject: AllocateOptions & {
+    session?: ReviewWorkspaceSessionCleanup;
+    reviewTaskStart?: ReviewTaskStart;
+  },
+) {
   const binding = structuredClone(run.reviewWorkspace!);
   const expected = JSON.stringify({
     identity: identityFor(run, binding, subject),
@@ -158,6 +167,7 @@ async function executeWorkspace(
         : {}),
       allowCancelled: (action === 'cleanup' || action === 'purge') && run.status === 'cancelled',
       ...(subject.session ? { session: subject.session } : {}),
+      ...(subject.reviewTaskStart ? { reviewTaskStart: subject.reviewTaskStart } : {}),
     }),
   ];
   await check();
@@ -167,7 +177,12 @@ async function executeWorkspace(
       : await execNativeNodeArgv(run.nativeOwnerPrincipalId!, binding.machine, argv, 300_000);
   await check();
   const receipt = result.stdout
-    ? (JSON.parse(result.stdout) as { state?: string; error?: { code?: string; message?: string } })
+    ? (JSON.parse(result.stdout) as {
+        state?: string;
+        stdout?: string;
+        stderr?: string;
+        error?: { code?: string; message?: string };
+      })
     : undefined;
   if (result.exitCode !== 0)
     throw new GatewayMethodError(
@@ -184,9 +199,28 @@ async function executeWorkspace(
         ? 'cancelled'
         : action === 'purge'
           ? 'purged'
-          : 'cleaned')
+          : action === 'start-review-task'
+            ? 'review-task'
+            : 'cleaned')
   )
     throw new Error('Workspace operation returned an invalid receipt');
+  return receipt;
+}
+
+export async function executeWorkspaceReviewTaskStart(
+  run: Run,
+  subject: Omit<AllocateOptions, 'assertCurrent'>,
+  start: ReviewTaskStart,
+  assertCurrent: WorkspaceOptions['assertCurrent'],
+): Promise<{ stdout: string; stderr: string }> {
+  const receipt = await executeWorkspace(run, 'start-review-task', {
+    ...subject,
+    assertCurrent,
+    reviewTaskStart: start,
+  });
+  if (typeof receipt.stdout !== 'string' || typeof receipt.stderr !== 'string')
+    throw new Error('Review workspace returned no skill output');
+  return { stdout: receipt.stdout, stderr: receipt.stderr };
 }
 
 export async function allocateReviewWorkspace(
@@ -329,6 +363,7 @@ export async function allocateReviewWorkspace(
             }
           : {}),
       ...(originalBinding?.support ? { support: originalBinding.support } : {}),
+      ...(originalBinding?.reviewTask ? { reviewTask: originalBinding.reviewTask } : {}),
       ...(!originalBinding
         ? {
             retentionDays:

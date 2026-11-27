@@ -178,7 +178,10 @@ test('each project ships the static review template that request-review loads', 
         ? /after run used `\{\{REPO\}\}\/bin\/mm-harness`, both with the same `--library perps=` retained library/
         : /both runs used the published harness; .* after run selected `--library perps=\{\{REPO\}\}`/,
     );
-    assert.match(content, /`artifacts\/after-fix`, or `artifacts\/candidate` for QA/);
+    assert.match(
+      content,
+      /the attempt selected in `artifacts\/latest-valid-recipe-run\.json`; `artifacts\/candidate` for QA/,
+    );
     assert.doesNotMatch(content, / run <recipe>/);
   }
 });

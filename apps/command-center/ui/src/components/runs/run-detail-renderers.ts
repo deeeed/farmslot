@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 
 import type { EvidenceReviewModel } from '@farmslot/adapter-sdk/evidence';
@@ -23,6 +23,7 @@ import {
   type PRStatus,
   resolveRunSlotId,
   reviewChainForRun,
+  reviewPublicationPending,
   reviewPublicationPolicyForRun,
   type Run,
   type RunDecision,
@@ -55,6 +56,7 @@ import type {
 } from '../shared/artifact-browser-model.js';
 import { renderCollapsiblePanel } from '../shared/collapsible-panel.js';
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
+import { renderEvalRunBadge } from '../shared/eval-run-badge.js';
 import type { EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import type { EvidenceReviewerView } from '../shared/evidence-reviewer-url-state.js';
 import { getFileTransfersForRun } from '../shared/file-transfer-progress-store.js';
@@ -71,6 +73,7 @@ import {
 } from './review-execution-location.js';
 import type { RunLifecycleAction } from './run-detail-actions.js';
 import { renderCancelledRunSlotChoices } from './run-detail-cancelled-slot-renderers.js';
+import { renderRunCost } from './run-detail-cost.js';
 import {
   canLaunchComparisonSibling,
   canReplayRunSteps,
@@ -87,6 +90,7 @@ import { runInventoryHashFromDetail } from './run-detail-url-state.js';
 import { runProgressSummary } from './run-list-model.js';
 import { stepInspectorTaskProgress } from './run-pipeline-model.js';
 import { renderReviewProcess, renderRunReviewResult } from './run-review-result-renderer.js';
+import { renderRunSlotPreparePopover } from './run-slot-prepare-popover.js';
 import {
   collectRunEvidenceArtifacts,
   dispositionColor,
@@ -258,6 +262,7 @@ export function renderInteractiveDevGate(run: Run, ctx: InteractiveDevGateRender
 
 export interface RunEvidenceRenderContext {
   selectedSharedEvidence?: boolean;
+  composedEvidence?: TemplateResult;
   taskProgress?: TaskProgressStructured | null;
   evidenceLightboxItems: LightboxItem[];
   evidenceLightboxOpen: boolean;
@@ -297,7 +302,7 @@ export function renderRunEvidence(
   includeOverlay = true,
 ): unknown {
   return html`<section data-shared-run-panel="evidence" tabindex="-1">
-      ${renderRunEvidenceContent(run, ctx)}
+      ${ctx.composedEvidence ?? nothing} ${renderRunEvidenceContent(run, ctx)}
     </section>
     ${includeOverlay ? renderEvidenceLightbox(ctx) : nothing}`;
 }
@@ -632,6 +637,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ctx.siblings.filter((s) => s.lane === 'comparison').length + (r.lane === 'comparison' ? 1 : 0);
   const actionsBlocked = ctx._actionsBlocked();
   const publication = reviewPublicationPolicyForRun(r);
+  const publishing = reviewPublicationPending(r);
   const hasGatePanel = r.decisions.some(
     (decision) =>
       !decision.resolvedAt &&
@@ -698,9 +704,11 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               ? 'Published'
               : r.reviewPublication?.error
                 ? 'Needs attention'
-                : publication.enabled
-                  ? 'Requested'
-                  : 'Farmslot results only'}</strong
+                : publishing
+                  ? 'Publishing…'
+                  : publication.enabled
+                    ? 'Requested'
+                    : 'Farmslot results only'}</strong
           >
           <span>
             ·
@@ -737,7 +745,9 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                     ? 'Checking publication…'
                     : r.reviewPublication?.error || r.reviewPublication?.receipt
                       ? 'Retry publication'
-                      : 'Publish now'}
+                      : publishing
+                        ? 'Check publication'
+                        : 'Publish now'}
                 </button>
               `
             : nothing}
@@ -755,6 +765,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
           ${r.qaAfterReview.error ? html`<p>${r.qaAfterReview.error}</p>` : nothing}
         </div>`
       : nothing}
+    ${renderRunCost(r)}
     <div class="meta">
       <div class="meta-item">
         <div class="meta-label">ID</div>
@@ -1015,12 +1026,6 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                   1`
                 : nothing}
             </div>
-          </div>`
-        : nothing}
-      ${r.metrics.costEstimate
-        ? html`<div class="meta-item">
-            <div class="meta-label">Cost</div>
-            <div class="meta-value">$${r.metrics.costEstimate.toFixed(2)}</div>
           </div>`
         : nothing}
       ${r.metrics.sessionInputTokens || r.metrics.sessionOutputTokens
@@ -1453,6 +1458,7 @@ function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail:
             >`
           : r.ticketOrPr}
       </h2>
+      ${renderEvalRunBadge(r, isEvalCandidateRun(r))}
       <span
         class="status-badge ${activityLabel ? 'run-activity-label' : ''}"
         style="border:1px solid ${sc}; color:${sc}"
@@ -1587,19 +1593,11 @@ function renderRunDetailHeader(ctx: RunDetailViewContext, r: RunListRow, detail:
           `
         : nothing}
       ${boundSlotId && r.branch && canActivateRunOnSlot(r.status)
-        ? html`
-            <slot-prepare-popover
-              slot-id=${boundSlotId}
-              slot-branch=${ctx._slotBranchForRun(r)}
-              project=${r.project}
-              run-id=${r.id}
-              run-branch=${r.branch}
-              button-label="Load ${boundSlotId} with this run →"
-              button-style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
-              .slotHealth=${ctx._slotHealthForRun(r)}
-              ?disabled=${actionsBlocked}
-            ></slot-prepare-popover>
-          `
+        ? renderRunSlotPreparePopover(
+            r,
+            { id: boundSlotId, branch: ctx._slotBranchForRun(r), health: ctx._slotHealthForRun(r) },
+            actionsBlocked,
+          )
         : nothing}
       ${r.status === 'failed'
         ? html`

@@ -26,6 +26,7 @@ import {
   type ReadyGatePrPackage,
   reasonWithoutRemedy,
   RecordedEvidenceReadError,
+  reviewEndsWithAcceptedFix,
   reviewFindingIsSettled,
   type ReviewStatus,
   type Run,
@@ -87,6 +88,7 @@ import {
 } from '../tasks/acceptance-status.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import {
+  DeterministicGateBlockedError,
   readFrozenWorkerTerminalContractForRun,
   validateDeterministicChecksForRun,
 } from '../tasks/worker-terminal-contract.js';
@@ -564,8 +566,13 @@ async function acceptableHeadFindings(
         publicationReviewMatchesPreparedPackage(review, preparedPackage) &&
         !validIds.has(review.id),
     ) ||
-    validInputs.filter((review) => publicationReviewMatchesPreparedPackage(review, preparedPackage))
-      .length === 0 ||
+    // The override accepts findings a reviewer recorded on this head; a gateway-accepted
+    // fix has none, since no reviewer saw it.
+    validInputs.filter(
+      (review) =>
+        !reviewEndsWithAcceptedFix(review) &&
+        publicationReviewMatchesPreparedPackage(review, preparedPackage),
+    ).length === 0 ||
     reviewFixInProgress(run) ||
     reviews.some((review) => review.verdict === 'pending')
   )
@@ -737,14 +744,18 @@ export async function collectRunGateAssessment(
   let deterministicChecks: DeterministicChecklistCheck[] | void = undefined;
   try {
     deterministicChecks = await source.deterministic(artifactRun);
-  } catch {
-    // The owner validator rejects absent/stale/failed receipts. Preserve that refusal.
-    reasons.push({
-      code: 'deterministic-not-passed',
-      prerequisite: 'deterministic',
-      message: 'A declared deterministic check has no current passing receipt.',
-      actionId: 'hold',
-    });
+  } catch (error) {
+    // The owner validator rejects absent/stale/failed receipts. Preserve that refusal,
+    // naming each owed check when it can so the worker knows which mark to rerun.
+    if (error instanceof DeterministicGateBlockedError && error.reasons.length)
+      reasons.push(...error.reasons);
+    else
+      reasons.push({
+        code: 'deterministic-not-passed',
+        prerequisite: 'deterministic',
+        message: 'A declared deterministic check has no current passing receipt.',
+        actionId: 'hold',
+      });
   }
   // A clean no-change result is adjudicated from its report. There is no fix
   // package or new acceptance claim to prove when the worker recorded no ledger.
@@ -763,7 +774,10 @@ export async function collectRunGateAssessment(
     reasons.push({
       code: 'acceptance-unreadable',
       prerequisite: 'acceptance',
-      message: 'The registered acceptance criteria or their verdicts could not be read.',
+      // The reader's own words name what failed (a changed registration, an
+      // invalid ledger, an unretained bundle); without them the hold says only
+      // that something is unreadable and an operator cannot act on it.
+      message: `The registered acceptance criteria or their verdicts could not be read: ${acceptance.error}`,
       actionId: 'hold',
     });
   } else if (acceptance.issues.length) {
@@ -1069,7 +1083,7 @@ export class RunGateNotReadyError extends GatewayMethodError {
       'RUN_GATE_NOT_READY',
       reasons.map((reason) => reason.message).join(' ') || 'Run work is still progressing.',
       {
-        details: { readiness },
+        details: { readiness, reasons },
         userAction: 'Resolve the listed prerequisites, then refresh the gate.',
       },
     );

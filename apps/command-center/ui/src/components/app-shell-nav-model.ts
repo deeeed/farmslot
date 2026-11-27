@@ -23,6 +23,13 @@ import { activeRunsForGlobalFilters } from './runs/run-list-model.js';
 
 export const SIDEBAR_WIDTH_PREF_KEY = 'farmslot:sidebar-expanded-width';
 
+/** Routes whose view owns its own scroll regions and needs a height-bounded flex content box. */
+const STACKED_CONTENT_ROUTES = new Set(['native', 'copilot']);
+
+export function contentClassForRoute(route: string): string {
+  return STACKED_CONTENT_ROUTES.has(route) ? 'fa-content fa-content--stacked' : 'fa-content';
+}
+
 export function pinnedWorkerReadError(state: ResourceQueryState<TmuxWorkerListResult>): string {
   if (state.error) {
     if (['RESOURCE_SOURCE_UNAVAILABLE', 'RESOURCE_SOURCE_CHANGED'].includes(state.error.code))

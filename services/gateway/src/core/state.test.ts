@@ -7,13 +7,43 @@ import {
   claimSlotStatusIf,
   markRunSlotHeld,
   markSlotStatusIf,
+  readSlotRow,
   resetSlotIf,
+  sameSlotField,
   SLOT_PHASE_RELEASING,
   slotOwnershipReleaseFields,
   statusFile,
   transitionSlotStatus,
   updateSlotStatusIf,
 } from './state.js';
+
+test('immediate ownership reads share one keyed committed snapshot and see an external rewrite', async (t) => {
+  const slotId = await withStatusFixture(t, { slot: 'indexed-owner-probe', current_run_id: 'run' });
+  await claimSlotStatusIf('indexed-unrelated-probe', () => true, { current_run_id: 'other' });
+  const parse = JSON.parse;
+  let statusParses = 0;
+  const parseMock = t.mock.method(
+    JSON,
+    'parse',
+    (text: string, reviver?: Parameters<typeof parse>[1]) => {
+      if (text.includes('"indexed-owner-probe"')) statusParses++;
+      return parse(text, reviver);
+    },
+  );
+  try {
+    const first = await readSlotRow(slotId);
+    assert.equal(first?.current_run_id, 'run');
+    for (let i = 0; i < 4; i++) assert.equal(await readSlotRow(slotId), first);
+    assert.equal(statusParses, 1);
+    await writeFile(
+      statusFile,
+      JSON.stringify({ slots: [{ slot: slotId, current_run_id: 'external' }] }),
+    );
+    assert.equal((await readSlotRow(slotId))?.current_run_id, 'external');
+  } finally {
+    parseMock.mock.restore();
+  }
+});
 
 async function withStatusFixture(
   t: { after: (fn: () => Promise<void>) => void },
@@ -292,3 +322,12 @@ for (const fence of [
     const after = await readSlotFixture(slotId);
     assert.equal(after.cleanup_run_id, fence.cleanup_run_id ?? 'predecessor');
   });
+
+test('a slot field read as missing and as null is the same value; real values still differ', () => {
+  assert.equal(sameSlotField(undefined, null), true);
+  assert.equal(sameSlotField(null, undefined), true);
+  assert.equal(sameSlotField('run-a', 'run-a'), true);
+  assert.equal(sameSlotField('run-a', null), false);
+  assert.equal(sameSlotField(undefined, 'run-a'), false);
+  assert.equal(sameSlotField('run-a', 'run-b'), false);
+});

@@ -455,3 +455,24 @@ test('the compact summary carries the recorded child of the running parent and k
   for (const step of active.subtask.progress.phases[0].steps) step.status = 'done';
   assert.equal(runChecklistProgressSummary(input)?.subtask, undefined);
 });
+
+test('a list row summary renders the same strip without steps', () => {
+  const view = runChecklistProgressSummary({
+    completedSteps: 2,
+    totalSteps: 5,
+    currentPhase: 'Build',
+    currentStep: '3. write the fix',
+  });
+  assert.equal(view?.counts, '2/5');
+  assert.equal(view?.label, '3. write the fix');
+  assert.equal(view?.subtask, undefined);
+  assert.equal(
+    runChecklistProgressSummary({
+      completedSteps: 5,
+      totalSteps: 5,
+      currentPhase: null,
+      currentStep: null,
+    })?.label,
+    'Checklist complete',
+  );
+});

@@ -418,7 +418,10 @@ export type RunReviewResult = Pick<
   | 'reviewSnapshot'
   | 'artifactManifest'
   | 'reviewInputArtifactPaths'
->;
+> & {
+  /** The review skill's round that produced this result (ADR-058 Amendment 4). */
+  reviewTask?: { round: number; mode: 'cold' | 'warm'; changedFiles?: string[] };
+};
 
 export type PublicationTarget = 'draft' | 'ready';
 export type PublicationStatus =
@@ -709,6 +712,8 @@ export interface ReviewFixDeltaSnapshot extends ReviewDiffSnapshot {
 }
 
 export interface RunnerSessionUsage {
+  /** Lifetime usage could include work before a retained handoff to this run. */
+  includesPriorRunLifetime?: true;
   /** Pipeline receipt metadata; optional only for older records. */
   model?: string | null;
   effort?: string | null;
@@ -727,8 +732,12 @@ export interface RunnerSessionUsage {
     import('./agents.js').NativeWorkerSessionBinding,
     'sessionId' | 'ownerPrincipalId' | 'executionNodeId' | 'stateDirectory'
   >;
-  /** All node-owned task leases contributing to this run's conversation receipt. */
+  /** Recorded task lease IDs. Older receipts can include observed, unmeasured leases. */
   usageLeaseIds?: string[];
+  /** The native transcript measurement verified every ID in usageLeaseIds. */
+  usageLeaseIdsVerified?: true;
+  /** Observed native task leases still awaiting a verified measurement. */
+  pendingUsageLeaseIds?: string[];
   startedAt?: string | null;
   completedAt?: string | null;
   durationMs?: number | null;
@@ -748,6 +757,10 @@ export interface RunnerSessionUsage {
   reasoningOutputTokens?: number | null;
   totalTokens?: number | null;
   costUsd?: number | null;
+  /** Provider-reported subtotal, including when the complete cost is unknown. */
+  providerReportedCostUsd?: number;
+  /** Pricing rule used by the gateway for a measured remote tmux Pi transcript. */
+  pricingScope?: 'remote-tmux-pi';
   measuredAt: string;
   source: 'runner-transcript' | 'provider-response' | 'unavailable';
   /** Transcript total at measurement time, or usage first observed within the owning run. */
@@ -1036,6 +1049,8 @@ export interface ReviewSummary {
     triggeredReWork: boolean;
     attempts: number;
     stale?: boolean;
+    /** The gateway accepted a worker fix without a reviewer; not a passing review. */
+    acceptedWithoutReview?: boolean;
     startedAt?: string;
     completedAt?: string;
   }>;
@@ -1624,6 +1639,10 @@ export interface LearningsAntipatternDraft {
   targetPath: string;
   /** Canonical library repository the draft belongs in. */
   targetRepo?: string;
+  /** The rules file section a tightening edits, for a checked (v1) lesson. */
+  targetSection?: string;
+  /** The rule change a checked (v1) lesson proposes, pending a person's decision. */
+  proposal?: import('./review-rules.js').ReviewRuleProposal;
   symptom: string;
   cause: string;
   action: string;
@@ -1648,6 +1667,8 @@ export interface KnowledgeDestination {
   path: string;
   library?: string;
   source: 'vars.knowledge_destination' | 'static_review';
+  /** `vars.knowledge_clients`: evidence repo → client, whose rules file is `<base>.<client>.md`. */
+  clients?: Record<string, string>;
 }
 
 export interface LearningsDraftPayload {
@@ -2020,6 +2041,8 @@ export interface RunMetrics {
    * live under `.runs/session-archives/`. Not eval evidence and not a farmrun payload.
    */
   runnerSessionArchive?: RunnerSessionArchiveRef;
+  /** One ref per worker session, in capture order (ADR-039 Amendment 10). */
+  runnerSessionArchives?: RunnerSessionArchiveRef[];
   /**
    * Operator-local provider subscription label that actually funded this run
    * (after any in-place failover). Label only — never an email, token, or home path.
@@ -2050,6 +2073,8 @@ export interface RunMetrics {
   sessionCacheCreation?: number;
   sessionCacheRead?: number;
   sessionTotalTokens?: number;
+  /** Provider charges from an archive-only historical projection. Not an attempt cost. */
+  retainedArchiveProviderReportedCostUsd?: number;
   /** Whether the session fields are raw transcript totals or a retained-review generation delta. */
   sessionUsageScope?: 'session-total' | 'review-generation-delta' | 'review-chain-total';
   /** Raw retained transcript total used as the next review generation's subtraction baseline. */
@@ -2142,6 +2167,29 @@ export type RunStartRefSource =
   | { kind: 'merged-pr'; repo?: string; prNumber?: number }
   | { kind: 'git-ref'; repository?: string; ref?: string };
 
+/**
+ * The build on the slot when the run's worker started: installed by a pinned
+ * prepare (`enforced`), or observed on an excluded eval trial. Analysis filters
+ * comparison cells whose build does not match their start commit.
+ */
+export interface RunPrepareArtifact {
+  kind: 'runway' | 'source';
+  slotId: string;
+  /** The start commit the build was installed for. */
+  baseSha: string;
+  /** Runway workflow run id; absent for a source build. */
+  runId?: string;
+  /**
+   * Commit the installed build was made from: always set when `enforced`; an
+   * observed record keeps it only when the slot reported a full commit.
+   */
+  revision?: string;
+  platform: string;
+  installedAt: string;
+  /** True when prepare installed and verified it; false when it was only observed. */
+  enforced: boolean;
+}
+
 export interface RunStartRefProvenance {
   requestedRef: string;
   resolvedSha?: string;
@@ -2178,6 +2226,8 @@ export interface SlotRunHistoryEntry {
   familyId: string;
   status: RunStatus;
   flowType: FlowType;
+  /** The run's domain, so a prepare-for-run from history can send it. */
+  domain?: string;
   ticketOrPr: string;
   /** Covered Jira key union for compact history clients. */
   linkedTicketRefs?: string[];
@@ -2440,6 +2490,29 @@ export interface RunRecoveryRuntimeProposal {
   status: RunAutoRecoveryProposalStatus;
   proposalId?: string;
   generation: number;
+}
+
+/** ADR-039 Amendment 10: the output a run was graded on, and its retained diff. */
+export interface RunGradedOutput {
+  /** sha256 of the graded diff against the dispatch head. */
+  diffSha256: string;
+  /** The published commit, or the working tree release graded before it reset the slot. */
+  source: 'committed' | 'working-tree';
+  /** The commit graded; for a working tree, the ref release parked its commits under, if any. */
+  ref: string | null;
+  /** The diff bytes, relative to the episode store; absent when the diff exceeded 32 MiB. */
+  path?: string;
+  sizeBytes: number;
+  recordedAt: string;
+}
+
+/** ADR-039 Amendment 10: an append-only attempt the step history and recovery records miss. */
+export interface RunAttemptLogEntry {
+  kind: 'dispatch' | 'replay' | 'recovery' | 'infra-failure' | 'operator';
+  step?: string;
+  at: string;
+  error?: string;
+  recovery?: string;
 }
 
 export interface RunReplayStep {
@@ -3072,6 +3145,8 @@ export interface MachineParkRecord {
 }
 
 export interface Run {
+  /** Opaque revision of accounting inputs on a run detail response. */
+  costAccountingRevision?: string;
   /** New PR-completion consumers; retained runs keep their frozen contracts. */
   acceptanceContractVersion?: 1;
   acceptanceExecutionContract?: AcceptanceExecutionContract;
@@ -3194,6 +3269,18 @@ export interface Run {
    * ownership. A later ownerless return to idle parks only this exact head.
    */
   releasedCheckout?: { slotId: string; branch: string; headSha: string; at: string };
+  /** The run's latest slot release that freed the slot, timed from its start to its settlement. */
+  slotRelease?: {
+    slotId: string;
+    startedAt: string;
+    durationMs: number;
+    /** A finished-run release's wall time per phase; phases need not add up to `durationMs`. */
+    phasesMs?: Record<string, number>;
+    /** Run-bundle lock time the release itself took, when it measured its own. */
+    bundleLock?: import('../recipes/step-io.js').CompleteStepTiming['bundleLock'];
+    /** Processes the release started, by kind. */
+    exec?: import('../recipes/step-io.js').CompleteStepTiming['exec'];
+  };
   /** Explicit workspace placement, mutually exclusive with a slot binding. */
   reviewWorkspaceTarget?: import('./review-workspace.js').ReviewWorkspaceTarget;
   /** Trusted runtime-owned checkout and output locations. Requires slotId=null. */
@@ -3232,6 +3319,12 @@ export interface Run {
   pressureAdmissionRef?: import('./pressure-admission.js').PressureAdmissionReference;
   /** Requested/resolved base ref for artifact-only comparison replay runs. */
   startRef?: RunStartRefProvenance | null;
+  /**
+   * The build on the slot for `startRef`: installed and verified by a pinned prepare
+   * (`enforced: true`), or observed on an excluded eval trial (`enforced: false`).
+   * Cleared when a prepare starts.
+   */
+  prepareArtifact?: RunPrepareArtifact | null;
   /** Stack position when this run builds on another run's published PR. */
   stack?: RunStack;
   /** Gateway-captured template provenance for the rendered worker task. */
@@ -3319,6 +3412,15 @@ export interface Run {
   /** Monotonic per-candidate launch attempt, inherited from the queue item; lets run
    * observations tell a legitimate takeover from a stale echo of a superseded run. */
   launchAttempt?: number;
+  /** ADR-039 Amendment 10 trace fields, written when the run records them. */
+  gradedOutput?: RunGradedOutput;
+  /** Worktree head when the run finished; the PR head when it was published; the merge commit. */
+  finalHead?: string;
+  prHead?: string;
+  mergeSha?: string;
+  /** The acceptance ledger at completion, when no ready gate recorded one. */
+  completionAcceptance?: AcceptanceStatusLedger;
+  attemptLog?: RunAttemptLogEntry[];
   completedAt?: string;
   error?: string;
   /**
@@ -3418,6 +3520,17 @@ export interface RunTaskExecution {
 
 export interface RunEngineState {
   slotCapabilityRequirements?: RunSlotCapabilityRequirements;
+  /**
+   * The one automatic COMPLETE send-back a run gets for stale CI receipts
+   * (961d55d3). A completion replay drops resolved decisions; this survives it.
+   */
+  staleReceiptSendBack?: { decisionId: string; sentAt: string };
+  /**
+   * The findings the last review verdict left open when any is a blocker or major
+   * (961d55d3). A replay clears REVIEW's outputs; a refused review launch reads these
+   * so open blockers never reach COMPLETE. The next review verdict replaces them.
+   */
+  openReviewFindings?: ReviewIssue[];
   /**
    * The engine generation a workspace review's DISPATCH admitted its reviewer
    * round under, so its MONITOR settles that attempt after a monitor-only replay
@@ -3566,6 +3679,13 @@ export interface RunEngineState {
   };
 }
 
+/** CI-watch gates that can auto-dispatch, and so offer "Keep holding" while a PR is held. */
+export type CIHoldGate =
+  | 'merge_conflict'
+  | 'ci_failed'
+  | 'review_comments'
+  | 'review_comments_early';
+
 /**
  * Per-run CI-watch inline-fix state — persisted on {@link Run} so dedup signatures
  * and attempt counters survive gateway restart (ADR-027).
@@ -3573,6 +3693,21 @@ export interface RunEngineState {
 export interface RunCiWatchState {
   /** Scope refusals stop automatic CI fix retries. */
   fixScopeRefusal?: string;
+  /**
+   * When a replay that re-ran ci-watch handed the PR back to automation. An
+   * operator hold is derived from `Run.decisions` (a `wait` at
+   * `inline_fix_blocked` while that gate offered a dispatch); replay keeps those
+   * resolved decisions, so a hold resolved before this time no longer applies.
+   */
+  holdReleasedAt?: string;
+  /**
+   * Per held gate (`merge_conflict`, `ci_failed`, `review_comments`,
+   * `review_comments_early`), the last time a complete GitHub read showed that
+   * gate's state clear while the PR was held. A "Keep holding" answered at or
+   * before it no longer quiets the gate, so a state that clears and returns asks
+   * again, across a gateway restart too.
+   */
+  holdClearedAt?: Partial<Record<CIHoldGate, string>>;
   branchMaintenanceOperation?: BranchMaintenanceOperation;
   /** Last successfully-dispatched fix fingerprint (bot-comment signature + HEAD sha). */
   dedup?: { signature: string; commitSha: string };

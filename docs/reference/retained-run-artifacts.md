@@ -207,13 +207,25 @@ An artifact already unavailable before this policy remains explicit missing data
 archival does not fabricate it or waive publication/proof requirements.
 
 The package owner selects inactive metadata reservations and abandoned intents or
-staging older than 24 hours. The gateway archives these paths before admission
-and capture, and during the hourly pass, so abandoned reservations do not exhaust
-capacity. Active captures remain protected. Selection and synchronous staging use
+staging older than 24 hours. The gateway archives these paths during the hourly
+pass, before an admission that capacity refuses, and before a capture that is at
+the archive threshold or would cross the cap, so abandoned reservations do not
+exhaust capacity. Admission reads the store's charge from a per-process cache
+that is reused only while the store root, `sha256/`, `usage/` and
+`availability/` keep their stamps; `reservations/` and `staging/` are walked on
+every read. Active captures remain protected. Selection and synchronous staging use
 the bundle lock; cross-volume copying, verification and source cleanup happen
 after admission locks are released. A missing/unwritable archive refuses the
 operation without deletion. Budget admission continues to enforce capacity and
 report explicit missing-media status; it never evicts history to make room.
+
+A bundle's `usage/<digest>.json` and `availability/<digest>.json` records move
+to the archive with its `sha256/<digest>` directory, right after it, in both the
+settled-run pass and housekeeping. Records whose bundle already left `sha256/`
+and that no run references or capture pins are archived by housekeeping, at
+most 200 per pass, under the archive key `bundle-records-<UTC hour>`. They are
+never deleted: availability may journal the archive locations of its media.
+Explicit garbage collection removes both records with each bundle it deletes.
 
 ### Settled-run retention
 
@@ -291,6 +303,34 @@ MUST be archived intact, including its restoration metadata, never purged.
 Gateway startup and capture MUST NOT invoke destructive bundle/media GC. Capacity
 admission retains its current budget checks. Another node's storage and slot
 checkouts remain outside this pass. Automated restore is not part of this change.
+
+### Stores no run owns
+
+ADR-039 Amendment 9. After the run pass, whether it succeeded or failed, the same
+hourly turn MUST handle two gateway stores that no run record owns. Each step runs
+even when the other fails.
+
+- Review execution caches (`review-workspace-support`, idle review allocators and
+  their native sessions): the pass runs the cleanup `run.cleanup` runs, without a
+  dry run. It removes only caches that no run needing execution storage protects
+  and that no run record references; reports, task views, archives and retained
+  bundles are untouched. These caches are recreatable, so nothing is archived.
+- Orphan slot scaffolding: slot release collects scaffolding into
+  `.runs/slot-scaffolding/<slot>/<collection>` when no run owns the release, one
+  directory per collection named by a UUID. A collection whose `manifest.json`
+  (written last) is older than the retention age MUST move to
+  `FARMSLOT_RUN_ARCHIVE_ROOT` under the archive key `slot-scaffolding-<slot>`,
+  journaled in `<archive-root>/slot-scaffolding-<slot>/manifest.json` exactly as a
+  run's storage manifest is, and restored the same way. A collection without
+  `manifest.json` is incomplete and stays. Nothing is deleted.
+
+When the archive root is unavailable (an unmounted volume, a failed write probe),
+the scaffolding move MUST skip, leave every collection in place, and raise a
+`run-retention.scaffolding-archive-skipped` gateway warning with the number of
+collections waiting. It MUST NOT fail the pass or the review cache cleanup. A
+move that fails part way keeps its journal and its staged `.retention-<generation>`
+sibling, which is never taken for a new collection; the run pass resumes it with
+the run archives, to the source the journal recorded.
 
 ## Public surface and backfill
 

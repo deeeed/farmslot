@@ -116,6 +116,8 @@ export interface RemoteNodeStack {
   }): Promise<{ downMs: number; nodeOfflineMs?: number }>;
   waitForNode(connected: boolean, budgetMs?: number): Promise<void>;
   restartNode(whileStopping: () => Promise<void>): Promise<void>;
+  /** A second node process with this node's identity (machine, credential, env), logging to `<name>.log`. */
+  startExtraNode(name: string): ChildProcess;
   /** The panes of a tmux session on the stack's private server (none when it has no such session). */
   panes(session: string): Array<{ paneId: string; panePid: number; dead: boolean }>;
   cleanup(): Promise<string[]>;
@@ -417,6 +419,8 @@ export async function startRemoteNodeStack(
   };
   let gateway: ChildProcess | undefined;
   let node: ChildProcess | undefined;
+  /** Extra node processes a proof started (startExtraNode): stopped with the stack. */
+  const extraNodes: ChildProcess[] = [];
   let connection: GatewayConnection | undefined;
   const nativeHostDirectories = () =>
     [nodeNativeRoot, gatewayNativeRoot].flatMap((rootDir) => {
@@ -439,6 +443,8 @@ export async function startRemoteNodeStack(
     connection?.close();
     connection = undefined;
     await attempt('node', () => stopProcess(node));
+    for (const extra of extraNodes)
+      await attempt(`extra node ${extra.pid}`, () => stopProcess(extra));
     await attempt('node proxy', async () => options.nodeProxy?.stop());
     const nativeDirectories = nativeHostDirectories();
     for (const directory of nativeDirectories) {
@@ -797,13 +803,11 @@ export async function startRemoteNodeStack(
       connection = undefined;
       await stopProcess(gateway);
     };
-    const startNode = () => {
-      if (stopping) throw new Error('The isolated node is stopping');
-      nodeGeneration += 1;
-      const fd = openSync(path.join(evidence, `node-${nodeGeneration}.log`), 'w', 0o600);
+    const spawnNode = (logName: string): ChildProcess => {
+      const fd = openSync(path.join(evidence, `${logName}.log`), 'w', 0o600);
       try {
         // Exec requests without a cwd resolve helpers from this node's installation.
-        node = spawn(
+        const child = spawn(
           process.execPath,
           ['--import', import.meta.resolve('tsx'), path.join(root, 'services/node/src/index.ts')],
           {
@@ -816,10 +820,16 @@ export async function startRemoteNodeStack(
             stdio: ['ignore', fd, fd],
           },
         );
+        reaper.group(child.pid);
+        return child;
       } finally {
         closeSync(fd);
       }
-      reaper.group(node.pid);
+    };
+    const startNode = () => {
+      if (stopping) throw new Error('The isolated node is stopping');
+      nodeGeneration += 1;
+      node = spawnNode(`node-${nodeGeneration}`);
     };
     const call = <T,>(method: string, params?: unknown) => {
       if (!connection) throw new Error(`The isolated gateway is not connected (${method})`);
@@ -879,6 +889,12 @@ export async function startRemoteNodeStack(
       },
       call,
       waitForNode,
+      startExtraNode: (name) => {
+        if (stopping) throw new Error('The isolated node is stopping');
+        const extra = spawnNode(name);
+        extraNodes.push(extra);
+        return extra;
+      },
       async restartNode(whileStopping) {
         const info = (
           await call<{ nodes: Array<{ machine: string; pid: number }> }>('nodes.list')

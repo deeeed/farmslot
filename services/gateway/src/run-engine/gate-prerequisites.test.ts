@@ -133,7 +133,53 @@ test('nested-list normalized task acceptance stays readable and changed ticket t
     deterministic: passed,
     progress: idle,
   });
-  assert.ok(changed.reasons.some(({ code }) => code === 'acceptance-unreadable'));
+  const unreadable = changed.reasons.find(({ code }) => code === 'acceptance-unreadable');
+  assert.ok(unreadable);
+  assert.match(
+    unreadable.message,
+    /Original acceptance registration is missing or changed/,
+    'the hold must name what the reader refused, not only that something is unreadable',
+  );
+});
+
+test('an unretained run says why its capture failed instead of only naming acceptance', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'gate-capture-error-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'inputs'));
+  await mkdir(path.join(root, 'artifacts'));
+  const run = makeRun({
+    id: randomUUID(),
+    taskFile: path.join(root, 'TASK.md'),
+    ticketData: {
+      source: 'jira',
+      title: 'Capture failed',
+      description: '',
+      affectedArea: '',
+      stepsToReproduce: [],
+      screenshots: [],
+      labels: [],
+      acceptanceCriteria: ['The tooltip shows the maintenance margin copy'],
+    },
+  });
+  // The capture step records this and retains nothing: the bundle volume was
+  // unmounted (run 062f6a94). Nothing downstream can read the task directory.
+  run.output = {
+    workerFinished: true,
+    capturedAt: new Date().toISOString(),
+    artifactManifest: [],
+    manifestDigest: '',
+    captureError:
+      'Storage unavailable: /Volumes/c910ssd is not mounted. Reconnect the volume before using /Volumes/c910ssd/farmslot-data/farmslot-dev/run-bundles.',
+  };
+  assert.match((await readGateAcceptance(run)).error ?? '', /c910ssd is not mounted/);
+  const readiness = await collectRunGateReadiness(run, null, {
+    deterministic: passed,
+    progress: idle,
+  });
+  const unreadable = readiness.reasons.find(({ code }) => code === 'acceptance-unreadable');
+  assert.ok(unreadable);
+  assert.match(unreadable.message, /Run artifacts are not retained/);
+  assert.match(unreadable.message, /c910ssd is not mounted/);
 });
 
 test('artifact-only comparison and reportless output retain their digest fence without a review decision', async (t) => {
@@ -276,6 +322,100 @@ test('review overrides waive only their owning review policy, never checks or li
       [{ id: 'hold' }],
     );
   }
+});
+
+// Run c22a1e09: the gateway accepted a small worker fix that no reviewer saw.
+test('an accepted fix on the package head offers no approval route when a review is required', async () => {
+  const prepared = makeReadyGatePackage({
+    reviewPolicy: { minimumReviews: 1, requestedBy: 'dispatch' },
+  });
+  const reviewPath = 'artifacts/pipeline-review-loop-2/review-result.json';
+  const headSha = prepared.headSha!;
+  // The reviewer last saw an earlier head; the fix delta links the acceptance to it.
+  const priorSnapshot = { ...prepared.reviewSnapshot!, headSha: 'f'.repeat(40), diffHash: 'prior' };
+  const review: ReviewStatus = {
+    id: 'pipeline-review-c22',
+    source: 'pipeline',
+    mode: 'cold',
+    loopNumber: 1,
+    reviewerSessionId: 'reviewer-session',
+    reviewedHeadSha: prepared.headSha,
+    reviewedReviewSubjectHash: prepared.reviewSubjectHash,
+    reviewSnapshot: prepared.reviewSnapshot,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    artifactPaths: [reviewPath],
+    attempts: [
+      {
+        mode: 'cold',
+        loopNumber: 2,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        issues: [{ severity: 'minor', file: 'src/a.ts', description: 'Rename the helper.' }],
+        reviewSnapshot: priorSnapshot,
+        session: {
+          mode: 'cold',
+          continuity: 'fresh',
+          reviewId: 'pipeline-review-c22',
+          sessionId: 'reviewer-session',
+        },
+        artifactPaths: [reviewPath],
+      },
+      {
+        mode: 'cold',
+        loopNumber: 3,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        reviewSnapshot: prepared.reviewSnapshot,
+        fixDelta: {
+          source: 'local-git',
+          capturedAt: '2026-11-22T03:44:51Z',
+          fixBaseSha: priorSnapshot.headSha,
+          fixHeadSha: headSha,
+        },
+        timeline: [
+          {
+            kind: 'worker-fix',
+            loopNumber: 3,
+            startedAt: '2026-11-22T03:41:00Z',
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    ],
+  };
+  const run = makeRun({ engineState: { publishGate: { reviews: [review] } } });
+  const inputs = {
+    deterministic: passed,
+    acceptance: emptyAcceptance,
+    progress: idle,
+    selectedEvidence: passed,
+    reviewResult: async () =>
+      JSON.stringify({
+        schemaVersion: 1,
+        verdict: 'issues',
+        issues: [{ severity: 'minor', file: 'src/a.ts', description: 'Rename the helper.' }],
+      }),
+  };
+  const actions = [
+    { id: 'approve-publish' },
+    { id: 'approve-publish-unresolved' },
+    { id: 'hold' },
+    { id: 'request-review' },
+  ];
+  const required = await collectRunGateReadiness(run, prepared, inputs);
+  assert.equal(required.state, 'not-ready');
+  assert.deepEqual(gateActionsForReadiness(actions, required), [
+    { id: 'hold' },
+    { id: 'request-review' },
+  ]);
+  const optional = await collectRunGateReadiness(
+    run,
+    { ...prepared, reviewPolicy: { minimumReviews: 0, requestedBy: 'dispatch' } },
+    inputs,
+  );
+  assert.equal(optional.state, 'ready');
 });
 
 test('an evidence-only WARM fix uses its final pass artifact and still requires that result', async (t) => {
@@ -2345,6 +2485,31 @@ for (const verdict of ['issues', 'pass'] as const)
       ),
     );
     assert.ok(staleCi.reasons.some(({ code }) => code === 'deterministic-not-passed'));
+    // 961d55d3: a refusal that names its checks keeps them, so the hold says what to rerun.
+    const owed = {
+      code: 'deterministic-stale',
+      prerequisite: 'deterministic' as const,
+      reference: 'ci.local_check',
+      message:
+        'REVIEW-FIX.md step 4 (ci.local_check) is stale. Rerun step 4 (`yarn ci:local`) to record a current receipt.',
+      actionId: 'hold',
+    };
+    const { DeterministicGateBlockedError } = await import('../tasks/worker-terminal-contract.js');
+    const namedStale = await collectRunGateReadiness(run, prepared, {
+      ...readers,
+      deterministic: async () => {
+        throw new DeterministicGateBlockedError('Deterministic CI gate blocked: stale', [owed]);
+      },
+    });
+    assert.deepEqual(
+      namedStale.reasons.filter(({ prerequisite }) => prerequisite === 'deterministic'),
+      [owed],
+    );
+    assert.ok(
+      !projectRunGateActions(definitions, namedStale).actions.some(({ id }) =>
+        id.startsWith('approve-publish'),
+      ),
+    );
     const unreadable = certifyingReview(prepared, {
       id: 'missing-result',
       reviewerSessionId: 'other-session',

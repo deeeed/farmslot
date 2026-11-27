@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { workspaceReviewRoundAdmissionId } from '@farmslot/protocol';
 
 import { recordedReviewRounds } from '../review/recorded-review-rounds.test-support.js';
+import { resolveConfiguredExecutionTemplate } from '../tasks/execution-template-catalog.js';
 
 import {
   materializeReviewWorkspaceTask,
@@ -625,5 +626,28 @@ test('retained task reads ignore closeout receipts while preserving immutable so
     assert.equal(await readReviewWorkspaceCompletion(f.run.id, f.deps), null);
     f.run.reviewWorkspace!.workspaceId = 'different-workspace';
     await assert.rejects(readReviewWorkspaceSignal(f.run.id, f.deps), /identity/);
+  });
+});
+
+test('a re-review writes its task from the current template, not one frozen before a catalog change', async () => {
+  await withFixture(async (f) => {
+    // The parent froze the catalog as it was; the template library moved on before the re-review.
+    await writeFile(
+      path.join(f.project.projectTemplatesDir!, 'worker/review-pr.md'),
+      `${checklist}- [ ] New step.\n`,
+    );
+    await assert.rejects(
+      materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps),
+      /changed after catalog resolution/,
+    );
+    const current = await resolveConfiguredExecutionTemplate(f.project, {
+      flow: 'review-pr',
+      platform: 'web',
+      runMode: 'autonomous',
+    });
+    assert.notEqual(current.reference.sha256, f.run.executionTemplate!.sha256);
+    f.run.executionTemplate = current.reference;
+    const task = await materializeReviewWorkspaceTask(f.run.id, f.subject, f.deps);
+    assert.ok(task.taskFile);
   });
 });

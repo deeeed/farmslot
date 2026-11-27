@@ -11,7 +11,14 @@ import type { ParkedRunCommits, Run } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 import type { execOnSlot } from '../core/exec.js';
-import { claimSlotStatusIf, statusFile } from '../core/state.js';
+import {
+  claimSlotStatusIf,
+  readSlotRow,
+  resetSlotIf,
+  rewriteStatusFile,
+  statusFile,
+} from '../core/state.js';
+import { buildFleetRefreshSnapshot } from '../methods/fleet.js';
 import { resetSlotRepoToIdle } from '../methods/slot/slot-tracking.js';
 import { makeRun } from '../run-engine/test-fixtures.js';
 import { makeVars } from '../runners/test-fixtures.js';
@@ -675,6 +682,57 @@ test('failed slot receipt persistence leaves current work intact and the Git bac
   } finally {
     if (moved) await rename(`${statusFile}.offline`, statusFile);
   }
+});
+
+test('a fleet refresh during parking does not strand a just-released slot', async (t) => {
+  const { vars, head, validation } = await fixture(t);
+  // The terminal release resets the row (cleanup_run_id: null), then recovery parks at once.
+  assert.ok(await resetSlotIf(vars.slotId, () => true));
+  let refreshed = false;
+  const refreshDuringPark: typeof execOnSlot = async (...args) => {
+    const result = await localExec(...args);
+    if (!refreshed && args[1].includes('"op":"park"')) {
+      // A fleet refresh lands while the slow remote park runs: it rewrites the row from its
+      // previous values, the way runFleetHealthRefresh does.
+      await rewriteStatusFile((current) =>
+        buildFleetRefreshSnapshot(
+          current?.slots ?? [],
+          [
+            {
+              slot: vars.slotId,
+              machine: 'local',
+              platform: 'cli',
+              project: 'farmslot-farm',
+              ssh: 'OK',
+              dev: '-',
+              devserver: 'OFF',
+              device: '-',
+              cdp: 'OFF',
+              fixtures: 'OK',
+              branch: validation.branch!,
+              agent: 'idle',
+              enabled: true,
+              mode: 'dispatch',
+              dispatchable: true,
+            },
+          ],
+          [],
+          new Date().toISOString(),
+        ),
+      );
+      refreshed = true;
+    }
+    return result;
+  };
+  const capture = await captureSlotWork(
+    vars,
+    {},
+    { defaultBranch: 'main', runId: validation.id },
+    refreshDuringPark,
+  );
+  assert.ok(refreshed, 'the refresh landed inside the parking window');
+  assert.equal(capture.receipts[0]?.headSha, head);
+  assert.ok((await readSlotRow(vars.slotId))?.parked_work, 'the parked inventory is registered');
 });
 
 test('prior-work and a verified checkpoint at the same head keep distinct immutable receipts', async (t) => {

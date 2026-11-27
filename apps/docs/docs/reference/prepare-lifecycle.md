@@ -53,9 +53,10 @@ worker retirement, sentinel acquisition and all prepare phases, including
 bind-only profiles, and appears in `slot.check`. It receives the project and
 pool environment plus `FARMSLOT_MACHINE`. A nonzero exit blocks prepare and
 retains its diagnostic, for example `missing extension checkout on node, set
-TERMINAL_EXTENSION_CHECKOUT`. The hook runs before profile selection. Profile hook overrides and
-`FARMSLOT_PREPARE_PROFILE` do not apply. Keep the check under ten seconds; it
-must not install dependencies or change slot state.
+TERMINAL_EXTENSION_CHECKOUT`. The hook runs before profile selection. Profile
+hook overrides, `FARMSLOT_PREPARE_PROFILE` and `FARMSLOT_FLOW_TYPE` do not
+apply. Keep the check under ten seconds; it must not install dependencies or
+change slot state.
 
 ## Bundled phases
 
@@ -153,6 +154,55 @@ This makes warm reuse explicit. A profile such as `attach` says: "reuse the
 current runtime only if health is already good; otherwise fall back to a full
 prepare."
 
+## Pinned comparison runs
+
+A comparison-lane `dev` or `fix-bug` run with a `startRef` is **pinned**: it must run
+on a build of its start commit, or fail before its worker starts. Blind capsule
+trials (their own isolated base) and QA proof trials are not pinned. Pinning applies
+to projects that take part, by declaring an `artifact_check` hook or
+`prepare.pinned_profiles`; other projects prepare these runs as before. A project
+config that fails to load refuses a run that would otherwise be pinned.
+
+```json
+"prepare": {
+  "profiles": {
+    "full": { "phases": ["git", "fixtures", "deps", "preflight", "health"], "pinned_kind": "source" },
+    "runway": { "phases": ["git", "fixtures", "deps", "preflight"], "requires": ["artifact_available"], "fallback": "runtime", "pinned_kind": "runway" }
+  },
+  "pinned_profiles": { "ios": ["runway", "full"], "android": ["full"] }
+}
+```
+
+- **Selection.** `pinned_profiles` is one list, or one list per platform. The first
+  entry is the default; an explicitly requested profile must be listed for the slot's
+  platform. Selection is strict (no fallback walk) and skips the `artifact_available`
+  probe; any other requirement still applies. Every listed profile declares
+  `pinned_kind`: `runway` (a prebuilt artifact of the start commit) or `source` (a
+  build of the checked-out commit).
+- **Preflight installs the build.** Prepare exports the resolved start commit (a full commit id)
+  as `FARMSLOT_PREPARE_BASE_SHA`. The preflight writes
+  `<runtime_dir>/prepare-artifact.json`, on success and on refusal:
+  `{ status: "ok" | "failed", reason?, kind, baseSha, runId?, revision, platform }`.
+  Prepare deletes the file before preflight and reads it after. A missing or malformed
+  receipt, a `kind` or `platform` that does not match, a `baseSha` other than the
+  start, or a `revision` that is not a full commit id fails the prepare. A `source` revision may
+  descend from the start (a prepare replay keeps worker commits). A refusal's
+  `reason` becomes the prepare error, flattened to one line.
+- **The record.** `run.prepareArtifact` holds
+  `{ kind, slotId, baseSha, runId?, revision, platform, installedAt, enforced }`,
+  cleared when a prepare starts and returned by `run.get` beside `startRef`.
+  `enforced: true` is a build prepare installed and verified. An eval trial that
+  pinning excludes records, best effort, the Runway build its slot reports in
+  `runway-provision.json` (`enforced: false`, only when the app is installed on the
+  slot's simulator); `revision` may then be absent.
+- **No way around it.** Dispatch refuses a pinned run without an enforced record for
+  its slot and start. `skipPrepare` is refused for pinned runs at `run.create`, at a
+  replay that would re-dispatch, and at prepare. A replay whose target lies after
+  prepare and at or before dispatch restarts from prepare, unless it resumes a live
+  native worker. Restart recovery prepares a pinned run with no matching record again
+  instead of trusting its health check. `activateOnSlot` keeps a stored profile
+  listed for the slot's platform, otherwise uses the pinned default, never `attach`.
+
 ## Hook overrides
 
 A profile can override project hooks for that prepare run:
@@ -184,8 +234,37 @@ overrides are useful when the runtime can be repaired incrementally instead of
 rebuilt. If a profile overrides `preflight`, that hook owns its own runtime
 cleanup; Farmslot does not do the default dev-server port cleanup before it.
 
-Project lifecycle hooks receive `FARMSLOT_PREPARE_PROFILE=<name>`, so a project
-can either use hook overrides or keep one hook script that branches internally.
+Project lifecycle hooks (deps, preflight, health and unlock) receive
+`FARMSLOT_PREPARE_PROFILE=<name>`, so a project can either use hook overrides or
+keep one hook script that branches internally. They also receive
+`FARMSLOT_FLOW_TYPE=<flow>` when the prepare belongs to a flow: `dev`,
+`fix-bug`, `qa`, `review-pr`, `pr-complete` or `update-branch`. A script can
+then set up a runtime for a dev run but not for a review. A flowless prepare
+(`slot.recycle`, a keep-warm release, a manual prepare without `--flow-type`)
+unsets it. Prerequisites, signing and the profile requirement probes see
+neither.
+
+#### Lockfile drift on a PR branch
+
+The deps hook (`post_merge_install`) also receives
+`FARMSLOT_PREPARE_LOCKFILE_DRIFT=allow` when the run works on an existing PR
+branch: a `pr-complete` run, or a `dev` run whose branch was already on origin.
+Such a run may have to fix that branch's lockfile, so when its frozen install
+fails only because the lockfile and `package.json` disagree, the hook may run one
+mutable install. It prints `[farmslot] lockfile drift fallback` before that
+install. It must not stage the lockfile: prepare accepts the rewrite only from the
+working tree. Prepare then accepts a deps phase that changed lockfiles only, when its
+log shows the drift, records them as `lockfilesRewritten` in the prepare step
+outputs and logs that the worker must commit them. Any other tracked change still
+fails prepare. A failure after the marker is reported as itself, not as drift.
+
+Without the flag, or when the hook does not fall back, a drift failure fails
+prepare with `failureKind: 'lockfile-drift'` in the step outputs and a message
+naming the package. `update-branch` and `review-pr` runs do not get the flag.
+
+A mutable install resolves whatever the lockfile lacks afresh, so it gives up the
+frozen-lockfile guarantee for those packages. That fits PR branches the farm owns;
+a hook must not fall back for a PR from an outside contributor.
 
 ### Runtime ensure profiles
 

@@ -1,0 +1,1 @@
+- Pi workers drop the oldest images over a provider's per-request image cap (`FARMSLOT_PI_<SOURCE>_MAX_IMAGES`, a model's `maxImages`, or `inputLimits.images` in `models.json`) instead of failing the request.

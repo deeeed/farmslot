@@ -1,7 +1,8 @@
 // @farmslot:serial. Uses an owned detached host and OS process cleanup.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -9,7 +10,9 @@ import { RUNTIME_VERSION } from '../version.js';
 
 import { NativeSessionClient } from './client.js';
 import { setup, stopNativeStack, until } from './durability.test-support.js';
+import { nativeIdleStopCleanupMs } from './host-runtime.js';
 import { type HostIdentity, requestHost } from './ipc.js';
+import { currentRuntimeBuild, runtimeBuildIdentity } from './runtime-build.js';
 import { readJson } from './storage.js';
 import { decodeNativeWorkerLaunch } from './worker-launch.js';
 
@@ -73,6 +76,73 @@ test('busy host with unknown version stays alive and readable while admissions f
     await client.close('owner', session.id);
   } finally {
     await stopNativeStack(fixture);
+  }
+});
+
+// A source deploy rebuilds agent-runtime without bumping its version (0.50.6 before and after on
+// mini), so a host that loaded the old code passed the version check and kept running it: #2450's
+// Claude reviewer fix stayed inert until a manual host refresh.
+test('warm refreshes an idle host whose runtime build differs at the same version', async () => {
+  const fixture = setup();
+  const client = new NativeSessionClient(fixture.root);
+  try {
+    await client.warm();
+    const hostFile = join(fixture.root, 'host.json');
+    const before = readJson<HostIdentity>(hostFile);
+    assert.equal(before.runtimeBuild, currentRuntimeBuild());
+    writeFileSync(hostFile, JSON.stringify({ ...before, runtimeBuild: 'older-build' }));
+    await client.warm();
+    const after = readJson<HostIdentity>(hostFile);
+    assert.notEqual(after.pid, before.pid, 'an idle host must not keep the previous build');
+    assert.equal(after.runtimeVersion, RUNTIME_VERSION);
+    assert.equal(after.runtimeBuild, currentRuntimeBuild());
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('a busy host on an older build stays alive while new admissions fail', async () => {
+  const fixture = setup();
+  const client = new NativeSessionClient(fixture.root);
+  try {
+    await client.warm();
+    const session = await client.create('owner', { runner: 'codex', cwd: fixture.cwd });
+    const hostFile = join(fixture.root, 'host.json');
+    const before = readJson<HostIdentity>(hostFile);
+    writeFileSync(hostFile, JSON.stringify({ ...before, runtimeBuild: 'older-build' }));
+    await assert.rejects(client.warm(), { code: 'NATIVE_HOST_VERSION_SKEW' });
+    assert.equal(readJson<HostIdentity>(hostFile).pid, before.pid);
+    assert.equal((await client.inspect('owner', session.id)).id, session.id);
+    await assert.rejects(
+      client.create('owner', { runner: 'codex', cwd: fixture.cwd }),
+      /Native host runtime version skew/,
+    );
+    await client.close('owner', session.id);
+  } finally {
+    await stopNativeStack(fixture);
+  }
+});
+
+test('the runtime build follows code and ignores tests', () => {
+  const root = mkdtempSync(join(tmpdir(), 'runtime-build-'));
+  try {
+    mkdirSync(join(root, 'dist', 'native'), { recursive: true });
+    mkdirSync(join(root, 'scripts'));
+    writeFileSync(join(root, 'package.json'), '{"version":"0.50.6"}');
+    writeFileSync(join(root, 'dist', 'native', 'claude.js'), 'old');
+    writeFileSync(join(root, 'scripts', 'review-filesystem.cjs'), 'sandbox');
+    const build = () => runtimeBuildIdentity(root, ['dist', 'scripts']);
+    const first = build();
+    writeFileSync(join(root, 'dist', 'native', 'claude.test.js'), 'tests are not runtime');
+    writeFileSync(join(root, 'dist', 'native', 'claude.js.map'), 'maps are not runtime');
+    assert.equal(build(), first);
+    writeFileSync(join(root, 'dist', 'native', 'claude.js'), 'new');
+    assert.notEqual(build(), first, 'changed code at the same version is a new build');
+    const second = build();
+    writeFileSync(join(root, 'scripts', 'review-filesystem.cjs'), 'sandbox v2');
+    assert.notEqual(build(), second, 'a host-loaded script is part of the build');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -175,4 +245,11 @@ test('an acknowledged upgrade fence refuses late admission through host IPC and 
   } finally {
     await stopNativeStack(fixture);
   }
+});
+
+// A guard on the budget's arithmetic only: no test host is slow enough to show whether
+// stopIdleSessionsNativeHost passes it the live runner count.
+test('the idle-stop cleanup budget grows with each live runner', () => {
+  assert.equal(nativeIdleStopCleanupMs(0), 10_000);
+  assert.equal(nativeIdleStopCleanupMs(3), 55_000);
 });

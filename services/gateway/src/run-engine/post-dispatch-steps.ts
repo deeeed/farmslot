@@ -15,6 +15,7 @@ import {
   PipelineSteps,
   PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES,
   type ReadyGatePrPackage,
+  reviewFixRetriesExhausted,
   reviewPolicySatisfied,
   type ReviewSelection,
   type ReviewValidationDepth,
@@ -57,6 +58,7 @@ import { loadFleetStatus } from '../fleet/state.js';
 import { assertQaCompletion } from '../qa/completion.js';
 import { PIPELINE_REVIEW_SOURCE } from '../quality/review-sources.js';
 import { readPRCompletionHead } from '../review/acceptance-coverage.js';
+import { blockingReviewFindings } from '../review/approval-policy.js';
 import {
   executeReview,
   pipelineReviewSelection,
@@ -82,6 +84,7 @@ import {
   runCompletionPipeline,
 } from '../run-completion/orchestrator.js';
 import { captureRunOutput, failRunOutputCapture } from '../run-completion/output.js';
+import { measureCompleteStep, timeCompletePhase } from '../run-completion/phase-timing.js';
 import { withPublicationPackageStorageWait } from '../run-completion/publication-package-wait.js';
 import {
   computeReadyGateReviewSubjectHash,
@@ -918,6 +921,7 @@ export async function executeReviewStep(
   // The engine records partial I/O on failure; keep the selected reviewer for its next retry.
   stepPartialIO.set(runId, { inputs });
   const review = context.executeReviewForRun ?? executeReview;
+  const reviewGeneration = current.engineState?.generation ?? 0;
   let publicationReviewBudgetSpent = false;
   const executeReviewForRun: typeof executeReview = async (...args) => {
     let reviewed: ReviewResult;
@@ -932,11 +936,28 @@ export async function executeReviewStep(
         reviewLaunchRejection: rejection,
       });
     }
+    if (
+      (reviewed.verdict === 'issues' || reviewed.verdict === 'pass') &&
+      !runSupersededSince(getRun(runId), reviewGeneration)
+    ) {
+      const open =
+        reviewed.verdict === 'issues' && blockingReviewFindings(reviewed.issues ?? []).length
+          ? reviewed.issues
+          : undefined;
+      updateRun(runId, {
+        engineState: { ...getRun(runId)?.engineState, openReviewFindings: open },
+      });
+    }
     if (reviewed.verdict === 'issues') {
       const latest = getRun(runId);
       const budget = latest && (await runReviewRoundBudget(latest));
       if (budget?.remaining === 0) {
-        if (latest && requiresPublicationApproval(latest) && !reviewed.fixDeliveryFailure) {
+        if (
+          latest &&
+          requiresPublicationApproval(latest) &&
+          !reviewed.fixDeliveryFailure &&
+          (latest.mode === 'interactive' || !blockingReviewFindings(reviewed.issues ?? []).length)
+        ) {
           publicationReviewBudgetSpent = true;
           return reviewed;
         }
@@ -1006,7 +1027,25 @@ export async function executeReviewStep(
         PUBLICATION_REVIEW_LAUNCH_REJECTION_CODES.roundLimitReached
     ) {
       // A budget stop is not a new review verdict. The publication gate checks the retained
-      // reviews and every hard prerequisite before offering a person any override.
+      // reviews and every hard prerequisite before offering a person any override, unless the
+      // last review verdict left a blocker or major open: an autonomous run stops here, held
+      // when it delivered a result and failed when not (961d55d3). Interactive runs keep
+      // their gate, as before.
+      const latest = getRun(runId) ?? current;
+      const open = latest.engineState?.openReviewFindings;
+      if (open?.length && latest.mode !== 'interactive') {
+        const outputs = {
+          ...error.stepOutputs,
+          verdict: 'issues',
+          issues: open,
+          // A refused launch ran no review: the findings are the last verdict's.
+          ...(error.stepOutputs.verdict === 'issues' ? {} : { findingsFromLastReview: true }),
+        };
+        if (runDeliveredResult(latest))
+          throw new ResultDecisionHoldError(error.message, inputs, outputs);
+        stepPartialIO.set(runId, { inputs, outputs });
+        throw new Error(error.message);
+      }
       stepPartialIO.delete(runId);
       return { inputs, outputs: { ...error.stepOutputs, cliCommand } };
     }
@@ -1106,6 +1145,15 @@ export async function executeReviewStep(
         ? `${firstIssue.file}${firstIssue.line ? `:${firstIssue.line}` : ''}`
         : 'unknown';
       const message = firstIssue?.description ?? 'Review found issues';
+      // Only a spent fix budget is exhausted: a no-verdict cap stop leaves its rounds
+      // unspent, and labelling it exhausted misled run 961d55d3.
+      const maxRetriesExhausted = reviewFixRetriesExhausted({
+        verdict: 'issues',
+        issues: result.issues,
+        retryCount: result.retryCount,
+        maxRetries: result.maxRetries,
+        maxRetriesExhausted: result.maxRetriesExhausted === true,
+      });
       // Persist review outputs (verdict, retryCount, maxRetries, issues) so
       // the failure step in the UI can render "MAX RETRIES" + the residual issues
       // instead of just "x". Without this stepPartialIO call the catch handler
@@ -1115,7 +1163,7 @@ export async function executeReviewStep(
         outputs: {
           ...result,
           cliCommand,
-          maxRetriesExhausted: true,
+          maxRetriesExhausted,
         },
       });
       const retriesLabel =
@@ -1123,13 +1171,17 @@ export async function executeReviewStep(
           ? ` after ${result.retryCount}/${result.maxRetries} fix attempts`
           : '';
       const reason = `Review found ${issueCount || 'one or more'} issue(s)${retriesLabel} in ${location}: ${message}`;
-      if (requiresPublicationApproval(getRun(runId) ?? current)) {
+      if (
+        requiresPublicationApproval(getRun(runId) ?? current) &&
+        !blockingReviewFindings(result.issues ?? []).length
+      ) {
         // The review completed with issues, not a pass. Publication still requires an explicit
         // person choice at the human gate, including when the review budget is spent.
+        // An open blocker or major stops here instead: COMPLETE would package it (961d55d3).
         stepPartialIO.delete(runId);
         return {
           inputs: { ...inputs, enabled: true },
-          outputs: { ...result, cliCommand, maxRetriesExhausted: true },
+          outputs: { ...result, cliCommand, maxRetriesExhausted },
         };
       }
       // A delivered result waits for a person instead of failing (ADR-065 Amendment 7).
@@ -1137,7 +1189,7 @@ export async function executeReviewStep(
         throw new ResultDecisionHoldError(reason, inputs, {
           ...result,
           cliCommand,
-          maxRetriesExhausted: true,
+          maxRetriesExhausted,
         });
       throw new Error(reason);
     }
@@ -1156,7 +1208,9 @@ export async function holdSlotForPublicationGate(
   broadcastFn: (event: string, payload: unknown) => void,
 ): Promise<void> {
   await markSlotBusy(slotId, 'review-gate', 'working');
-  broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+  broadcastFn(Events.FLEET_UPDATED, {
+    fleet: await loadFleetStatus(true, false, { newest: true }),
+  });
 }
 
 /**
@@ -1331,7 +1385,9 @@ export async function executeHumanGateStep(
   // No-change COMPLETE can already have released the checkout.
   if (current.slotId && !noChangeGate) {
     await markSlotBusy(current.slotId, 'review-gate', 'working');
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+    broadcastFn(Events.FLEET_UPDATED, {
+      fleet: await loadFleetStatus(true, false, { newest: true }),
+    });
   }
 
   // Gate re-entry (restart recovery, step replay) presents a fresh decision;
@@ -1731,7 +1787,9 @@ export async function executeHumanGateStep(
   // Publication keeps its worker alive through finalize.
   if (current.slotId && !noChangeGate) {
     await markSlotBusy(current.slotId, 'working', 'working');
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+    broadcastFn(Events.FLEET_UPDATED, {
+      fleet: await loadFleetStatus(true, false, { newest: true }),
+    });
   }
 
   const after = getRun(runId)!;
@@ -1775,7 +1833,18 @@ async function releaseNoChangeCompletion(
   };
 }
 
+/** COMPLETE, with where its time went recorded on its outputs (`timing`). */
 export async function executeCompleteStep(
+  runId: string,
+  context: PostDispatchStepContext,
+): Promise<StepIO> {
+  const { value, timing } = await measureCompleteStep(() =>
+    executeCompleteStepUnmeasured(runId, context),
+  );
+  return value.outputs ? { ...value, outputs: { ...value.outputs, timing } } : value;
+}
+
+async function executeCompleteStepUnmeasured(
   runId: string,
   context: PostDispatchStepContext,
 ): Promise<StepIO> {
@@ -1897,7 +1966,9 @@ export async function executeCompleteStep(
   // Artifact-only workers deliberately leave a local diff. Snapshot it before
   // the completion pipeline retains the artifact manifest, without committing it.
   const artifactOnlyDiff = artifactOnly
-    ? await getDiffStat(current, { fresh: true, required: true })
+    ? await timeCompletePhase('diffStat', () =>
+        getDiffStat(current, { fresh: true, required: true }),
+      )
     : undefined;
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
@@ -1905,7 +1976,8 @@ export async function executeCompleteStep(
     noCodeDisposition,
     artifactOnly,
   };
-  if (current.flowType !== 'review-pr') await captureReviewInputArtifactsForRun(current);
+  if (current.flowType !== 'review-pr')
+    await timeCompletePhase('reviewInputs', () => captureReviewInputArtifactsForRun(current));
 
   const hasCIWatch = shouldSkipRetrospectiveAtComplete(current);
   const skipRetrospective = hasCIWatch;
@@ -1919,11 +1991,15 @@ export async function executeCompleteStep(
   broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
   if (shouldPrepareLocalFirstPackage(current)) {
     updateRunStep(runId, S.COMPLETE, { detail: 'Preparing local PR package...' });
-    const diffStat = await getDiffStat(current, { fresh: true });
-    const prepared = await prepareCompletionPackage(runId, {
-      diffStat,
-      requireArtifactMirror: true,
-    });
+    const diffStat = await timeCompletePhase('diffStat', () =>
+      getDiffStat(current, { fresh: true }),
+    );
+    const prepared = await timeCompletePhase('package', () =>
+      prepareCompletionPackage(runId, {
+        diffStat,
+        requireArtifactMirror: true,
+      }),
+    );
     await holdSlotForPublicationGate(current.slotId, broadcastFn);
     const cliCommand = `farmslot slot check ${current.slotId}`;
     return {
@@ -1951,16 +2027,20 @@ export async function executeCompleteStep(
       },
     };
   }
-  const completion = await runCompletionPipeline(runId, {
-    acceptanceIdentity,
-    skipRetrospective,
-    suppressPrMutation: noCodeDisposition || artifactOnly,
-    requireArtifactMirror: artifactOnly,
-    inheritedAcceptance,
-  });
-  await refreshRunLinks(runId);
+  const completion = await timeCompletePhase('pipeline', () =>
+    runCompletionPipeline(runId, {
+      acceptanceIdentity,
+      skipRetrospective,
+      suppressPrMutation: noCodeDisposition || artifactOnly,
+      requireArtifactMirror: artifactOnly,
+      inheritedAcceptance,
+    }),
+  );
+  await timeCompletePhase('links', () => refreshRunLinks(runId));
   if (completion.prNumber && current.flowType !== 'review-pr') {
-    await captureReviewInputArtifactsForRun(getRun(runId) ?? current);
+    await timeCompletePhase('reviewInputs', () =>
+      captureReviewInputArtifactsForRun(getRun(runId) ?? current),
+    );
   }
 
   const runBeforeDiff = getRun(runId) ?? current;
@@ -1971,7 +2051,9 @@ export async function executeCompleteStep(
   }
 
   // diffStat needs the slot's git tree; runs before slotRelease below.
-  const diffStat = artifactOnlyDiff ?? (await getDiffStat(getRun(runId) ?? current));
+  const diffStat =
+    artifactOnlyDiff ??
+    (await timeCompletePhase('diffStat', () => getDiffStat(getRun(runId) ?? current)));
   const finalizedEvalPackage = await finalizeEvalResultPackageForRun(getRun(runId) ?? current);
   const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
   const outputs = {
@@ -2036,7 +2118,8 @@ export async function executeCompleteStep(
       slotDisposition = 'release-deferred';
     } else {
       const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
-      slotDisposition = (await releaseCompletedRunSlot(current)).released
+      slotDisposition = (await timeCompletePhase('release', () => releaseCompletedRunSlot(current)))
+        .released
         ? 'released'
         : 'kept-shared-slot';
     }

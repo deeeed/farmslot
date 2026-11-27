@@ -14,18 +14,23 @@ import {
   agentDispatchWindow,
   agentRoleWindow,
   primaryRoleForFlow,
+  type Run,
   signalFileForTask,
 } from '@farmslot/protocol';
+
+import '../core/private-pool.test-support.js';
 
 import { resolveRecoverableCiFixContext } from '../ci-monitor/inline-fix.js';
 import { poolDirectory } from '../core/config.js';
 import { resolveAgentOrBareTarget, unavailableTerminalTarget } from '../methods/terminal.js';
+import { makeRun } from '../run-engine/test-fixtures.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   getAgentContexts,
   markAgentContextStatus,
   resolveAgentTarget,
+  runReachedDispatch,
   selectAgentContext,
   summarizeAgentContexts,
   synthesizePrimaryContext,
@@ -944,4 +949,55 @@ test('upsert without mirrorIf keeps the unconditional mirror', () => {
   assert.match(source, /updateSlotStatusIf\(updated\.slotId, options\.mirrorIf, mirrorFields\)/);
   // Callers that pass no predicate keep the previous behaviour.
   assert.match(source, /await updateSlotStatus\(updated\.slotId, mirrorFields\)/);
+});
+
+test('a run reached dispatch on any record a dispatch leaves, even after a replay reset the step', () => {
+  const worker: AgentContext = {
+    id: 'dev',
+    role: 'dev',
+    label: 'dev',
+    status: 'failed',
+    slotId: 'slot-1',
+    runId: 'run-1',
+  };
+  const fresh = makeRun({
+    steps: [
+      { name: 'prepare', status: 'skipped' },
+      { name: 'dispatch', status: 'skipped' },
+    ],
+    agentContexts: [worker],
+  });
+  assert.equal(runReachedDispatch(fresh), false, 'a cancel during prepare');
+  const dispatch = (patch: Partial<Run['steps'][number]>): Run => ({
+    ...fresh,
+    steps: [fresh.steps[0]!, { name: 'dispatch', status: 'skipped', ...patch }],
+  });
+  const at = '2026-11-24T00:00:00.000Z';
+  const workerWith = (patch: Partial<AgentContext>): Run => ({
+    ...fresh,
+    agentContexts: [{ ...worker, ...patch }],
+  });
+  const marked: Record<string, Run> = {
+    'no dispatch step': { ...fresh, steps: [fresh.steps[0]!] },
+    'dispatch started': dispatch({ startedAt: at }),
+    'dispatch outputs': dispatch({ outputs: { worker: 'dev' } }),
+    'dispatch done': dispatch({ status: 'done' }),
+    'task execution': {
+      ...fresh,
+      engineState: { taskExecution: { taskFile: 'task.json', startedAt: at } },
+    },
+    'review dispatch generation': {
+      ...fresh,
+      engineState: { workspaceReviewDispatchGeneration: 0 },
+    },
+    'head at dispatch': { ...fresh, worktreeHeadAtDispatch: 'a'.repeat(40) },
+    'run runner session': { ...fresh, metrics: { ...fresh.metrics, runnerSessionId: 'session' } },
+    'worker started': workerWith({ startedAt: at }),
+    'worker attempt started': workerWith({ attemptStartedAt: at }),
+    'worker prompt delivery': workerWith({ promptDeliveryStartedAt: at }),
+    'worker runner session': workerWith({ runnerSessionId: 'session' }),
+    'worker session archive': workerWith({ runnerSessionArchive: { status: 'captured' } }),
+  };
+  for (const [marker, run] of Object.entries(marked))
+    assert.equal(runReachedDispatch(run), true, marker);
 });

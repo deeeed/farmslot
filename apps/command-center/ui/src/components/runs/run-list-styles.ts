@@ -306,6 +306,15 @@ export const runListStyles = css`
     grid-column: 1 / -1;
     min-width: 0;
   }
+  .run-row-summary {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  /* Eval runs stay in the list but read as evals at a glance. */
+  .run-card.eval-run {
+    box-shadow: inset 3px 0 0 ${unsafeCSS(colors.accent)};
+  }
   .run-row-footer {
     display: flex;
     align-items: center;

@@ -5,7 +5,12 @@ import { type Run, runStepExecutionMs, runStepQueuedMs } from '@farmslot/protoco
 
 import { createRun, deleteRun, getRun, updateRun, updateRunStep } from '../runs/store.js';
 
-import { createPrepareProgressEmitter } from './dispatch-lifecycle-steps.js';
+import {
+  createPrepareProgressEmitter,
+  keptBranchRecorder,
+  type StepIO,
+  tempScrubRecorder,
+} from './dispatch-lifecycle-steps.js';
 import { awaitAsQueueTime } from './find-slot-step.js';
 import { stepEntryTiming } from './orchestrator.js';
 import { mirrorMonitorStepProgress } from './run-monitor.js';
@@ -248,4 +253,60 @@ test('the monitor step mirrors structured worker progress', (t) => {
   });
   mirrorMonitorStepProgress(getRun(run.id)!, iso(T0 + 127_000));
   assert.equal(step(run.id, 'monitor').lastProgressAt, iso(T0 + 127_000));
+});
+
+test('a kept branch stays in the prepare outputs through later progress, for a prepare that then fails', (t) => {
+  const run = devRun(t);
+  updateRunStep(run.id, 'prepare', { status: 'running', startedAt: iso(T0) });
+  const stepPartialIO = new Map<string, StepIO>();
+  const baseOutputs: Record<string, unknown> = { cliCommand: 'farmslot slot prepare slot-1' };
+  const emit = createPrepareProgressEmitter({
+    runId: run.id,
+    inputs: {},
+    baseOutputs,
+    collector: createSubStepCollector(),
+    stepPartialIO,
+    broadcastFn: () => {},
+  });
+  const kept = keptBranchRecorder(run.id, {}, baseOutputs, stepPartialIO);
+
+  kept('TAT-1-fix-kept-0123456789ab');
+  emit('script.step', { name: 'branch', detail: 'Kept unpushed commits of TAT-1-fix' });
+  emit('script.step', { name: 'deps', detail: 'Installing deps' });
+
+  // The orchestrator records a failed step's outputs from its partial outputs.
+  assert.deepEqual(stepPartialIO.get(run.id)?.outputs?.keptBranches, [
+    'TAT-1-fix-kept-0123456789ab',
+  ]);
+  assert.deepEqual(step(run.id, 'prepare').outputs?.keptBranches, ['TAT-1-fix-kept-0123456789ab']);
+});
+
+test('the temp/ clear-out stays in the prepare outputs through later progress', (t) => {
+  const run = devRun(t);
+  updateRunStep(run.id, 'prepare', { status: 'running', startedAt: iso(T0) });
+  const stepPartialIO = new Map<string, StepIO>();
+  const baseOutputs: Record<string, unknown> = { cliCommand: 'farmslot slot prepare slot-1' };
+  const emit = createPrepareProgressEmitter({
+    runId: run.id,
+    inputs: {},
+    baseOutputs,
+    collector: createSubStepCollector(),
+    stepPartialIO,
+    broadcastFn: () => {},
+  });
+  const receipt = {
+    removed: [{ type: 'entry' as const, path: 'temp/scratch', kind: 'dir' }],
+    removedCount: 1,
+    kept: [],
+    keptCount: 0,
+    refused: [],
+    refusedCount: 0,
+  };
+
+  tempScrubRecorder(run.id, {}, baseOutputs, stepPartialIO)(receipt);
+  emit('script.step', { name: 'clean', detail: 'Removed dir temp/scratch' });
+  emit('script.step', { name: 'deps', detail: 'Installing deps' });
+
+  assert.deepEqual(stepPartialIO.get(run.id)?.outputs?.tempScrub, receipt);
+  assert.deepEqual(step(run.id, 'prepare').outputs?.tempScrub, receipt);
 });

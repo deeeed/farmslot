@@ -1,1 +1,0 @@
-- `CLAUDE_CLI_EFFORTS` is the Claude CLI effort list: low, medium, high, xhigh, and max.

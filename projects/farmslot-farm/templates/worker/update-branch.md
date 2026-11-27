@@ -37,9 +37,9 @@ merge commit.
 - [ ] **6. Changed-file CI** [DETERMINISTIC: ci.local_check] - call `{{TASK_DIR}}/mark 6`. The engine runs the frozen command and records its receipt. Read the retained failure log and fix failures, then repeat this mark. Do not select or launch tests, builds, lint or validation scripts yourself.
 - [ ] **7. Push** — publish the updated branch with an explicit lease against the recorded remote PR-head SHA. Record the exact push command used.
 - [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` recording: publication base, validation results, conflict resolution, exact push command and any remaining risks.
-- [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
+- [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Write it in Learnings v1: first line `# Learnings v1`, then `- None` when there is none, or one entry per failure in this run that is likely to recur: `- <kind>: <one-line lesson>` with two-space-indented fields. Kinds: `add`, `edit` or `retire` for a review rule (`evidence: <repo> <path>:<line>`; `family: <file>.md#<section>`, or `examined: <file>.md#<section>, ...` for an add; `confirmation: run <other run id> <path>:<line>`, `fix <owner/repo#n>` or `none`, where this run's own report or review is `none`), `recipe-broken` or `recipe-missing` for a recipe, `workflow` for a template, tool or setup step. `./mark` prints the full format and warns on a malformed file.
 - [ ] **10. Signal completion** — run `{{TASK_DIR}}/mark complete --mark-last`
 
 ## Recipe proof + acceptance review
 
-Follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. Retain the recipe results and resolve refused checks before completing the checklist.
+Follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. The proof this task claims is the attempt selected in `artifacts/latest-valid-recipe-run.json`; a task-root `evidence-manifest.json` is optional and only declares extra evidence. Retain the recipe results and resolve refused checks before completing the checklist.

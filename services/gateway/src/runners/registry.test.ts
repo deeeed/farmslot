@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
@@ -16,6 +20,7 @@ import {
   buildLaunchCommand,
   type BuildLaunchOptions,
   buildRunnerSessionReloadCommand,
+  CLAUDE_WORKER_ENV_UNSET,
   withTaskRecipeTrustEnvironment,
 } from './launch-command.js';
 import { readPaneStateFromCapture } from './pane-state-script.js';
@@ -56,7 +61,6 @@ import {
   getRunnerObservability,
   grokPaneShowsColdStartSession,
   isRunnerPaneRetired,
-  keyForClassifierTrustAction,
   KNOWN_RUNNERS,
   normalizeRunner,
   resolveLaunchBlockerWithFreshEvidence,
@@ -409,52 +413,6 @@ describe('cursor runner', () => {
       autoAction: 'grok-select-current-project',
     });
     assert.equal(detectRunnerLaunchBlocker(pane, 'cursor'), null);
-  });
-
-  it('maps classifier trust_prompt/send_yes to the Grok project-directory confirmation key', () => {
-    const pane = `
-  Run Grok Build in a project directory?
-  1 (○) farmslot-grok-probe (current)
-  Enter:submit
-`;
-    assert.equal(
-      keyForClassifierTrustAction(
-        { state: 'trust_prompt', confidence: 0.99, suggestedAction: 'send_yes' },
-        'grok',
-        pane,
-      ),
-      'Enter',
-    );
-    assert.equal(
-      keyForClassifierTrustAction(
-        { state: 'trust_prompt', confidence: 0.99, suggestedAction: 'send_yes' },
-        'cursor',
-        `
-  ▶ [a] Trust this workspace
-    [q] Quit
-  Use arrow keys to navigate
-`,
-      ),
-      'a',
-    );
-    // Truncated pane: detector may miss markers, but classifier send_yes still
-    // maps to Grok's confirmation key so ready-timeout recovery can fire.
-    assert.equal(
-      keyForClassifierTrustAction(
-        { state: 'trust_prompt', confidence: 0.99, suggestedAction: 'send_yes' },
-        'grok',
-        'Run Grok Build in a project directory?\n1 (○) probe',
-      ),
-      'Enter',
-    );
-    assert.equal(
-      keyForClassifierTrustAction(
-        { state: 'ready', confidence: 0.99, suggestedAction: 'send_yes' },
-        'grok',
-        pane,
-      ),
-      null,
-    );
   });
 
   it('resolveLaunchBlockerWithFreshEvidence sends the detector key for the captured target', async () => {
@@ -1771,7 +1729,13 @@ describe('buildLaunchCommand', () => {
           provider === routerId || provider === 'router' ? 'ROUTER' : provider.toUpperCase();
         for (const source of ['ROUTER', 'LITELLM', 'OLLAMA'] as const) {
           const selected = source === kind;
-          for (const setting of ['CONTEXT', 'MAX_TOKENS', 'REASONING', 'MODEL_LIMITS'])
+          for (const setting of [
+            'CONTEXT',
+            'MAX_TOKENS',
+            'MAX_IMAGES',
+            'REASONING',
+            'MODEL_LIMITS',
+          ])
             assert.equal(admitted.includes(`FARMSLOT_PI_${source}_${setting}`), selected);
           const endpoint = {
             ROUTER: 'FARMSLOT_PI_ROUTER_URL',
@@ -1938,7 +1902,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, { safetyTier: 'full-auto' });
       assert.match(
         cmd,
-        /unset CLAUDECODE && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
+        /unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
       );
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
       assert.match(cmd, /--runner 'claude' --repo '\/tmp\/repo'/);
@@ -1956,7 +1920,7 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
+        /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && \/usr\/local\/bin\/claude --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json'$/,
       );
       assert.match(cmd, /install failed; continuing without hooks/);
       assert.match(cmd, /mkdir -p '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability'/);
@@ -1977,8 +1941,59 @@ describe('buildLaunchCommand', () => {
       assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
-        /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
+        /unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && cd \/tmp\/repo && \/usr\/local\/bin\/claude --settings '\/tmp\/\.farmslot-runtime\/repo\/\.agent\/\.observability\/claude-settings\.json' --model opus \.task\/fix\/abc\/TASK\.md/,
       );
+    });
+
+    it('drops a default-socket TMUX but keeps TMUX_PANE on every Claude worker launch path', () => {
+      // iTerm's user-level agent hook asks iTerm for the session showing $TMUX's
+      // pane and never returns for a detached worker pane.
+      const vars = makeVars({ dispatchCmd: 'cd {repo} && {claude_path} --model {model}' });
+      const commands = [
+        ['inline', buildLaunchCommand(makeVars({ dispatchCmd: '' }), 'claude', 'opus', PROMPT)],
+        [
+          'dispatch_cmd',
+          buildLaunchCommand(vars, 'claude', 'opus', PROMPT, { claudeUsesDispatchCmd: true }),
+        ],
+        ['reload', buildRunnerSessionReloadCommand(vars, 'claude', 'opus', 'sess-1')],
+      ] as const;
+      for (const [name, cmd] of commands) {
+        assert.ok(cmd.includes(`${CLAUDE_WORKER_ENV_UNSET} && `), name);
+        assert.doesNotMatch(cmd, /TMUX_PANE/, name);
+      }
+      const tmuxTmpdir = mkdtempSync(path.join(os.tmpdir(), 'claude-worker-tmux-'));
+      const fallbackSocket = path.join(
+        realpathSync(tmuxTmpdir),
+        `tmux-${process.getuid?.()}`,
+        'default',
+      );
+      const envAfterUnset = (tmux: string, tmpdir = tmuxTmpdir): string =>
+        execFileSync(
+          'bash',
+          ['-c', `${CLAUDE_WORKER_ENV_UNSET} && printf '%s|%s' "\${TMUX-unset}" "$TMUX_PANE"`],
+          {
+            env: { PATH: process.env.PATH, TMUX: tmux, TMUX_PANE: '%7', TMUX_TMPDIR: tmpdir },
+            encoding: 'utf8',
+          },
+        );
+      try {
+        assert.equal(envAfterUnset(`${fallbackSocket},1889,55`), 'unset|%7');
+        // tmux falls back to /tmp when TMUX_TMPDIR is missing.
+        const tmpSocket = path.join(realpathSync('/tmp'), `tmux-${process.getuid?.()}`, 'default');
+        assert.equal(envAfterUnset(`${tmpSocket},1,0`, path.join(tmuxTmpdir, 'gone')), 'unset|%7');
+        // An existing non-directory is not skipped by tmux, so TMUX keeps its routing.
+        const notDir = path.join(tmuxTmpdir, 'file');
+        writeFileSync(notDir, '');
+        assert.equal(envAfterUnset(`${tmpSocket},1,0`, notDir), `${tmpSocket},1,0|%7`);
+        for (const kept of [
+          path.join(path.dirname(fallbackSocket), 'cross-model-demo'),
+          '/private/tmp/isolated/default',
+        ]) {
+          assert.equal(envAfterUnset(`${kept},1889,55`), `${kept},1889,55|%7`);
+        }
+      } finally {
+        rmSync(tmuxTmpdir, { recursive: true, force: true });
+      }
     });
 
     it('preserves selected effort once across the Claude tmux launch paths', () => {
@@ -2765,7 +2780,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /install-runner-observability\.mjs/);
     assert.match(
       cmd,
-      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && if \[ .+? \]; then unset TMUX; fi && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --settings '\/tmp\/\.farmslot-runtime\/repo\/temp\/recipe\/runtime\/\.observability\/claude-settings\.json' --resume 'session-123' 'Read and execute TASK.md'$/,
     );
     assert.match(
       cmd,

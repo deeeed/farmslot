@@ -41,7 +41,12 @@ import {
   resumeInterruptedPublicationReview,
 } from './ready-gate.js';
 import { reviewLineageOptionsForRun } from './review-plan.js';
-import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
+import {
+  deleteTestRunIfPresent,
+  makeFreedSlotPark,
+  makeReadyGatePackage,
+  makeRun,
+} from './test-fixtures.js';
 
 const prLinkage = await import('../integrations/pr-linkage.js');
 mock.module('../integrations/pr-linkage.js', {
@@ -593,34 +598,7 @@ test('a resolved publication gate fails closed when the run park freed its slot'
   const base = makeRun({ id: 'run-gate-parked', flowType: 'dev', mode: 'autonomous' });
   assert.equal(freedSlotGateResolutionBlocker(base), null);
 
-  const parked: Run = {
-    ...base,
-    park: {
-      version: 1,
-      operationId: 'park-1',
-      previewId: 'preview-1',
-      runId: base.id,
-      generation: 1,
-      machine: 'machine-a',
-      slotId: base.slotId!,
-      mode: 'release',
-      phase: 'parked',
-      slotDisposition: 'freed',
-      slotFreedAt: '2026-09-05T00:00:10.000Z',
-      prePauseStatus: 'human-gating',
-      prePauseCurrentStep: { index: 1, name: 'human-gate', status: 'running' },
-      resourceManifest: {
-        capturedAt: '2026-09-05T00:00:00.000Z',
-        resources: [],
-        capabilityLeases: [],
-      },
-      recoveryHandle: null,
-      errors: [],
-      residuals: { runner: 'stopped', resources: [] },
-      createdAt: '2026-09-05T00:00:00.000Z',
-      updatedAt: '2026-09-05T00:00:10.000Z',
-    },
-  };
+  const parked: Run = { ...base, park: makeFreedSlotPark(base) };
   const blocker = freedSlotGateResolutionBlocker(parked);
   // BlockedRunError so the engine marks the run `blocked`, not `failed`: cancel
   // refuses terminal runs, and a failed run would strand the park record.

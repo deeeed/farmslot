@@ -9,7 +9,7 @@ export function staticReviewReplayBlock(
 ): string | null {
   if (!run.reviewWorkspaceTarget) return null;
   if (run.reviewWorkspace?.transferredTo)
-    return 'This review workspace belongs to its successor. Continue the latest review run.';
+    return `This review workspace belongs to run ${run.reviewWorkspace.transferredTo.runId}. Continue that review run's lineage.`;
   if (run.reviewWorkspace?.retirement && !run.reviewWorkspace.cleanedAt)
     return 'Workspace retention cleanup is pending; retry after the owned operation settles.';
   const ownsAttempt = Boolean(
@@ -46,9 +46,17 @@ export interface ReviewWorkspaceSupportSource {
 export interface ReviewWorkspaceSupportEntry extends ReviewWorkspaceSupportSource {
   entry: string;
 }
+/**
+ * A review skill run by its own mechanism (ADR-058 Amendment 4): the skill repository's
+ * `tools/install` installs it for `repo` into the review checkout, as an engineer installs it,
+ * and its `scripts/review-task.mjs` round folder is the review.
+ */
+export interface ReviewWorkspaceSkillEntry extends ReviewWorkspaceSupportEntry {
+  install?: { repo: string };
+}
 /** Trusted farm configuration. This contract accepts files and installed packages, never commands. */
 export interface ReviewWorkspaceSupportConfig {
-  skills?: ReviewWorkspaceSupportEntry[];
+  skills?: ReviewWorkspaceSkillEntry[];
   libraries?: ReviewWorkspaceSupportSource[];
   runtime?: ReviewWorkspaceSupportEntry;
   environment?: Record<string, string>;
@@ -65,7 +73,20 @@ export interface ReviewWorkspaceSupportBinding {
     packageName?: string;
     packageVersion?: string;
   }>;
-  skills: Array<{ name: string; path: string }>;
+  skills: Array<{
+    name: string;
+    path: string;
+    /** Installed with the frozen skill repository's `tools/install` (ADR-058 Amendment 4). */
+    install?: {
+      repo: string;
+      /** Frozen skill source tree on the node: `tools/` and the skill directory. */
+      source: string;
+      /** `<domain>/<skill>`, the installer's `--include`. */
+      include: string;
+      /** The installed directory name, `mms-<skill>`. */
+      installedName: string;
+    };
+  }>;
   runtime?: { name: string; path: string };
   /** Literal configuration with {{support}} and {{<key>_repo}} bound at native launch. Never credentials. */
   environment: Record<string, string>;
@@ -109,6 +130,20 @@ export interface ReviewWorkspaceSubject {
   url?: string;
 }
 
+/** A review skill's round folder, `temp/tasks/review/<target>/r<N>` in the review checkout. */
+export interface ReviewTaskRound {
+  /** Absolute path on the execution node. */
+  folder: string;
+  round: number;
+  mode: 'cold' | 'warm';
+  headSha: string;
+  /** The skill revision `review-task.mjs` recorded. */
+  revision: string;
+  startedAt: string;
+  /** The attempt opened by the skill's initial checklist mark. */
+  attemptId: string;
+}
+
 /** Trusted binding created by the execution runtime, never supplied by a caller. */
 export interface ReviewWorkspaceBinding {
   workspaceId: string;
@@ -119,9 +154,15 @@ export interface ReviewWorkspaceBinding {
   artifactPath: string;
   /** Exact predecessor source identity used for an exclusive stopped-session transfer. */
   continuedFrom?: { runId: string; headSha: string; baseSha: string; taskPath: string };
-  /** Durable successor claim. A predecessor can no longer execute or reclaim this workspace. */
+  /**
+   * Durable claim by another run: the successor that continued this workspace (this run can no
+   * longer execute or reclaim it), or, on a continuation that never launched its reviewer, the
+   * predecessor it handed the workspace back to.
+   */
   transferredTo?: { runId: string; generation: number };
   support?: ReviewWorkspaceSupportBinding;
+  /** The skill's review round this run owns (ADR-058 Amendment 4), from its `review.json`. */
+  reviewTask?: ReviewTaskRound;
   /** Frozen retention policy. Configuration changes do not move existing bindings. */
   retentionDays?: number;
   retainedAt?: string;

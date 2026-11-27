@@ -6,6 +6,50 @@ All notable changes to `@farmslot/adapter-web` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.19.36 - 2026-11-26
+
+- Recover Web DApp launches when the saved browser has lost its app tab or shows an error page, using the existing profile and network protections.
+
+## 0.19.35 - 2026-11-25
+
+- Uses recipe-runner 0.52.5: `ui.wait_for` on a busy page ends with its own timeout instead of a raw CDP timeout.
+
+## 0.19.34 - 2026-11-25
+
+- Republished in the 25 Nov cohort release with the other @farmslot packages, so an install resolves one copy of each.
+
+## 0.19.33 - 2026-11-24
+
+- A Terminal (web-dapp) launch with no display choice runs headless when the macOS session is locked, instead of refusing with SESSION_LOCKED. Headful stays the default when the screen can paint; an explicit `--headful` or `TERMINAL_HEADLESS=0` on a locked session still refuses.
+
+## 0.19.32 - 2026-11-24
+
+- The injected wallet presented as MetaMask also answers the extension's window streams (`metamask-provider` and the `metamask-multichain-provider` session API), so apps that log in through `@metamask/connect-multichain`, such as the Web Terminal's Web3Auth login, finish starting and can connect.
+
+## 0.19.31 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+
+## 0.19.30 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+
+## 0.19.29 - 2026-11-21
+
+- Pin the pending flow and recording timeline producer cohort.
+
+## 0.19.28 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
+## 0.19.27 - 2026-11-19
+
+- Pin the qualified invocation-timing SDK cohort with exact package dependencies.
+
+## 0.19.26 - 2026-11-19
+
+- Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.
+
 ## 0.19.25 - 2026-11-18
 
 - Align published dependencies with @farmslot/adapter-sdk 0.28.7, @farmslot/protocol 0.90.0, @farmslot/recipe-runner 0.48.0.

@@ -1,0 +1,1 @@
+- Regenerated the gateway API reference for the run trace methods (`run.grade.external.record`, `run.interview.record`, `run.episode.recapture`).

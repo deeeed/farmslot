@@ -5,6 +5,7 @@ import type { Run } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import { runBundleRetentionSettings, withRunBundleStoreLock } from '@farmslot/run-bundle';
 
+import { reportGatewayWarning } from '../../chat/copilot-observer.js';
 import { projectTaskRoots } from '../../core/config.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../../core/index.js';
 import {
@@ -13,9 +14,14 @@ import {
   resolveFamilyIdentity,
 } from '../../family-observability/context.js';
 import { loadProjectConfig } from '../../fleet/state.js';
+import {
+  nodeJournalRetentionDeps,
+  nodeJournalRetentionPass,
+} from '../../host-services/node-native-journals.js';
 import { nodeTaskPinRetentionPass } from '../../host-services/node-task-pins.js';
 import { github } from '../../integrations/github-client.js';
 import { reviewPRIdentity } from '../../review/session-mode.js';
+import { cleanupReviewWorkspaceCaches } from '../../review-workspaces/cache-cleanup.js';
 import { reclaimReviewWorkspaceStorage } from '../../review-workspaces/storage-use.js';
 import {
   archiveRunArtifactHousekeeping,
@@ -26,7 +32,13 @@ import {
 import { captureMissingRunEpisodes } from '../../run-completion/run-episode.js';
 import { parkedWorkRetentionPass } from '../../run-lifecycle/parked-work-retention.js';
 import { nativeSessionManager } from '../../runners/native/manager.js';
+import { journalRetentionFile } from '../../runs/native-journal-retention.js';
 import {
+  archiveOrphanSlotScaffolding,
+  type OrphanScaffoldingResult,
+} from '../../runs/orphan-scaffolding.js';
+import {
+  countsAsRetentionEntry,
   DAY_MS,
   diskBytes,
   exists,
@@ -243,7 +255,14 @@ export const RUN_RETENTION_DEPS: RunRetentionDeps = {
 
 /** Archive irreplaceable storage and delete recreatable copies only for eligible runs. Live and archived run records stay in place forever. */
 export async function runRetentionPass(
-  options: { apply: boolean; emit?: Emit; now?: number; roots?: RunRetentionRoots },
+  options: {
+    apply: boolean;
+    emit?: Emit;
+    now?: number;
+    roots?: RunRetentionRoots;
+    /** Archive node-hosted journals of the runs this pass released (ADR-039 Amendment 11). */
+    nodeJournals?: (released: readonly Run[], held: readonly Run[]) => Promise<void>;
+  },
   deps: RunRetentionDeps = RUN_RETENTION_DEPS,
 ): Promise<RunRetentionPlan> {
   if (options.apply && !options.roots) {
@@ -434,11 +453,94 @@ export async function runRetentionPass(
     archived.push(staged.id);
     for (const file of staged.files) {
       paths[file.store].push(file.source);
-      stores[file.store].entries++;
+      if (countsAsRetentionEntry(file.store, file.source)) stores[file.store].entries++;
       stores[file.store].bytes += file.bytes;
     }
   }
+  if (options.nodeJournals) {
+    try {
+      // Read the runs again: one held since the pass began (reopened, or dispatched to resume a
+      // released session) keeps its sessions, and a run created since then is held.
+      const released: Run[] = [];
+      const held: Run[] = [];
+      const fresh = await getAllRunsWithArchived();
+      const live = getAllRuns();
+      // currentRetentionHold for every run at once: the live runs' reads are mapped one time.
+      const sources = activeSourceHolds(live, [...fresh, ...live]);
+      for (const run of fresh) {
+        const hold = runRetentionHold(run, context) ?? sources.get(run.id);
+        (hold || (await deps.holdsSlot(run)) ? held : released).push(run);
+      }
+      await options.nodeJournals(released, held);
+    } catch (error) {
+      console.error(`[native-journal retention] pass failed: ${(error as Error).message}`);
+    }
+  }
   return { runs: archived, held: plan.held, paths, stores };
+}
+
+/** The review execution caches, as `run.cleanup` and the hourly pass both clean them. */
+export function cleanGatewayReviewCaches(dryRun: boolean): Promise<string[]> {
+  const paths = currentFarmPaths('gateway');
+  return cleanupReviewWorkspaceCaches(dryRun, {
+    runs: getAllRunsWithArchived,
+    runsDir: runsDirectory(),
+    ...(paths.layout === 2 ? { supportRoot: paths.state.reviewWorkspaceSupport } : {}),
+    nativeRoot: nativeSessionManager.root,
+  });
+}
+
+export interface SharedStoreRetentionDeps {
+  cleanReviewCaches: () => Promise<string[]>;
+  archiveScaffolding: () => Promise<OrphanScaffoldingResult>;
+  warn: (type: string, summary: string) => void;
+}
+
+export const SHARED_STORE_RETENTION_DEPS: SharedStoreRetentionDeps = {
+  cleanReviewCaches: () => cleanGatewayReviewCaches(false),
+  archiveScaffolding: async () =>
+    archiveOrphanSlotScaffolding({
+      scaffoldingRoot: path.join(runsDirectory(), 'slot-scaffolding'),
+      archiveRoot: runArchiveRoot(),
+      maxAgeMs: RUN_RETENTION_DEPS.retentionDays() * DAY_MS,
+    }),
+  warn: reportGatewayWarning,
+};
+
+/**
+ * ADR-039 Amendment 9: stores no run owns. Each step runs whatever the other or the run pass
+ * did; an unavailable archive root skips the scaffolding move and reports it.
+ */
+export async function sharedStoreRetentionPass(
+  deps: SharedStoreRetentionDeps = SHARED_STORE_RETENTION_DEPS,
+): Promise<{ reviewCaches?: string[]; scaffolding?: OrphanScaffoldingResult }> {
+  const result: { reviewCaches?: string[]; scaffolding?: OrphanScaffoldingResult } = {};
+  try {
+    result.reviewCaches = await deps.cleanReviewCaches();
+    if (result.reviewCaches.length)
+      console.log(`[run-retention] removed ${result.reviewCaches.length} review cache dir(s)`);
+  } catch (error) {
+    console.error(`[run-retention] review cache cleanup failed: ${(error as Error).message}`);
+  }
+  try {
+    const scaffolding = await deps.archiveScaffolding();
+    result.scaffolding = scaffolding;
+    const bytes = scaffolding.archived.reduce((total, entry) => total + entry.bytes, 0);
+    if (scaffolding.archived.length)
+      console.log(
+        `[run-retention] archived ${scaffolding.archived.length} orphan scaffolding collection(s) (${(bytes / 1e9).toFixed(2)} GB)`,
+      );
+    if (scaffolding.skipped)
+      deps.warn(
+        'run-retention.scaffolding-archive-skipped',
+        `${scaffolding.pending} orphan slot scaffolding collection(s) stay on local disk: ${scaffolding.skipped}`,
+      );
+    for (const failure of scaffolding.failed)
+      console.error(`[run-retention] scaffolding archive failed; source retained: ${failure}`);
+  } catch (error) {
+    console.error(`[run-retention] orphan scaffolding pass failed: ${(error as Error).message}`);
+  }
+  return result;
 }
 
 export function formatRunRetention(plan: RunRetentionPlan): string {
@@ -451,6 +553,21 @@ export function formatRunRetention(plan: RunRetentionPlan): string {
   return `${plan.runs.length} run(s): ${stores}`;
 }
 
+/** One hourly turn: the run pass, then the stores no run owns, whatever the run pass did. */
+export async function retentionTurn(
+  runPass: () => Promise<void>,
+  sharedPass: () => Promise<unknown> = () => sharedStoreRetentionPass(),
+): Promise<void> {
+  try {
+    await runPass();
+  } catch (err) {
+    console.error(
+      `[run-retention] ARCHIVE FAILED; source storage retained: ${(err as Error).stack}`,
+    );
+  }
+  await sharedPass();
+}
+
 /** The gateway itself checks its archive access, including removable-volume privacy, before every pass. */
 export function startRunRetention(emit: Emit): void {
   if (process.env.FARMSLOT_SANDBOX_HOME) return;
@@ -458,20 +575,23 @@ export function startRunRetention(emit: Emit): void {
   const pass = () => {
     if (running) return;
     running = true;
-    runRetentionPass({ apply: true, emit })
-      .then(async (plan) => {
-        await nodeTaskPinRetentionPass(Date.now(), (await retentionContext([])).ageMs);
-        await parkedWorkRetentionPass();
-        if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);
-      })
-      .catch((err) =>
-        console.error(
-          `[run-retention] ARCHIVE FAILED; source storage retained: ${(err as Error).stack}`,
-        ),
-      )
-      .finally(() => {
-        running = false;
+    void retentionTurn(async () => {
+      const plan = await runRetentionPass({
+        apply: true,
+        emit,
+        nodeJournals: (released, held) =>
+          nodeJournalRetentionPass(
+            released,
+            held,
+            nodeJournalRetentionDeps(journalRetentionFile(runArchiveRoot())),
+          ),
       });
+      await nodeTaskPinRetentionPass(Date.now(), (await retentionContext([])).ageMs);
+      await parkedWorkRetentionPass();
+      if (plan.runs.length) console.log(`[run-retention] ${formatRunRetention(plan)}`);
+    }).finally(() => {
+      running = false;
+    });
   };
   assertArchiveRoot(runArchiveRoot())
     .then(() => console.log(`[run-retention] gateway archive root writable: ${runArchiveRoot()}`))

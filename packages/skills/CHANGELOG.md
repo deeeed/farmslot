@@ -6,6 +6,35 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.13.25 - 2026-11-25
+
+- The child-unit example marks the rows done so far in one call (`mark sub perps-review 1-4`) and finishes with `complete --rows`, instead of one call per row.
+- Republished in the 25 Nov cohort release with the other @farmslot packages, so an install resolves one copy of each.
+
+## 0.13.24 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+
+## 0.13.23 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+
+## 0.13.22 - 2026-11-21
+
+- Pin the pending flow and recording timeline producer cohort.
+
+## 0.13.21 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
+## 0.13.20 - 2026-11-19
+
+- Pin the qualified invocation-timing SDK cohort with exact package dependencies.
+
+## 0.13.19 - 2026-11-19
+
+- Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.
+
 ## 0.13.18 - 2026-11-18
 
 - Align published dependencies with @farmslot/agent-runtime 0.50.0, @farmslot/protocol 0.90.0.

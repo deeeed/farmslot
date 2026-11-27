@@ -1,0 +1,1 @@
+- Run installed review skills against the frozen PR head. Read live progress and results from the skill's own checklist, ledger and verdict.

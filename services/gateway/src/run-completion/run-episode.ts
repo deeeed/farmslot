@@ -15,6 +15,7 @@ import {
   type Run,
   type RunArtifactBundleRef,
   type RunBundleEntryMeta,
+  type RunPrepareArtifact,
 } from '@farmslot/protocol';
 import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 import {
@@ -25,6 +26,8 @@ import {
 } from '@farmslot/run-bundle';
 
 import { writeAtomicJSON } from '../core/atomic-json.js';
+import { buildTraceLabels, type TraceLabels } from '../run-traces/labels.js';
+import { archiveRefsOf } from '../runners/session-archive.js';
 import { runsDirectory } from '../runs/store.js';
 
 export const RUN_EPISODE_SCHEMA = 'farmslot-episode-v1';
@@ -54,6 +57,8 @@ export interface RunEpisode {
     summary?: string;
     branch?: string | null;
     startRef?: string;
+    /** The build on the slot for `startRef` (see Run.prepareArtifact). */
+    prepareArtifact?: RunPrepareArtifact;
     dispatchHead?: string | null;
     pr?: { repo?: string; number: number };
     files: RunEpisodeFile[];
@@ -63,7 +68,18 @@ export interface RunEpisode {
     /** One entry per recipe-run directory, in path order. */
     recipeRuns: { dir: string; files: RunEpisodeFile[] }[];
     agents: (Pick<AgentContext, 'role' | 'runner' | 'model' | 'runnerSessionId'> & {
+      /** The latest captured session, as before per-session archives. */
       archive?: { relativeDir?: string; sha256?: string; sizeBytes?: number };
+      /** ADR-039 Amendment 10: absent on episodes captured before it. */
+      contextId?: string;
+      sessions?: {
+        sessionKey: string | null;
+        status: string;
+        relativeDir?: string;
+        sha256?: string;
+        sizeBytes?: number;
+        answersRound?: number;
+      }[];
     })[];
     steps: { name: string; status: string; startedAt?: string; completedAt?: string }[];
     recoveryAttempts: number;
@@ -76,7 +92,7 @@ export interface RunEpisode {
     reviews: RunEpisodeFile[];
     recipeQuality: RunEpisodeFile[];
     evidence: RunEpisodeFile[];
-  };
+  } & Partial<TraceLabels>;
   /**
    * The pinned recipe sources the run executed: the provider package and each
    * library revision, copied from the task's recipe binding and its
@@ -258,6 +274,7 @@ export function buildRunEpisode(
       summary: run.summary,
       branch: run.branch,
       startRef: run.startRef?.resolvedSha ?? run.startRef?.requestedRef,
+      ...(run.prepareArtifact ? { prepareArtifact: run.prepareArtifact } : {}),
       dispatchHead: run.worktreeHeadAtDispatch,
       pr,
       files: inputs,
@@ -275,6 +292,16 @@ export function buildRunEpisode(
           sha256: context.runnerSessionArchive.sha256,
           sizeBytes: context.runnerSessionArchive.sizeBytes,
         },
+        contextId: context.id,
+        sessions: archiveRefsOf(context.runnerSessionArchives, context.runnerSessionArchive).map(
+          (ref) => ({
+            sessionKey: ref.sessionKey ?? null,
+            status: ref.status,
+            ...(ref.relativeDir ? { relativeDir: ref.relativeDir } : {}),
+            ...(ref.sha256 ? { sha256: ref.sha256, sizeBytes: ref.sizeBytes } : {}),
+            ...(ref.answersRound !== undefined ? { answersRound: ref.answersRound } : {}),
+          }),
+        ),
       })),
       steps: run.steps.map(({ name, status, startedAt, completedAt }) => ({
         name,
@@ -296,6 +323,7 @@ export function buildRunEpisode(
       reviews,
       recipeQuality,
       evidence,
+      ...buildTraceLabels(run),
     },
     provenance,
     sources: {

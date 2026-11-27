@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { type ArtifactRef, type ReviewDiffSnapshot, type Run } from '@farmslot/protocol';
 
+import { isConventionalCommitSubject } from '../../../../scripts/quality/conventional-subject.mjs';
 import { getProjectField, inferArtifactPurpose } from '../core/index.js';
 import { contributionStack } from '../run-engine/diff-artifacts.js';
 import { loadProjectVarsOrNull } from '../run-engine/project-vars.js';
@@ -33,11 +34,15 @@ function inferDraftPrTitleScope(run: Run): string {
   return '';
 }
 
+// Same optional separator as the platform prefix above: colon, em dash, or hyphen.
+export function stripIssueBracketTag(title: string): string {
+  return title.replace(/^\[(?:bug|feature)\]\s*[:—-]?\s*/i, '');
+}
+
 function sanitizeDraftPrTitleDescription(rawTitle: string): string {
-  return rawTitle
-    .trim()
-    .replace(/^\[(core|extension|mobile|terminal|mm[em])\]\s*[:—-]?\s*/i, '')
-    .replace(/[.\s]+$/, '');
+  return stripIssueBracketTag(
+    rawTitle.trim().replace(/^\[(core|extension|mobile|terminal|mm[em])\]\s*[:—-]?\s*/i, ''),
+  ).replace(/[.\s]+$/, '');
 }
 
 // A ticket key alone (`TAT-4138`, `[TAT-4138]:`) names the ticket, not the change.
@@ -62,14 +67,17 @@ function bodyHeadingTitle(body: string): string | null {
 
 /**
  * The PR title a package records and approval publishes: the body's leading
- * conventional heading, else one built from the ticket title. Empty when
- * neither says more than a ticket key; approval refuses an empty title.
+ * conventional heading, else the ticket title when that title is already
+ * conventional, else one built from the ticket title. Empty when neither
+ * says more than a ticket key; approval refuses an empty title.
  */
 export function buildDraftPrTitle(run: Run, draftBody: string): string {
   const heading = bodyHeadingTitle(draftBody);
   if (heading) return heading;
-  const rawTitle = run.ticketData?.title?.trim();
+  const rawTitle = run.ticketData?.title?.trim() ?? '';
   if (!rawTitle) return '';
+  // Judge the ticket title before platform-prefix and trailing-period cleanup.
+  if (isConventionalCommitSubject(rawTitle)) return rawTitle;
   const sanitized = sanitizeDraftPrTitleDescription(rawTitle);
   if (namesOnlyTicketKey(sanitized)) return '';
   const commitType = run.flowType === 'fix-bug' ? 'fix' : run.flowType === 'dev' ? 'feat' : 'chore';

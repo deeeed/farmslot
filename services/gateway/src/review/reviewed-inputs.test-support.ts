@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { poolDirectory } from '../core/config.js';
 import { farmslotRoot } from '../fleet/state.js';
 import { deleteTestRunIfPresent } from '../run-engine/test-fixtures.js';
 import { createRun, updateRun } from '../runs/store.js';
@@ -29,7 +30,7 @@ export async function slotWithTask(
 ) {
   const id = `reviewed-inputs-${process.pid}-${Date.now()}`;
   const repo = await mkdtemp(path.join(os.tmpdir(), `${id}-`));
-  const poolFile = path.join(farmslotRoot(), 'pool', `${id}.json`);
+  const poolFile = path.join(poolDirectory(), `${id}.json`);
   const taskRelDir = `test/${id}`;
   const artifacts = path.join(repo, '.sandbox/farmslot-farm/worker-task', taskRelDir, 'artifacts');
   const run = createRun({

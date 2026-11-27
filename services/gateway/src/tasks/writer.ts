@@ -9,6 +9,7 @@ import {
   buildOperatorWaitInstructions,
   type HandoffSourceKind,
   inspectTaskAcceptanceState,
+  OPERATOR_NOTE_RUNTIME_VERSION,
   parseProjectWorkerTemplateFileName,
   portableProjectRepo,
   readTaskDocumentAddendum,
@@ -30,8 +31,10 @@ import {
   isBranchUpdateStrategy,
   isLightweightInteractiveDevRun,
   type PlanningContextProjection,
+  releaseAtLeast,
   type RepeatReviewContext,
   type Run,
+  runLinkedTicketsView,
   runOutputReviewEnabled,
   type RunTicketData,
   type TaskSchema,
@@ -78,6 +81,7 @@ import {
   buildFollowUpScopeContractSection,
   materializeInheritedContext,
 } from '../family-observability/context.js';
+import { getNode } from '../fleet/machine-registry.js';
 import {
   buildSmartBranch,
   flowDir as computeFlowDir,
@@ -1015,12 +1019,18 @@ export async function writeTaskFile(
   // TICKET_URL = deep link to the source (Jira browse URL, GitHub issue URL, or "")
   // Templates MUST use these generic names — NEVER hardcode JIRA/GITHUB_ISSUE.
   // This lets a future freeform/manual flow reuse the same template shape.
-  const jiraBaseUrl: string = (projectVars.projectJson as any)?.jira?.base_url ?? '';
+  // `jira.base_url` is typed but never validated, and this is now read for every
+  // run rather than only Jira ones, so a non-string value must not throw here.
+  const rawJiraBaseUrl = (projectVars.projectJson as any)?.jira?.base_url;
+  const jiraBaseUrl: string = typeof rawJiraBaseUrl === 'string' ? rawJiraBaseUrl : '';
+  // One browse base for this project: TICKET_URL and the linked-ticket fallback
+  // below must not drift apart.
+  const jiraBrowseBase = jiraBaseUrl ? `${jiraBaseUrl.replace(/\/$/, '')}/browse/` : '';
   let ticketRef = run.ticketOrPr;
   let ticketUrl = '';
   if (ticket.jiraKey) {
     ticketRef = ticket.jiraKey;
-    ticketUrl = jiraBaseUrl ? `${jiraBaseUrl.replace(/\/$/, '')}/browse/${ticket.jiraKey}` : '';
+    ticketUrl = jiraBrowseBase ? `${jiraBrowseBase}${ticket.jiraKey}` : '';
   } else if (ticket.githubIssue) {
     ticketRef = ticket.githubIssue;
     const m = ticket.githubIssue.match(/^([^#]+)#(\d+)$/);
@@ -1142,14 +1152,39 @@ export async function writeTaskFile(
   // ─── Linked tickets (plural, pre-rendered markdown) ───
   // A PR can reference multiple tickets ("Fixes PROJ-123, PROJ-456"). Templates
   // can't loop, so we pre-render two markdown blocks:
-  //   LINKED_TICKETS      — bullet list of "- [ref](url) — title"
+  //   LINKED_TICKETS      — bullet list of "- [ref](url) — title", dropping the
+  //                         title when the run fetched no summary for that
+  //                         ticket, and the link when no base resolves, which
+  //                         leaves a bare "- ref"
   //   LINKED_DESCRIPTIONS — each ticket's full description, separated by ---
   // Both render as empty-state placeholder strings when there are no links.
   const linked = ticket.linkedTickets ?? [];
-  vars.LINKED_TICKETS =
-    linked.length > 0
-      ? linked.map((t) => `- [${t.ref}](${t.url})${t.title ? ` — ${t.title}` : ''}`).join('\n')
-      : '_No linked tickets_';
+  // Ticket identities come from the one shared resolver, which merges the run's own
+  // ref, the recorded linked tickets and the operator's additions. Reading
+  // ticket.linkedTickets alone missed both: only the PR-data path fills it, so dev
+  // and fix-bug got no section, and operator refs live on the run and reached no
+  // task document on any flow. The resolver answers both which refs this run
+  // names and where each one points, from a recorded ticket URL or the run's own
+  // Jira link; the project's browse base covers the case where it has neither,
+  // and with no base the ref stays unlinked rather than inventing a host.
+  // Recorded tickets keep the order the fetch recorded them in, so a PR-bound
+  // run's bullets stay where they were when its first linked key's fetch failed
+  // and a later key became `jiraKey`, which `runLinkedTicketRefs` leads with.
+  // This stays in the document builder: the resolver's own order feeds
+  // `references`, whose leading-source contract the UI depends on.
+  const recordedOrder = new Map(linked.map((entry, at) => [entry.ref.toUpperCase(), at]));
+  const linkedView = runLinkedTicketsView(run)
+    .tickets.filter((entry) => entry.named)
+    .sort(
+      (left, right) =>
+        (recordedOrder.get(left.ref) ?? recordedOrder.size) -
+        (recordedOrder.get(right.ref) ?? recordedOrder.size),
+    )
+    .map((entry) => {
+      const url = entry.url ?? (jiraBrowseBase ? `${jiraBrowseBase}${entry.ref}` : null);
+      return `- ${url ? `[${entry.ref}](${url})` : entry.ref}${entry.title ? ` — ${entry.title}` : ''}`;
+    });
+  vars.LINKED_TICKETS = linkedView.length > 0 ? linkedView.join('\n') : '_No linked tickets_';
   vars.LINKED_DESCRIPTIONS =
     linked.length > 0
       ? linked
@@ -1393,9 +1428,16 @@ export async function writeTaskFile(
             : 'text';
   const addendum = await readTaskDocumentAddendum(projectVars.projectTemplatesDir);
   const { executionTemplate: _reference, ...portableProvenance } = templateProvenance;
+  // A node older than OPERATOR_NOTE_RUNTIME_VERSION ignores `operatorNote` and would
+  // drop the note entirely, so it keeps the old end-of-document section until it is
+  // redeployed. An unreported runtime counts as old.
+  const nodeRendersOperatorNote = releaseAtLeast(
+    getNode(slotVars.machine)?.runtimeVersion,
+    OPERATOR_NOTE_RUNTIME_VERSION,
+  );
   const additions =
     (await appendTaskContext('')) +
-    taskNoteSection(run.taskNote) +
+    (nodeRendersOperatorNote ? '' : taskNoteSection(run.taskNote)) +
     (run.engineState?.evalExperiment?.blind?.executionPolicy === 'normal-slot'
       ? '\nDo not look up the original answer: do not fetch or read newer Git history, reference PRs or patches, earlier task artifacts, or other checkouts to find the fix.\n'
       : '') +
@@ -1476,6 +1518,9 @@ export async function writeTaskFile(
     taskDocumentAdditions,
     terminalContract,
     bugInput: run.ticketData ?? undefined,
+    // The operator's note is an override: the renderer puts it ahead of the task and
+    // gives it a checklist step, instead of tacking it onto the end of the document.
+    ...(run.taskNote && nodeRendersOperatorNote ? { operatorNote: run.taskNote } : {}),
     ...(referenceCheckouts.length ? { referenceCheckouts } : {}),
     ...(splitChecklist
       ? {}

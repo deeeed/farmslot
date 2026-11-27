@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { farmslotRoot } from '../fleet/state.js';
+import '../core/private-pool.test-support.js';
+
+import { poolDirectory } from '../core/config.js';
 import { deleteTestRunIfPresent } from '../run-engine/test-fixtures.js';
 import { createRun, getRun, updateRun } from '../runs/store.js';
 
@@ -17,7 +19,7 @@ const SIGNAL_FILE = 'temp/tasks/feat/tat-4145/REVIEW-FIX-SIGNAL.json';
 async function runWithFixSignal(t: test.TestContext, signal: Record<string, unknown> | null) {
   const id = `review-fix-settle-${process.pid}-${Date.now()}`;
   const repo = await mkdtemp(path.join(os.tmpdir(), `${id}-`));
-  const poolFile = path.join(farmslotRoot(), 'pool', `${id}.json`);
+  const poolFile = path.join(poolDirectory(), `${id}.json`);
   const slotId = `${id}-slot`;
   const run = createRun({
     flowType: 'dev',

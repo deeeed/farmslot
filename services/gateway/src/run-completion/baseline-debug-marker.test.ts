@@ -97,6 +97,33 @@ index 123abcd..456abcd 100644
   assert.equal(await isTicketMarkerCommit(terminal, base, marker, ticket), true);
 });
 
+test('a marker admits console.error', async () => {
+  const terminal = `${marker}\0${base}\0debug(${ticket}): add reproduction marker\0\n${`diff --git a/src/perps/order.ts b/src/perps/order.ts
+index 123abcd..456abcd 100644
+--- a/src/perps/order.ts
++++ b/src/perps/order.ts
+@@ -12,0 +13 @@
++  console.error('[${ticket}] BUG_MARKER: size field cleared before submit');
+`}`;
+  assert.equal(await isTicketMarkerCommit(terminal, base, marker, ticket), true);
+  // An added import bound as `console` shadows the global: its error() is that logger's.
+  const shadowed = terminal.replace(
+    '@@ -12,0 +13 @@',
+    "@@ -1,0 +2 @@\n+import console from '../util/Logger';\n@@ -12,0 +13 @@",
+  );
+  assert.equal(await isTicketMarkerCommit(shadowed, base, marker, ticket), false);
+  assert.equal(
+    await isTicketMarkerCommit(
+      shadowed.replace('console.error(', 'console.log('),
+      base,
+      marker,
+      ticket,
+    ),
+    true,
+    'the import is a logger and the marker logs through it',
+  );
+});
+
 for (const [name, changed] of [
   [
     'an import of something the marker never logs through',

@@ -11,7 +11,7 @@ import type { RawPoolJson } from '../core/index.js';
 import { markGhostSlots } from '../fleet/state.js';
 import { makeVars } from '../runners/test-fixtures.js';
 
-import { isFreeSlot } from './dispatch/slot-scoring.js';
+import { activeRunOnSlotReason, isFreeSlot } from './dispatch/slot-scoring.js';
 import { makeRun } from './run/test-fixtures.js';
 import {
   buildFleetRefreshSnapshot,
@@ -121,6 +121,20 @@ test('fleet refresh preserves an unconfirmed cleanup stop with its owner and hol
   assert.equal(refreshed.slot_epoch, 76);
   assert.equal(refreshed.lifecycle, 'held');
   assert.equal(refreshed.phase, 'occupied');
+});
+
+// The idle sweep times a run-less prepare scope on the slot row (15 min, or 2 h keep-warm);
+// a refresh every few minutes would otherwise restart that window forever.
+test('refresh keeps the idle prepare-scope window', () => {
+  const window = { scope: '0123456789abcdef0123456789abcdef', epoch: 12, since: 1_000 };
+  const idle = makeRefreshRow({
+    lifecycle: 'ready',
+    current_run_id: null,
+    slot_epoch: 12,
+    idle_prepare_scope: window,
+  });
+  const refreshed = buildFleetRefreshSnapshot([idle], [makeRefreshRow()], [], 'now').slots[0]!;
+  assert.deepEqual(refreshed.idle_prepare_scope, window);
 });
 
 test('lost running leases quarantine only their slots and preserve healthy refresh rows', (t) => {
@@ -1329,6 +1343,45 @@ test("one slot's broken config doesn't fail its host's SSH check for every slot 
   assert.equal(status.get('dead.invalid'), 'unloadable', 'no slot loads: no SSH verdict at all');
 });
 
+test('a host whose slots are all held is skipped even when they name a mode', async () => {
+  const reached: string[] = [];
+  const status = await checkSSHPerMachine(
+    [
+      {
+        machine: 'held',
+        project: 'audiolab',
+        platform: 'ios',
+        os: 'darwin',
+        host: 'held.invalid',
+        ssh_user: 'operator',
+        slots: [
+          {
+            id: 'held-1',
+            mode: 'dispatch',
+            enabled: false,
+            repo: '/repos/held-1',
+            session: 'held-1',
+          },
+          {
+            id: 'held-2',
+            mode: 'custom',
+            enabled: false,
+            repo: '/repos/held-2',
+            session: 'held-2',
+          },
+        ],
+      },
+    ],
+    async (slotId) => makeVars({ slotId }),
+    async (vars) => {
+      reached.push(vars.slotId);
+      return { exitCode: 0, stdout: 'ok', stderr: '' };
+    },
+  );
+  assert.equal(status.get('held.invalid'), 'skip');
+  assert.deepEqual(reached, [], 'no held slot is probed');
+});
+
 test('a pool read mid-write is read again; one still unreadable is reported with its last good slots (F306)', async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'fleet-pools-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -1401,4 +1454,48 @@ test('fleet refresh preserves the durable parked inventory independently of reco
   const before = makeRefreshRow({ parked_work });
   const refreshed = buildFleetRefreshSnapshot([before], [makeRefreshRow()], [], 'now').slots[0];
   assert.deepEqual(refreshed.parked_work, parked_work);
+});
+
+test("a fleet refresh leaves a warm child's parent row alone until the child claims it", (t) => {
+  const lost = t.mock.method(console, 'error', () => {});
+  const child: Run = {
+    ...makeRun({
+      id: 'warm-child',
+      slotId: 'macwork-mm-4',
+      status: 'dispatching',
+      parentRunId: 'parent-run',
+      steps: [{ name: 'dispatch', status: 'running' }],
+    }),
+    engineState: { generation: 0, flags: { warmSessionReuse: true } },
+  };
+  const hold = makeRefreshRow({
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: null,
+    cleanup_run_id: 'parent-run',
+    held_reason: activeRunOnSlotReason(child.id),
+    slot_epoch: 80,
+  });
+  const held = buildFleetRefreshSnapshot([hold], [makeRefreshRow()], [child], 'now').slots[0]!;
+  assert.equal(held.held_reason, activeRunOnSlotReason(child.id), 'the child can still claim it');
+  assert.equal(held.current_run_id, null);
+  assert.equal(held.cleanup_run_id, 'parent-run');
+  assert.equal(held.slot_epoch, 80);
+  const owned = makeRefreshRow({ lifecycle: 'busy', current_run_id: 'parent-run', slot_epoch: 81 });
+  const kept = buildFleetRefreshSnapshot([owned], [makeRefreshRow()], [child], 'now').slots[0]!;
+  assert.equal(kept.current_run_id, 'parent-run', 'the refresh does not bind the child');
+  assert.equal(kept.slot_epoch, 81);
+  assert.equal(lost.mock.callCount(), 0, 'no lost lease is reported for the child');
+  // A child past its dispatch that loses its lease to its parent's row is still quarantined.
+  const monitoring: Run = {
+    ...child,
+    status: 'monitoring',
+    steps: [
+      { name: 'dispatch', status: 'done' },
+      { name: 'monitor', status: 'running' },
+    ],
+  };
+  const quarantined = buildFleetRefreshSnapshot([owned], [makeRefreshRow()], [monitoring], 'now')
+    .slots[0]!;
+  assert.match(String(quarantined.held_reason), /lost its lease/);
 });

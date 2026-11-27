@@ -46,6 +46,7 @@ import {
 } from '@farmslot/protocol';
 import {
   deriveReviewedRecipeClaims,
+  indexOccurrenceRecordingCoverage,
   indexRecordingTimelines,
   type OccurrenceRecordingCoverage,
   occurrenceRecordingCoverage,
@@ -165,6 +166,8 @@ export interface EvidenceReviewArtifact {
 export interface EvidenceReviewMediaRecording {
   videoPath: string;
   videoDigest?: string;
+  /** Verified bytes of the selected recording's timing sidecar, when retained. */
+  timelineDigest?: string;
   hasTimeline: boolean;
 }
 
@@ -289,10 +292,24 @@ export interface EvidenceReviewComparisonViewRow extends EvidenceReviewCompariso
   primaryFiles: readonly EvidenceReviewArtifact[];
 }
 
+interface EvidenceReviewRecordingTimeline {
+  timeline?: RecipeRecordingTimelineDocument;
+  current: boolean;
+  sidecarDigest?: string;
+  videoDigest?: string;
+  traceDigest?: string;
+  historicalSeekMs?(traceIndex: number, mediaDurationMs?: number): number | null;
+  retainedOccurrences?: readonly Pick<EvidenceReviewOccurrence, 'traceIndex' | 'intent' | 'ok'>[];
+}
+
 export interface EvidenceReviewModel {
   readonly artifactInventory: readonly ArtifactRef[];
   claimMedia(claimId: string, openedPath?: string): EvidenceReviewClaimMedia;
   recordingForPath(artifactPath: string): EvidenceReviewMediaRecording | undefined;
+  recordingTimelineForPath(
+    artifactPath: string,
+    options?: { allowHistorical?: boolean },
+  ): EvidenceReviewRecordingTimeline | undefined;
   claimDisplay(claimId: string): EvidenceReviewClaimDisplay;
   judgmentRows(principal: SelfPrincipalSummary | null): readonly EvidenceReviewJudgmentRow[];
   rawArtifacts<T extends { path: string }>(inventory: readonly T[]): readonly T[];
@@ -410,6 +427,42 @@ export function runEvidencePending(
   run: Pick<Run, 'status' | 'artifactBundle' | 'output'>,
 ): boolean {
   return !isTerminalRunStatus(run.status) && !run.artifactBundle && !run.output?.artifactBundle;
+}
+
+/** Share source and coverage keys across claims from the same retained recording. */
+export function indexRetainedClipSources(
+  sources: ReadonlyMap<string, { input: RecordedEvidencePackageInput; prefix: string }>,
+): ReadonlyMap<string, ClipSource> {
+  const result = new Map<string, ClipSource>();
+  // Claims can share a retained original. Reuse its segment array and timeline map
+  // so coverageFor builds only one lookup for that package and artifact namespace.
+  const retainedPackages = new WeakMap<RecordedEvidencePackageInput, Map<string, ClipSource>>();
+  for (const [claimId, { input: source, prefix }] of sources) {
+    let byPrefix = retainedPackages.get(source);
+    if (!byPrefix) {
+      byPrefix = new Map();
+      retainedPackages.set(source, byPrefix);
+    }
+    let clips = byPrefix.get(prefix);
+    if (!clips) {
+      clips = {
+        recipeRunId: source.claims?.recipeRunId,
+        timelines: new Map(
+          Object.values(source.timelines).map((timeline) => [
+            `${prefix}${timeline.videoPath}`,
+            { ...timeline, videoPath: `${prefix}${timeline.videoPath}` },
+          ]),
+        ),
+        segments: (source.claims?.recording.segments ?? []).map((segment) => ({
+          ...segment,
+          videoPath: `${prefix}${segment.videoPath}`,
+        })),
+      };
+      byPrefix.set(prefix, clips);
+    }
+    result.set(claimId, clips);
+  }
+  return result;
 }
 
 /** Experimental ADR-062 projection shared by web and native review contexts. */
@@ -753,6 +806,42 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     }
   >();
   const headTimelines = new Map(timelines);
+  const headRecordingDigests = new Map(
+    segments.map(({ videoPath, videoDigest }) => [videoPath, videoDigest]),
+  );
+  const timelineDigests = new Map<string, string>();
+  const retainedRecordingInputs = new Map<string, RecordedEvidencePackageInput>();
+  const retainedRecordingOccurrences = new WeakMap<
+    RecordedEvidencePackageInput,
+    NonNullable<EvidenceReviewRecordingTimeline['retainedOccurrences']>
+  >();
+  function retainedTimelineOccurrences(videoPath: string) {
+    const source = retainedRecordingInputs.get(videoPath);
+    if (!source) return undefined;
+    let rows = retainedRecordingOccurrences.get(source);
+    if (!rows) {
+      rows = (recipeTraceEntries(source.trace) ?? []).flatMap((entry, traceIndex) =>
+        isRecord(entry) && typeof entry.nodeId === 'string'
+          ? [
+              {
+                traceIndex,
+                intent: typeof entry.intent === 'string' ? entry.intent : entry.nodeId,
+                ok: entry.ok === true,
+              },
+            ]
+          : [],
+      );
+      retainedRecordingOccurrences.set(source, rows);
+    }
+    return rows;
+  }
+  const registerTimelineDigests = (source: RecordedEvidencePackageInput, prefix = '') => {
+    for (const [sidecar, timeline] of Object.entries(source.timelines)) {
+      const digest = source.artifactDigests[sidecar];
+      if (digest) timelineDigests.set(`${prefix}${timeline.videoPath}`, digest);
+    }
+  };
+  if (pkg) registerTimelineDigests(pkg);
   const mediaRecordings = new Map<string, EvidenceReviewMediaRecording>();
   const registerRecordings = (
     sources: readonly Pick<EvidenceReviewMediaRecording, 'videoPath' | 'videoDigest'>[],
@@ -760,18 +849,22 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   ) => {
     for (const source of sources) {
       const path = `${input.artifactPrefix ?? ''}${source.videoPath}`;
-      if (!mediaRecordings.has(path) || measured || timelines.has(source.videoPath))
+      if (!mediaRecordings.has(path) || measured || timelines.has(source.videoPath)) {
+        const timelineDigest = timelineDigests.get(source.videoPath);
         mediaRecordings.set(path, {
           videoPath: source.videoPath,
           videoDigest: source.videoDigest,
+          ...(timelineDigest ? { timelineDigest } : {}),
           hasTimeline: measured || timelines.has(source.videoPath),
         });
+      }
     }
   };
   registerRecordings([...headTimelines.values(), ...segments]);
   for (const timeline of headTimelines.values())
     playbackSources.set(timeline.videoPath, { segments, timelines: headTimelines });
   const addDependencyTimelines = (source: RecordedEvidencePackageInput, prefix: string) => {
+    registerTimelineDigests(source, prefix);
     const childTimelines = new Map(
       Object.values(source.timelines).map((timeline) => [
         `${prefix}${timeline.videoPath}`,
@@ -784,8 +877,10 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     }));
     for (const [videoPath, timeline] of childTimelines) {
       timelines.set(videoPath, timeline);
+      retainedRecordingInputs.set(videoPath, source);
       playbackSources.set(videoPath, { segments: childSegments, timelines: childTimelines });
     }
+    for (const segment of childSegments) retainedRecordingInputs.set(segment.videoPath, source);
     registerRecordings([...childTimelines.values(), ...childSegments]);
     for (const child of source.comparisonDependencies ?? [])
       addDependencyTimelines(child.input, `${prefix}${child.artifactRoot}/`);
@@ -855,28 +950,21 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
   // Each ordered segment array belongs to one immutable recording source snapshot.
   const coverageIndexes = new WeakMap<
     readonly RecordingSegmentRef[],
-    Map<number, OccurrenceRecordingCoverage>
+    (traceIndex: number) => OccurrenceRecordingCoverage
   >();
   const coverageFor = (
     traceIndex: number,
     sourceSegments: readonly RecordingSegmentRef[],
     sourceTimelines: ReadonlyMap<string, RecipeRecordingTimelineDocument>,
   ): OccurrenceRecordingCoverage => {
-    let index = coverageIndexes.get(sourceSegments);
-    if (!index) {
-      index = new Map();
-      coverageIndexes.set(sourceSegments, index);
+    if (sourceSegments.length <= 1)
+      return occurrenceRecordingCoverage(traceIndex, sourceSegments, sourceTimelines, markerFor);
+    let lookup = coverageIndexes.get(sourceSegments);
+    if (!lookup) {
+      lookup = indexOccurrenceRecordingCoverage(sourceSegments, sourceTimelines);
+      coverageIndexes.set(sourceSegments, lookup);
     }
-    const cached = index.get(traceIndex);
-    if (cached) return cached;
-    const coverage = occurrenceRecordingCoverage(
-      traceIndex,
-      sourceSegments,
-      sourceTimelines,
-      markerFor,
-    );
-    index.set(traceIndex, coverage);
-    return coverage;
+    return lookup(traceIndex);
   };
   // One clip derivation for the fresh execution and each retained original.
   const clipsFrom = (
@@ -911,27 +999,16 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
           traceIndex,
           (marker) => byOccurrence.get(traceIndex)?.intent ?? marker.nodeId,
         );
-  const retainedClipSources = new Map(
-    [...retainedSources].map(([claimId, retained]): [string, ClipSource] => [
-      claimId,
-      {
-        timelines: new Map(
-          Object.values(retained.input.timelines).map((timeline) => [
-            `${retained.prefix}${timeline.videoPath}`,
-            { ...timeline, videoPath: `${retained.prefix}${timeline.videoPath}` },
-          ]),
-        ),
-        segments: (retained.input.claims?.recording.segments ?? []).map((segment) => ({
-          ...segment,
-          videoPath: `${retained.prefix}${segment.videoPath}`,
-        })),
-        recipeRunId: retained.input.claims!.recipeRunId,
-      },
-    ]),
-  );
-  for (const source of retainedClipSources.values()) {
-    registerRecordings([...source.timelines.values()], true);
-    registerRecordings(source.segments);
+  const retainedClipSources = indexRetainedClipSources(retainedSources);
+  const registeredClipSources = new Set<ClipSource>();
+  for (const [claimId, clips] of retainedClipSources) {
+    if (registeredClipSources.has(clips)) continue;
+    registeredClipSources.add(clips);
+    const source = retainedSources.get(claimId)!.input;
+    registerRecordings([...clips.timelines.values()], true);
+    registerRecordings(clips.segments);
+    for (const path of clips.timelines.keys()) retainedRecordingInputs.set(path, source);
+    for (const segment of clips.segments) retainedRecordingInputs.set(segment.videoPath, source);
   }
   // Long recordings may list every original in the retained ledger. Present
   // only this claim's measured originals; the full file inventory stays browsable.
@@ -1107,14 +1184,13 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
             'Use the current gate action'),
       }
     : null;
-  const markerSeekMs: EvidenceReviewModel['markerSeekMs'] = (
+  const seekRecordingMarker: EvidenceReviewModel['markerSeekMs'] = (
     videoPath,
     traceIndex,
     phase,
     mediaDurationMs,
   ) => {
     if (
-      errors.length ||
       !playbackSources.has(videoPath) ||
       coverageFor(
         traceIndex,
@@ -1140,6 +1216,8 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
       return null;
     return clamp((bounds[0] + bounds[1]) / 2, first, Math.min(last, duration));
   };
+  const markerSeekMs: EvidenceReviewModel['markerSeekMs'] = (...args) =>
+    errors.length ? null : seekRecordingMarker(...args);
   const occurrenceCues = new Map<number, RunEvidenceCue | null>();
   const occurrenceCue = (traceIndex: number): RunEvidenceCue | null => {
     if (occurrenceCues.has(traceIndex)) return occurrenceCues.get(traceIndex)!;
@@ -1250,6 +1328,47 @@ export function createEvidenceReviewModel(input: EvidenceReviewInput): EvidenceR
     artifactInventory: input.artifacts ?? [],
     recordingForPath(path) {
       return mediaRecordings.get(path);
+    },
+    recordingTimelineForPath(path, options) {
+      const recording = mediaRecordings.get(path);
+      if (!recording?.videoDigest) return undefined;
+      const timeline = timelines.get(recording.videoPath);
+      if (timeline && timeline.videoDigest !== recording.videoDigest) return undefined;
+      const ownRecording = timeline
+        ? headTimelines.get(timeline.videoPath) === timeline
+        : headRecordingDigests.get(recording.videoPath) === recording.videoDigest;
+      const current = !replaced && ownRecording;
+      // A ledger mismatch blocks verdicts, but an explicitly selected, verified old
+      // package can still play its own trace in Run Detail.
+      const historical =
+        options?.allowHistorical &&
+        input.context === 'run-detail' &&
+        replaced &&
+        ownRecording &&
+        errors.length === 1 &&
+        errors[0] === REPLACED_RECORDING_MESSAGE;
+      const retained = retainedRecordingInputs.has(recording.videoPath);
+      if (!timeline && !current && !retained && !historical) return undefined;
+      return {
+        timeline,
+        current,
+        sidecarDigest: recording.timelineDigest,
+        videoDigest: recording.videoDigest,
+        traceDigest:
+          timeline?.traceDigest ??
+          (ownRecording ? pkg : retainedRecordingInputs.get(recording.videoPath))?.artifactDigests[
+            'trace.json'
+          ],
+        ...(historical
+          ? {
+              historicalSeekMs: (traceIndex: number, duration?: number) =>
+                seekRecordingMarker(recording.videoPath, traceIndex, 'start', duration),
+            }
+          : {}),
+        get retainedOccurrences() {
+          return historical ? occurrences : retainedTimelineOccurrences(recording.videoPath);
+        },
+      };
     },
     claimMedia(id, openedPath) {
       const claim = byClaim.get(id);

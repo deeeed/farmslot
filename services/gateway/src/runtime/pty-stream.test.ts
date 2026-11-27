@@ -55,11 +55,16 @@ syncBuiltinESMExports();
 
 let spawned: { command: string; args: string[] } | undefined;
 const exits: Array<() => void> = [];
+let kills = 0;
 mock.module('node-pty', {
   namedExports: {
     spawn: (command: string, args: string[]) => {
       spawned = { command, args };
       return {
+        pid: 0,
+        kill: () => {
+          kills++;
+        },
         onData: () => ({ dispose() {} }),
         onExit: (callback: (event: { exitCode: number }) => void) => {
           exits.push(() => callback({ exitCode: 0 }));
@@ -69,7 +74,7 @@ mock.module('node-pty', {
     },
   },
 });
-const { subscribePty, reinitTmuxSession } = await import('./pty-stream.js');
+const { subscribePty, unsubscribePty, reinitTmuxSession } = await import('./pty-stream.js');
 const importCommands = tmuxCommands.map((args) => [...args]);
 
 test('import sends no tmux server command', () => {
@@ -124,4 +129,47 @@ test('remote PTY uses the same window and pane selection in one attach command',
   assert.match(command, /select-pane/);
   assert.ok(command.indexOf('select-window') < command.indexOf('select-pane'));
   assert.doesNotMatch(command, /\|\|/);
+});
+
+test('a detached worker PTY is replaced within the linger window', async (t) => {
+  const key = 'worker-node:%42';
+  const handler = () => undefined;
+  const opts = { workerPaneId: '%42', selectTarget: '=proof-session:0.0' } as const;
+  t.after(() => exits.splice(0).forEach((exit) => exit()));
+  await subscribePty(key, 'proof-session', handler, 90, 25, opts);
+  const attached = spawned;
+  const count = kills;
+  unsubscribePty(key, handler);
+  const replacement = await subscribePty(key, 'proof-session', () => undefined, 90, 25, opts);
+  assert.equal(replacement.joined, false);
+  assert.notEqual(spawned, attached);
+  assert.equal(kills, count + 1);
+});
+
+test('a live worker PTY joins the same session but rejects a linked alias', async (t) => {
+  const key = 'worker-node:%43';
+  const opts = { workerPaneId: '%42', selectTarget: '=proof-session:0.0' } as const;
+  t.after(() => exits.splice(0).forEach((exit) => exit()));
+  await subscribePty(key, 'proof-session', () => undefined, 90, 25, opts);
+  const attached = spawned;
+  assert.equal(
+    (await subscribePty(key, 'proof-session', () => undefined, 90, 25, opts)).joined,
+    true,
+  );
+  await assert.rejects(
+    subscribePty(key, 'linked-alias', () => undefined, 90, 25, opts),
+    /different worker session/u,
+  );
+  assert.equal(spawned, attached);
+});
+
+test('a detached slot PTY still reuses its linger window', async (t) => {
+  const key = 'slot:linger';
+  const handler = () => undefined;
+  t.after(() => exits.splice(0).forEach((exit) => exit()));
+  await subscribePty(key, 'slot-session', handler);
+  const attached = spawned;
+  unsubscribePty(key, handler);
+  assert.equal((await subscribePty(key, 'slot-session', () => undefined)).joined, true);
+  assert.equal(spawned, attached);
 });

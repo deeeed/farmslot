@@ -3,14 +3,16 @@
 // Compare mode: image slider overlay + synced two-pane video.
 // Used by family-observability and review-workspace.
 import { html, nothing } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
+import { ref } from 'lit/directives/ref.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import {
   type EvidenceReviewModel,
   type EvidenceReviewPlaybackEffect,
   formatEvidenceReviewVideoTime,
+  restoreRecordingTimeMs,
 } from '@farmslot/adapter-sdk/evidence';
 import type { RecipeRecordingMarker, RecipeRecordingTimelineDocument } from '@farmslot/protocol';
 import { buildArtifactUrlResolver } from '@farmslot/review-dispatch';
@@ -60,6 +62,8 @@ interface LightboxEvidenceState {
 
 @customElement('media-lightbox')
 export class MediaLightbox extends MediaLightboxState {
+  @property({ type: Boolean }) autoplay = true;
+
   private readonly _mediaDocuments = new Map<string, GatewayMediaDocument>();
   private _previewGeneration = 0;
   private readonly _htmlBodies = new Map<string, string>();
@@ -97,7 +101,8 @@ export class MediaLightbox extends MediaLightboxState {
   private _timelineAbort?: AbortController;
   private _resumeEvidencePlayback = false;
   @state() private _videoPlayError = '';
-  private _pendingSeekMs: number | null = null;
+  private _pendingSeek?: { ms: number; itemUrl?: string; pause: boolean };
+  private readonly _videoItemUrls = new WeakMap<HTMLVideoElement, string>();
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -155,7 +160,14 @@ export class MediaLightbox extends MediaLightboxState {
       if (logUrl) void this._refreshLog(logUrl);
     }
 
+    if (
+      this._pendingSeek?.itemUrl &&
+      (changed.has('items') || changed.has('selectedIndex')) &&
+      this.items[this.selectedIndex]?.url !== this._pendingSeek.itemUrl
+    )
+      this._pendingSeek = undefined;
     if (changed.has('open')) {
+      if (!this.open) this._pendingSeek = undefined;
       if (!this.open) this.clearMediaDocuments();
       this._timelineAbort?.abort();
       this._timelineRequest++;
@@ -446,6 +458,16 @@ export class MediaLightbox extends MediaLightboxState {
     this._broken = next;
   }
 
+  private _markVideoBroken(index: number, url: string) {
+    this._markBroken(index);
+    this._reportVideoFailure(url);
+  }
+
+  private _reportVideoFailure(url: string, retriable = false) {
+    if (!retriable && this._pendingSeek?.itemUrl === url) this._pendingSeek = undefined;
+    this.dispatchEvent(new CustomEvent('lightbox-video-error', { detail: { url, retriable } }));
+  }
+
   private _wireVideoSync() {
     const a = this.renderRoot.querySelector<HTMLVideoElement>('.ml-cmp-video.a');
     const b = this.renderRoot.querySelector<HTMLVideoElement>('.ml-cmp-video.b');
@@ -521,18 +543,45 @@ export class MediaLightbox extends MediaLightboxState {
     return video ? video.currentTime * 1000 : null;
   }
 
+  videoDurationMs(itemUrl?: string): number | undefined {
+    const video = this._primaryVideo();
+    if (
+      !video ||
+      (itemUrl && this._videoItemUrls.get(video) !== itemUrl) ||
+      !Number.isFinite(video.duration)
+    )
+      return undefined;
+    return video.duration * 1000;
+  }
+
   /**
    * Seeks every synced video; before the media loads, the seek waits for it.
    */
-  seekToMs(ms: number): void {
+  seekToMs(ms: number, itemUrl?: string, pause = false): void {
+    this._pendingSeek = { ms, itemUrl, pause };
     const video = this._primaryVideo();
-    if (!video || video.readyState < 1) {
-      this._pendingSeekMs = ms;
+    if (video) this._syncVideoState(video);
+  }
+
+  cancelPendingSeek(): void {
+    this._pendingSeek = undefined;
+  }
+
+  private _applyPendingSeek(video: HTMLVideoElement): void {
+    const pending = this._pendingSeek;
+    if (!pending || video.readyState < 1) return;
+    if (pending.itemUrl && this._videoItemUrls.get(video) !== pending.itemUrl) return;
+    this._pendingSeek = undefined;
+    const duration = pending.itemUrl && Number.isFinite(video.duration) ? video.duration : Infinity;
+    const seek = restoreRecordingTimeMs(pending.ms, duration * 1000);
+    if (seek === null) {
+      this.dispatchEvent(new CustomEvent('lightbox-seek-unavailable'));
       return;
     }
-    this._pendingSeekMs = null;
-    for (const candidate of this._videoSet()) candidate.currentTime = ms / 1000;
-    this._syncVideoState(video);
+    for (const candidate of this._videoSet()) {
+      if (pending.pause) candidate.pause();
+      candidate.currentTime = seek / 1000;
+    }
   }
 
   /** Where a paused video rests (a pause, a scrub, a frame step), for a host's link. */
@@ -546,11 +595,7 @@ export class MediaLightbox extends MediaLightboxState {
 
   private _syncVideoState(video: HTMLVideoElement | null = this._primaryVideo()): void {
     if (!video || !this._videoSet().includes(video)) return;
-    if (this._pendingSeekMs !== null && video.readyState >= 1) {
-      const ms = this._pendingSeekMs;
-      this._pendingSeekMs = null;
-      for (const candidate of this._videoSet()) candidate.currentTime = ms / 1000;
-    }
+    this._applyPendingSeek(video);
     this._videoTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
     this._videoDuration = Number.isFinite(video.duration) ? video.duration : 0;
     this._videoPaused = video.paused;
@@ -1256,8 +1301,14 @@ export class MediaLightbox extends MediaLightboxState {
                             item.url,
                             html`<video
                               class="ml-expanded ml-video"
-                              src=${gatewayMediaSrc(item.url)}
-                              autoplay
+                              ${ref((element) => {
+                                if (element instanceof HTMLVideoElement)
+                                  this._videoItemUrls.set(element, item.url);
+                              })}
+                              src=${gatewayMediaSrc(item.url, 'url', () =>
+                                this._reportVideoFailure(item.url, true),
+                              )}
+                              ?autoplay=${this.autoplay}
                               preload="metadata"
                               style=${`transform: translate(${this._panX}px, ${this._panY}px) scale(${this._zoom}); cursor: ${this._zoom > 1 ? 'grab' : 'pointer'};`}
                               @pointerdown=${(e: PointerEvent) => this._onPointerDown(e)}
@@ -1268,8 +1319,10 @@ export class MediaLightbox extends MediaLightboxState {
                                 if (this._panMoved) this._panMoved = false;
                                 else this._toggleVideoPlayback();
                               }}
-                              @loadedmetadata=${(event: Event) =>
-                                this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                              @loadedmetadata=${(event: Event) => {
+                                this._syncVideoState(event.currentTarget as HTMLVideoElement);
+                                this.dispatchEvent(new CustomEvent('lightbox-video-metadata'));
+                              }}
                               @timeupdate=${(event: Event) =>
                                 this._syncVideoState(event.currentTarget as HTMLVideoElement)}
                               @play=${(event: Event) =>
@@ -1288,7 +1341,7 @@ export class MediaLightbox extends MediaLightboxState {
                                 this._finishEvidencePlayback(
                                   event.currentTarget as HTMLVideoElement,
                                 )}
-                              @error=${() => this._markBroken(selectedIdx)}
+                              @error=${() => this._markVideoBroken(selectedIdx, item.url)}
                             ></video>`,
                           )}
                         </div>

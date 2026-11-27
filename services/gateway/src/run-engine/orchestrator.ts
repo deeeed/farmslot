@@ -57,6 +57,7 @@ import {
   prepareIdentityPath,
   reapSlotPrepareScope,
 } from '../methods/slot.js';
+import type { PrepareCommandError } from '../methods/slot/shared.js';
 import { isReviewerCapacityError } from '../review/terminal-result.js';
 import {
   executeReviewWorkspaceStep,
@@ -66,14 +67,18 @@ import {
 } from '../review-workspaces/pipeline.js';
 import { PublishPackageRefusedError } from '../run-completion/publish-package-refused.js';
 import {
+  announcePendingResultDecision,
   holdRunForResultDecision,
   ResultDecisionHoldError,
   runDeliveredResult,
+  sendBackStaleReceiptOnce,
+  staleReceiptSendBackDue,
 } from '../run-completion/result-decision.js';
 import {
   reserveRunArtifactMetadata,
   retainedRunArtifactManifest,
 } from '../run-completion/retained-artifacts.js';
+import { retainFailedStepLogs } from '../run-lifecycle/failed-step-log.js';
 import { STEP_TO_STATUS } from '../run-lifecycle/step-status.js';
 import {
   routeTerminalRunTransition,
@@ -81,6 +86,7 @@ import {
   type TerminalTransitionRequest,
 } from '../run-lifecycle/terminal-transition.js';
 import type { RunTransitionResult } from '../run-lifecycle/transition-router.js';
+import { captureSessionAtEnd } from '../run-traces/session-capture.js';
 import { clearSettledWorkerError } from '../runners/native/worker-control.js';
 import { NativeWorkerOperationUncertainError } from '../runners/native/worker-error.js';
 import { PromptDeliveryUncertainError } from '../runners/registry.js';
@@ -97,6 +103,7 @@ import { withRunSessionUsageContext } from '../runtime/run-session-usage-context
 import { captureRunSourceOwnerFence } from '../sources/run-fence.js';
 import { SourceAdmissionRefusal, SourcePlanRestart, withRunSources } from '../sources/runtime.js';
 import { isNoCodeTerminalDisposition, releasedNoChangeChecks } from '../tasks/worker-signals.js';
+import { DeterministicGateBlockedError } from '../tasks/worker-terminal-contract.js';
 import { schedulerTick } from '../work-graph/store.js';
 
 import { retainedMaintenanceStepOutputs } from './branch-maintenance.js';
@@ -481,7 +488,7 @@ async function retainCompletionPrerequisiteFailure(
   runId: string,
   generation: number,
   stepName: typeof S.COMPLETE | typeof S.FINALIZE,
-  error: GatewayMethodError | PublishPackageRefusedError,
+  error: GatewayMethodError | PublishPackageRefusedError | DeterministicGateBlockedError,
 ): Promise<void> {
   const current = getRun(runId);
   if (runSupersededSince(current, generation)) return;
@@ -489,7 +496,12 @@ async function retainCompletionPrerequisiteFailure(
     status: 'failed',
     detail: error.message,
     outputs: {
-      gatePrerequisiteRefusal: error instanceof GatewayMethodError ? (error.details ?? {}) : {},
+      gatePrerequisiteRefusal:
+        error instanceof GatewayMethodError
+          ? (error.details ?? {})
+          : error instanceof DeterministicGateBlockedError
+            ? { readiness: { reasons: error.reasons } }
+            : {},
     },
   });
   const steps = pipelineStepsForRun(current!);
@@ -499,19 +511,34 @@ async function retainCompletionPrerequisiteFailure(
   // A delivered result waits for a person instead of failing (ADR-065
   // Amendment 7); without one the refusal stays Amendment 6's `failed`.
   if (runDeliveredResult(getRun(runId)!)) {
+    // Only a refusal the engine sends back at once holds without a card first.
+    const sendBackDue = stepName === S.COMPLETE && staleReceiptSendBackDue(getRun(runId)!);
+    let held: Run | null | undefined;
     try {
-      await holdRunForResultDecision(
+      held = await holdRunForResultDecision(
         runId,
         stepName === S.COMPLETE ? 'complete' : 'finalize',
         error.message,
-        { patch: { metrics: { ...current!.metrics, outcome: 'partial' } } },
+        {
+          patch: { metrics: { ...current!.metrics, outcome: 'partial' } },
+          announce: !sendBackDue,
+        },
       );
-      return;
     } catch (holdError) {
       // Never left `completing`: an unrecorded hold falls back to Amendment 6.
       console.error(
         `[run-engine] run ${runId.slice(0, 8)} could not be held for a decision; failing it: ${(holdError as Error).message}`,
       );
+    }
+    if (held !== undefined) {
+      // The run is held: a failed announcement never fails it.
+      if (held && sendBackDue && !(await sendBackStaleReceiptOnce(held)))
+        await announcePendingResultDecision(runId).catch((announceError: unknown) =>
+          console.warn(
+            `[run-engine] run ${runId.slice(0, 8)} held, but its decision was not announced: ${(announceError as Error).message}`,
+          ),
+        );
+      return;
     }
   }
   const collaborators = terminalCollaborators(Events.RUN_UPDATED, null);
@@ -989,6 +1016,8 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       });
       broadcastFn(Events.RUN_STEP_COMPLETED, { runId, step: stepName });
       broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+      // ADR-039 Amendment 10: the worker session ends with its terminal signal.
+      if (stepName === S.MONITOR) captureSessionAtEnd({ runId });
 
       if (after.status === 'failed' || after.status === 'blocked') {
         // Step `i` is now correctly marked done; finalize only needs to skip steps i+1..end.
@@ -1126,10 +1155,12 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       }
 
       // COMPLETE or FINALIZE could not build the publish package from the
-      // run's evidence. Both delivered and failed captures retain the original
-      // worker for recovery under ADR-065 Amendments 6 and 7.
+      // run's evidence, or a declared CI check has no current passing receipt.
+      // Both delivered and failed captures retain the original worker for
+      // recovery under ADR-065 Amendments 6 and 7.
       if (
-        err instanceof PublishPackageRefusedError &&
+        (err instanceof PublishPackageRefusedError ||
+          err instanceof DeterministicGateBlockedError) &&
         (stepName === S.COMPLETE || stepName === S.FINALIZE)
       ) {
         stepPartialIO.delete(runId);
@@ -1296,10 +1327,22 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
             ),
           ),
         });
+        // ADR-039 Amendment 10: a blocked or failed worker's session, after the transition.
+        captureSessionAtEnd({ runId });
         return;
       }
 
       console.error(`[run-engine] run ${runId.slice(0, 8)} step ${stepName} failed: ${msg}`);
+
+      // The run keeps its own copy of the failed logs before the slot's next prepare reuses
+      // them. Copied before the generation check below: nothing awaits between that check and
+      // the writes it guards, and a copy taken by a stale loop is harmless.
+      const failure: PrepareCommandError = err instanceof Error ? err : new Error(msg);
+      const {
+        failedLogPath,
+        relatedLogs,
+        message: failureMessage,
+      } = await retainFailedStepLogs(runId, failure, msg);
 
       // Stale loop — a replay started a new generation, don't overwrite its state
       if (getRunGeneration(runId) !== myGen) {
@@ -1312,20 +1355,18 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       // Persist partial I/O even on failure — valuable for debugging and fine-tuning
       const partialIO = stepPartialIO.get(runId);
       stepPartialIO.delete(runId);
-      const failedCommand = (err as any).failedCommand as string | undefined;
-      const failedLogPath = (err as any).failedLogPath as string | undefined;
-      const failedPhase = (err as any).failedPhase as string | undefined;
-      const relatedLogs = (err as any).relatedLogs as string[] | undefined;
+      const { failedCommand, failedPhase, failureKind } = failure;
       const failureOutputs = {
         ...partialIO?.outputs,
         ...(failedCommand ? { failedCommand } : {}),
         ...(failedLogPath ? { failedLogPath } : {}),
         ...(failedPhase ? { failedPhase } : {}),
+        ...(failureKind ? { failureKind } : {}),
         ...(relatedLogs?.length ? { relatedLogs } : {}),
       };
       updateRunStep(runId, stepName, {
         status: 'failed',
-        detail: msg,
+        detail: failureMessage,
         inputs: partialIO?.inputs,
         outputs: failureOutputs,
       });
@@ -1333,7 +1374,8 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
       // owned the slot (an in-flight release or rival claim does), so resetting
       // it here would clear the actual owner's lifecycle fence mid-teardown.
       const claimRefused = isSlotClaimRefusedError(err);
-      if (!claimRefused && (await holdRunForRunningAgents(runId, myGen, stepName, msg))) return;
+      if (!claimRefused && (await holdRunForRunningAgents(runId, myGen, stepName, failureMessage)))
+        return;
       // Skip remaining steps
       for (let j = i + 1; j < steps.length; j++) {
         updateRunStep(runId, steps[j], { status: 'skipped' });
@@ -1384,7 +1426,7 @@ async function driveRun(runId: string, options: StartRunOptions): Promise<void> 
         actor: 'engine',
         patch: {
           status: 'failed',
-          error: msg,
+          error: failureMessage,
           completedAt: new Date().toISOString(),
           metrics: {
             ...failedRun.metrics,
@@ -1496,6 +1538,18 @@ export function startRunWithStepAcknowledgement(
 export function cancelRunEngine(runId: string): void {
   const controller = activeMonitors.get(runId);
   if (controller) controller.abort();
+}
+
+/**
+ * An engine loop drives the run's current generation and is not parked on an open decision, i.e.
+ * it is working the gate (the operator's answer resumed it). A loop parked on its own decision
+ * still needs a replay to re-present the gate with what recovery ingested.
+ */
+function engineWorksCurrentGeneration(run: Run): boolean {
+  return (
+    drivenGenerations.get(run.id) === (run.engineState?.generation ?? 0) &&
+    !run.decisions.some((decision) => !decision.resolvedAt && hasEngineDecisionWaiter(decision.id))
+  );
 }
 
 /** True while an engine loop drives the run (any generation). */
@@ -1672,6 +1726,14 @@ function rearmPublicationReviewRecovery(
       state.cleanup();
       return;
     }
+    // An engine already works this generation, e.g. the operator answered the gate during startup
+    // and that answer resumed HUMAN_GATE: a replay would take the gate and abort that work. An
+    // answer whose resume failed leaves no driver, so the replay still runs as its retry.
+    if (state.replayPending && engineWorksCurrentGeneration(latest)) {
+      clearRecovery(latest);
+      state.cleanup();
+      return;
+    }
 
     inFlight = true;
     attempts += 1;
@@ -1688,9 +1750,11 @@ function rearmPublicationReviewRecovery(
           shouldAbort: () => settled,
         });
         if (settled) return;
+        const afterRecovery = getRun(latest.id) ?? latest;
         state.replayPending = publicationReviewRecoveryNeedsReplay(
           recoveryResult,
-          getRun(latest.id)?.engineState?.publishGate?.reviews,
+          afterRecovery.engineState?.publishGate?.reviews,
+          afterRecovery,
         );
         state.replayGeneration = getRun(latest.id)?.engineState?.generation ?? 0;
         if (!state.replayPending && recoveryResult.terminalErrors.length === 0) {
@@ -1723,6 +1787,12 @@ function rearmPublicationReviewRecovery(
           state.cleanup();
           return;
         }
+      }
+      const current = getRun(latest.id) ?? latest;
+      if (engineWorksCurrentGeneration(current)) {
+        clearRecovery(current);
+        state.cleanup();
+        return;
       }
       await replayHumanGateForRecovery(latest.id);
       if (settled) return;
@@ -1822,6 +1892,20 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
           `[run-engine] reconcile: resuming the interrupted recovery of ${slotId} failed: ${(error as Error).message}`,
         ),
       );
+    },
+    releaseFenceBlocker: async (run, slotId) => {
+      const { releaseFenceCensus } = await import('./release-fence-census.js');
+      return releaseFenceCensus(run, slotId);
+    },
+    cancelledReplayBlocker: async (run, slotId) => {
+      if (run.slotId !== slotId) return `Run ${run.id} is no longer bound to ${slotId}`;
+      const { fencedSlotOwnershipBlocker } = await import('../run-lifecycle/slot-teardown.js');
+      return fencedSlotOwnershipBlocker(run);
+    },
+    resumeInterruptedCancel: async (run, slotId, fence) => {
+      const { resumeInterruptedCancelCleanup } =
+        await import('../run-lifecycle/cancel-transition.js');
+      return resumeInterruptedCancelCleanup(run, slotId, fence);
     },
     quarantineLeakedRun,
     stopRunOwnedWorkers: async (run) => {

@@ -43,6 +43,7 @@ export const CI_PARITY_STEPS = [
       'tsx',
       '--test',
       'scripts/runner-validation/canary/outcome.test.mts',
+      'scripts/runner-validation/canary/proofs.test.mts',
     ],
   ],
   ['large files', ['yarn', 'quality:large-files']],

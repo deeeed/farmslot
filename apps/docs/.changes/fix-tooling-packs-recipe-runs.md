@@ -1,0 +1,1 @@
+- The worker template quality reference no longer lists the MetaMask harness and perps templates as opting out of recipe proof selection: their proof now runs under `artifacts/recipe-runs`.

@@ -99,7 +99,10 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
         let value: unknown;
         switch (p.method) {
           case 'prepareUpgrade':
-            value = { idle: manager.prepareUpgrade() };
+            if (p.idleRunners) {
+              const busy = manager.prepareIdleRunnerUpgrade();
+              value = { idle: busy.length === 0, busy };
+            } else value = { idle: manager.prepareUpgrade() };
             break;
           case NATIVE_WORKER_COMPACT:
             socket.setTimeout(185_000);
@@ -175,11 +178,14 @@ const server = createServer({ allowHalfOpen: true }, (socket) => {
             value = await manager.closeWorker(p.owner, p.id, p.generation, p.leaseId);
             break;
           case NATIVE_WORKER_CONFIRM_STOPPED:
-            value = manager.confirmWorkerStopped(p.owner, p.id, p.generation, p.leaseId);
+            value = await manager.confirmWorkerStopped(p.owner, p.id, p.generation, p.leaseId);
             break;
           case NATIVE_WORKER_INTERRUPT:
             manager.assertWorkerLease(p.owner, p.id, p.generation, p.leaseId);
             value = await manager.interrupt(p.owner, p.id);
+            break;
+          case 'archiveSessions':
+            value = manager.archiveSessions(p.owner, p.ids);
             break;
           case 'list':
             value = manager.list(p.owner);

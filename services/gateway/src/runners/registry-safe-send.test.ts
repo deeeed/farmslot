@@ -48,6 +48,10 @@ let paneCaptureCount = 0;
 const paneCaptureCommands: string[] = [];
 let paneClearsAfterSubmit = true;
 let paneTextByCapture: string[] | null = null;
+/** Scripts the pane by time or by what was sent; wins over every other pane source. */
+let paneNow: ((command: string) => string) | null = null;
+/** Overrides `activityReading` with a reading that changes over (virtual) time. */
+let activityReadingProvider: (() => ObservabilityReading<RunnerActivity>) | null = null;
 let paneTextAfterLiteralSend: string | null = null;
 let paneTextAfterBareSend: string | null = null;
 let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
@@ -129,7 +133,7 @@ mock.module('./claude-observability.js', {
       promptAcceptanceMode: 'hook-digest',
       async getActivity() {
         callOrder.push('obs:getActivity');
-        return activityReading;
+        return activityReadingProvider ? activityReadingProvider() : activityReading;
       },
       async getContextPct() {
         return null;
@@ -319,6 +323,16 @@ mock.module('../core/exec.js', {
         callOrder.push('pane:capture');
         paneCaptureCommands.push(cmd);
         paneCaptureCount += 1;
+        if (paneNow) {
+          // Honour a `| tail -N` capture, so a tall pane's top can be cut off as on a slot.
+          const tail = /\| tail -(\d+)/.exec(cmd);
+          const pane = paneNow(cmd);
+          return {
+            exitCode: 0,
+            stdout: tail ? pane.split('\n').slice(-Number(tail[1])).join('\n') : pane,
+            stderr: '',
+          };
+        }
         const scriptedPane = paneTextByCapture?.[paneCaptureCount - 1];
         if (scriptedPane !== undefined) {
           return { exitCode: 0, stdout: scriptedPane, stderr: '' };
@@ -342,6 +356,19 @@ mock.module('../core/exec.js', {
         return { exitCode: 0, stdout: '0', stderr: '' };
       }
       return { exitCode: 0, stdout: '', stderr: '' };
+    },
+  },
+});
+
+// The readiness path must never ask a model about the pane.
+let llmCalls = 0;
+const llm = await import('../llm/index.js');
+mock.module('../llm/index.js', {
+  namedExports: {
+    ...llm,
+    callLLM: async () => {
+      llmCalls += 1;
+      throw new Error('no model may be asked about the pane');
     },
   },
 });
@@ -2794,4 +2821,273 @@ test('Pi refuses to touch the pane when the retained conversation changes before
     'held-untouched',
   );
   assert.equal(callOrder.includes('tmux:send-literal'), false);
+});
+
+/** A runner whose pane shows it busy for `busyCaptures` reads, then idle at its prompt. */
+function startingRunner(t: TestContext, busyCaptures: number) {
+  callOrder.length = 0;
+  llmCalls = 0;
+  paneCaptureCount = 0;
+  paneClearsAfterSubmit = true;
+  paneTextByCapture = Array.from({ length: busyCaptures }, () => '✻ Working…\n');
+  activityReading = null;
+  promptAcceptedReading = null;
+  acknowledgePromptInput = true;
+  t.after(() => {
+    paneTextByCapture = null;
+    paneNow = null;
+    activityReading = {
+      value: 'idle',
+      source: 'hook',
+      confidence: 'high',
+      observedAt: Date.now(),
+    };
+  });
+}
+
+const slowStartOptions = {
+  readyTimeoutMs: 10_000,
+  stabilityPolls: 2,
+  pollIntervalMs: 1_000,
+  verifyWaitMs: 0,
+  maxAttempts: 1,
+};
+
+const launch = (t: TestContext, runner = 'claude') =>
+  withVirtualTime(t, () =>
+    sendRunnerPostLaunchPrompt(
+      vars,
+      target,
+      runner,
+      message,
+      'TASK.md',
+      '[test]',
+      slowStartOptions,
+    ),
+  );
+
+const composer = (text: string) => `────────────────\n❯ ${text}\n────────────────\n`;
+
+/**
+ * A pane that never settles (a ticker line above it): `beforeDeadline` until the readiness
+ * deadline's own capture, then `shown`, then `afterSend` once anything is sent.
+ */
+function unsettledPane(
+  t: TestContext,
+  shown: string,
+  afterSend: string,
+  beforeDeadline: string = shown,
+) {
+  startingRunner(t, 0);
+  paneTextByCapture = null;
+  let ticks = 0;
+  let loopStartedAt: number | null = null;
+  let switched = false;
+  paneNow = (command) => {
+    ticks += 1;
+    if (promptInputCommands.length) return afterSend;
+    // The wait loop's first capture comes one poll after it starts; the deadline's capture is the
+    // only one that keeps escapes (`-e`).
+    if (loopStartedAt === null && /capture-pane -p -t /.test(command))
+      loopStartedAt = Date.now() - slowStartOptions.pollIntervalMs;
+    const deadline =
+      loopStartedAt === null ? Infinity : loopStartedAt + slowStartOptions.readyTimeoutMs;
+    if (!switched && command.includes(' -e ') && Date.now() >= deadline) switched = true;
+    // The ticker sits above the runner's own layout, so composer footers stay intact.
+    return `elapsed ${ticks}s\n${switched ? shown : beforeDeadline}`;
+  };
+}
+
+// 961d55d3: a runner that settled a few seconds after the readiness deadline failed the dispatch.
+test('a runner that settles after the readiness deadline gets one more window, with no model asked', async (t) => {
+  startingRunner(t, 13);
+  await launch(t);
+  assert.ok(callOrder.includes('tmux:send'), 'the prompt was delivered after the extra wait');
+  assert.equal(llmCalls, 0);
+});
+
+test('a runner still busy after the extra window fails with its pane and snapshot, naming both waits', async (t) => {
+  startingRunner(t, 1_000);
+  await assert.rejects(
+    withVirtualTime(t, () =>
+      sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+        ...slowStartOptions,
+        blockerSnapshotPath: '/tmp/repo/.artifacts/dispatch-launch.txt',
+      }),
+    ),
+    /within 10s \(and 10s more after the deadline\) in tmux target .*Snapshot: \/tmp\/repo\/\.artifacts\/dispatch-launch\.txt\..*Last pane content:\n✻ Working…/s,
+  );
+  assert.ok(callOrder.includes('python:write'), 'the ready-timeout snapshot was written');
+  assert.equal(callOrder.includes('tmux:send'), false);
+  assert.equal(llmCalls, 0);
+});
+
+test('the instruction in the live composer at the deadline is submitted once by delivery, not retyped', async (t) => {
+  promptInputCommands.length = 0;
+  unsettledPane(t, composer(message), '⏺ Reading TASK.md\n✻ Working…\n');
+  await launch(t);
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 1);
+  assert.match(promptInputCommands[0]!, /send-keys -t '%1' Enter/);
+  assert.equal(callOrder.includes('tmux:send-literal'), false, 'the instruction is not retyped');
+  assert.equal(llmCalls, 0);
+});
+
+test('an authoritative idle hook at the deadline hands a never-settling pane to delivery', async (t) => {
+  unsettledPane(t, composer(''), '⏺ Reading TASK.md\n✻ Working…\n');
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  await launch(t);
+  assert.ok(callOrder.includes('tmux:send-literal'), 'the prompt was delivered');
+  assert.equal(llmCalls, 0);
+});
+for (const [why, pane, runner] of [
+  [
+    "claude's dim prompt suggestion",
+    '────────────────\n❯ \x1b[2mTry "fix lint errors"\x1b[22m\n────────────────\n',
+    'claude',
+  ],
+  ["codex's placeholder", '› Ask Codex to do anything\n\n  gpt-5.5 · ~/repo\n', 'codex'],
+] as const)
+  test(`an idle hook hands over a composer showing only ${why}`, async (t) => {
+    promptInputCommands.length = 0;
+    unsettledPane(t, pane, '⏺ Reading TASK.md\n✻ Working…\n');
+    activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+    await launch(t, runner);
+    assert.ok(callOrder.includes('tmux:send-literal'), 'the prompt was delivered');
+  });
+
+const idle: RunnerActivity = 'idle';
+const trustPrompt =
+  ' Accessing workspace:\n\n /tmp/repo\n\n Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel\n';
+for (const [why, pane, reading, runner] of [
+  [
+    'a permission dialog naming the task file',
+    'Do you want to make this edit to TASK.md?\n❯ 1. Yes\n  2. No\n\nEsc to cancel\n',
+    null,
+    'claude',
+  ],
+  [
+    'an operator draft in the composer',
+    `⏺ Read TASK.md\n${composer('wait, use the other branch')}`,
+    null,
+    'claude',
+  ],
+  ['an awaiting-input hook reading', composer(message), 'awaiting-input', 'claude'],
+  [
+    'an operator draft while the hook reads idle',
+    `⏺ Read TASK.md\n${composer('wait, use the other branch')}`,
+    idle,
+    'claude',
+  ],
+  [
+    'a codex draft under the instruction in scrollback while the hook reads idle',
+    `› ${message}\n\n  Sure.\n\n› hold on\n\n  gpt-5.5 · ~/repo\n`,
+    idle,
+    'codex',
+  ],
+  [
+    'a question above an empty composer while the hook reads idle',
+    `Would you like to continue? [y/N]\n${composer('')}`,
+    idle,
+    'claude',
+  ],
+  [
+    'a claude draft whose first row is blank while the hook reads idle',
+    '────────────────\n❯ \n  do not touch main\n────────────────\n',
+    idle,
+    'claude',
+  ],
+  [
+    'a claude draft with a bare prompt on a later row while the hook reads idle',
+    '────────────────\n❯ see this\n❯\n────────────────\n',
+    idle,
+    'claude',
+  ],
+  [
+    'claude bash mode below an older bare prompt while the hook reads idle',
+    '❯\n\n────────────────\n! rm -rf x\n────────────────\n',
+    idle,
+    'claude',
+  ],
+  [
+    'a codex draft whose first row is blank while the hook reads idle',
+    '› \n  hold on\n\n  gpt-5.5 · ~/repo\n',
+    idle,
+    'codex',
+  ],
+  [
+    'an empty codex composer below the already-submitted instruction while the hook reads idle',
+    `› ${message}\n\n› \n\n  gpt-5.5 · ~/repo\n`,
+    idle,
+    'codex',
+  ],
+] as const)
+  test(`nothing is submitted at the deadline over ${why}`, async (t) => {
+    promptInputCommands.length = 0;
+    unsettledPane(t, `✻ Working…\n${pane}`, pane);
+    if (reading)
+      activityReading = {
+        value: reading,
+        source: 'hook',
+        confidence: 'high',
+        observedAt: Date.now(),
+      };
+    await assert.rejects(launch(t, runner), /and 10s more after the deadline/);
+    assert.equal(callOrder.includes('tmux:send'), false);
+  });
+
+test('a trust prompt at the top of a tall pane blocks the idle-hook handover', async (t) => {
+  promptInputCommands.length = 0;
+  const tall = `${trustPrompt}${'\n'.repeat(100)}${composer('')}`;
+  unsettledPane(t, tall, '❯\nctx:12%\n', '✻ Working…\n');
+  activityReading = { value: 'idle', source: 'hook', confidence: 'high', observedAt: Date.now() };
+  await launch(t);
+  assert.match(promptInputCommands[0]!, /'Down' 'Enter'/, 'the trust prompt got its key first');
+});
+
+test('a runner that turns idle during the extra window is handed over at the second deadline', async (t) => {
+  promptInputCommands.length = 0;
+  unsettledPane(t, composer(''), '⏺ Reading TASK.md\n✻ Working…\n');
+  // Busy through the first (extended) deadline into the extra window, then idle; the pane never
+  // settles.
+  const idleFrom = Date.now() + slowStartOptions.readyTimeoutMs * 2;
+  activityReadingProvider = () => ({
+    value: Date.now() < idleFrom ? 'tool-running' : 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  });
+  t.after(() => {
+    activityReadingProvider = null;
+  });
+  await launch(t);
+  assert.ok(callOrder.includes('tmux:send-literal'), 'delivered after the second deadline');
+});
+
+test('a trust prompt at the deadline gets the detector key, never a bare submit', async (t) => {
+  promptInputCommands.length = 0;
+  unsettledPane(
+    t,
+    ' Accessing workspace:\n\n /tmp/repo\n\n Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel\n',
+    '❯\nctx:12%\n',
+    '✻ Working…\n',
+  );
+  await launch(t);
+  // The fixture counts the trust key's echo as the prompt's acknowledgement; only the keys matter.
+  assert.match(promptInputCommands[0]!, /'Down' 'Enter'/, 'the detector key');
+  assert.equal(
+    promptInputCommands.some((command) => /send-keys -t '%1' Enter$/.test(command.trim())),
+    false,
+    'no bare submit key over the trust prompt',
+  );
+});
+
+test('a refused submit at the deadline handover fails the delivery instead of waiting', async (t) => {
+  promptInputCommands.length = 0;
+  unsettledPane(t, composer(message), composer(message));
+  failedPromptSends = 1;
+  t.after(() => {
+    failedPromptSends = 0;
+  });
+  await assert.rejects(launch(t), /Failed to send prompt to test-1:dev: target missing/);
+  assert.equal(callOrder.filter((entry) => entry === 'tmux:send').length, 1);
 });

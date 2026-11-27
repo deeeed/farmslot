@@ -71,6 +71,7 @@ export class JsonLineProcess {
   private closing = false;
   private failure?: Error;
   private readonly stderr: NativeStderrCapture;
+  private readonly includeDetachedGroups: boolean;
   private exitCode: number | null = null;
   private exitSignal: string | null = null;
   private pending = new Map<
@@ -88,6 +89,7 @@ export class JsonLineProcess {
       onProcessSnapshot?: (snapshot: ProcessIdentity[]) => void;
       signal?: AbortSignal;
       processSandbox?: NativeProcessSandbox;
+      includeDetachedGroups?: boolean;
     },
     onMessage: (message: Record<string, unknown>) => void,
     private readonly onExit: (
@@ -97,6 +99,7 @@ export class JsonLineProcess {
     ) => void,
   ) {
     this.stderr = new NativeStderrCapture(options.env ?? process.env);
+    this.includeDetachedGroups = options.includeDetachedGroups ?? false;
     const identity = `farmslot-native-${randomUUID()}`;
     this.child = spawn(
       process.execPath,
@@ -296,6 +299,18 @@ export class JsonLineProcess {
     }));
   }
 
+  async verifyStoppedProcessTree(): Promise<boolean> {
+    if (!this.cleanupStarted || (this.exitCode === null && this.exitSignal === null)) return false;
+    await this.finished;
+    return this.ownedTreeIsEmpty();
+  }
+
+  private async ownedTreeIsEmpty(): Promise<boolean> {
+    return this.tree
+      ? this.tree.empty({ includeDetachedGroups: this.includeDetachedGroups })
+      : this.gatedRootExited();
+  }
+
   private beginStop(): void {
     if (this.closing || this.cleanupStarted) return;
     this.closing = true;
@@ -382,7 +397,7 @@ export class JsonLineProcess {
     }
     let stopError: unknown;
     try {
-      await this.tree.stop();
+      await this.tree.stop({ includeDetachedGroups: this.includeDetachedGroups });
     } catch (error) {
       // A group can disappear while shutdown snapshots are being taken. Accept
       // cleanup only after fresh OS evidence proves every tracked process and
@@ -392,7 +407,7 @@ export class JsonLineProcess {
     const deadline = Date.now() + 3_000;
     while (Date.now() < deadline) {
       if (
-        (await this.tree.empty()) &&
+        (await this.ownedTreeIsEmpty()) &&
         (this.child.exitCode !== null || this.child.signalCode !== null)
       )
         return;

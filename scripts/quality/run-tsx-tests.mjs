@@ -10,6 +10,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  watch,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,6 +33,41 @@ export { finish };
  * a time, never overlapping each other or the parallel lanes.
  */
 export const SERIAL_PRAGMA = '@farmslot:serial';
+
+/** The checkout's shared pool directory: the default FARMSLOT_POOL_DIR of every test file. */
+const SHARED_POOL = resolve(import.meta.dirname, '../../pool');
+
+/**
+ * Watches the shared pool directory for the length of a run. Test files run in parallel in one
+ * checkout, so a pool file one of them creates there reaches every other file's slot lookups
+ * (backlog/store.test.ts failed "allowed slot not found" that way). `stop()` returns the entries
+ * created meanwhile, removed again or not; none is expected. Nothing is watched when the
+ * directory is absent.
+ */
+export function watchSharedPool(directory = SHARED_POOL) {
+  if (!existsSync(directory)) return { stop: () => [] };
+  const before = new Set(readdirSync(directory));
+  const touched = new Set();
+  const watcher = watch(directory, (event, file) => {
+    if (event === 'rename' && file) touched.add(String(file));
+  });
+  watcher.unref();
+  return {
+    stop() {
+      watcher.close();
+      // A rename event can lag the write: compare the listing too. Entries that were there before
+      // the run are left out (macOS can report their earlier writes as events of this watch).
+      for (const entry of readdirSync(directory)) touched.add(entry);
+      return [...touched].filter((entry) => !before.has(entry)).sort();
+    },
+  };
+}
+
+/** The failure line for entries a run created or removed in the shared pool directory. */
+export function sharedPoolFailure(touched, directory = SHARED_POOL) {
+  if (touched.length === 0) return null;
+  return `[tsx-tests] the shared pool directory ${directory} gained entries during the run: ${touched.join(', ')}. A test's pool files belong in a private FARMSLOT_POOL_DIR (gateway tests: import core/private-pool.test-support first and write under poolDirectory()). In a live farm checkout, a gateway saving a pool config meanwhile shows up here too.`;
+}
 
 export const WORKERS_ENV = 'FARMSLOT_TSX_TEST_WORKERS';
 export const TEST_STATUS_ENV = 'FARMSLOT_TEST_STATUS_FILE';
@@ -175,10 +211,18 @@ export function discoverTests(roots, cwd) {
   return [...new Set(roots.flatMap((root) => collectTests(root, cwd)))].sort();
 }
 
+/** Whether a test file needs Node's module mocks (`--experimental-test-module-mocks`). */
+export function usesModuleMocks(source) {
+  return source.includes('mock.module(') || source.includes('mock-pty.test-support');
+}
+
+/**
+ * The lane a test file runs in. The serial pragma wins: a marked file runs alone even
+ * when it also uses module mocks, and is then started with the module-mock flag.
+ */
 export function classifyTest(source) {
-  if (source.includes('mock.module(') || source.includes('mock-pty.test-support'))
-    return 'module-mock';
   if (source.includes(SERIAL_PRAGMA)) return 'serial';
+  if (usesModuleMocks(source)) return 'module-mock';
   return 'parallel';
 }
 
@@ -189,7 +233,10 @@ export function classifyTest(source) {
  * file lands in exactly one worker bucket. Assignment is round-robin over the
  * sorted file list, so the same input always yields the same plan.
  */
-export function partitionTests(tests, { workers = 1, classify, nodeTest = false } = {}) {
+export function partitionTests(
+  tests,
+  { workers = 1, classify, usesMocks = () => false, nodeTest = false } = {},
+) {
   const moduleMock = [];
   const serial = [];
   const parallelFiles = [];
@@ -211,13 +258,55 @@ export function partitionTests(tests, { workers = 1, classify, nodeTest = false 
     parallel[index % laneCount].push(file);
   });
 
-  return { moduleMock, serial, parallel };
+  // Each module-mock file runs in its own process, so its mocks cannot reach another
+  // file: it shares the parallel workers. `--node-test` files keep their own lane.
+  // Serial files that use module mocks run alone, with the module-mock flag.
+  return {
+    moduleMock,
+    serial,
+    serialModuleMocks: serial.filter((file) => usesMocks(file)),
+    parallel,
+    moduleMockParallel: !nodeTest,
+  };
+}
+
+/**
+ * The worker that runs the module-mock file at `index`. Parallel files fill the
+ * workers from the first one, so module-mock files fill them from the last: the
+ * counts stay even, and a lone module-mock file does not queue behind a parallel one.
+ */
+export function moduleMockWorker(index, workers) {
+  return workers - 1 - (index % workers);
+}
+
+/**
+ * The files each parallel worker runs, in order: its share of the module-mock files
+ * (run with the module-mock flag), then its parallel bucket. Without
+ * `moduleMockParallel` the module-mock files are not here; they run on their own
+ * before the serial lane.
+ */
+export function workerLanes(partition) {
+  const workers = partition.parallel.length;
+  return partition.parallel.map((files, worker) => [
+    ...(partition.moduleMockParallel
+      ? partition.moduleMock
+          .filter((_file, index) => moduleMockWorker(index, workers) === worker)
+          .map((file) => ({ file, moduleMock: true }))
+      : []),
+    ...files.map((file) => ({ file, moduleMock: false })),
+  ]);
 }
 
 /** Flat {file, lane, worker} view used for reporting and assignment checks. */
 export function assignments(partition) {
   const entries = [
-    ...partition.moduleMock.map((file) => ({ file, lane: 'module-mock', worker: null })),
+    ...partition.moduleMock.map((file, index) => ({
+      file,
+      lane: 'module-mock',
+      worker: partition.moduleMockParallel
+        ? moduleMockWorker(index, partition.parallel.length)
+        : null,
+    })),
     ...partition.serial.map((file) => ({ file, lane: 'serial', worker: null })),
     ...partition.parallel.flatMap((lane, worker) =>
       lane.map((file) => ({ file, lane: 'parallel', worker })),
@@ -348,8 +437,11 @@ export function openTmuxSandbox(uid = process.getuid?.() ?? 0) {
   return dir;
 }
 
-function childEnvironment(tmuxDir) {
-  const env = tmuxSandboxEnvironment({ ...process.env, NODE_TEST_CONTEXT: '1' }, tmuxDir);
+/** The environment every test file starts from; runOne adds its own tmux sandbox. */
+function childEnvironment() {
+  const env = { ...process.env, NODE_TEST_CONTEXT: '1' };
+  delete env.TMUX;
+  delete env.TMUX_PANE;
   for (const key of GIT_LOCATION_ENV) delete env[key];
   delete env.FARMSLOT_CI_TEST_SELECTION;
   delete env.FARMSLOT_QUALITY_TIMINGS_DIR;
@@ -358,6 +450,9 @@ function childEnvironment(tmuxDir) {
 
 /** Test processes still running, so an interrupted run can stop them first. */
 const activeChildren = new Set();
+
+/** Per-file tmux sandboxes not yet closed, by directory, so the run's exit closes any left. */
+const openSandboxes = new Map();
 
 /** Set when a signal interrupts the run: no further test file starts. */
 let interrupted = false;
@@ -611,19 +706,27 @@ async function runOne(file, context) {
   linkToolCaches(fileTmp);
   const testStatusFile = join(stateDir, '.farm-status.json');
   writeFileSync(testStatusFile, '{"slots":[]}\n');
+  // One tmux server per file: files running at the same time never share its
+  // sessions, panes or paste buffers.
+  const env = tmuxSandboxEnvironment(
+    {
+      ...context.env,
+      ...(context.tsconfig ? { TSX_TSCONFIG_PATH: resolve(context.cwd, context.tsconfig) } : {}),
+      [TEST_STATUS_ENV]: testStatusFile,
+      TMPDIR: fileTmp,
+      TMP: fileTmp,
+      TEMP: fileTmp,
+    },
+    openTmuxSandbox(),
+  );
+  openSandboxes.set(env.TMUX_TMPDIR, env);
   let result;
   let leaked = [];
+  let tmuxFailure;
   try {
     result = await runYarn(testCommand(file, context), {
       cwd: context.cwd,
-      env: {
-        ...context.env,
-        ...(context.tsconfig ? { TSX_TSCONFIG_PATH: resolve(context.cwd, context.tsconfig) } : {}),
-        [TEST_STATUS_ENV]: testStatusFile,
-        TMPDIR: fileTmp,
-        TMP: fileTmp,
-        TEMP: fileTmp,
-      },
+      env,
       buffered: context.buffered,
       timeoutMs: context.fileTimeoutMs,
     });
@@ -632,6 +735,13 @@ async function runOne(file, context) {
     leaked = existsSync(fileTmp) ? readdirSync(fileTmp).filter((entry) => !caches.has(entry)) : [];
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
+    try {
+      closeTmuxSandbox(env);
+    } catch (error) {
+      tmuxFailure = error.message;
+    } finally {
+      openSandboxes.delete(env.TMUX_TMPDIR);
+    }
   }
   const label = `${basename(context.cwd)}/${relative(context.cwd, file)}`;
   const leakFailure = tmpdirLeakFailure(label, leaked);
@@ -640,12 +750,13 @@ async function runOne(file, context) {
       ? `[tsx-tests] ${label} did not finish within ${context.fileTimeoutMs} ms (${FILE_TIMEOUT_ENV}); killed its process group`
       : undefined,
     leakFailure ?? knownLeakerNotice(label, leaked),
+    tmuxFailure,
   ]
     .filter(Boolean)
     .join('\n');
   // Buffered lanes print the message inside this file's own output block.
   if (leakMessage && !context.buffered) console.error(leakMessage);
-  const status = leakFailure && result.status === 0 ? 1 : result.status;
+  const status = (leakFailure || tmuxFailure) && result.status === 0 ? 1 : result.status;
   const output = leakMessage ? `${result.output}${leakMessage}\n` : result.output;
   const ms = performance.now() - started;
   if (context.buffered) {
@@ -658,9 +769,10 @@ async function runOne(file, context) {
 
 async function runLaneSequentially(files, context) {
   const records = [];
-  for (const file of files) {
+  for (const entry of files) {
     if (interrupted) break;
-    records.push(await runOne(file, context));
+    const { file, moduleMock = false } = typeof entry === 'string' ? { file: entry } : entry;
+    records.push(await runOne(file, moduleMock ? { ...context, moduleMock } : context));
   }
   return records;
 }
@@ -807,15 +919,20 @@ async function main() {
     return;
   }
 
+  const sources = new Map();
+  const source = (file) => {
+    if (!sources.has(file)) sources.set(file, readFileSync(file, 'utf8'));
+    return sources.get(file);
+  };
   const partition = partitionTests(tests, {
     workers,
     nodeTest,
-    classify: (file) => classifyTest(readFileSync(file, 'utf8')),
+    classify: (file) => classifyTest(source(file)),
+    usesMocks: (file) => usesModuleMocks(source(file)),
   });
 
   // Every file's state and private TMPDIR live here; removed when the run ends,
-  // interrupted or not. Created and registered before the tmux sandbox, so a
-  // failure opening that cannot leave it behind.
+  // interrupted or not, together with any per-file tmux sandbox still open.
   const runRoot = mkdtempSync(join(tmpdir(), 'fst-'));
   let env;
   // Each cleanup reports its own failure: one cannot skip the other.
@@ -830,11 +947,15 @@ async function main() {
   };
   const closeSandbox = () => {
     cleanupStep(() => rmSync(runRoot, { recursive: true, force: true }));
-    if (env) cleanupStep(() => closeTmuxSandbox(env));
+    // A file that outlived an interrupt's stop deadline never reached its own close.
+    for (const [dir, sandbox] of openSandboxes) {
+      openSandboxes.delete(dir);
+      cleanupStep(() => closeTmuxSandbox(sandbox));
+    }
   };
   process.once('exit', closeSandbox);
   // An interrupted run stops its test processes, removes its directories and
-  // ends its tmux server, then dies by the same signal. A second signal during
+  // ends the tmux servers of files still open, then dies by the same signal. A second signal during
   // that shutdown gets the default action: the operator's override, which
   // skips the cleanup.
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
@@ -852,7 +973,7 @@ async function main() {
         });
     });
   }
-  env = childEnvironment(openTmuxSandbox());
+  env = childEnvironment();
   const toLabel = (file) => relative(cwd, file);
 
   // Reject a bad partition before spending minutes running tests: a lost file
@@ -866,7 +987,7 @@ async function main() {
 
   // Buffer per-file output only when lanes can actually interleave; a single
   // active lane keeps the historical live-streaming behaviour.
-  const activeLanes = partition.parallel.filter((lane) => lane.length > 0);
+  const activeLanes = workerLanes(partition).filter((lane) => lane.length > 0);
   const buffered = activeLanes.length > 1;
   const context = {
     cwd,
@@ -880,14 +1001,23 @@ async function main() {
   };
   const started = performance.now();
   const records = [];
+  const sharedPool = watchSharedPool();
 
-  // One process per file, sequentially: module mocks are process-global, and a
-  // shared process is what let `--test` skip the whole batch silently.
+  // `--node-test` files run one process per file, one at a time; a shared process is
+  // what let `--test` skip a whole batch silently. Module-mock files are on the workers.
+  if (!partition.moduleMockParallel)
+    records.push(
+      ...(await runLaneSequentially(partition.moduleMock, { ...context, moduleMock: true })),
+    );
+
+  // Serial files run alone, before the workers start; those using module mocks get the flag.
+  const serialMocks = new Set(partition.serialModuleMocks ?? []);
   records.push(
-    ...(await runLaneSequentially(partition.moduleMock, { ...context, moduleMock: true })),
+    ...(await runLaneSequentially(
+      partition.serial.map((file) => ({ file, moduleMock: serialMocks.has(file) })),
+      context,
+    )),
   );
-
-  records.push(...(await runLaneSequentially(partition.serial, context)));
   const parallelRecords = await Promise.all(
     activeLanes.map((lane) => runLaneSequentially(lane, { ...context, buffered })),
   );
@@ -910,13 +1040,15 @@ async function main() {
   };
 
   for (const line of summaryLines(report)) console.log(line);
+  const poolFailure = sharedPoolFailure(sharedPool.stop());
+  if (poolFailure) console.error(poolFailure);
   const artifactPath = writeTimingArtifact(
     `tsx-tests-${report.workspace}${selectionFile ? `-${createHash('sha256').update(roots.join('\0')).digest('hex').slice(0, 12)}` : ''}.json`,
     buildArtifact(report),
   );
   if (artifactPath) console.log(`[tsx-tests] timings artifact: ${artifactPath}`);
 
-  finish(failures.length > 0 ? 1 : 0);
+  finish(failures.length > 0 || poolFailure ? 1 : 0);
 }
 
 if (isMainModule(import.meta.url)) await main();

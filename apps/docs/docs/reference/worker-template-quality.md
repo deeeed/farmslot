@@ -35,6 +35,7 @@ node scripts/quality/check-worker-template-contract.mjs projects/my-farm/templat
 - Terminal flow documents `./mark complete`, `./mark no-change`, or `./mark blocked` (or `mark-checklist-step … complete` for secondary signals like self-review)
 - Checklist references required artifact paths for the inferred flow (`artifacts/learnings.md`, `artifacts/report.md`, `artifacts/review.md`, …)
 - Honors `worker_terminal` overrides in `project.json` when present
+- A template or execution-template checklist that runs recipe proof names the selected proof attempt, `artifacts/latest-valid-recipe-run.json` (see [Recipe proof selection](#recipe-proof-selection)). Review and QA flows are exempt. Pack-owned checklists (`execution_templates` sources with `root.projectPath`) are checked here; sources rooted in an env var or another source are checked in the repo that owns them.
 
 **Structure checks**
 
@@ -43,6 +44,22 @@ node scripts/quality/check-worker-template-contract.mjs projects/my-farm/templat
 - Missing `## Task` / checklist / completion section on terminal templates
 
 Failing lint should be fixed before merge. Farmslot’s own repo runs this in `yarn quality` for `projects/farmslot-farm` only — external packs run it locally.
+
+## Recipe proof selection
+
+A worker template that runs recipe proof tells the worker which attempt the task claims: the passing attempt selected in `artifacts/latest-valid-recipe-run.json`. A passing proof run with `RECIPE_TASK_DIR` set in the same command, writing under `artifacts/recipe-runs/<attempt>`, records that selection. To claim another retained attempt, run `retained-recipe-attempt.cjs <task-dir> <attempt-dir>`. `./mark complete` refuses proof attempts under `artifacts/recipe-runs` that nothing selects, and a selection without `artifacts/recipe.json` (#2424).
+
+A task-root `artifacts/evidence-manifest.json` is optional. Use it only to declare extra evidence, such as captures from another attempt.
+
+A template whose proof uses a different designed layout opts out by name, with its reason: `<!-- proof-selection: exempt (<reason>) -->`.
+
+**Before evidence from a separate base run.** Run the base proof into its own attempt under `artifacts/recipe-runs`. If that passing run moves the selection, re-select the after attempt. Declare the base captures in the optional task-root `artifacts/evidence-manifest.json` as before evidence (`before_after_pairs[].before` or `videos.before`). A root `before_after_pairs` list or `videos` object replaces the selected attempt's, so put each pair's after path, or `videos.after`, in the same declaration. Publication admits a capture from another attempt only when that attempt keeps its `artifact-manifest.json` and a `product-provenance.json` that is clean, on the run branch or detached, and whose `git_ref` is an eligible base:
+
+- a recorded pre-work base;
+- the publication merge base, when the frozen comparison head is the selected attempt's clean head;
+- for fix-bug, its verified bug-marker commit.
+
+A capture from another attempt on the selected attempt's clean head may also be declared as after or standalone evidence. When none of this applies, a person can attest one same-run attempt as before evidence at the publish gate (ADR-062 Amendment 21). An "outside selected recipe attempt" refusal means a declared capture's attempt lacks its provenance or a digest doesn't match, or the selected attempt's own provenance isn't a clean `git_ref` at the selected head. A missing base `artifact-manifest.json` is refused separately ("The captured baseline artifact-manifest.json is missing …"). If it names an attempt other than the current selection, the selection has moved: check the newest package under `artifacts/publication-packages`. Before evidence recorded off every eligible base is refused with "… not the unchanged base …" and the attestation command to run.
 
 ## Heuristic review (skill)
 

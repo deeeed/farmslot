@@ -16,6 +16,7 @@ import {
   type RunDecisionPayload,
   SLOT_DESTRUCTIVE_OPS,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
+  type SlotStatus,
 } from '@farmslot/protocol';
 import { canonicalResourceJson } from '@farmslot/protocol/client-cache';
 import { withProjectSources } from '@farmslot/slot-config';
@@ -33,6 +34,7 @@ import {
   transitionSlotStatus,
   updateSlotStatus,
 } from '../core/index.js';
+import { activePrepareSlots } from '../core/native-worker-exclusion.js';
 import {
   loadFleetStatus,
   loadPoolConfigs,
@@ -99,11 +101,13 @@ import {
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
+import { recoveryFromRow } from '../methods/slot/workspace.js';
 import { type GatewayResourceRevisions, resourceRevisions } from '../resources/revisions.js';
 import {
   isCancelledSlotHolder,
   reclaimCancelledSlot,
 } from '../run-lifecycle/cancelled-slot-reclaim.js';
+import { cleanupHoldClearsSoon, type CleanupHoldLookup } from '../run-lifecycle/cleanup-hold.js';
 import { reclaimFinishedSlot } from '../run-lifecycle/finished-slot-reclaim.js';
 import { assertNativeSlotReplacementOwner } from '../runners/native/worker.js';
 import {
@@ -122,6 +126,7 @@ import {
   getAllRuns,
   getAllRunsWithArchived,
   getRun,
+  getRunWithArchived,
   persistRunNow,
   updateRun,
   updateRunStep,
@@ -406,6 +411,50 @@ function acceptedAppBinding(run: Run | undefined): AppBindingMismatchPayload | u
  * this claim aborts its remaining writes instead of clobbering the claim.
  */
 
+/**
+ * A slot this run will prepare next must not be under another prepare guard: prepare would
+ * refuse it 'already preparing' (1b542e2f). Card picks and reuse claims reach the claim
+ * without the explicit-pick wait, and a guard can be taken after selection, so the claim
+ * waits for it the same way, as queue time.
+ */
+export async function waitForPrepareGuard(
+  runId: string,
+  generation: number,
+  slotId: string,
+  deps: {
+    preparing?: (slotId: string) => boolean;
+    runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<unknown>;
+    timeoutMs?: number;
+    wrapWait?: (wait: () => Promise<void>) => Promise<void>;
+  } = {},
+): Promise<void> {
+  const {
+    preparing = (id) => activePrepareSlots.has(id),
+    runLookup = getRun,
+    now = Date.now,
+    sleep = delay,
+    timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
+    wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
+  } = deps;
+  if (!preparing(slotId)) return;
+  await wrapWait(async () => {
+    const deadline = now() + timeoutMs;
+    while (preparing(slotId)) {
+      if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
+      // A conflict: find-slot selects again (skipping the slot) instead of failing the run.
+      if (now() >= deadline)
+        throw slotClaimRefusedError(
+          slotId,
+          `Slot ${slotId} is still preparing after ${Math.round(timeoutMs / 60_000)}m`,
+          true,
+        );
+      await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
+    }
+  });
+}
+
 async function claimSelectedSlot(
   slotId: string,
   runId: string,
@@ -421,6 +470,7 @@ async function claimSelectedSlot(
     const slotRunner = (await readSlotRow(slotId))?.runner;
     assertNativeRunForSlot(run, typeof slotRunner === 'string' ? slotRunner : undefined);
   }
+  if (phase === 'preparing') await waitForPrepareGuard(runId, generation, slotId);
   // The gate for every claim, before source admission and the claim itself. Paths
   // that may change a slot before claiming it (safe reuse, takeovers, picks) asked
   // already and replay here; a clean scored pick, affinity, the skip-prepare preview
@@ -455,6 +505,10 @@ async function claimSelectedSlot(
       const capabilityRefusal = slotCapabilityBlocker(slotId, requiredCapabilities, catalogs);
       if (capabilityRefusal) throw new Error(`Slot ${slotId}: ${capabilityRefusal}`);
       if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
+      // A guard taken while this claim waited on admission (sources, catalogs) would refuse
+      // the run's prepare: refuse as a conflict, so find-slot selects again.
+      if (phase === 'preparing' && activePrepareSlots.has(slotId))
+        throw slotClaimRefusedError(slotId, `Slot ${slotId} is preparing`, true);
       // Record the binding only after source revalidation. Automatic replans keep their
       // original open request, while the claim and any teardown see this exact target.
       if (current?.slotId !== slotId) updateRun(runId, { slotId });
@@ -517,14 +571,61 @@ async function claimAdmittedSlot(
   }
 
   if (!run.engineState?.flags?.skipPrepare) {
-    if (!run.engineState?.flags?.freshReuse && !opts?.takeoverLiveOwner && !opts?.reserveOnly)
-      await reclaimFinishedSlot(slotId, run, emit);
+    if (!run.engineState?.flags?.freshReuse && !opts?.takeoverLiveOwner && !opts?.reserveOnly) {
+      const before = await readSlotRow(slotId);
+      try {
+        await reclaimFinishedSlot(slotId, run, emit);
+      } catch (error) {
+        // Someone else acting on the slot (a recovery, a rival claim) ends by itself, whatever
+        // refusal it caused here: select again or wait rather than fail the run.
+        if (slotChangedUnderAttempt(slotId, before, await readSlotRow(slotId)))
+          throw slotClaimRefusedError(slotId, 'the slot changed during reclaim', true);
+        throw error;
+      }
+    }
     await releaseBranchHolderForSelection(slotId, run.branch);
   }
   await commitSlotClaim(slotId, runId, generation, phase, agent, opts);
   if (selectedExecutionTemplate && !run.executionTemplate) {
     updateRun(runId, { executionTemplate: selectedExecutionTemplate });
   }
+}
+
+/** A workspace recovery (an automatic idle return, a refresh) is running on the slot now. It
+ * holds the prepare guard and its fenced row while it runs; a failed one is held for an operator
+ * instead. After a gateway crash the fenced row stays until the reconciler resumes the recovery,
+ * which needs the slot's node back, so a wait on it ends once that node returns. */
+function workspaceRecoveryInFlight(
+  slotId: string,
+  row: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  return (
+    activePrepareSlots.has(slotId) ||
+    (!!row?.workspace_recovery &&
+      row.lifecycle === 'busy' &&
+      row.phase === SLOT_PHASE_RELEASING &&
+      !row.current_run_id)
+  );
+}
+
+/** Another actor changed the slot while this run tried it: a recovery is running, a claim moved
+ * its ownership epoch (every claim does), or another recovery finished meanwhile: the slot is
+ * ready again with a different marker, head or branch (recovery keeps the epoch). This run's own
+ * recovery that failed leaves the slot held instead, which is its real refusal, not a change. */
+function slotChangedUnderAttempt(
+  slotId: string,
+  before: Readonly<Record<string, unknown>> | null | undefined,
+  after: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  const recoveryId = (row: typeof before) => (row ? recoveryFromRow(row)?.id : undefined);
+  return (
+    workspaceRecoveryInFlight(slotId, after) ||
+    (Number(before?.slot_epoch) || 0) !== (Number(after?.slot_epoch) || 0) ||
+    (after?.lifecycle === 'ready' &&
+      (recoveryId(before) !== recoveryId(after) ||
+        (before?.head_sha ?? null) !== (after?.head_sha ?? null) ||
+        (before?.branch ?? null) !== (after?.branch ?? null)))
+  );
 }
 
 /**
@@ -546,6 +647,7 @@ export async function commitSlotClaim(
     readRow?: typeof readSlotRow;
     runLookup?: (id: string) => Pick<Run, 'status' | 'engineState'> | undefined;
     listSlotRuns?: () => Promise<SlotHistoryRun[]>;
+    cleanupHoldRun?: CleanupHoldLookup;
   } = {},
 ): Promise<void> {
   const {
@@ -555,6 +657,7 @@ export async function commitSlotClaim(
     readRow = readSlotRow,
     runLookup = getRun,
     listSlotRuns = getAllRunsWithArchived,
+    cleanupHoldRun = getRunWithArchived,
   } = deps;
   const reservation = Boolean(opts?.takeoverLiveOwner || opts?.reserveOnly);
   const releaseRecoveryClaim = async (
@@ -646,7 +749,12 @@ export async function commitSlotClaim(
       blocker
         ? await describeSlotClaimBlocker(slotId, blocker, listSlotRuns)
         : 'slot changed hands during the claim',
-      !blocker || blocker.kind === 'live-owner',
+      // A hold the previous run's cleanup is about to clear sends the run back to selection,
+      // whose preview waits for it on a pinned slot.
+      !blocker ||
+        blocker.kind === 'live-owner' ||
+        workspaceRecoveryInFlight(slotId, row) ||
+        (blocker.kind === 'occupied' && (await cleanupHoldClearsSoon(slotId, row, cleanupHoldRun))),
     );
   }
   // The predicate passed, but a cancel, pause or replay can still land while
@@ -701,8 +809,37 @@ export async function commitSlotClaim(
   }
 }
 
+// A guard that clears on a slot reading ready changes what selection may pick: announce it
+// as a slot change, so a run waiting in the slot picker re-checks.
+activePrepareSlots.onCleared((slotId) => resourceRevisions.advance({ family: 'slot', slotId }));
+
+/**
+ * Free slots split by whether a prepare guard still holds them. A guarded slot is skipped,
+ * not picked and then refused at prepare ('already preparing', 1b542e2f on macpro-mmt-4).
+ */
+export function splitGuardedFreeSlots<
+  S extends Pick<SlotStatus, 'slot' | 'missingFromPool' | 'lifecycle' | 'agent' | 'enabled'>,
+>(
+  slots: readonly S[],
+  guarded: (slotId: string) => boolean = (slotId) => activePrepareSlots.has(slotId),
+): { free: S[]; guarded: string[] } {
+  const free: S[] = [];
+  const held: string[] = [];
+  for (const slot of slots) {
+    if (!isFreeSlot(slot)) continue;
+    if (guarded(slot.slot)) held.push(slot.slot);
+    else free.push(slot);
+  }
+  return { free, guarded: held };
+}
+
 /** How long an explicit slot pick waits for an in-flight release to land. */
 export const EXPLICIT_SLOT_RELEASE_WAIT_MS = 5 * 60 * 1000;
+/**
+ * How long a pinned slot waits for the previous run's cleanup. The held-slot pass retries that
+ * cleanup every minute and does not count the waiting pin as the slot's holder.
+ */
+export const CLEANUP_HOLD_WAIT_MS = 2 * 60 * 1000;
 const EXPLICIT_SLOT_RELEASE_POLL_MS = 2000;
 
 /**
@@ -810,9 +947,10 @@ async function reclaimCancelledSlotForSelection(
 }
 
 /**
- * Guard an already chosen slot before preview. A release gets a bounded queue wait.
+ * Guard an already chosen slot before preview. A release gets a bounded queue wait, and so
+ * does a pinned slot whose finished run's cleanup waits on a process still exiting.
  * A live owner becomes a claim conflict: the caller reselects an automatic pick
- * or waits for its pin. Handoffs and occupied holds are refused. Cancel, pause or
+ * or waits for its pin. Handoffs and other occupied holds are refused. Cancel, pause or
  * replay stops this attempt. Unconstrained scoring previews directly.
  */
 export async function previewWhenSlotClaimable<T>(
@@ -829,6 +967,12 @@ export async function previewWhenSlotClaimable<T>(
     timeoutMs?: number;
     reclaimCancelled?: typeof reclaimCancelledSlot;
     wrapWait?: <W>(wait: () => Promise<W>) => Promise<W>;
+    /** An in-process prepare, recovery or upkeep still holds the slot's prepare guard. */
+    preparing?: (slotId: string) => boolean;
+    /** The slot is the run's own pin, so it may wait for the previous run's cleanup. */
+    waitForCleanupHold?: boolean;
+    cleanupHoldRun?: CleanupHoldLookup;
+    cleanupHoldTimeoutMs?: number;
   } = {},
 ): Promise<T> {
   if (!slotId) return preview();
@@ -841,6 +985,10 @@ export async function previewWhenSlotClaimable<T>(
     timeoutMs = EXPLICIT_SLOT_RELEASE_WAIT_MS,
     reclaimCancelled = reclaimCancelledSlotForSelection,
     wrapWait = (wait) => awaitAsQueueTime(runId, 'find-slot', wait),
+    preparing = (id) => activePrepareSlots.has(id),
+    waitForCleanupHold = false,
+    cleanupHoldRun = getRunWithArchived,
+    cleanupHoldTimeoutMs = CLEANUP_HOLD_WAIT_MS,
   } = deps;
   const assertRunUnchanged = () => {
     if (runSupersededSince(runLookup(runId), generation)) throw runChangedError(runId, slotId);
@@ -856,22 +1004,60 @@ export async function previewWhenSlotClaimable<T>(
 
   await reclaimCancelled(slotId, runId);
   assertRunUnchanged();
-  let blocker = blockerOf(await readRow(slotId));
-  if (blocker?.kind === 'releasing') {
+  let row = await readRow(slotId);
+  let blocker = blockerOf(row);
+  const cleanupHeld = async (
+    currentRow: Readonly<Record<string, unknown>> | null,
+    current: typeof blocker,
+  ) =>
+    waitForCleanupHold &&
+    current?.kind === 'occupied' &&
+    (await cleanupHoldClearsSoon(slotId, currentRow, cleanupHoldRun));
+  // A slot mid-release, or one that reads free while a prepare guard still holds it (it would
+  // refuse this run's prepare 'already preparing', 1b542e2f), is waited for, not refused.
+  // One classification per read: the cleanup check may look the leaver up in the archive.
+  const waitReason = async (
+    currentRow: Readonly<Record<string, unknown>> | null,
+    current: typeof blocker,
+  ): Promise<'cleanup' | 'release' | null> =>
+    (await cleanupHeld(currentRow, current))
+      ? 'cleanup'
+      : current?.kind === 'releasing' || (!current && preparing(slotId))
+        ? 'release'
+        : null;
+  let reason = await waitReason(row, blocker);
+  if (reason) {
     // One read decides both whether to wait and whether it counts as queue time.
     blocker = await wrapWait(async () => {
       const deadline = now() + timeoutMs;
+      // The held-slot pass fences the slot while it retries the cleanup, so the hold and a
+      // release alternate: the cleanup bound runs from the first hold seen, not per phase.
+      let cleanupSince: number | undefined;
       let current = blocker;
-      while (current?.kind === 'releasing') {
-        if (now() >= deadline) {
+      while (reason) {
+        if (reason === 'cleanup' && current) {
+          cleanupSince ??= now();
+          if (now() - cleanupSince >= cleanupHoldTimeoutMs) {
+            const minutes = Math.round(cleanupHoldTimeoutMs / 60_000);
+            throw slotClaimRefusedError(
+              slotId,
+              `${await describeSlotClaimBlocker(slotId, current, listSlotRuns)}; still held after ${minutes}m`,
+            );
+          }
+        } else if (now() >= deadline) {
+          const minutes = Math.round(timeoutMs / 60_000);
           throw slotClaimRefusedError(
             slotId,
-            `${current.detail}, still releasing after ${Math.round(timeoutMs / 60_000)}m`,
+            current?.kind === 'releasing'
+              ? `${current.detail}, still releasing after ${minutes}m`
+              : `Slot ${slotId} is still preparing after ${minutes}m`,
           );
         }
         await sleep(EXPLICIT_SLOT_RELEASE_POLL_MS);
         assertRunUnchanged();
-        current = blockerOf(await readRow(slotId));
+        row = await readRow(slotId);
+        current = blockerOf(row);
+        reason = await waitReason(row, current);
       }
       return current;
     });
@@ -983,6 +1169,19 @@ async function consumeRunPressureAdmissionRef(
 }
 
 /**
+ * Whether a refused claim waits for this slot. The queue's own pick within a wider allowlist is
+ * not the caller's pin: a lost claim there selects again within the allowlist instead of waiting.
+ */
+function claimConflictPinned(
+  run: Pick<Run, 'queuedAt' | 'allowedSlots'>,
+  automaticLoadPinned: boolean,
+): boolean {
+  return run.queuedAt && run.allowedSlots && run.allowedSlots.length > 1
+    ? false
+    : automaticLoadPinned;
+}
+
+/**
  * `generation` is the engine attempt running this step: a cancel, pause or
  * replay that moves the run off it owns the run, and no claim may land for it.
  */
@@ -998,10 +1197,7 @@ export async function executeFindSlotStep(
   const pick = run.slotId ? undefined : continuedOperatorPick(run);
   if (pick) run = updateRun(runId, { slotId: pick, requestedSlotId: pick });
   let automaticLoadPinned = isPinnedSlotSelection(run);
-  // The queue's own pick within a wider allowlist is not the caller's pin: a lost claim there
-  // selects again within the allowlist instead of waiting for the winner's whole run.
-  const conflictPinned =
-    run.queuedAt && run.allowedSlots && run.allowedSlots.length > 1 ? false : automaticLoadPinned;
+  const conflictPinned = claimConflictPinned(run, automaticLoadPinned);
   const requestedSlotId = run.slotId;
   let hostLoadWaitReason: string | undefined;
   let slotClaimWaitReason: string | undefined;
@@ -1101,15 +1297,22 @@ function operatorPickedSlot(run: Run): string | undefined {
 
 /**
  * Poll the slot row (no selection work) until the slot can be claimed. A live holder ends by
- * itself, so that wait is unbounded; the slot still busy under the ended run is bounded like an
- * explicit pick's release. A release in progress is left to the explicit pick's own bounded wait,
- * a cancelled holder to selection's reclaim, and any other blocker to selection to report.
+ * itself, so that wait is unbounded; so does a workspace recovery, which holds the slot only
+ * while it runs (a failed one is held for an operator and no longer reads as running). The slot
+ * still busy under the ended run is bounded like an explicit pick's release. A release in
+ * progress is left to the explicit pick's own bounded wait, a cancelled holder to selection's
+ * reclaim, and any other blocker to selection to report.
  */
 async function waitUntilSlotClaimable(slotId: string, runId: string, generation: number) {
   let teardownSince: number | undefined;
   for (;;) {
     if (runSupersededSince(getRun(runId), generation)) throw runChangedError(runId, slotId);
     const row = await readSlotRow(slotId);
+    // A pin waits out a recovery on its slot rather than meeting its refusal again at once.
+    if (workspaceRecoveryInFlight(slotId, row)) {
+      await delay(SLOT_CLAIM_CONFLICT_POLL_MS);
+      continue;
+    }
     const blocker = row ? slotClaimBlocker(row, runId, getRun) : null;
     const owner =
       row && typeof row.current_run_id === 'string' ? getRun(row.current_run_id) : undefined;
@@ -1640,7 +1843,7 @@ async function findSlotAttempt(
       `No complete source plan for eligible slots:\n${reasons.join('\n')}`,
     );
   }
-  const freeSlots = projectSlots.filter(isFreeSlot);
+  const { free: freeSlots, guarded: guardedFreeSlots } = splitGuardedFreeSlots(projectSlots);
   const refreshableSlots = freeSlots.filter(
     (slot) => !automaticSlotLoadBlocker(slot, selectionOptions),
   );
@@ -1686,8 +1889,10 @@ async function findSlotAttempt(
       allowedSlots: run.allowedSlots ?? null,
       ...selectionOptions,
     });
+    // A slot still under a prepare guard is not reused: prepare would refuse it.
     if (
       affinitySlot &&
+      !activePrepareSlots.has(affinitySlot.slot) &&
       !eligibleFreeSlots.some(
         (slot) =>
           (compareSlotModelAvailability(slot, affinitySlot, selectionOptions) ||
@@ -1783,7 +1988,7 @@ async function findSlotAttempt(
             prMatchKind: top.prMatchKind,
             canNudge: top.canNudge,
           },
-          freeSlotCandidates: projectSlots.filter(isFreeSlot).map((s) => ({
+          freeSlotCandidates: freeSlots.map((s) => ({
             slotId: s.slot,
             score: isEligibleFreeSlot(s) ? scoreCandidate(s) : -1,
             branch: s.branch || '',
@@ -2016,6 +2221,7 @@ async function findSlotAttempt(
         throw runChangedError(runId, candidate.slot);
       // Safe reuse may release or reset the candidate: ask about its app first.
       await confirmAppBinding(run, candidate.slot, createEngineDecision);
+      const before = await readSlotRow(candidate.slot);
       const recover = async () =>
         (await import('../run-lifecycle/safe-idle-slot.js')).reuseSafeIdleSlot(
           candidate.slot,
@@ -2032,6 +2238,9 @@ async function findSlotAttempt(
         reusableSlotId = candidate.slot;
         break;
       }
+      // A recovery or claim that took it after the guard filter ends by itself: select again.
+      if (slotChangedUnderAttempt(candidate.slot, before, await readSlotRow(candidate.slot)))
+        throw slotClaimRefusedError(candidate.slot, 'the slot changed during safe reuse', true);
       if (outcome.kind === 'local-work') localWorkSlots.add(candidate.slot);
       reuseReasons[candidate.slot] = outcome.reason;
       inputs.reclaimFailures = { ...reuseReasons };
@@ -2097,7 +2306,9 @@ async function findSlotAttempt(
         lifecycle !== 'ready' ||
         row.agent === 'working' ||
         slotClaimBlocker(row, runId, getRun) ||
-        (typeof row.current_run_id === 'string' && pickerActiveOwners.has(row.current_run_id))
+        (typeof row.current_run_id === 'string' && pickerActiveOwners.has(row.current_run_id)) ||
+        // A slot under a prepare guard is not offered; the picker resumes when the guard clears.
+        activePrepareSlots.has(slot.slot)
       )
         continue;
       pickerSlots.push(slot);
@@ -2113,7 +2324,11 @@ async function findSlotAttempt(
 
     const desc =
       reason === 'no_free_slots'
-        ? `No eligible free slots for **${run.project}**. Selection resumes automatically when an allowed slot is ready.`
+        ? `No eligible free slots for **${run.project}**.${
+            guardedFreeSlots.length
+              ? ` ${guardedFreeSlots.join(', ')} read${guardedFreeSlots.length === 1 ? 's' : ''} free but ${guardedFreeSlots.length === 1 ? 'is' : 'are'} still preparing or being serviced.`
+              : ''
+          } Selection resumes automatically when an allowed slot is ready.`
         : reason === 'missing_required_resources'
           ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Selection resumes automatically when an allowed resource slot is ready.`
           : !skipPrepare
@@ -2144,6 +2359,8 @@ async function findSlotAttempt(
           )
           .map((slot) => ({
             slot: slot.slot,
+            // A free slot under a prepare guard is skipped; its guard clearing is a change.
+            preparing: activePrepareSlots.has(slot.slot),
             machine: slot.machine,
             enabled: slot.enabled,
             dispatchable: slot.dispatchable,
@@ -2299,31 +2516,38 @@ async function findSlotAttempt(
 
   let result: DispatchPreviewResult;
   try {
-    result = await previewWhenSlotClaimable(runId, generation, run.slotId || reusableSlotId, () =>
-      dispatchPreview(
-        {
-          ...buildDispatchPreviewParamsForRun(run),
-          // The preview's node check needs the model the run names.
-          ...runExplicitRunnerModel(run),
-          // A lower-load unsafe candidate must not win again after another was recovered.
-          ...(reusableSlotId ? { allowedSlots: [reusableSlotId] } : {}),
-          targetBranch,
-          ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
-          ...(skipPrepare ? { skipPrepare } : {}),
-        },
-        // Delayed engine preview: the audit principal was resolved and persisted
-        // at run.create; never re-derive it from ambient context here.
-        {
-          ...(run.pressureOverride
-            ? { overridePrincipalId: run.pressureOverride.principalId }
-            : {}),
-          includeProfileFit: false,
-          candidateTemplate: run.engineState?.evalExperiment?.candidateTemplate,
-          automaticLoadPinned,
-          sourcePlans,
-          ...capabilitySelection,
-        },
-      ),
+    result = await previewWhenSlotClaimable(
+      runId,
+      generation,
+      run.slotId || reusableSlotId,
+      () =>
+        dispatchPreview(
+          {
+            ...buildDispatchPreviewParamsForRun(run),
+            // The preview's node check needs the model the run names.
+            ...runExplicitRunnerModel(run),
+            // A lower-load unsafe candidate must not win again after another was recovered.
+            ...(reusableSlotId ? { allowedSlots: [reusableSlotId] } : {}),
+            targetBranch,
+            ...(run.qa ? { qaProfileId: run.qa.profile.id, qaInputs: run.qa.inputs } : {}),
+            ...(skipPrepare ? { skipPrepare } : {}),
+          },
+          // Delayed engine preview: the audit principal was resolved and persisted
+          // at run.create; never re-derive it from ambient context here.
+          {
+            ...(run.pressureOverride
+              ? { overridePrincipalId: run.pressureOverride.principalId }
+              : {}),
+            includeProfileFit: false,
+            candidateTemplate: run.engineState?.evalExperiment?.candidateTemplate,
+            automaticLoadPinned,
+            sourcePlans,
+            ...capabilitySelection,
+          },
+        ),
+      // Only a pin waits for the previous run's cleanup, by the conflict loop's notion of one: a
+      // queue pick inside a wider allowlist selects again instead.
+      { waitForCleanupHold: claimConflictPinned(run, automaticLoadPinned) },
     );
   } catch (error) {
     if (!run.slotId && error instanceof AutomaticSlotLoadWaitError)

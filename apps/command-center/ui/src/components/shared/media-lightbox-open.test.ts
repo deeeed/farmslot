@@ -49,3 +49,38 @@ test('unassigned media clears unsupported role filters; browsing within Unassign
   view.willUpdate(new Map([['selectedIndex', 2]]));
   assert.equal(view._kindFilter, 'setup', 'all unbound media remains in the same filter');
 });
+
+test('a rounded video endpoint seeks and pauses, while a later millisecond is unavailable', () => {
+  const url = '/video';
+  let pauses = 0;
+  const video = {
+    readyState: 1,
+    duration: 1.666667,
+    currentTime: 0,
+    pause() {
+      pauses++;
+    },
+  };
+  const events: string[] = [];
+  interface SeekState {
+    _pendingSeek: { ms: number; itemUrl: string; pause: boolean };
+    _applyPendingSeek(video: unknown): void;
+  }
+  const view = Object.assign(Object.create(MediaLightbox.prototype), {
+    _videoSet: () => [video],
+    _videoItemUrls: new Map([[video, url]]),
+    dispatchEvent: (event: Event) => events.push(event.type),
+  }) as SeekState;
+
+  view._pendingSeek = { ms: 1667, itemUrl: url, pause: true };
+  view._applyPendingSeek(video);
+  assert.equal(video.currentTime, video.duration);
+  assert.equal(pauses, 1);
+  assert.deepEqual(events, []);
+
+  view._pendingSeek = { ms: 1668, itemUrl: url, pause: true };
+  view._applyPendingSeek(video);
+  assert.equal(video.currentTime, video.duration);
+  assert.equal(pauses, 1);
+  assert.deepEqual(events, ['lightbox-seek-unavailable']);
+});

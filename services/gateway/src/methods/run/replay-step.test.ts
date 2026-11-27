@@ -15,6 +15,8 @@ import {
   type RuntimeCapabilityStatusResult,
 } from '@farmslot/protocol';
 
+import '../../core/private-pool.test-support.js';
+
 import {
   addItem,
   claimQueueItem,
@@ -57,10 +59,12 @@ import {
   freshBlockedWorkerAttempt,
   freshDispatchEngineStateForReplay,
   normalizeReplayPrerequisites,
+  partitionReplayGateDecisions,
   readAdoptableTaskSignal,
   replaySlotReclaimCheck,
   ReplayTaskSignalProbeError,
   resetPublishGateApprovalForReplay,
+  retainReplayLifetimeUsage,
   rollbackReclaimedSlotReleaseOptions,
   runReplayStep,
   type RunReplayStepHooks,
@@ -832,75 +836,203 @@ test('human-gate replay preserves the reviewer plan for an active fix recovery',
   assert.equal(reset?.publishGate?.reviewSequenceRequestedAt, '2026-09-03T05:00:00.000Z');
 });
 
-test('runReplayStep abandons a retained handoff and re-enters normal dispatch', async (t) => {
-  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
-  const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
-  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
-  const run = createRun({
-    flowType: 'fix-bug',
-    project: 'farmslot-farm',
-    ticketOrPr: `PROJ-${Date.now()}`,
-  });
-  const taskFile = '/tmp/farmslot-fresh-dispatch/TASK.md';
-  await writeFile(
-    statusFile,
-    `${JSON.stringify({
-      slots: [{ slot: 'macwork-ff-fresh-dispatch', lifecycle: 'busy', current_run_id: run.id }],
-    })}\n`,
-  );
-  updateRun(run.id, {
-    status: 'failed',
-    error: 'Retained runner handoff was not acknowledged',
-    slotId: 'macwork-ff-fresh-dispatch',
-    taskFile,
-    engineState: {
-      generation: 2,
-      flags: {
-        skipPrepare: true,
-        warmSessionReuse: true,
-        warmHandoffSucceeded: false,
+for (const freshDispatch of [true, false])
+  test(`dispatch replay preserves review receipts and inherited spend (${freshDispatch ? 'fresh' : 'ordinary'})`, async (t) => {
+    const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+    const priorDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+    const run = createRun({
+      flowType: 'fix-bug',
+      project: 'farmslot-farm',
+      ticketOrPr: `PROJ-${Date.now()}`,
+    });
+    const taskFile = '/tmp/farmslot-fresh-dispatch/TASK.md';
+    await writeFile(
+      statusFile,
+      `${JSON.stringify({
+        slots: [{ slot: 'macwork-ff-fresh-dispatch', lifecycle: 'busy', current_run_id: run.id }],
+      })}\n`,
+    );
+    updateRun(run.id, {
+      status: 'failed',
+      error: 'Retained runner handoff was not acknowledged',
+      slotId: 'macwork-ff-fresh-dispatch',
+      taskFile,
+      agentContexts: [
+        {
+          id: 'worker',
+          label: 'Retained worker',
+          role: 'fix-bug',
+          runner: 'pi',
+          runnerSessionId: 'retained-worker',
+          runId: run.id,
+          slotId: 'macwork-ff-fresh-dispatch',
+          status: 'complete',
+          target: { session: 'worker', target: 'worker:0' },
+        },
+      ],
+      sessionUsage: [
+        {
+          runner: 'pi',
+          runnerSessionId: 'retained-worker',
+          role: 'fix-bug',
+          measuredAt: '2026-11-20T00:00:00Z',
+          source: 'runner-transcript',
+          costUsd: 1,
+        },
+        {
+          runner: 'pi',
+          runnerSessionId: 'independent-review',
+          role: 'review',
+          measuredAt: '2026-11-20T00:00:00Z',
+          source: 'runner-transcript',
+          scope: 'run-delta',
+          totalTokens: 10,
+          costUsd: 1,
+        },
+        {
+          runner: 'pi',
+          runnerSessionId: 'step-only-review',
+          role: 'review',
+          measuredAt: '2026-11-20T00:00:02Z',
+          source: 'runner-transcript',
+          totalTokens: 150,
+          costStatus: 'unpriced',
+        },
+      ],
+      decisions: [
+        {
+          id: 'old-ready',
+          type: 'engine_human_gate',
+          title: 'Ready',
+          description: '',
+          actions: [],
+          createdAt: '2026-11-20T00:00:00Z',
+          resolvedAt: '2026-11-20T00:00:01Z',
+          payload: {
+            kind: 'ready',
+            prNumber: null,
+            repo: null,
+            branch: 'review',
+            diffStat: { files: 0, additions: 0, deletions: 0 },
+            workerReport: '',
+            reviews: [
+              {
+                id: 'gate-review',
+                verdict: 'pass',
+                mode: 'cold',
+                loopNumber: 1,
+                unresolvedCount: 0,
+                runner: 'pi',
+                reviewerSessionId: 'gate-only-review',
+                usage: {
+                  source: 'runner-transcript',
+                  measuredAt: '2026-11-20T00:00:00Z',
+                  costUsd: 4,
+                },
+              },
+            ],
+          },
+        },
+      ],
+      engineState: {
+        generation: 2,
+        flags: {
+          warmSessionReuse: true,
+          warmHandoffSucceeded: true,
+        },
       },
-    },
-    steps: run.steps.map((step) =>
-      step.name === 'find-slot' || step.name === 'write-task' || step.name === 'prepare'
-        ? {
-            ...step,
-            status: 'done',
-            outputs: step.name === 'write-task' ? { taskFile } : step.outputs,
-          }
-        : step.name === 'dispatch'
-          ? { ...step, status: 'failed' }
-          : step,
-    ),
-  });
+      steps: run.steps.map((step) =>
+        step.name === 'find-slot' || step.name === 'write-task' || step.name === 'prepare'
+          ? {
+              ...step,
+              status: 'done',
+              outputs: step.name === 'write-task' ? { taskFile } : step.outputs,
+            }
+          : step.name === 'dispatch'
+            ? { ...step, status: 'done', outputs: { warmHandoff: true, workerTarget: 'worker:0' } }
+            : step.name === 'review'
+              ? {
+                  ...step,
+                  status: 'done',
+                  outputs: {
+                    usage: {
+                      runner: 'pi',
+                      runnerSessionId: 'step-only-review',
+                      measuredAt: '2026-11-20T00:00:00Z',
+                      source: 'runner-transcript',
+                      costUsd: 2,
+                      totalTokens: 150,
+                      inputTokens: 100,
+                      outputTokens: 50,
+                      runnerSessionPath: '/tmp/retained-review.jsonl',
+                    },
+                    attempts: [
+                      {
+                        usage: {
+                          runner: 'pi',
+                          runnerSessionId: 'independent-review',
+                          measuredAt: '2026-11-20T00:00:01Z',
+                          source: 'runner-transcript',
+                          scope: 'session-total',
+                          totalTokens: 100,
+                          costUsd: 5,
+                        },
+                      },
+                    ],
+                  },
+                }
+              : step,
+      ),
+    });
 
-  t.after(async () => {
-    if (priorDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
-    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = priorDisableStart;
-    if (priorStatus == null) await rm(statusFile, { force: true });
-    else await writeFile(statusFile, priorStatus);
-    if (getRun(run.id)) {
-      await evictTestRun(run.id, 'failed');
+    t.after(async () => {
+      if (priorDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+      else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = priorDisableStart;
+      if (priorStatus == null) await rm(statusFile, { force: true });
+      else await writeFile(statusFile, priorStatus);
+      if (getRun(run.id)) {
+        await evictTestRun(run.id, 'failed');
+      }
+    });
+
+    const replayed = await runReplayStep(
+      {
+        runId: run.id,
+        stepName: 'dispatch',
+        ...(freshDispatch ? { freshDispatch: true } : {}),
+        triggeredBy: 'operator',
+      },
+      () => {},
+      { startEngine: async () => {}, probeTaskSignal: async () => null },
+    );
+
+    assert.equal(replayed.run.status, 'dispatching');
+    assert.equal(replayed.run.error, undefined);
+    if (freshDispatch) {
+      assert.equal(replayed.run.engineState?.flags?.warmSessionReuse, undefined);
+      assert.equal(replayed.run.engineState?.flags?.warmHandoffSucceeded, undefined);
     }
+    const receipts = replayed.run.sessionUsage ?? [];
+    assert.equal(
+      receipts.find((row) => row.runnerSessionId === 'retained-worker')?.includesPriorRunLifetime,
+      true,
+    );
+    const independent = receipts.find((row) => row.runnerSessionId === 'independent-review');
+    assert.equal(independent?.costUsd, 1);
+    assert.equal(independent?.scope, 'run-delta');
+    assert.equal(independent?.totalTokens, 10);
+    assert.ok(!replayed.run.decisions.some(({ id }) => id === 'old-ready'));
+    assert.equal(receipts.find((row) => row.runnerSessionId === 'gate-only-review')?.costUsd, 4);
+    assert.equal(independent?.includesPriorRunLifetime, undefined);
+    const stepOnly = receipts.find((row) => row.runnerSessionId === 'step-only-review');
+    assert.equal(stepOnly?.costUsd, 2);
+    assert.notEqual(stepOnly?.costStatus, 'unpriced');
+    assert.equal(stepOnly?.inputTokens, 100);
+    assert.equal(stepOnly?.outputTokens, 50);
+    assert.equal(stepOnly?.runnerSessionPath, '/tmp/retained-review.jsonl');
+    assert.equal(replayed.run.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
   });
-
-  const replayed = await runReplayStep(
-    {
-      runId: run.id,
-      stepName: 'dispatch',
-      freshDispatch: true,
-      triggeredBy: 'operator',
-    },
-    () => {},
-  );
-
-  assert.equal(replayed.run.status, 'dispatching');
-  assert.equal(replayed.run.error, undefined);
-  assert.equal(replayed.run.engineState?.flags?.warmSessionReuse, undefined);
-  assert.equal(replayed.run.engineState?.flags?.warmHandoffSucceeded, undefined);
-  assert.equal(replayed.run.engineState?.flags?.skipPrepare, undefined);
-  assert.equal(replayed.run.steps.find((step) => step.name === 'dispatch')?.status, 'pending');
-});
 
 test('a replay a service principal requests drives the run under its stored ownership', async (t) => {
   // Run 22e62daa: farm-automation's resume re-attached the monitor, and the
@@ -1761,6 +1893,65 @@ test('replay does not reclaim a replacement plan reusing the same candidate id',
     getQueueSnapshot().some((item) => item.launchPlanId === 'lp_current'),
     "the current plan's work must survive a replay from the superseded plan",
   );
+});
+
+test('a ci-watch replay hands a held PR back to automation', async (t) => {
+  // An operator hold (wait at inline_fix_blocked while it offered a dispatch) is
+  // derived from run.decisions. A post-gate replay of a dev run keeps resolved
+  // decisions, so without an explicit release the hold would outlive the replay
+  // that is the operator handing the PR back.
+  const { ciHoldSince } = await import('../../ci-monitor/state.js');
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const ciWatchAt = run.steps.findIndex((step) => step.name === 'ci-watch');
+  assert.ok(ciWatchAt > 0, 'the dev flow has a ci-watch step');
+  const hold = {
+    id: 'hold',
+    type: 'ci_inline_fix_blocked' as const,
+    title: 'inline fix blocked',
+    description: 'inline fix blocked',
+    actions: [
+      { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'primary' as const },
+      { id: 'wait', label: 'Keep watching CI', style: 'secondary' as const },
+    ],
+    createdAt: '2026-11-24T13:28:57.000Z',
+    resolvedAt: '2026-11-24T13:28:57.000Z',
+    resolvedAction: 'wait',
+  };
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    decisions: [hold],
+    ciWatchState: { consecutiveAttempts: 0, totalAttempts: 0, skips: 0 },
+    steps: run.steps.map((step, index) =>
+      index < ciWatchAt
+        ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+        : index === ciWatchAt
+          ? { ...step, status: 'failed', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+  assert.ok(ciHoldSince(getRun(run.id)), 'held before the replay');
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'cancelled');
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+    }),
+  );
+
+  const after = getRun(run.id);
+  assert.ok(
+    after?.decisions.some((decision) => decision.id === 'hold'),
+    'the post-gate replay kept the resolved hold, so a release is needed',
+  );
+  assert.ok(after?.ciWatchState?.holdReleasedAt, 'the replay recorded the release');
+  assert.equal(ciHoldSince(after), undefined, 'and the PR is no longer held');
 });
 
 test('runReplayStep rejects monitor replay when dispatch is still running', async (t) => {
@@ -2970,6 +3161,216 @@ test('runReplayStep forces eval worker replays through prepare to reinstall harn
   assert.equal(replayed.recoveryAttempts?.at(-1)?.stepName, 'prepare');
 });
 
+// A pinned comparison run (comparison dev run with a start ref) whose project config
+// cannot be read counts as taking part, so the project name below pins it without a pack.
+function pinnedRunFailedAt(failedStep: 'dispatch' | 'monitor') {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'pinned-prepare-absent-project',
+    ticketOrPr: `PROJ-${Date.now() + (failedStep === 'dispatch' ? 0 : 1)}`,
+  });
+  const failedAt = run.steps.findIndex((step) => step.name === failedStep);
+  updateRun(run.id, {
+    status: 'failed',
+    lane: 'comparison',
+    startRef: { requestedRef: '260bd3a5', resolvedSha: '260bd3a5b20c3f9126510b7b71d0e5527f395b5d' },
+    steps: run.steps.map((step, index) =>
+      index < failedAt
+        ? { ...step, status: 'done' }
+        : index === failedAt
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+  return run;
+}
+
+test('a pinned run replayed from dispatch prepares its build again', async (t) => {
+  const run = pinnedRunFailedAt('dispatch');
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  await runReplayStep({ runId: run.id, stepName: 'dispatch', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+  });
+  const replayed = getRun(run.id);
+  assert.equal(replayed?.steps.find((step) => step.name === 'prepare')?.status, 'pending');
+  assert.equal(replayed?.recoveryAttempts?.at(-1)?.stepName, 'prepare');
+});
+
+test('a pinned run replayed from monitor keeps its prepared slot', async (t) => {
+  const run = pinnedRunFailedAt('monitor');
+  t.after(async () => {
+    if (getRun(run.id)) await evictTestRun(run.id, 'failed');
+  });
+  await runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+  });
+  const replayed = getRun(run.id);
+  assert.equal(replayed?.steps.find((step) => step.name === 'prepare')?.status, 'done');
+  assert.equal(replayed?.steps.find((step) => step.name === 'dispatch')?.status, 'done');
+});
+
+test('a pinned dispatch replay that adopts the original worker stays out of prepare', async (t) => {
+  const run = pinnedRunFailedAt('dispatch');
+  const startedAt = new Date(Date.now() - 2000).toISOString();
+  updateRun(run.id, {
+    recordedEvidenceContractVersion: 0,
+    status: 'blocked',
+    slotId: 'macwork-ff-5',
+    taskFile: '/tmp/TASK.md',
+    metrics: { ...run.metrics, runner: 'claude', model: 'sonnet', runnerSessionId: 'session' },
+    agentContexts: [
+      {
+        id: 'dev',
+        role: 'dev',
+        label: 'Dev',
+        status: 'blocked',
+        runId: run.id,
+        slotId: 'macwork-ff-5',
+        runner: 'claude',
+        model: 'sonnet',
+        runnerSessionId: 'session',
+        signalAttemptId: 'original-attempt',
+      },
+    ],
+    steps: getRun(run.id)!.steps.map((step) =>
+      step.name === 'dispatch' ? { ...step, startedAt } : step,
+    ),
+  });
+  await holdOnlySlot(t, 'macwork-ff-5', {
+    lifecycle: 'busy',
+    phase: 'occupied',
+    current_run_id: run.id,
+    slot_epoch: 12,
+  });
+  t.after(() => evictTestRun(run.id, 'failed'));
+  await runReplayStep({ runId: run.id, stepName: 'dispatch' }, () => {}, {
+    probeTaskSignal: async () => ({
+      status: 'running' as const,
+      attemptId: 'original-attempt',
+      timestamp: new Date(Date.now() - 1000).toISOString(),
+    }),
+    startEngine: async () => {},
+  });
+  const after = getRun(run.id)!;
+  assert.equal(after.steps.find((step) => step.name === 'prepare')?.status, 'done');
+  assert.equal(after.status, 'monitoring', 'the adopted worker keeps running');
+});
+
+for (const closed of [false, true]) {
+  test(`a pinned dispatch replay with a ${closed ? 'closed' : 'held, launched'} native worker ${closed ? 'prepares again' : 'keeps it'}`, async (t) => {
+    const previousOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = 'pinned-replay-owner';
+    const created = createRun(
+      {
+        flowType: 'dev',
+        project: 'pinned-prepare-absent-project',
+        ticketOrPr: `PROJ-${Date.now() + (closed ? 3 : 2)}`,
+        transport: 'native',
+      },
+      { nativeOwnerPrincipalId: 'pinned-replay-owner' },
+    );
+    const failedAt = created.steps.findIndex((step) => step.name === 'dispatch');
+    const nativeSession = {
+      sessionId: 'session',
+      executionNodeId: 'node',
+      ownerPrincipalId: 'pinned-replay-owner',
+      leaseId: 'lease',
+      commandId: 'command',
+      launchRequestedAt: '2026-11-25T10:00:00.000Z',
+      ...(closed ? { closedAt: '2026-11-25T10:05:00.000Z' } : {}),
+    };
+    updateRun(created.id, {
+      status: 'failed',
+      lane: 'comparison',
+      startRef: {
+        requestedRef: '260bd3a5',
+        resolvedSha: '260bd3a5b20c3f9126510b7b71d0e5527f395b5d',
+      },
+      agentContexts: [
+        {
+          id: 'dev',
+          role: 'dev',
+          label: 'Dev',
+          status: 'working',
+          slotId: null,
+          runId: created.id,
+          nativeSession,
+        },
+      ],
+      steps: created.steps.map((step, index) =>
+        index < failedAt
+          ? { ...step, status: 'done' }
+          : index === failedAt
+            ? { ...step, status: 'failed' }
+            : step,
+      ),
+    });
+    t.after(async () => {
+      if (previousOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+      else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = previousOwner;
+      const current = getRun(created.id);
+      if (!current) return;
+      updateRun(created.id, {
+        agentContexts: current.agentContexts?.map((context) =>
+          context.nativeSession
+            ? {
+                ...context,
+                nativeSession: { ...context.nativeSession, closedAt: new Date().toISOString() },
+              }
+            : context,
+        ),
+      });
+      await evictTestRun(created.id, 'failed');
+    });
+    const replay = await runReplayStep(
+      { runId: created.id, stepName: 'dispatch', triggeredBy: 'operator' },
+      () => {},
+      { startEngine: async () => {} },
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    // A replay rerouted to prepare would restart the native task, which this fixture
+    // has no node for; the retained worker path needs none.
+    assert.equal(replay instanceof Error ? replay.message : undefined, undefined);
+    assert.equal(
+      getRun(created.id)?.recoveryAttempts?.at(-1)?.stepName,
+      closed ? 'prepare' : 'dispatch',
+    );
+    const prepare = getRun(created.id)?.steps.find((step) => step.name === 'prepare')?.status;
+    assert.equal(
+      prepare,
+      closed ? 'pending' : 'done',
+      `replay ${replay instanceof Error ? `failed: ${replay.message}` : 'ran'}`,
+    );
+  });
+}
+
+test('a pinned run cannot skip prepare on a replay that re-dispatches, but can on a monitor replay', async (t) => {
+  const run = pinnedRunFailedAt('dispatch');
+  const monitorRun = pinnedRunFailedAt('monitor');
+  t.after(async () => {
+    for (const id of [run.id, monitorRun.id]) if (getRun(id)) await evictTestRun(id, 'failed');
+  });
+  await assert.rejects(
+    runReplayStep(
+      { runId: run.id, stepName: 'dispatch', triggeredBy: 'operator', skipPrepare: true },
+      () => {},
+      { startEngine: async () => {} },
+    ),
+    /A pinned comparison run cannot skip prepare/,
+  );
+  await assert.doesNotReject(
+    runReplayStep(
+      { runId: monitorRun.id, stepName: 'monitor', triggeredBy: 'operator', skipPrepare: true },
+      () => {},
+      { startEngine: async () => {} },
+    ),
+  );
+});
+
 test('blocked eval monitor without a slot restarts at find-slot instead of requiring proof', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
@@ -3249,6 +3650,17 @@ test('runReplayStep preserves skipPrepare for CI-watch chained follow-up replays
   assert.ok(replayed);
   assert.equal(replayed.engineState?.flags?.skipPrepare, true);
   assert.equal(replayed.engineState?.flags?.nudgeReuse, undefined);
+});
+
+test('post-gate replay retains the decision inventory without reading its entries', () => {
+  const history = new Proxy<RunDecision[]>([], {
+    get() {
+      assert.fail('post-gate replay inspected retained decision history');
+    },
+  });
+  const replay = partitionReplayGateDecisions(history, [], undefined);
+  assert.equal(replay.retained, history);
+  assert.deepEqual(replay.retiringGates, []);
 });
 
 test('runReplayStep preserves resolved publish approvals for post-gate publish retries', async (t) => {
@@ -4035,6 +4447,119 @@ async function blockedGateRun(t: test.TestContext, label: string, decisions: Run
   });
   return run;
 }
+
+// Run 062f6a94: capture failed because the bundle volume was unmounted, so COMPLETE
+// refused. With the volume back, replaying COMPLETE refused again on the same recorded
+// captureError, and only run.refreshMirror (which recaptures) let the next replay pass.
+// A replay of COMPLETE must refresh the worker mirror itself when the recorded capture
+// failed, the same way a human-gate replay does.
+test('replaying complete after a failed capture recaptures the worker mirror first', async (t) => {
+  const slotId = await disposablePoolSlot(t, 'complete-recapture');
+  const taskFile = '/tmp/farmslot-complete-recapture/TASK.md';
+  const created = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+    slotId,
+  });
+  const doneThroughReview = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'review',
+  ]);
+  const run = updateRun(created.id, {
+    status: 'failed',
+    taskFile,
+    output: {
+      workerFinished: true,
+      capturedAt: new Date().toISOString(),
+      artifactManifest: [],
+      manifestDigest: '',
+      captureError:
+        'Storage unavailable: /Volumes/c910ssd is not mounted. Reconnect the volume before using /Volumes/c910ssd/farmslot-data/farmslot-dev/run-bundles.',
+    },
+    steps: created.steps.map((step) =>
+      doneThroughReview.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'complete'
+          ? {
+              ...step,
+              status: 'failed',
+              detail: 'The registered acceptance criteria or their verdicts could not be read.',
+            }
+          : step,
+    ),
+  });
+  await holdOnlySlot(t, slotId, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: run.id,
+    slot_epoch: 4,
+  });
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (!getRun(run.id)) return;
+    updateRun(run.id, { slotId: null });
+    await evictTestRun(run.id, 'failed');
+  });
+  const captured: string[] = [];
+  await runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+    captureOutput: async (runId) => {
+      captured.push(runId);
+      return 0;
+    },
+  }).catch(() => undefined);
+  assert.deepEqual(
+    captured,
+    [run.id],
+    'a stale capture failure must be refreshed before the gate re-reads the retained output',
+  );
+
+  // And when the retry fails too, the refusal must name the current cause, not the
+  // one the operator already fixed: the recorded failure is replaced, not kept.
+  await runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {}, {
+    startEngine: async () => {},
+    captureOutput: async () => {
+      throw new Error('Storage unavailable: /Volumes/c910ssd went away again.');
+    },
+  }).catch(() => undefined);
+  assert.match(
+    getRun(run.id)?.output?.captureError ?? '',
+    /went away again/,
+    'the fresh capture failure replaces the stale one the gate would otherwise report',
+  );
+
+  // And a second replay that took the run while the first capture was still
+  // running must not have the first one's rejection written onto its generation:
+  // `assertReplayOwnsRun` only compares generations for a `done` run and
+  // `assertNativeReplayCurrent` skips tmux, so neither covers this failed run.
+  const stale = getRun(run.id)?.output?.captureError;
+  await assert.rejects(
+    runReplayStep({ runId: run.id, stepName: 'complete', triggeredBy: 'operator' }, () => {}, {
+      startEngine: async () => {},
+      captureOutput: async (runId) => {
+        const current = getRun(runId)!;
+        updateRun(runId, {
+          engineState: {
+            ...current.engineState,
+            generation: (current.engineState?.generation ?? 0) + 1,
+          },
+        });
+        throw new Error('Storage unavailable: a newer replay owns this run.');
+      },
+    }),
+    /owned by a newer replay/,
+  );
+  assert.equal(
+    getRun(run.id)?.output?.captureError,
+    stale,
+    'the superseded replay records nothing on the newer generation',
+  );
+});
 
 // F311: a restart stopped a gate after the pipeline review and before its planned codex review.
 // Recovery's replay re-enters that gate with the plan; an operator's replay starts it fresh.
@@ -4877,4 +5402,32 @@ test('a cleaned static review admits artifact-only monitor replay without replac
   );
   assert.deepEqual(replayed.reviewWorkspace, before?.reviewWorkspace);
   assert.equal(replayed.taskFile, before?.taskFile);
+});
+
+test('replay keeps the inherited lifetime exclusion on its receipt', async (t) => {
+  const run = createRun({ flowType: 'dev', project: 'demo', ticketOrPr: 'REPLAY-COST' });
+  t.after(() => evictTestRun(run.id, 'failed'));
+  const base = {
+    runner: 'pi',
+    runnerSessionId: 'retained',
+    source: 'runner-transcript' as const,
+    measuredAt: '2026-11-20T00:00:00Z',
+    costUsd: 10,
+    role: 'primary',
+  };
+  updateRun(run.id, {
+    engineState: { ...run.engineState, flags: { nudgeReuse: true } },
+    sessionUsage: [
+      { ...base, scope: 'session-total' },
+      { ...base, runnerSessionId: 'scoped', scope: 'run-delta' },
+    ],
+  });
+  const saved = retainReplayLifetimeUsage(run);
+  assert.equal(saved?.[0]?.includesPriorRunLifetime, true);
+  assert.equal(saved?.[1]?.includesPriorRunLifetime, undefined);
+  assert.equal(
+    retainReplayLifetimeUsage({ ...run, sessionUsage: saved }),
+    saved,
+    'already-qualified receipts keep the same array',
+  );
 });

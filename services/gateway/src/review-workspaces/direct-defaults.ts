@@ -334,6 +334,7 @@ export async function resolveDirectWorkflowDefaults<T extends DirectWorkflowRequ
           ...choice,
           effort: workerModelFromSelection(choice).effort ?? undefined,
           model: workerModelFromSelection(choice).model,
+          domain: params.domain,
         };
         const inspected = await inspectReviewWorkspaceTarget(
           target,

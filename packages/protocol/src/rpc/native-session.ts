@@ -129,6 +129,39 @@ export interface NativeExecutionNodeDeclaration {
   supportsWorkerStopAttestation?: boolean;
   supportsStructuredResults?: boolean;
   supportsProfiles?: boolean;
+  /** A launch carrying the gateway's release list may refresh a host on another runtime. */
+  supportsHostRefresh?: boolean;
+  /** Run retention may move settled sessions' journals out of host startup replay. */
+  supportsSessionArchive?: boolean;
+}
+
+/**
+ * Run retention's request to a node that declares supportsSessionArchive, inside the gateway's
+ * `native.session` envelope. Never a public gateway method.
+ */
+export const NATIVE_SESSION_ARCHIVE = 'native.session.archive';
+/** At most this many sessions in one archive request. */
+export const NATIVE_SESSION_ARCHIVE_LIMIT = 50;
+/** A node's answer for one session it was asked to archive. */
+export type NativeSessionArchiveReceipt =
+  | { sessionId: string; outcome: 'archived' | 'already-archived' | 'missing' }
+  | { sessionId: string; outcome: 'kept'; reason: string };
+/** The gateway's `native.session` request to an execution node. */
+export interface NativeNodeSessionEnvelope {
+  owner: string;
+  method: string;
+  params: Record<string, unknown>;
+  requester?: NativeSessionRequester;
+  /** Trusted runner executable resolved from pool config on the gateway. */
+  executable?: string;
+  /** Trusted runner executables by runner name for profile status operations. */
+  executables?: Record<string, string>;
+  observe?: true;
+  /**
+   * Sessions a launch may stop to refresh a host on another runtime, sent only to a node that
+   * declares supportsHostRefresh, after that node refused the launch as skewed.
+   */
+  hostRelease?: string[];
 }
 export interface NativeSessionListResult {
   sessions: NativeSessionInfo[];

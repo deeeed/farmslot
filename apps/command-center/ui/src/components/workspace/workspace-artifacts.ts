@@ -76,13 +76,28 @@ export function runArtifactUrl(
   return runArtifactFetchUrl(runId, artifact);
 }
 
+/** Frozen review paths are task-relative, including paths shared before a gate took over. */
+export function frozenGateArtifactUrl(
+  runId: string,
+  path: string,
+  scope: { bundleDigest?: string; decisionId?: string },
+): string {
+  const params = new URLSearchParams({ runId, path, recipeRunId: 'current-artifacts' });
+  if (scope.bundleDigest && scope.decisionId) params.set('decisionId', scope.decisionId);
+  return gatewayResourceUrl(
+    withArtifactBundleDigest(`/api/run-artifact?${params.toString()}`, scope.bundleDigest),
+  );
+}
+
 export function recipeRunArtifactUrl(
   runId: string,
   group: Pick<RecipeRunArtifactGroup, 'id' | 'groupKind' | 'artifactBundle'>,
   artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'sizeBytes' | 'bundleDigest'>,
+  options: { pinCurrentGroup?: boolean } = {},
 ): string {
   const params = new URLSearchParams({ runId, path: artifact.path });
-  if (group.groupKind !== 'current-artifacts') params.set('recipeRunId', group.id);
+  if (group.groupKind !== 'current-artifacts' || options.pinCurrentGroup)
+    params.set('recipeRunId', group.id);
   if (artifact.sha256) params.set('v', artifact.sha256.slice(0, 12));
   else if (typeof artifact.sizeBytes === 'number') params.set('v', `s${artifact.sizeBytes}`);
   if (typeof artifact.sizeBytes === 'number') params.set('vsize', String(artifact.sizeBytes));

@@ -159,8 +159,9 @@ export class NodeTransportUnavailableError extends Error {
     readonly machine: string,
     readonly reason: NodeTransportUnavailableReason,
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = 'NodeTransportUnavailableError';
   }
 }
@@ -171,6 +172,16 @@ class NodeRequestNotAcceptedError extends NodeTransportUnavailableError {
     super(machine, 'not-connected', `Node ${machine} is stopping; request was not accepted`);
     this.name = 'NodeRequestNotAcceptedError';
   }
+}
+
+/** This node socket already answered NODE_SHUTTING_DOWN: it takes no new requests. */
+export function isNodeSocketStopping(ws: WebSocket): boolean {
+  return stoppingNodes.has(ws);
+}
+
+/** The node refused the request because it is shutting down (NODE_SHUTTING_DOWN). */
+export function isNodeRequestNotAcceptedError(error: unknown): boolean {
+  return error instanceof NodeRequestNotAcceptedError;
 }
 
 export function isNodeTransportUnavailableError(
@@ -201,11 +212,14 @@ export class NodeExecUnconfirmedError extends NodeTransportUnavailableError {
     executionConnection?: WebSocket,
     /** Settles when the node later delivers this execution's result on its original connection. */
     readonly closeout: Promise<void> = new Promise(() => {}),
+    cause?: Error,
   ) {
     super(
       machine,
       reason,
-      `Execution ${requestId} on ${machine} has unconfirmed closeout (${reason}); preserve its resources until verified.`,
+      `Execution ${requestId} on ${machine} has unconfirmed closeout (${reason}); preserve its resources until verified.` +
+        (cause ? ` ${cause.message}` : ''),
+      cause ? { cause } : undefined,
     );
     this.name = 'NodeExecUnconfirmedError';
     this.#executionConnection = executionConnection;
@@ -216,14 +230,19 @@ export class NodeExecUnconfirmedError extends NodeTransportUnavailableError {
   }
 }
 
-/**
- * Send an RPC request to a connected node and await the response.
- */
+interface NodeRequestOptions {
+  timeout?: number;
+  onRequestId?: (id: string) => void;
+  onSent?: () => void;
+  requireSameConnection?: boolean;
+}
+
+/** Send an RPC request to a connected node and await the response. */
 export function sendNodeRequest(
   node: ConnectedNode,
   method: string,
   params: unknown,
-  opts?: { timeout?: number; onRequestId?: (id: string) => void; requireSameConnection?: boolean },
+  opts?: NodeRequestOptions,
 ): Promise<unknown> {
   return measureManagedOperation('node', 'node', async () => {
     try {
@@ -247,7 +266,7 @@ function sendNodeRequestUnmeasured(
   node: ConnectedNode,
   method: string,
   params: unknown,
-  opts?: { timeout?: number; onRequestId?: (id: string) => void; requireSameConnection?: boolean },
+  opts?: NodeRequestOptions,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (stoppingNodes.has(node.ws)) return reject(new NodeRequestNotAcceptedError(node.machine));
@@ -283,7 +302,31 @@ function sendNodeRequestUnmeasured(
         : {}),
     });
     opts?.onRequestId?.(id);
-    node.ws.send(JSON.stringify({ type: 'req', id, method, params }));
+    const frame = JSON.stringify({ type: 'req', id, method, params });
+    const onSent = opts?.onSent;
+    if (!onSent) {
+      node.ws.send(frame);
+      return;
+    }
+    const failWrite = (error: unknown) => {
+      const cause = error instanceof Error ? error : new Error(String(error));
+      takePendingRequest(id)?.reject(
+        new NodeTransportUnavailableError(
+          node.machine,
+          'disconnected',
+          `Node ${node.machine} send failed: ${cause.message}`,
+          { cause },
+        ),
+      );
+    };
+    try {
+      node.ws.send(frame, (error) => {
+        if (error) failWrite(error);
+        else if (pending.has(id)) onSent();
+      });
+    } catch (error) {
+      failWrite(error);
+    }
   });
 }
 
@@ -308,6 +351,7 @@ const DEFAULT_STREAMING_TIMEOUT_MS = 120_000;
 interface StreamingRequestOptions {
   timeout?: number;
   onOutput?: (stream: string, data: string) => void;
+  onDispatch?: (node: ConnectedNode) => void;
   signal?: AbortSignal;
   closeoutTimeoutMs?: number;
 }
@@ -430,6 +474,7 @@ function sendNodeRequestStreamingUnmeasured(
     try {
       node.ws.send(JSON.stringify({ type: 'req', id, method, params }), (error) => {
         if (error) sendFailed(error);
+        else if (pending.has(id)) opts?.onDispatch?.(node);
       });
     } catch (error) {
       sendFailed(error instanceof Error ? error : new Error(String(error)));
@@ -543,6 +588,7 @@ export interface NodeExecOpts {
   closeoutTimeoutMs?: number;
   timeout?: number;
   onOutput?: (stream: string, data: string) => void;
+  onDispatch?: (node: ConnectedNode) => void;
   maxBuffer?: number;
   /** Fail instead of resending after a lost reply: the command may already have run. */
   noRetry?: boolean;
@@ -570,7 +616,7 @@ export async function nodeExecArgv(
   return nodeExecRequest(machine, { argv, cwd }, opts);
 }
 
-/** Task libraries execute in a node worker with the same owned closeout as exec. */
+/** Task libraries execute in a child process of the node with the same owned closeout as exec. */
 export async function nodeTaskRuntime(
   machine: string,
   request: import('@farmslot/slot-config/task-runtime').TaskRuntimeRequest,
@@ -642,6 +688,7 @@ async function nodeExecRequest(
                   }
                 : {}),
               onOutput: opts?.onOutput,
+              onDispatch: opts?.onDispatch,
               signal: opts?.signal,
               closeoutTimeoutMs: opts?.closeoutTimeoutMs,
             },

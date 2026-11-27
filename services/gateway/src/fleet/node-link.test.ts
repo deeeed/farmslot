@@ -24,16 +24,17 @@ after(async () => {
   else process.env.FARMSLOT_POOL_DIR = previousPool;
   await rm(suiteRoot, { recursive: true, force: true });
 });
-const { registerNode, unregisterByWs } = await import('./machine-registry.js');
+const { getNode, registerNode, unregisterByWs } = await import('./machine-registry.js');
 const { acceptNodeLinkStream, invokeNodeLink } = await import('./node-link.js');
-const { handleNodeResponse } = await import('./node-rpc.js');
+const { handleNodeResponse, NodeExecUnconfirmedError, NodeTransportUnavailableError } =
+  await import('./node-rpc.js');
 
 test('typed node link streams real argv output and reuses the durable receipt without executing twice', async (t) => {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'node-link-rpc-')));
   const previousHome = process.env.FARMSLOT_HOME;
   process.env.FARMSLOT_HOME = root;
   const machine = 'node-link-rpc-fixture';
-  const { principal } = await linkedNode(t, root, machine);
+  const { principal, gatewaySocket } = await linkedNode(t, root, machine);
   t.after(async () => {
     if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
     else process.env.FARMSLOT_HOME = previousHome;
@@ -47,11 +48,26 @@ test('typed node link streams real argv output and reuses the durable receipt wi
     approval: 'framework',
   };
   let output = '';
+  const dispatches: ReturnType<typeof getNode>[] = [];
+  const dispatchCountsAtSend: number[] = [];
+  const send = gatewaySocket.send.bind(gatewaySocket);
+  let commandWriteFailure: Error | undefined;
+  t.mock.method(gatewaySocket, 'send', (raw: string, callback?: (error?: Error) => void) => {
+    if (JSON.parse(raw).method === 'node.link.command') {
+      dispatchCountsAtSend.push(dispatches.length);
+      if (commandWriteFailure) {
+        callback?.(commandWriteFailure);
+        return;
+      }
+    }
+    send(raw, callback);
+  });
   const invocation = {
     commandId: 'retained-process-command',
     target: { nodeId: machine, resourceId: 'fixture-process' },
     authority,
     assertCurrent: () => undefined,
+    onDispatch: (node: ReturnType<typeof getNode>) => dispatches.push(node),
     onOutput: (_stream: 'stdout' | 'stderr', data: string) => {
       output += data;
     },
@@ -78,11 +94,15 @@ test('typed node link streams real argv output and reuses the durable receipt wi
   const receipt = await invokeNodeLink(request, invocation);
   assert.equal(receipt.state, 'completed');
   assert.equal(receipt.closeoutConfirmed, true);
+  assert.deepEqual(dispatchCountsAtSend, [0]);
+  assert.equal(dispatches.length, 1);
+  assert.equal(dispatches[0], getNode(machine));
   assert.equal(output, 'NODE_LINK_REAL_PROCESS');
   assert.deepEqual(receipt.result, { exitCode: 0, stdout: output, stderr: '' });
   // A repeat cannot emit another process output frame; it reads the settled outcome.
   output = '';
   assert.deepEqual(await invokeNodeLink(request, invocation), receipt);
+  assert.equal(dispatches.length, 1);
   assert.equal(output, '');
   await assert.rejects(
     invokeNodeLink(
@@ -93,6 +113,21 @@ test('typed node link streams real argv output and reuses the durable receipt wi
       invocation,
     ),
     { code: 'IDEMPOTENCY_CONFLICT' },
+  );
+  const writeFailure = new Error('fixture socket write failed before close');
+  commandWriteFailure = writeFailure;
+  await assert.rejects(
+    invokeNodeLink(request, { ...invocation, commandId: 'failed-write-command' }),
+    (error: unknown) => {
+      assert(error instanceof NodeExecUnconfirmedError);
+      assert.equal(error.executionConnection, gatewaySocket);
+      assert.equal(dispatches.length, 1);
+      assert.equal(error.reason, 'disconnected');
+      assert.match(error.message, /send failed: fixture socket write failed before close/);
+      assert(error.cause instanceof NodeTransportUnavailableError);
+      assert.equal(error.cause.cause, writeFailure);
+      return true;
+    },
   );
 });
 
@@ -214,7 +249,15 @@ async function linkedNode(
       nodePrincipal: principal,
     },
   );
-  return { agent, principal, calls, cancelAcknowledged, delayedReplyReady, commandHandled };
+  return {
+    agent,
+    principal,
+    calls,
+    cancelAcknowledged,
+    delayedReplyReady,
+    commandHandled,
+    gatewaySocket,
+  };
 }
 
 test('flagged task staging uses node commands, preserves existing artifacts and publishes executable marker last', async (t) => {

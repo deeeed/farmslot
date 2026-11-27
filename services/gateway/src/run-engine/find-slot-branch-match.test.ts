@@ -21,6 +21,7 @@ import { sourceTestLock, sourceTestMaterialization } from '../sources/source.tes
 await import('../runtime/mock-pty.test-support.js');
 const { makeRun } = await import('./test-fixtures.js');
 const store = await import('../runs/store.js');
+const { activePrepareSlots } = await import('../core/native-worker-exclusion.js');
 const fleet = await import('../fleet/state.js');
 const core = await import('../core/index.js');
 const branches = await import('../methods/dispatch/branch-checkout.js');
@@ -115,14 +116,14 @@ let pickerPayload: import('@farmslot/protocol').RunDecisionPayload | undefined;
 const liveRows = new Map<string, Record<string, unknown>>();
 let pressureDecisions = new Map<string, PressureAdmissionDecision>();
 const loadWaits: number[] = [];
-let afterLoadWait: (() => void) | undefined;
+let afterLoadWait: (() => void | Promise<void>) | undefined;
 mock.module('node:timers/promises', {
   namedExports: {
     ...promiseTimers,
     setTimeout: async (ms: number) => {
       loadWaits.push(ms);
       assert.ok(afterLoadWait, 'unexpected timer in slot selection');
-      afterLoadWait();
+      await afterLoadWait();
     },
   },
 });
@@ -142,14 +143,24 @@ let candidateSourcePlans: (() => RunSlotSourcePlans) | undefined;
 const sourceAdmissions: string[] = [];
 const finishedReclaims: string[] = [];
 let finishedRefusal: string | undefined;
+/** The refusal clears after it is thrown once. */
+let finishedRefusalOnce = false;
+/** Runs just before the refusal is thrown. */
+let onFinishedRefusal: (() => void) | undefined;
 let slotSelection: ProjectSlotSelectionConfig | undefined;
 let affinitySlot: SlotStatus | undefined;
+const archivedRuns = new Map<string, Run>();
 mock.module('../runs/store.js', {
   namedExports: {
     ...store,
     getRun: (id: string) =>
       id === run.id ? run : cancelledHolder?.id === id ? cancelledHolder : undefined,
     getAllRuns: () => (cancelledHolder ? [run, cancelledHolder] : [run]),
+    // A finished run another run's selection waits on may already be archived.
+    getRunWithArchived: async (id: string) =>
+      id === run.id
+        ? run
+        : (archivedRuns.get(id) ?? (cancelledHolder?.id === id ? cancelledHolder : undefined)),
     listRuns: () => ({ runs: [], totalCount: 0 }),
     persistRunNow: async () => {},
     updateRunStep: (
@@ -411,7 +422,12 @@ mock.module('../run-lifecycle/finished-slot-reclaim.js', {
     reclaimFinishedSlot: async (slotId: string) => {
       assert.deepEqual(claims, [], 'cleanup must finish before the incoming claim');
       finishedReclaims.push(slotId);
-      if (finishedRefusal) throw new Error(finishedRefusal);
+      if (finishedRefusal) {
+        const message = finishedRefusal;
+        if (finishedRefusalOnce) finishedRefusal = undefined;
+        onFinishedRefusal?.();
+        throw new Error(message);
+      }
     },
   },
 });
@@ -434,6 +450,35 @@ mock.module('../run-lifecycle/safe-idle-slot.js', {
     },
   },
 });
+// Runs while a selected slot's claim is admitted, after the guard wait and before the claim.
+let duringClaimAdmission: ((slotId: string) => void) | undefined;
+const capabilities = await import('./slot-capability-requirements.js');
+mock.module('./slot-capability-requirements.js', {
+  namedExports: {
+    ...capabilities,
+    replaySlotCapabilityRequirements: async () => undefined,
+    slotCapabilityCatalogs: async (
+      ...args: Parameters<typeof capabilities.slotCapabilityCatalogs>
+    ) => {
+      // A claim reads one slot's catalog; selection reads the project's.
+      const [slotIds] = args;
+      if (slotIds.length === 1) duringClaimAdmission?.(slotIds[0]!);
+      return capabilities.slotCapabilityCatalogs(...args);
+    },
+  },
+});
+// The previous run's cleanup, as the held-slot pass retries it.
+let releaseCompleted: ((leaver: Run) => Promise<{ released: boolean }>) | undefined;
+const lifecycle = await import('../methods/run/lifecycle-control.js');
+mock.module('../methods/run/lifecycle-control.js', {
+  namedExports: {
+    ...lifecycle,
+    releaseCompletedRunSlot: async (leaver: Run) => {
+      assert.ok(releaseCompleted, 'unexpected slot release');
+      return releaseCompleted(leaver);
+    },
+  },
+});
 const { resolveDispatchPreviewFromFleet } = await import('../methods/dispatch/preview.js');
 const { nodeModelCatalogs } = await import('../runners/model-catalog.js');
 const { executeFindSlotStep } = await import('./find-slot-step.js');
@@ -448,10 +493,6 @@ mock.module('./orchestrator.js', {
       return 1;
     },
   },
-});
-const capabilities = await import('./slot-capability-requirements.js');
-mock.module('./slot-capability-requirements.js', {
-  namedExports: { ...capabilities, replaySlotCapabilityRequirements: async () => undefined },
 });
 const { runReplayStep } = await import('../methods/run/replay-step.js');
 
@@ -480,6 +521,8 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   repoProbeError = undefined;
   finishedReclaims.length = 0;
   finishedRefusal = undefined;
+  finishedRefusalOnce = false;
+  onFinishedRefusal = undefined;
   slotSelection = undefined;
   affinitySlot = undefined;
   run = makeRun({
@@ -504,6 +547,7 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   pressureDecisions = new Map();
   loadWaits.length = 0;
   afterLoadWait = undefined;
+  duringClaimAdmission = undefined;
   expectedSlot = 'macpro-mmt-1';
   refreshedSlots.length = 0;
   nudgeCandidates = [];
@@ -526,6 +570,8 @@ function reset(flowType: Run['flowType'], ticketOrPr: string): void {
   fleetReadFailure = false;
   fleetPoolErrors = undefined;
   pressureRefs = false;
+  archivedRuns.clear();
+  releaseCompleted = undefined;
 }
 const context: Parameters<typeof executeFindSlotStep>[3] = {
   ...policy,
@@ -731,6 +777,112 @@ test('a refused finished checkout cleanup never claims the incoming run', async 
   await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /UNMERGED_WORK/);
   assert.deepEqual(claims, []);
   assert.equal(run.taskFile, null);
+});
+
+test('a recovery running on the pinned slot is waited out, whatever refusal it caused', async (t) => {
+  reset('fix-bug', 'TAT-4137');
+  const slotId = slots[0]!.slot;
+  run.slotId = slotId;
+  t.after(() => activePrepareSlots.delete(slotId));
+  // The automatic idle return holds the slot's guard; reclaim meets its eligibility refusal.
+  finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot is returning to idle`;
+  finishedRefusalOnce = true;
+  onFinishedRefusal = () => activePrepareSlots.add(slotId);
+  afterLoadWait = () => {
+    activePrepareSlots.delete(slotId);
+  };
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(finishedReclaims, [slotId, slotId]);
+  assert.deepEqual(claims, [slotId]);
+  assert.ok(loadWaits.includes(5_000), 'the pin waited for the recovery to end');
+});
+
+test('a fenced recovery row on the pinned slot is waited out, without the guard', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const slotId = slots[0]!.slot;
+  run.slotId = slotId;
+  finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot is returning to idle`;
+  finishedRefusalOnce = true;
+  // A recovery this gateway did not start (one a crash left fenced): only its row shows.
+  onFinishedRefusal = () =>
+    liveRows.set(slotId, {
+      workspace_recovery: { id: 'recovery-1' },
+      lifecycle: 'busy',
+      phase: 'releasing',
+      current_run_id: null,
+    });
+  afterLoadWait = () => {
+    liveRows.delete(slotId);
+  };
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(finishedReclaims, [slotId, slotId]);
+  assert.deepEqual(claims, [slotId]);
+});
+
+test('a rival that claimed the slot during reclaim makes the pin wait, not fail', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const slotId = slots[0]!.slot;
+  run.slotId = slotId;
+  finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot ownership changed; inspect again`;
+  finishedRefusalOnce = true;
+  // The rival's claim moved the epoch and still holds the slot.
+  onFinishedRefusal = () => {
+    cancelledHolder = makeRun({ id: 'rival', slotId, status: 'reviewing' });
+    liveRows.set(slotId, { slot_epoch: 9, current_run_id: 'rival', lifecycle: 'busy' });
+  };
+  afterLoadWait = () => {
+    cancelledHolder = undefined;
+    liveRows.set(slotId, { slot_epoch: 10, current_run_id: null, lifecycle: 'ready' });
+  };
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.ok(loadWaits.includes(5_000), 'the pin waited for the rival');
+  assert.deepEqual(finishedReclaims, [slotId, slotId]);
+  assert.deepEqual(claims, [slotId]);
+});
+
+test('a recovery that finished during reclaim sends the pin back: same epoch, new head', async () => {
+  reset('fix-bug', 'TAT-4137');
+  const slotId = slots[0]!.slot;
+  run.slotId = slotId;
+  finishedRefusal = `Finished slot ${slotId} cleanup refused: Slot ownership changed; inspect again`;
+  finishedRefusalOnce = true;
+  // No guard, no fenced row and no epoch move: only the reset checkout shows the recovery.
+  onFinishedRefusal = () => liveRows.set(slotId, { head_sha: 'c'.repeat(40), branch: 'main' });
+  afterLoadWait = () => {};
+  await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(finishedReclaims, [slotId, slotId]);
+  assert.deepEqual(claims, [slotId]);
+});
+
+test("reclaim's own failed recovery fails the pinned run with its reason, not a conflict", async () => {
+  reset('fix-bug', 'TAT-4137');
+  const slotId = slots[0]!.slot;
+  run.slotId = slotId;
+  finishedRefusal = `Finished slot ${slotId} cleanup refused: Recovery verify: fixtures failed`;
+  // The recovery this reclaim ran failed after its mark: held, with its marker and a new head.
+  onFinishedRefusal = () =>
+    liveRows.set(slotId, {
+      lifecycle: 'held',
+      phase: 'occupied',
+      held_reason: 'Recovery verify: fixtures failed',
+      workspace_recovery: { id: 'own-failed-recovery' },
+      head_sha: 'f'.repeat(40),
+    });
+  // Only reclaim's own error says "cleanup refused"; the held slot's later refusal does not.
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, context),
+    /cleanup refused: Recovery verify: fixtures failed/,
+  );
+  assert.deepEqual(finishedReclaims, [slotId]);
+  assert.deepEqual(claims, []);
+});
+
+test('the same refusal with no recovery running still fails the run', async () => {
+  reset('fix-bug', 'TAT-4137');
+  run.slotId = slots[0]!.slot;
+  finishedRefusal = `Finished slot ${run.slotId} cleanup refused: Slot is returning to idle`;
+  await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /returning to idle/);
+  assert.deepEqual(claims, []);
 });
 
 test('skip-prepare retains its selected checkout without finished-run release', async () => {
@@ -1205,6 +1357,77 @@ for (const kind of ['local-work', 'unavailable'] as const) {
   });
 }
 
+test('a candidate a recovery takes after the guard filter is selected again, not a failure', async (t) => {
+  reset('dev', 'PROOF-9002');
+  expectedTarget = undefined;
+  const only = candidate('only', 'first', 'fix/merged');
+  slots.splice(0, slots.length, only);
+  t.after(() => activePrepareSlots.delete(only.slot));
+  let first = true;
+  afterReuse = (slotId) => {
+    if (!first) return;
+    first = false;
+    activePrepareSlots.add(slotId);
+    reuseOutcomes.set(slotId, { kind: 'unavailable', reason: 'Slot is preparing or refreshing' });
+  };
+  afterLoadWait = () => {
+    activePrepareSlots.delete(only.slot);
+    reuseOutcomes.delete(only.slot);
+  };
+  expectedSlot = only.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, only.slot);
+  assert.deepEqual(reuseCalls, [only.slot, only.slot]);
+});
+
+test('a candidate whose own recovery failed is passed with its reason, and the next one tried', async () => {
+  reset('dev', 'PROOF-9003');
+  expectedTarget = undefined;
+  const failing = candidate('failing', 'first', 'fix/merged');
+  const safe = candidate('safe', 'second', 'fix/merged');
+  slots.splice(0, slots.length, failing, safe);
+  reuseOutcomes.set(failing.slot, {
+    kind: 'unavailable',
+    reason: 'Recovery verify: fixtures failed',
+  });
+  afterReuse = (slotId) => {
+    if (slotId === failing.slot)
+      liveRows.set(slotId, {
+        lifecycle: 'held',
+        phase: 'occupied',
+        held_reason: 'Recovery verify: fixtures failed',
+        workspace_recovery: { id: 'own-failed-recovery' },
+        head_sha: 'f'.repeat(40),
+      });
+  };
+  expectedSlot = safe.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, safe.slot);
+  assert.deepEqual(reuseCalls, [failing.slot, safe.slot]);
+  assert.deepEqual(result.inputs?.reclaimFailures, { failing: 'Recovery verify: fixtures failed' });
+});
+
+test('a sole candidate whose own recovery failed fails the run with that reason', async () => {
+  reset('dev', 'PROOF-9004');
+  expectedTarget = undefined;
+  const only = candidate('only', 'first', 'fix/merged');
+  slots.splice(0, slots.length, only);
+  reuseOutcomes.set(only.slot, { kind: 'unavailable', reason: 'Recovery verify: fixtures failed' });
+  afterReuse = (slotId) =>
+    liveRows.set(slotId, {
+      lifecycle: 'held',
+      phase: 'occupied',
+      held_reason: 'Recovery verify: fixtures failed',
+      workspace_recovery: { id: 'own-failed-recovery' },
+      head_sha: 'f'.repeat(40),
+    });
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, context),
+    /No safely reusable slot: only: Recovery verify: fixtures failed/,
+  );
+  assert.deepEqual(reuseCalls, [only.slot]);
+});
+
 test('a clean main checkout is selected regardless of numeric stale score', async () => {
   reset('dev', 'PROOF-9001');
   expectedTarget = undefined;
@@ -1509,6 +1732,143 @@ test('branch affinity never claims a held slot whose node lacks the run model', 
   assert.equal(result.outputs?.selectedSlot, free.slot);
   assert.notEqual(result.outputs?.selectionMethod, 'affinity');
   assert.deepEqual(claims, [free.slot]);
+});
+
+test('branch affinity skips a held slot still under a prepare guard', async (t) => {
+  reset('pr-complete', 'example-org/terminal#210');
+  affinitySlot = { ...candidate('held-guarded', 'node-a', branch), lifecycle: 'held' };
+  const free = candidate('free-a', 'node-a', 'main');
+  slots.splice(0, slots.length, affinitySlot, free);
+  cleanSlots.add(free.slot);
+  expectedSlot = free.slot;
+  activePrepareSlots.add(affinitySlot.slot);
+  t.after(() => activePrepareSlots.delete('held-guarded'));
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, free.slot);
+  assert.notEqual(result.outputs?.selectionMethod, 'affinity');
+  assert.deepEqual(claims, [free.slot]);
+});
+
+test('the branch-affinity card does not offer a free slot still under a prepare guard', async (t) => {
+  reset('pr-complete', 'example-org/terminal#210');
+  const busy: SlotStatus = {
+    ...candidate('busy-a', 'node-a', branch),
+    lifecycle: 'busy',
+    agent: 'working',
+  };
+  const guarded = candidate('free-guarded', 'node-a', 'main');
+  const free = candidate('free-a', 'node-a', 'main');
+  slots.splice(0, slots.length, busy, guarded, free);
+  activePrepareSlots.add(guarded.slot);
+  t.after(() => activePrepareSlots.delete('free-guarded'));
+  nudgeCandidates = [
+    {
+      slot: busy,
+      uncommittedCount: 0,
+      uncommittedFiles: [],
+      nudgeCount: 0,
+      ctxPct: null,
+      prMatchKind: 'branch-slug',
+      riskFlags: [],
+      canNudge: false,
+    },
+  ];
+  const offered: string[] = [];
+  await assert.rejects(
+    executeFindSlotStep(run.id, run, 0, {
+      ...context,
+      createEngineDecision: async (_id, reason, _description, _actions, payload) => {
+        assert.equal(reason, 'branch_affinity_nudge');
+        assert.ok(payload?.kind === 'branch_affinity_nudge');
+        offered.push(...payload.freeSlotCandidates.map((slot) => slot.slotId));
+        return 'abort';
+      },
+    }),
+    /Aborted: branch-affinity nudge declined/,
+  );
+  assert.deepEqual(offered, [free.slot]);
+});
+
+test('an automatic pick skips a free slot still under a prepare guard', async (t) => {
+  reset('dev', 'PROOF-9001');
+  expectedTarget = undefined;
+  const guarded = candidate('guarded-main', 'first', 'main');
+  const free = candidate('free-main', 'first', 'main');
+  slots.splice(0, slots.length, guarded, free);
+  activePrepareSlots.add(guarded.slot);
+  t.after(() => activePrepareSlots.delete('guarded-main'));
+  expectedSlot = free.slot;
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, free.slot);
+  assert.ok(!reuseCalls.includes(guarded.slot), 'the guarded slot is never considered');
+});
+
+test('a slot guarded while its claim is admitted is refused as a conflict and another is picked', async (t) => {
+  reset('dev', 'PROOF-9001');
+  expectedTarget = undefined;
+  const first = candidate('first-main', 'first', 'main');
+  const second = candidate('second-main', 'first', 'main');
+  slots.splice(0, slots.length, first, second);
+  t.after(() => activePrepareSlots.delete('first-main'));
+  expectedSlot = first.slot;
+  duringClaimAdmission = (slotId) => {
+    assert.equal(slotId, first.slot);
+    duringClaimAdmission = undefined;
+    // Upkeep takes the guard on the slot this claim is about to take.
+    activePrepareSlots.add(first.slot);
+    expectedSlot = second.slot;
+  };
+  // A lost claim selects again after a short pause.
+  afterLoadWait = () => {};
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.deepEqual(loadWaits, [1_000]);
+  assert.deepEqual(claims, [second.slot]);
+  assert.equal(result.outputs?.selectedSlot, second.slot);
+});
+
+test('the slot picker does not offer a slot still under a prepare guard', async (t) => {
+  reset('dev', 'TAT-9000');
+  defaultReuseOutcome = { kind: 'local-work', reason: 'dirty files' };
+  expectedTarget = undefined;
+  const selectable = candidate('selectable', 'macpro', 'fix/old');
+  const guarded = candidate('guarded', 'macpro', 'fix/guarded');
+  slots.splice(0, slots.length, selectable, guarded);
+  activePrepareSlots.add(guarded.slot);
+  t.after(() => activePrepareSlots.delete('guarded'));
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.2));
+  expectedSlot = pickedSlot = selectable.slot;
+  await executeFindSlotStep(run.id, run, 0, context);
+  if (pickerPayload?.kind !== 'slot_picker') throw new Error('Missing slot picker');
+  assert.deepEqual(
+    pickerPayload.candidates.map((slot) => slot.slotId),
+    [selectable.slot],
+  );
+});
+
+test('a picked slot guarded after the card was shown is claimed only once the guard clears', async (t) => {
+  reset('dev', 'TAT-9000');
+  defaultReuseOutcome = { kind: 'local-work', reason: 'dirty files' };
+  expectedTarget = undefined;
+  const selectable = candidate('selectable', 'macpro', 'fix/old');
+  slots.splice(0, slots.length, selectable);
+  pressureDecisions.set('macpro', loadDecision('macpro', 0.2));
+  expectedSlot = pickedSlot = selectable.slot;
+  t.after(() => activePrepareSlots.delete('selectable'));
+  afterLoadWait = () => {
+    assert.deepEqual(claims, [], 'no claim while the guard holds');
+    activePrepareSlots.delete(selectable.slot);
+  };
+  await executeFindSlotStep(run.id, run, 0, {
+    ...context,
+    createEngineDecision: async (...args) => {
+      const action = await context.createEngineDecision(...args);
+      // Upkeep takes the guard between the card and the pick.
+      if (args[1] === 'no_suitable_slot') activePrepareSlots.add(selectable.slot);
+      return action;
+    },
+  });
+  assert.equal(loadWaits.length, 1, 'one wait for the guard');
+  assert.deepEqual(claims, [selectable.slot]);
 });
 
 test('a pinned fresh reuse on a node that lacks the run model is refused before teardown', async () => {
@@ -2282,3 +2642,98 @@ for (const state of ['fresh', 'replayed'] as const) {
     assert.deepEqual(claims, [run.slotId]);
   });
 }
+
+test('a pinned run waits while the held-slot pass releases the cleanup its previous run left', async () => {
+  // eed987a0, 12afdc85: the previous run's teardown found a process it started still exiting.
+  reset('fix-bug', 'TAT-4137');
+  freshPreview = true;
+  expectedTarget = undefined;
+  const slot = slots[0]!;
+  run.slotId = slot.slot;
+  // Archived already: the wait and the pass find it the same way.
+  const leaver = makeRun({ id: 'leaver-run', project, status: 'done', slotId: slot.slot });
+  archivedRuns.set(leaver.id, leaver);
+  const hold = {
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: null,
+    cleanup_run_id: leaver.id,
+    held_reason: 'Process 4242 still uses the slot repository; slot teardown was skipped',
+  };
+  liveRows.set(slot.slot, hold);
+  Object.assign(slot, { lifecycle: 'held', phase: 'occupied', currentRunId: null });
+  let processExited = false;
+  const releases: string[] = [];
+  releaseCompleted = async (finished) => {
+    releases.push(finished.id);
+    if (!processExited) return { released: false };
+    liveRows.set(slot.slot, {
+      ...hold,
+      lifecycle: 'ready',
+      phase: null,
+      cleanup_run_id: null,
+      held_reason: null,
+    });
+    Object.assign(slot, { lifecycle: 'ready', phase: null });
+    return { released: true };
+  };
+  const { reconcileOrphanedSlots } = await import('./recovery.js');
+  const { isTerminalTeardownInFlight } = await import('./terminal-teardown-registry.js');
+  const { retryOccupiedRunSlot } = await import('../run-lifecycle/slot-teardown.js');
+  const pass = () =>
+    reconcileOrphanedSlots({
+      listRuns: () => ({ runs: [run] }),
+      loadFleetStatus: async () => ({
+        slots: [
+          { slot: slot.slot, lifecycle: slot.lifecycle, phase: slot.phase, currentRunId: null },
+        ],
+      }),
+      isTerminalTeardownInFlight,
+      readSlotField: async (id, field) => liveRows.get(id)?.[field],
+      getRun: (id) => (id === run.id ? run : undefined),
+      updateRun: () => {},
+      resetSlot: async () => assert.fail('the hold is released by its own cleanup'),
+      resetSlotIf: async () => assert.fail('the hold is released by its own cleanup'),
+      updateSlotStatusIf: async () => assert.fail('the hold is released by its own cleanup'),
+      broadcast: () => {},
+      retryOccupiedRunSlot,
+      resumeInterruptedRecovery: () => assert.fail('no workspace recovery'),
+    });
+  let polls = 0;
+  afterLoadWait = async () => {
+    polls += 1;
+    assert.ok(polls <= 3, 'the pin waited but the held-slot pass never released the slot');
+    // One pass while the process still runs, then the process exits before the next pass.
+    if (polls === 2) processExited = true;
+    await pass();
+  };
+  const result = await executeFindSlotStep(run.id, run, 0, context);
+  assert.equal(result.outputs?.selectedSlot, slot.slot);
+  assert.deepEqual(claims, [slot.slot]);
+  assert.deepEqual(releases, [leaver.id, leaver.id], 'the pass retried the cleanup twice');
+  assert.deepEqual(loadWaits, [2_000, 2_000]);
+});
+
+test('a queue pick inside a wider allowlist does not wait for the previous run cleanup', async () => {
+  reset('fix-bug', 'TAT-4137');
+  freshPreview = true;
+  expectedTarget = undefined;
+  const slot = slots[0]!;
+  Object.assign(run, {
+    slotId: slot.slot,
+    queuedAt: new Date().toISOString(),
+    allowedSlots: [slot.slot, slots[1]!.slot],
+  });
+  const leaver = makeRun({ id: 'leaver-run', project, status: 'done', slotId: slot.slot });
+  archivedRuns.set(leaver.id, leaver);
+  liveRows.set(slot.slot, {
+    lifecycle: 'held',
+    phase: 'occupied',
+    current_run_id: null,
+    cleanup_run_id: leaver.id,
+    held_reason: 'Process 4242 still uses the slot repository; slot teardown was skipped',
+  });
+  Object.assign(slot, { lifecycle: 'held', phase: 'occupied', currentRunId: null });
+  await assert.rejects(executeFindSlotStep(run.id, run, 0, context), /slot remains occupied/);
+  assert.deepEqual(loadWaits, [], 'the queue pick is refused without waiting');
+});

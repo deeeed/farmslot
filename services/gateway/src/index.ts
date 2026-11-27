@@ -71,6 +71,7 @@ import {
   rehydratePressureHistory,
   startLocalCollection,
 } from './fleet/node-health.js';
+import { startIdleDevServerSweep, stopIdleDevServerSweep } from './fleet/resource-manager.js';
 import {
   farmslotRoot,
   getCachedFleet,
@@ -293,6 +294,7 @@ async function main(): Promise<void> {
   const shutdown = async (code: number): Promise<void> => {
     if (isGatewayShuttingDown()) return;
     beginGatewayShutdown();
+    stopIdleDevServerSweep();
     stopUpstreamInterest();
     stopPRListCollection();
     try {
@@ -1064,6 +1066,7 @@ async function main(): Promise<void> {
       console.error(`[slot.prepare] startup reconcile error: ${(err as Error).message}`);
     });
     startOrphanReconciler();
+    startIdleDevServerSweep();
   }
 
   // Bootstrap fleet from pool configs if file is missing or cache is empty.

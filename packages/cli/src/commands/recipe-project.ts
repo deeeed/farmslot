@@ -616,7 +616,10 @@ export function registerProjectLifecycleCommands(recipe: Command): void {
     if (operation === 'logs')
       command
         .option('--source <name>', 'Select one runtime log source')
-        .option('--full', 'Follow the entire selected log without filtering')
+        .option(
+          '--full',
+          'Print the entire selected log without filtering; add --follow to keep streaming',
+        )
         .option('--lines <count>', 'Number of initial raw log lines')
         .option('--events <count>', 'Number of compact events to follow')
         .option('--window', 'Reopen the owned primary log window')

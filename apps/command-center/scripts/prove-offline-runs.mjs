@@ -514,6 +514,9 @@ async function observeResources({ clientKind = 'ui', token = profile.credential.
   const socket = new WebSocket(profile.url);
   const changes = [];
   const fleetUpdates = [];
+  // A node peer that answers NODE_SHUTTING_DOWN, as a stopping node does, can be replaced by a
+  // second process; one that answers anything else is a live node and the second one is refused.
+  let stopping = false;
   socket.addEventListener('message', ({ data }) => {
     const frame = JSON.parse(data);
     if (clientKind === 'node' && frame.type === 'req')
@@ -522,10 +525,12 @@ async function observeResources({ clientKind = 'ui', token = profile.credential.
           type: 'res',
           id: frame.id,
           ok: false,
-          error: {
-            code: 'PROOF_UNSUPPORTED',
-            message: 'This observation peer executes no machine commands',
-          },
+          error: stopping
+            ? { code: 'NODE_SHUTTING_DOWN', message: 'Node is shutting down.' }
+            : {
+                code: 'PROOF_UNSUPPORTED',
+                message: 'This observation peer executes no machine commands',
+              },
         }),
       );
     if (frame.type === 'event' && frame.event === 'resource.changed')
@@ -606,6 +611,7 @@ async function observeResources({ clientKind = 'ui', token = profile.credential.
       read: request,
       readStamped: (method, params) => request(method, params, true),
       barrier: () => request('gateway.ping'),
+      markStopping: () => void (stopping = true),
       sendEvent: (event, payload) => socket.send(JSON.stringify({ type: 'event', event, payload })),
       closeAndWait: () =>
         new Promise((resolve, reject) => {
@@ -1729,6 +1735,8 @@ if (phase === 'fleet-store-web') {
       'Version details and fleet must observe the same canonical node collection',
     );
     const oldPeer = nodePeer;
+    // The old process is stopping, so the gateway admits its replacement.
+    oldPeer.markStopping();
     nodePeer = await observeResources({ clientKind: 'node', token: issued.secret });
     await nodePeer.read('node.connect', {
       machine,

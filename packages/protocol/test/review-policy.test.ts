@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import type { ReadyGatePayload, ReviewStatus } from '../src/contracts/runs.js';
 import { openReviewFindingCount, reviewFindingId } from '../src/runs/review-findings.js';
-import { reviewPolicySatisfied, reviewRequirementDisplay } from '../src/runs/review-policy.js';
+import {
+  classifyReviewFreshness,
+  reviewPolicySatisfied,
+  reviewRequirementDisplay,
+} from '../src/runs/review-policy.js';
 
 const payload = (): ReadyGatePayload => ({
   kind: 'ready',
@@ -142,4 +146,84 @@ test('permitted nits retained by a validated passing review do not become unreso
     reviewRequirementDisplay({ ...payload(), reviews: [review] }).counts.unresolvedFindings,
     0,
   );
+});
+
+test('a gateway-accepted fix on the package head is shown as unreviewed and does not meet the requirement', () => {
+  const gate = payload();
+  gate.reviewPolicy = { minimumReviews: 1, requestedBy: 'dispatch' };
+  gate.prPackage = {
+    id: 'package',
+    gatePolicy: { owner: 'human', publishAuthority: 'human', reason: 'Operator review' },
+    publicationTarget: 'draft',
+    publicationStatus: 'not_published',
+    packageHash: 'hash',
+    artifactPath: 'artifacts/pr-package.json',
+    branch: gate.branch,
+    headSha: gate.headSha!,
+    reviewSubjectHash: 'subject',
+    diffStat: gate.diffStat,
+    draftTitle: 'Title',
+    draftBody: 'Body',
+    reviewArtifactIds: [],
+    createdAt: '2026-10-14T00:00:00Z',
+  };
+  // Run c22a1e09: the reviewer's last verdict was issues; the gateway accepted the fix.
+  const review: ReviewStatus = {
+    id: 'pipeline-review-c22',
+    source: 'pipeline',
+    mode: 'warm',
+    loopNumber: 1,
+    verdict: 'pass',
+    unresolvedCount: 0,
+    reviewerSessionId: 'reviewer-session',
+    reviewedHeadSha: gate.headSha,
+    reviewedReviewSubjectHash: 'subject',
+    attempts: [
+      {
+        mode: 'warm',
+        loopNumber: 2,
+        verdict: 'issues',
+        unresolvedCount: 1,
+        session: {
+          mode: 'warm',
+          continuity: 'resumed',
+          reviewId: 'pipeline-review-c22',
+          sessionId: 'reviewer-session',
+        },
+        timeline: [
+          {
+            kind: 're-review',
+            loopNumber: 2,
+            startedAt: '2026-11-22T03:36:56Z',
+            verdict: 'issues',
+            unresolvedCount: 1,
+          },
+        ],
+      },
+      {
+        mode: 'warm',
+        loopNumber: 3,
+        verdict: 'pass',
+        unresolvedCount: 0,
+        timeline: [
+          {
+            kind: 'worker-fix',
+            loopNumber: 3,
+            startedAt: '2026-11-22T03:41:00Z',
+            verdict: 'pass',
+            unresolvedCount: 0,
+          },
+        ],
+      },
+    ],
+  };
+  gate.reviews = [review];
+  const view = reviewRequirementDisplay(gate);
+  assert.equal(view.satisfied, false);
+  assert.equal(view.label, '0/1 passing independent reviews');
+  assert.equal(
+    classifyReviewFreshness(review, gate).label.endsWith('fix accepted without re-review'),
+    true,
+  );
+  assert.equal(reviewPolicySatisfied(gate.reviewPolicy, [review]), false);
 });

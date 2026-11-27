@@ -111,3 +111,9 @@ A report model takes the existing output manifest and `OutputReviewPayload`.
 `readEvidenceReviewReport` verifies the selected report bytes against that manifest
 before returning text. Reviewers can open its case/check claims through the same
 model. No separate QA verdict reducer or player is needed.
+
+### Invocation timing
+
+`runEvidenceView(model, run?)` keeps its existing evidence export and version. Prepared flow rows add optional `timing: RunEvidenceInvocationTiming`; flow also supplies `claimTimings` and `unassignedTiming` from the shared recipe-runner projection. Display each metric's qualification and preserve null unknowns. An inclusive measurement does not imply a measured self duration. Shared AC work is not split equally or charged twice within a rollup. Retained source executions keep their own identity.
+
+The same values serve the viewer and run report. A timing-only change changes `updateId` even at unchanged trace length. Legacy Story, media files and seek cues keep their existing behavior. Hosts format the supplied projection without using media length, trace order or the current clock to guess elapsed durations.

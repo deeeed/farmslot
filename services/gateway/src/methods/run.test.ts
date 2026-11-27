@@ -24,11 +24,12 @@ import {
   SEND_BACK_TO_AGENT_ACTION,
 } from '@farmslot/protocol';
 
+import '../core/private-pool.test-support.js';
+
 import { digest } from '../assessment/failure-triage/packet.js';
 import { beginAssessment, finishAssessment, reserveAssessment } from '../assessment/store.js';
-import { invalidateProjectVarsCache, projectsDirectory } from '../core/config.js';
+import { invalidateProjectVarsCache, poolDirectory, projectsDirectory } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
-import { farmslotRoot } from '../fleet/state.js';
 import {
   recordedReviewRound,
   recordedReviewRounds,
@@ -4033,7 +4034,7 @@ async function parkedPackagedGate(
     invalidateProjectVarsCache();
   });
   const root = mkdtempSync(path.join(tmpdir(), 'parked-publication-source-'));
-  const poolFile = path.join(farmslotRoot(), 'pool', `parked-approval-${randomUUID()}.json`);
+  const poolFile = path.join(poolDirectory(), `parked-approval-${randomUUID()}.json`);
   const oldRepo = path.join(root, 'foreign');
   const ownedRepo = path.join(root, 'owned');
   for (const repo of [oldRepo, ownedRepo]) {

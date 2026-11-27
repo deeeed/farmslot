@@ -33,6 +33,19 @@ function older(version: ReleaseVersion, minimum: ReleaseVersion): boolean {
   );
 }
 
+/**
+ * Whether a peer's reported release is at least `minimum`.
+ *
+ * An unreported or unparseable version answers false: a caller gating a new
+ * behavior on node support has to degrade, not assume the node is current.
+ */
+export function releaseAtLeast(version: string | undefined, minimum: string): boolean {
+  const reported = version ? releaseVersion(version) : null;
+  const floor = releaseVersion(minimum);
+  if (!reported || !floor) return false;
+  return !older(reported, floor);
+}
+
 /** Unknown legacy declarations cannot establish a break. No caller infers semver breaks. */
 export function peerVersionCompatibility(
   local: PeerVersionDeclaration,

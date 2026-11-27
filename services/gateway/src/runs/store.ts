@@ -115,6 +115,7 @@ import { currentSessionOriginator } from '../security/work-originator.js';
 import { captureRunCreationRequest } from '../sources/creation-request.js';
 
 import { emitAnalyticsForTerminalRun } from './analytics.js';
+import { noteCostAccountingWrite, noteCostReadyIndex } from './cost-accounting-revision.js';
 import { forgetRunListRow } from './list-version.js';
 import { isLeakedGatewayTestFixture, isLeakedGatewayTestRun } from './test-run-leak.js';
 
@@ -280,6 +281,7 @@ function initialAgentContextsForRun(
       runnerSessionId: run.metrics.runnerSessionId,
       runnerSessionPath: run.metrics.runnerSessionPath,
       runnerSessionArchive: run.metrics.runnerSessionArchive,
+      runnerSessionArchives: run.metrics.runnerSessionArchives,
       nudgeCount: run.metrics.nudgeCount,
       updatedAt: run.updatedAt,
     },
@@ -800,6 +802,7 @@ export async function loadAllRuns(): Promise<void> {
       const changed = normalizePersistedRun(run);
       const previous = runs.get(run.id);
       runs.set(run.id, run);
+      noteCostAccountingWrite(run);
       noteReviewWorkspaceRetirement(run, true);
       publishRunResources(
         captureRunResources(run),
@@ -1325,6 +1328,7 @@ export function createRun(params: RunCreateParams, options?: RunRecordBuildOptio
   const run = buildRunRecord(params, options);
   if (runs.has(run.id)) throw new Error('Run creation identity is already registered');
   runs.set(run.id, run);
+  noteCostAccountingWrite(run);
   noteReviewWorkspaceRetirement(run);
   if (!options?.deferBackgroundPersist) {
     persistRunBackground(run, 'create');
@@ -1459,11 +1463,14 @@ export function recordAdoptedTmuxWorker(id: string, partial: Partial<Run>): Run 
 function retainDecisionHistory(run: Run, decisions: RunDecision[]): RunDecision[] {
   if (decisions === run.decisions) return [];
   const remaining = new Map<string, RunDecision[]>();
-  for (const decision of decisions) {
+  let readyIndex = -1;
+  for (const [index, decision] of decisions.entries()) {
+    if (decision.payload?.kind === 'ready') readyIndex = index;
     const entries = remaining.get(decision.id) ?? [];
     entries.push(decision);
     remaining.set(decision.id, entries);
   }
+  noteCostReadyIndex(decisions, readyIndex);
   const unmatched = run.decisions.filter((decision) => {
     const entries = remaining.get(decision.id);
     const index = entries?.findIndex((entry) => isDeepStrictEqual(entry, decision)) ?? -1;
@@ -1764,6 +1771,7 @@ export function updateRun(id: string, partial: Partial<Run>, authorization?: sym
       );
     });
   }
+  noteCostAccountingWrite(run);
   persistRunBackground(run, 'update');
   publishRunResources(captureRunResources(run), previousResources);
   return run;
@@ -1829,6 +1837,7 @@ export function updateRunStep(id: string, stepName: string, update: Partial<RunS
     Object.assign(step, partial);
   }
   run.updatedAt = new Date().toISOString();
+  if (stepName === 'dispatch' || stepName.includes('review')) noteCostAccountingWrite(run);
   persistRunBackground(run, 'step update');
   publishRunResources(captureRunResources(run));
   return run;
@@ -2133,6 +2142,31 @@ export async function claimReviewWorkspaceTransfer(
   );
 }
 
+/**
+ * A continuation that never launched gives the workspace it claimed back to the live run it came
+ * from, so that run's retained checkout and reviewer stay continuable.
+ */
+export async function returnReviewWorkspaceTransfer(
+  predecessorId: string,
+  successorId: string,
+): Promise<Run> {
+  return commitRetainedRunMutation(
+    predecessorId,
+    (run) => {
+      const { transferredTo: _returned, ...workspace } = run.reviewWorkspace!;
+      return { ...run, reviewWorkspace: workspace };
+    },
+    (run) => {
+      // Only a live predecessor takes it back: an archived one has nothing to reclaim it.
+      assertRunNotArchiving(predecessorId);
+      if (getRun(predecessorId) !== run)
+        throw new Error('An archived review cannot take its workspace back');
+      if (run.reviewWorkspace?.transferredTo?.runId !== successorId)
+        throw new Error('Retained review workspace is not held by this continuation');
+    },
+  );
+}
+
 /** Retention records the restore manifest without evicting live or archived history. */
 export async function recordRunStorageArchive(id: string, manifest: string): Promise<void> {
   const url = pathToFileURL(manifest).href;
@@ -2178,6 +2212,34 @@ export async function recordParkedRunCommits(
     // A parking receipt grants no lifecycle authority; the release claim checks ownership.
     () => undefined,
   );
+}
+
+/**
+ * Runs a release of `slotId` for run `runId` and, when it frees the slot, records how long it
+ * took on the run. A run already archived keeps its record as it was: the timing is an
+ * observation, not part of the archived execution.
+ */
+export async function timeRunSlotRelease<T extends { released: boolean }>(
+  runId: string,
+  slotId: string,
+  release: () => Promise<T>,
+  /** Read after `release` settles: where the release spent its time, when it measured that. */
+  breakdown?: () =>
+    | Pick<NonNullable<Run['slotRelease']>, 'phasesMs' | 'bundleLock' | 'exec'>
+    | undefined,
+): Promise<T> {
+  const startedAt = Date.now();
+  const result = await release();
+  if (result.released && getRun(runId))
+    updateRun(runId, {
+      slotRelease: {
+        slotId,
+        startedAt: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+        ...breakdown?.(),
+      },
+    });
+  return result;
 }
 
 /** Ownership release records its checkout without rewriting archived execution. */

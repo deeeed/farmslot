@@ -468,6 +468,8 @@ export class NativeSessionView extends LitElement {
   protected override updated(changed: PropertyValues): void {
     try {
       this.renderedRevision = this.revision;
+      if (changed.has('requests'))
+        this.revealNewRequests(changed.get('requests') as NativeSessionEvent[] | undefined);
       if (
         !this.fixture &&
         parseHashRoute().route === this.navigationRoute &&
@@ -1980,6 +1982,22 @@ ${JSON.stringify(
       }
     }
     void this.respond(event, { answers });
+  }
+
+  /**
+   * Co-Pilot's panel can scroll the composer out of sight (short window, settings open), so a
+   * request the operator has not seen yet scrolls its approval controls into view.
+   */
+  private revealNewRequests(previous: readonly NativeSessionEvent[] | undefined): void {
+    if (this.navigationRoute !== 'copilot') return;
+    const seen = new Set((previous ?? []).map((event) => event.request?.id));
+    const unseen = this.requests.find((event) => event.request && !seen.has(event.request.id));
+    if (!unseen?.request) return;
+    // Align the request's end: its answer controls are last, and a long request can exceed the view.
+    const id = unseen.request.id;
+    [...this.renderRoot.querySelectorAll<HTMLElement>('.request')]
+      .find((element) => element.dataset.requestId === id)
+      ?.scrollIntoView({ block: 'end' });
   }
 
   private renderRequest(event: NativeSessionEvent) {

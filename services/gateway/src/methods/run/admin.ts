@@ -28,7 +28,6 @@ import {
   type RunTagsSetParams,
   type RunTagsSetResult,
 } from '@farmslot/protocol';
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { markBacklogRunReleased } from '../../backlog/store.js';
 import {
@@ -37,7 +36,6 @@ import {
   readSlotRow,
   SLOT_PHASE_RELEASING,
 } from '../../core/index.js';
-import { cleanupReviewWorkspaceCaches } from '../../review-workspaces/cache-cleanup.js';
 import { isTerminalTeardownInFlight } from '../../run-engine/terminal-teardown-registry.js';
 import {
   assertRunNotArchiving,
@@ -46,26 +44,28 @@ import {
   isRunArchiving,
 } from '../../run-lifecycle/archive-fence.js';
 import { reuseSafeIdleSlot } from '../../run-lifecycle/safe-idle-slot.js';
-import { slotOwnershipBlocker } from '../../run-lifecycle/slot-teardown.js';
+import {
+  clearCheckoutRetainedNote,
+  slotOwnershipBlocker,
+} from '../../run-lifecycle/slot-teardown.js';
 import { withRunTransition } from '../../run-lifecycle/transition-coordinator.js';
-import { nativeSessionManager } from '../../runners/native/manager.js';
 import {
   archiveRun as storeArchiveRun,
   assertRunArchivable,
   blockedRunOwnsSlot,
   cleanupRuns as storeCleanup,
   deleteRun as storeDeleteRun,
-  getAllRunsWithArchived,
   getRun,
   listRuns,
   listRunTags as storeListRunTags,
   persistRunNow,
-  runsDirectory,
   updateRun,
 } from '../../runs/store.js';
 import { withRunSessionUsageContext } from '../../runtime/run-session-usage-context.js';
 import { schedulerTick } from '../../work-graph/store.js';
 import { slotRelease, slotReleasePreflight } from '../slot/release.js';
+
+import { cleanGatewayReviewCaches } from './retention.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -315,7 +315,8 @@ async function releaseKeptSlot(
       runId: null,
       recordRunId: run.id,
     });
-    if (result.kind !== 'ready') {
+    if (result.kind === 'ready') await clearCheckoutRetainedNote(run);
+    else {
       const retained = updateRun(run.id, {
         slotTeardownSkipped: `Checkout retained: ${result.reason}`,
       });
@@ -388,14 +389,7 @@ export async function runCleanup(
       true,
     ),
   );
-  const cacheDirsRemoved = await cleanupReviewWorkspaceCaches(dryRun, {
-    runs: getAllRunsWithArchived,
-    runsDir: runsDirectory(),
-    ...(currentFarmPaths('gateway').layout === 2
-      ? { supportRoot: currentFarmPaths('gateway').state.reviewWorkspaceSupport }
-      : {}),
-    nativeRoot: nativeSessionManager.root,
-  });
+  const cacheDirsRemoved = await cleanGatewayReviewCaches(dryRun);
   return { ...result, cacheDirsRemoved };
 }
 

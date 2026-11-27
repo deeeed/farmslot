@@ -227,6 +227,8 @@ export interface TerminalModePayload {
 export interface TerminalExitedPayload {
   slotId?: string;
   worker?: TmuxWorkerRef;
+  /** Present for an adopted worker subscription on the receiving connection. */
+  workerSubscriptionSeq?: number;
   runId?: string;
   role?: AgentRole;
   contextId?: string;

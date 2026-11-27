@@ -26,6 +26,7 @@ const DEFAULT_ALLOW_EXTENSIONS = [
   '.exs',
   '.fs',
   '.go',
+  '.gradle',
   '.graphql',
   '.h',
   '.hpp',

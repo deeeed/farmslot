@@ -65,3 +65,18 @@ test('sanitizeRunForBundleExport never keeps archive pointers', () => {
   assert.equal(sanitized.dispatchRequest, undefined);
   assert.ok(run.dispatchRequest);
 });
+
+test('the per-session ref lists never ship in a bundle either', () => {
+  const run = runWithArchive();
+  const session = {
+    status: 'captured' as const,
+    sessionKey: 's1',
+    originalPath: '/Users/someone/.claude/projects/x/s1.jsonl',
+  };
+  run.metrics.runnerSessionArchives = [session];
+  run.agentContexts![0]!.runnerSessionArchives = [session];
+  const stripped = stripRunnerSessionArchives(run);
+  assert.equal(stripped.metrics.runnerSessionArchives, undefined);
+  assert.equal(stripped.agentContexts?.[0]?.runnerSessionArchives, undefined);
+  assert.doesNotMatch(JSON.stringify(sanitizeRunForBundleExport(run, 'reference')), /someone/);
+});

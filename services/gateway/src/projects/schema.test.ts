@@ -193,6 +193,32 @@ test('project schema accepts an opt-in host-pressure mode and rejects anything e
   assert.equal(validate(project({ mode: 'refuse', unknown_knob: 1 })), false);
 });
 
+test('project schema accepts prepare.pinned_profiles and pinned_kind', async () => {
+  const schema = await readProjectSchema();
+  const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+  const project = (pinned: unknown, kind: unknown = 'runway') => ({
+    name: 'schema-test',
+    prepare: {
+      default: 'full',
+      profiles: {
+        full: { phases: ['git', 'deps', 'preflight'], pinned_kind: 'source' },
+        runway: { phases: ['git', 'deps', 'preflight'], pinned_kind: kind },
+      },
+      pinned_profiles: pinned,
+    },
+  });
+  assert.equal(validate(project(['runway', 'full'])), true, JSON.stringify(validate.errors));
+  assert.equal(
+    validate(project({ ios: ['runway', 'full'], android: ['full'] })),
+    true,
+    JSON.stringify(validate.errors),
+  );
+  assert.equal(validate(project([])), false, 'an empty list');
+  assert.equal(validate(project('runway')), false, 'a bare name');
+  assert.equal(validate(project({ ios: [] })), false, 'an empty platform list');
+  assert.equal(validate(project(['runway'], 'cached')), false, 'an unknown kind');
+});
+
 test('project schema accepts diff_view test patterns and rejects other shapes', async () => {
   const schema = await readProjectSchema();
   const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);

@@ -9,7 +9,18 @@ export interface TaskProgressParams extends SlotAgentTargetParams {
    * still live under that repo root.
    */
   taskFile?: string;
+  /**
+   * List views: return only `summary`, without the markdown, child units, timing,
+   * operations, acceptance data or live spend, so the read costs the checklist alone.
+   */
+  summary?: true;
 }
+
+/** Done/total and the current step: all a list row shows of a checklist. */
+export type TaskProgressSummary = Pick<
+  import('../contracts/index.js').TaskProgressStructured,
+  'completedSteps' | 'totalSteps' | 'currentPhase' | 'currentStep'
+>;
 
 /** Spend of the viewed agent session so far, from the transcript bytes appended since the last read. */
 export interface TaskLiveSpend {
@@ -74,4 +85,6 @@ export interface TaskProgressResult {
   acceptanceEvidenceLinksError?: string;
   /** Live tokens, cost, compactions and tool calls of the viewed agent session. */
   liveSpend?: TaskLiveSpend;
+  /** Present instead of `structured` when the read asked for `summary`. */
+  summary?: TaskProgressSummary;
 }

@@ -439,6 +439,10 @@ metadata. Gateway startup/capture no longer invoke destructive bundle GC; budget
 admission continues to refuse insufficient capacity. Inactive reservations and
 abandoned capture scaffolding are archived before admission rather than charged
 forever. Only selection and staging hold admission locks; bulk copying does not.
+Since 2026-11-25 a capture runs that selection only at the archive threshold or
+when its own declared bytes would cross the cap; the hourly pass and dispatch
+admission refusals run it otherwise, because it reads every run record and capture intent
+under the store lock.
 Operators restore storage
 using the recorded paths while its run is inactive. Automated restore is outside
 this change.
@@ -452,7 +456,8 @@ One environment setting, `FARMSLOT_RUN_ARCHIVE_ROOT`. The hourly gateway pass an
 read-only retention-plan script remain the consumers. Run records use the existing
 `links` field for a local manifest reference; no public package or RPC change.
 The private `@farmslot/run-bundle` housekeeping selector is consumed by gateway
-admission, capture and hourly archival. No worker protocol changes.
+admission, by capture under capacity pressure, and by hourly archival. No worker
+protocol changes.
 
 ## Amendment 4: 2026-11-01 run-end episode capture
 
@@ -630,3 +635,256 @@ archived fails to write its task: inheritance reads the bundles of the root, the
 and every other member with a live run record (members whose record was archived are
 skipped), so dispatch is refused until the operator restores the storage of each such
 member from its archive manifest.
+
+## Amendment 9: 2026-11-24 retention for stores no run owns
+
+**Status:** Proposed.
+**Specification:** [Stores no run owns](../reference/retained-run-artifacts.md#stores-no-run-owns).
+
+### Decision
+
+Amendment 2 left shared review caches and slot scaffolding to their owners, and
+Amendment 7 kept shared review caches out of the run pass. Neither owner ever
+pruned them: on 2026-11-24 the macwork gateway held 4.5 GB of review support caches
+going back to September and 4.2 GB of slot scaffolding, most of it older than the
+retention age, with 22 GB left on its system disk. The review cache cleanup existed
+only behind the manual `run.cleanup` RPC, and scaffolding collected by a release
+with no owning run was never read or moved.
+
+The hourly retention turn now handles both after the run pass, each step
+independent of the other and of the run pass's result:
+
+- it runs the review execution cache cleanup that `run.cleanup` runs, with the same
+  protections (no cache a run still needs, none a run record references); and
+- it moves orphan slot scaffolding collections older than `runRetentionDays` to the
+  run archive with a restore manifest per slot, under Amendment 3's verified move.
+
+An unavailable archive root skips the scaffolding move with a gateway warning; it
+never fails the pass and never falls back to deleting.
+
+### Rationale and consequences
+
+The caches are recreatable and the cleanup's protections already gate `run.cleanup`,
+so deleting them follows Amendment 7. Scaffolding holds released task directories
+and runner observability with no run record to restore from, so it keeps Amendment
+3's archival. Scaffolding collected for a run already lives in that run's session
+archive and is unchanged. Session archives stay with their runs under the existing
+eligibility; they move to the run archive like other run storage when the run is
+eligible.
+
+## Amendment 10: 2026-11-24 run traces as private training data
+
+**Status:** Accepted by Arthur, 2026-11-24.
+**Builds on:** Amendment 4 (episodes), Amendments 3, 5 and 8 (archival and holds), [ADR-056](056-runner-session-archive.md) (session archives).
+**Amends:** Amendment 4's "No new RPC and no protocol type": this amendment adds three RPCs and additive types.
+**Specification:** [Run traces](../reference/run-traces.md).
+**External format:** [Hugging Face agent traces](https://huggingface.co/docs/hub/en/agent-traces) and its [Session Trace Simple Format](https://huggingface.co/docs/hub/en/session-traces-format).
+
+### Context
+
+Amendment 4 made every ended run an episode: input, trajectory and labels, by
+reference. The goal now is a dataset that can fine-tune and compare a small
+validation model (task and evidence in, verdict out). The episode is the right
+anchor, but the corpus behind it has three gaps.
+
+1. **Transcripts are missing for many agents.** ADR-056 copies a transcript once,
+   at slot release, one copy per agent context. By then a reviewer's session may be
+   gone with its review workspace, or a slot reset removed it, and a context reused
+   across rounds keeps only its last session. On the dev gateway, 605 of 1083
+   episodes (56%) hold any transcript. Claude reviewers are archived 12% of the
+   time, Pi reviewers 33% and Codex reviewers 72%; workers 57% to 97%. A prototype
+   export of 22 graded runs found 5 worker and 18 reviewer sessions only on the
+   node that ran them.
+2. **Labels are references, not values.** An episode points at review results and
+   acceptance manifests by digest. A training row needs the values: per-role model
+   and effort, cost and tokens per role, criterion verdicts, review verdicts per
+   round and the fix that answered it, the gate outcome, head SHAs, which diff was
+   graded and where it lived, whether acceptance criteria were registered or
+   derived, the task note text, attempt history, and external grades with their
+   grader and rubric. The run record holds most of these; the graded output, the
+   final and PR head SHAs, a completion acceptance snapshot, an attempt log and
+   external grades have no field yet.
+3. **There is no export.** Nothing builds a redacted, indexed dataset from a run
+   filter, so every analysis reads live stores by hand.
+
+### Decision
+
+**Capture.** A runner transcript is archived when its agent session ends, not only
+at slot release: worker completion, each review round, each review fix, and before a
+replay or an operator completion replaces a session. Slot release stays the backstop
+and retries any session still recorded `missing`. Each archive is keyed by context
+and runner session, so a later round or replay never overwrites an earlier one.
+Contexts and run metrics gain a list of per-session refs; the existing single ref
+stays and points at the latest session, and the archive read helpers resolve its
+path from the ref's session key, so History and usage follow the new layout.
+Archives written before this change read as a one-session list and are never moved.
+A copy writes to a temporary file and renames it; a failed copy never removes an
+earlier good one. One capture runs per run at a time, and slot release joins a
+pending one rather than racing it. The archive ref is patched on its own, never by
+rewriting the whole metrics object. Before a replay relaunches a step, the old
+session is captured synchronously from the path saved when it ended, within a time
+limit; a timeout records `missing` and the replay proceeds. Other captures run after
+the transition commits and never block it. Bytes stay runner-native.
+
+**Labels.** The episode carries label values inline, as additive
+`farmslot-episode-v1` fields beside the existing references: `labels.task`,
+`labels.roles`, `labels.cost`, `labels.acceptance`, `labels.reviewRounds`,
+`labels.gate`, `labels.attempts`, `labels.infraOnly`, `labels.output` and
+`labels.git`. Every value comes from a run-record field (agent contexts, run
+metrics, review attempts, the gate's acceptance ledger snapshot, decisions), so
+capture still opens no task artifact. The graded output (diff sha256, whether it was
+committed or left in the working tree, and the ref release parked it under), the
+final head, PR head and merge SHA, a completion acceptance snapshot and an attempt
+log become new run fields, written when the run records them; writing them updates
+the run, and the existing retention pass then recaptures its episode. When the
+graded output is recorded, the diff bytes it names are written beside the episode in
+the episode store (retained bundles are content-addressed and immutable), so the
+graded diff survives slot reset. Episodes that ended before this change gain label
+values through a gateway bulk-recapture method using the same writer. External
+grades are appended to a per-run sidecar in the episode store, through one RPC. A
+grade names its source, grader, scale, rubric points and reason, several graders may
+grade one run, and the schema stays project-neutral. Optional post-run interviews,
+such as an ask-why `why.md`, are attached through a second RPC. An absent label
+field means the episode was captured before it existed; `null` means its value is
+not known.
+
+**Storage, retention and opt-out.** Transcripts stay in `session-archives`, and
+episodes and grade files in the episode store. Retention is unchanged: episodes and
+grades are kept forever with the run record, and transcripts follow archival under
+Amendments 3 and 5 with Amendment 8's holds, staying readable through each run's
+archive manifest. A project opts out of training traces with `traces.enabled: false`
+in `project.json`. Capture then keeps ADR-056's slot-release snapshot for History
+only, and export skips the project's runs; export reads the flag when it runs. Run
+retention itself is not changed by the opt-out.
+
+**Export.** `farmslot runs traces export` runs in the CLI process, offline from the
+gateway, on the gateway's host, with the stores resolved through `farmslot paths
+--json` (Amendment 6). It reads the stores read-only (run records, episodes, grade
+sidecars, session archives, and archived copies through their manifests) and builds
+a dataset directory from a run filter: project, flow, date range, run family,
+has-grade. Each run gets a folder with its transcripts, `labels.json`, the task and
+graded diff when their bytes are retained, and its interviews; an `index.jsonl`
+lists one row per run. Files are verified against their recorded sha256. A
+transcript that is missing (node offline, slot reset) is reported, never a failure,
+and `--update` fills it in once a later capture has it. Tokens are always exported;
+a missing price is computed at export from a shipped price table and marked as such.
+Claude Code, Codex and Pi stay native JSONL, which the Hub viewer reads; Grok is
+converted to the Session Trace Simple Format; other runners record that no
+transcript exists.
+
+**Privacy and redaction.** Traces contain private code, testnet account data and
+anything sent through the LiteLLM gateway, which is employer-owned. They are private
+and local. Export redacts every file it writes, transcripts and labels alike, never
+an archive in place. Export gets a basic replacing scrubber of its own, applied
+line by line to file contents and file names in time linear in the input: the
+exact values of the farm's configured secrets, obvious token shapes, PEM private
+keys and hex keys labelled as keys (bare digests are kept), e-mail addresses and
+DSNs, secret variable names matched case-sensitively (so code identifiers survive),
+usernames, home paths and machine names. It reads text only; image payloads are
+kept. Farmslot does not own a full secret scan: an operator who wants one sets a
+scan hook, a command run on the written export that can redact or refuse it.
+Redaction is a best-effort backstop, not a guarantee: an export is for the local
+machine only, and sharing it, even internally, needs a human review. Farmslot has
+no upload path.
+
+**Cost.** Today's dev gateway holds a median of 7.7 MB of transcripts per run (p90
+42 MB, max 154 MB). Earlier capture adds the missing reviewer and earlier-round
+transcripts, at about the same size per session. Each capture costs three node calls
+(exists, stat, copy) plus a local read and hash. Slot release adds one stat per
+already-captured session to detect a changed source. Writing the graded diff adds
+one batched Git command (one node call for a remote slot) per finalize and per
+release that records the output. Transcripts stay raw JSONL because the Hub viewer
+and the History readers read it directly. Label values add a few kilobytes per
+episode (median 2.7 KB today). Export runs outside the gateway.
+
+### Rationale and consequences
+
+This extends the capture point, store and retention that Amendment 4 already
+settled, rather than adding a parallel trace store or a second schema. Episodes
+stay the index; transcripts stay opaque runner bytes; labels become values; export
+is a read-only, offline projection. Each part adds value on its own: earlier
+capture raises coverage for every later run, inline labels make episodes
+self-contained, and export makes the corpus usable without touching live stores.
+
+Runs that ended before this change keep the coverage they have; a bulk episode
+recapture adds their label values. Export reports a missing transcript or label
+honestly and never invents one; the only derived values are prices computed at
+export, marked `export-table`.
+
+### Public surface
+
+- Additive episode fields under `labels` (the schema id stays `farmslot-episode-v1`)
+  and additive run fields: graded output, final head, PR head, merge SHA,
+  completion acceptance snapshot and attempt log; the graded diff beside the
+  episode.
+- Per-session archive ref lists on agent contexts and run metrics (the single refs
+  stay, pointing at the latest session), listed per session in `trajectory.agents`.
+- The grade and interview sidecars in the episode store, and the RPCs
+  `run.grade.external.record`, `run.interview.record` and `run.episode.recapture`.
+- `farmslot runs traces export [--project] [--flow] [--since] [--until] [--family] [--has-grade] [--update] --out <dir>`, offline.
+- `farmslot runs episodes recapture --since <date> [--until <date>]`, a bulk episode
+  rewrite (through `run.episode.recapture`) for runs that ended before this change;
+  `farmslot runs bundle retain <runId>` also retries sessions still recorded
+  `missing`.
+- `traces.enabled` in `project.json` (default `true`).
+
+## Amendment 11: 2026-11-26 node-hosted native journals follow their runs
+
+**Status:** Accepted, 2026-11-26.
+
+### Decision
+
+A native session's journal on an execution node now follows its run. Before this, the run
+pass only took native state under the gateway's own root (`executionNodeId: 'local'`), so
+node hosts kept every journal forever and replayed all of them on every host start: on
+2026-11-26 macpro held 477 journals (1.5 GB, back to 2026-09-24) and its host took 16 s to
+become ready, past the node's start wait.
+
+Each hourly pass, after the run pass:
+
+- the sessions to archive are those bound by the agent contexts (`nativeSession` and
+  `nativeSessionHistory`, node-hosted only) of every settled run that `runRetentionHold()`
+  releases, whether or not its storage is already archived, less every session a held run
+  names anywhere in its record. Open-PR runs are held by Amendment 8, so the latest review
+  of an open PR keeps its sessions. A session no run references is never touched;
+- at most 50 per node go to the node in one `native.session.archive` request, inside the
+  gateway's `native.session` envelope, only to a connected node that declares
+  `supportsSessionArchive`. It is not a public gateway method;
+- the node hands them to its running host, which moves each journal to `archive/` beside
+  its `sessions/` directory, out of startup replay. It archives only a closed or failed
+  session whose process is confirmed stopped, with no pending request, open input or
+  conversation listener; any other is kept with its reason. The request never starts or
+  refreshes a host, and a host without the capability is reported unavailable; and
+- the gateway records what nodes confirmed (archived, already archived, missing) in
+  `native-journals.json` under the run archive root and never resends those, even after
+  their run is held for a while (an archived id is never reused, so a confirmation cannot go
+  stale). `missing` is final: the node's one host root has neither the journal
+  nor its archive. A session a node kept is asked about again after a day; sessions an
+  offline, older or other-owner node cannot take are not counted toward its 50 and are
+  asked about next pass. The runs are read again just before the requests, so a run held
+  since the pass began keeps its sessions.
+
+An archived journal is never overwritten, and its session id is never reused for a new
+session.
+
+A host also stops replaying settled sessions it does not need: after a start replays a
+closed or failed session whose process is confirmed stopped and nothing is pending, it
+records that session's identity in `sessions/summaries/`. Later starts load the summary
+instead of the journal while the journal is unchanged, and replay the journal the first
+time something reads that session.
+
+### Rationale and consequences
+
+Archiving rather than deleting keeps a released run's conversation on disk, since run
+bundles do not capture native journals. Nothing restores it automatically: an operator
+moves `archive/<id>.journal` back into `sessions/` and restarts the host. Until then the
+host no longer knows the session, so reading, resuming or listing it answers not found,
+including a native transcript view of an old released run in the Command Center; showing
+such a session as archived rather than missing is a follow-up. The archive is not pruned
+yet; at about 3 MB a journal it grows with each released run, and its own retention is a
+later decision. Standalone native sessions, which no run references, are out of scope.
+
+At 50 per node an hour, macpro's backlog of about 250 released journals drains in about
+5 hours after deploy, and the rest wait for their runs to settle. Pruning alone would
+leave about 230 journals (0.7 GB) and a 6 s start on macpro, so the summaries are what
+bring host start under 5 s.

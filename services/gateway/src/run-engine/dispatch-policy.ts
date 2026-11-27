@@ -1,6 +1,8 @@
-import type { DispatchPreviewParams, FlowType, Run } from '@farmslot/protocol';
+import type { DispatchPreviewParams, Run } from '@farmslot/protocol';
 
 import { assertRunnerTransport, normalizeRunner, runnerDefaultModel } from '../runners/registry.js';
+
+export { resolveCIWatchChainFlowType } from './ci-watch-chain-flow.js';
 
 export function buildDispatchPreviewParamsForRun(
   run: Pick<
@@ -111,11 +113,6 @@ export function assertNativeRunForSlot(
     resolveRunDispatchRunnerModel(run, { runner: slotRunner ?? '', model: '' }).runner,
     run.transport ?? 'tmux',
   );
-}
-export function resolveCIWatchChainFlowType(dispatchAction?: string | null): FlowType | null {
-  if (dispatchAction === 'dispatch-update-branch') return 'update-branch';
-  if (dispatchAction === 'dispatch-pr-complete') return 'pr-complete';
-  return null;
 }
 export function resolveCIWatchTerminalPatch(outcome?: {
   result?: 'passed' | 'failed' | 'blocked' | 'comments' | 'aborted' | 'timeout';

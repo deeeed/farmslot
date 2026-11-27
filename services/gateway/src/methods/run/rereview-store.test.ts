@@ -50,16 +50,50 @@ const fleet = await import('../../fleet/state.js');
 mock.module('../../fleet/state.js', {
   namedExports: {
     ...fleet,
-    loadProjectConfig: async () => ({ ci: { repo: 'owner/repo' } }),
+    loadProjectConfig: async () => ({
+      ci: { repo: 'owner/repo' },
+      staticReview: { templateId: 'review-pr/default' },
+    }),
+    loadPoolConfigs: async () => [
+      {
+        machine: 'review-node',
+        project: 'review-fixture',
+        slots: [],
+        reviewWorkspaces: { enabled: true },
+      },
+    ],
     loadFleetStatus: async () => ({ slots: [] }),
+  },
+});
+const admission = await import('../../review-workspaces/admission.js');
+mock.module('../../review-workspaces/admission.js', {
+  namedExports: {
+    ...admission,
+    resolveWorkspaceReviewTemplate: async () => ({
+      id: 'review-pr/default',
+      sourceId: 'review-fixture',
+      flow: 'review-pr',
+      platforms: ['mobile'],
+      labels: [],
+      relativePath: 'templates/review-pr/default.md',
+      sha256: 'c'.repeat(64),
+    }),
   },
 });
 const engine = await import('../../run-engine/orchestrator.js');
 mock.module('../../run-engine/orchestrator.js', {
   namedExports: { ...engine, startRun: async () => {}, applyChainedRunEngineFlags: () => {} },
 });
-const { createRun, getAllRuns, getRun, updateRun, deleteRun, loadAllRuns, runsDirectory } =
-  await import('../../runs/store.js');
+const {
+  createRun,
+  getAllRuns,
+  getRun,
+  updateRun,
+  deleteRun,
+  loadAllRuns,
+  persistRunNow,
+  runsDirectory,
+} = await import('../../runs/store.js');
 const { runWithSessionOriginator } = await import('../../security/work-originator.js');
 const { runRereviewLatestHead } = await import('./rereview.js');
 const { assertPRRunActivation } = await import('../../backlog/pr-admission.js');
@@ -74,7 +108,8 @@ const reference: PRWorkReference = {
 
 afterEach(async () => {
   for (const run of getAllRuns()) {
-    updateRun(run.id, { status: 'done', reviewWorkspace: undefined });
+    // Awaited, so no queued background write recreates the file after its deletion.
+    await persistRunNow(updateRun(run.id, { status: 'done', reviewWorkspace: undefined }), 'test');
     await deleteRun(run.id);
   }
 });

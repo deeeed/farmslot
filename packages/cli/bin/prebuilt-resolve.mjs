@@ -25,7 +25,7 @@ function built(file) {
  * The source a tsconfig `paths` target names, completed as TSX's resolver completes it, or
  * undefined when no such source exists: TSX then falls back to the package's own exports.
  */
-function complete(file) {
+export function complete(file) {
   const candidates = [file, `${file}.ts`, `${file}.tsx`, path.join(file, 'index.ts')];
   if (file.endsWith('.js')) candidates.unshift(file.replace(/\.js$/, '.ts'));
   return candidates.find((candidate) => /\.tsx?$/.test(candidate) && existsSync(candidate));

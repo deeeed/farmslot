@@ -4,6 +4,7 @@ import os from 'node:os';
 
 import type { NativeSessionClient } from '@farmslot/agent-runtime/native';
 import {
+  type CopilotCheckoutIdentity,
   type CopilotConfigureParams,
   type CopilotConfigureResult,
   type CopilotDelivery,
@@ -211,30 +212,51 @@ export class CopilotRuntimeController {
       };
     } else {
       const session = this.persisted.session;
-      const previous = session.checkout;
-      session.checkout = checkout;
       session.workload = this.workload(session.status === 'running');
       if (session.status === 'stopped' && session.effort === undefined)
         session.effort = resolveCopilotRunner({
           runner: session.runner,
           model: session.model,
         }).effort;
-      session.dangerousLaunch = dangerousLaunchBinding({
-        checkout,
-        runner: session.runner,
-        model: session.model,
-        effort: session.effort,
-      });
-      session.updatedAt = this.timestamp();
-      if (previous.head !== checkout.head || previous.branch !== checkout.branch)
-        await this.audit('checkout-transition', {
-          from: { branch: previous.branch, head: previous.head },
-          to: { branch: checkout.branch, head: checkout.head },
-        });
+      await this.applyCheckout(session, checkout);
     }
     await this.persist();
-    await confirm();
+    try {
+      await confirm();
+    } catch (error) {
+      // The checkout watch fires on any write under the checkout: gateway runtime files, ignored
+      // paths, an untracked file growing. Only a different branch, head or dirty-path list
+      // supersedes this snapshot; otherwise it still describes the checkout.
+      if (!isObservationChanged(error)) throw error;
+      const current = await this.inspectCheckout(this.checkout);
+      if (!sameCheckout(checkout, current)) {
+        // Keep what the checkout now is; an action's retry reads it again under a new watch.
+        await this.applyCheckout(this.persisted.session, current);
+        await this.persist();
+        throw error;
+      }
+    }
     return { session: this.persisted.session };
+  }
+  /** Record a checkout snapshot, its dangerous-launch binding, and any branch or head move. */
+  private async applyCheckout(
+    session: CopilotRuntimeSession,
+    checkout: CopilotCheckoutIdentity,
+  ): Promise<void> {
+    const previous = session.checkout;
+    session.checkout = checkout;
+    session.dangerousLaunch = dangerousLaunchBinding({
+      checkout,
+      runner: session.runner,
+      model: session.model,
+      effort: session.effort,
+    });
+    session.updatedAt = this.timestamp();
+    if (previous.head !== checkout.head || previous.branch !== checkout.branch)
+      await this.audit('checkout-transition', {
+        from: { branch: previous.branch, head: previous.head },
+        to: { branch: checkout.branch, head: checkout.head },
+      });
   }
   /**
    * An action starts from a whole checkout snapshot. A write to the checkout during the snapshot
@@ -245,11 +267,7 @@ export class CopilotRuntimeController {
       try {
         return await this.status();
       } catch (error) {
-        const superseded =
-          error instanceof Error &&
-          'code' in error &&
-          error.code === 'RESOURCE_OBSERVATION_CHANGED';
-        if (!superseded || tries >= ACTION_STATUS_TRIES) throw error;
+        if (!isObservationChanged(error) || tries >= ACTION_STATUS_TRIES) throw error;
       }
     }
   }
@@ -847,4 +865,19 @@ export function getCopilotRuntime(): CopilotRuntimeController {
 }
 export function setCopilotRuntimeForTests(controller: CopilotRuntimeController | null): void {
   runtimeController = controller;
+}
+
+function isObservationChanged(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'RESOURCE_OBSERVATION_CHANGED';
+}
+
+/** The parts of a checkout snapshot a status read reports and a dangerous launch binds. */
+function sameCheckout(a: CopilotCheckoutIdentity, b: CopilotCheckoutIdentity): boolean {
+  return (
+    a.path === b.path &&
+    a.branch === b.branch &&
+    a.head === b.head &&
+    a.dirtyPaths.length === b.dirtyPaths.length &&
+    a.dirtyPaths.every((file, index) => file === b.dirtyPaths[index])
+  );
 }

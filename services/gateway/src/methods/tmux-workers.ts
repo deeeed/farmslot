@@ -20,6 +20,7 @@ import {
   type TmuxWorkerListResult,
   type TmuxWorkerNodeResult,
   type TmuxWorkerNodeSummary,
+  type TmuxWorkerRef,
   type TmuxWorkerSummary,
 } from '@farmslot/protocol';
 
@@ -693,40 +694,48 @@ export async function buildTmuxWorkerListFromSources(params: {
   };
 }
 
-export async function assertTmuxWorkerControlAllowed(worker: {
-  nodeId: string;
-  session: string;
-  target: string;
-}): Promise<void> {
-  const observedAt = Date.now();
-  const [pools, fleet] = await Promise.all([loadPoolConfigs(), loadFleetStatus()]);
-  const activeRuns = correlationRuns();
+type WorkerControlRef = Pick<TmuxWorkerRef, 'nodeId' | 'session' | 'target'>;
+
+export function assertTmuxWorkerControlAllowed(worker: WorkerControlRef): Promise<void>;
+export function assertTmuxWorkerControlAllowed(
+  worker: WorkerControlRef,
+  exactSession: true,
+): Promise<NodeTmuxPane>;
+export async function assertTmuxWorkerControlAllowed(
+  worker: WorkerControlRef,
+  exactSession?: true,
+): Promise<NodeTmuxPane | void> {
+  const pools = await loadPoolConfigs();
   const pool = resolveMachinePoolConfig(pools, worker.nodeId);
-  if (!pool?.tmuxWorkers) return;
+  if (!pool?.tmuxWorkers && !exactSession) return;
 
   const node = getNode(worker.nodeId);
   if (!node) throw new Error(`node ${worker.nodeId} is not connected`);
   const payload = await sendNodeRequest(node, 'tmux.panes', {}, { timeout: TMUX_PANES_TIMEOUT_MS });
-  const panes = normalizeNodeTmuxPanesResult(payload);
-  const sessionCorrelation = buildSessionCorrelation(pools, fleet, activeRuns).get(worker.nodeId);
-  const summary = panes
-    .map((pane) =>
-      tmuxWorkerFromNodePane({
-        nodeId: worker.nodeId,
-        pane,
-        observedAt,
-        correlation: sessionCorrelation?.get(pane.session),
-      }),
-    )
-    .find(
-      (candidate) =>
-        candidate.ref.target === worker.target ||
-        (candidate.ref.session === worker.session && candidate.ref.target === worker.target),
+  const pane = normalizeNodeTmuxPanesResult(payload).find(
+    (pane) => (pane.paneId || pane.target) === worker.target && pane.session === worker.session,
+  );
+  if (!pane)
+    throw new Error(
+      exactSession
+        ? 'worker target is not present in the selected tmux session'
+        : 'worker target is not present in current tmux inventory',
     );
-  if (!summary) throw new Error('worker target is not present in current tmux inventory');
-  if (!tmuxWorkerAllowedByConfig(pool.tmuxWorkers, summary)) {
-    throw new Error(FILTERED_WORKER_ERROR);
+  if (pool?.tmuxWorkers) {
+    const fleet = await loadFleetStatus();
+    const correlation = buildSessionCorrelation(pools, fleet, correlationRuns())
+      .get(worker.nodeId)
+      ?.get(pane.session);
+    const summary = tmuxWorkerFromNodePane({
+      nodeId: worker.nodeId,
+      pane,
+      observedAt: Date.now(),
+      correlation,
+    });
+    if (!tmuxWorkerAllowedByConfig(pool.tmuxWorkers, summary))
+      throw new Error(FILTERED_WORKER_ERROR);
   }
+  if (exactSession) return pane;
 }
 
 export async function tmuxWorkerList(

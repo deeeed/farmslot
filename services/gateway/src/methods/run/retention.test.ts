@@ -50,8 +50,10 @@ import {
 import {
   formatRunRetention,
   retentionContext,
+  retentionTurn,
   RUN_RETENTION_DEPS,
   runRetentionPass,
+  sharedStoreRetentionPass,
 } from './retention.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -517,6 +519,9 @@ test('a retention plan lists only storage that removable runs alone own on this 
     path.join(remoteWorkspace, 'task', 'report.md'),
     path.join(bundleRoot, 'sha256', 'own', 'manifest.json'),
     path.join(bundleRoot, 'sha256', 'shared', 'manifest.json'),
+    path.join(bundleRoot, 'usage', 'own.json'),
+    path.join(bundleRoot, 'availability', 'own.json'),
+    path.join(bundleRoot, 'usage', 'shared.json'),
   ])
     await file(target);
   const old = RUN_RETENTION_AGE_MS + 60_000;
@@ -569,7 +574,13 @@ test('a retention plan lists only storage that removable runs alone own on this 
   assert.deepEqual(plan.paths['task-dirs'], [own], 'not the shared one or the slot copy');
   assert.deepEqual(plan.paths['review-workspaces'], [localWorkspace]);
   assert.deepEqual(plan.paths['native-sessions'].sort(), [native, workspaceNative].sort());
-  assert.deepEqual(plan.paths['run-bundles'], [path.join(bundleRoot, 'sha256', 'own')]);
+  // A bundle's usage and availability records leave with it, after its directory.
+  assert.deepEqual(plan.paths['run-bundles'], [
+    path.join(bundleRoot, 'sha256', 'own'),
+    path.join(bundleRoot, 'usage', 'own.json'),
+    path.join(bundleRoot, 'availability', 'own.json'),
+  ]);
+  assert.equal(plan.stores['run-bundles'].entries, 1, 'one bundle, not its three paths');
   assert.deepEqual(plan.paths['task-pins'], [retired]);
   assert.equal(plan.stores['task-dirs'].entries, 1);
   assert.ok(plan.stores['task-dirs'].bytes >= 4096);
@@ -616,6 +627,7 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
       path.join(roots.bundles!.root, 'sha256', run.id),
     ])
       await file(path.join(directory, 'bytes'));
+    await file(path.join(roots.bundles!.root, 'usage', `${run.id}.json`));
     await symlink('bytes', path.join(task, 'linked'));
     await pin(roots, run.id, task, NOW - RUN_RETENTION_AGE_MS - 60000);
   }
@@ -630,6 +642,8 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
   );
   assert.deepEqual(new Set(result.runs), new Set(runIds));
   assert.deepEqual(events, [], 'storage archival does not announce run deletion');
+  assert.equal(result.stores['run-bundles'].entries, 2, 'one entry per bundle, not per record');
+  assert.equal(result.paths['run-bundles'].length, 4, 'each bundle moved with its usage record');
   for (const [index, id] of runIds.entries()) {
     assert.ok(
       existsSync(originals[index]),
@@ -658,7 +672,8 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
       }
       assert.ok(existsSync(entry.destination));
       assert.ok(entry.destination.endsWith(entry.source));
-      if (entry.store !== 'task-pins')
+      // A bundle's usage record is a file; every other archived entry here is a directory.
+      if (entry.store !== 'task-pins' && !entry.source.endsWith('.json'))
         assert.equal(
           await readFile(path.join(entry.destination, 'bytes'), 'utf8'),
           'x'.repeat(4096),
@@ -666,8 +681,43 @@ test('a settled untagged 7-day-old run keeps both live and archived records whil
       assert.ok(entry.completedAt);
     }
   }
-  const after = await runRetentionPass({ apply: true, roots, now: passNow }, privateDeps);
+  // Node journals follow every released run, including runs whose storage is already archived.
+  // The runs are read again for them, so a run held since the pass began keeps its sessions.
+  const [stays, heldAgain] = runIds;
+  let slotChecks = 0;
+  let created: string | undefined;
+  let journals: { released: string[]; held: string[] } | undefined;
+  const after = await runRetentionPass(
+    {
+      apply: true,
+      roots,
+      now: passNow,
+      nodeJournals: async (released, held) => {
+        journals = { released: released.map((run) => run.id), held: held.map((run) => run.id) };
+      },
+    },
+    {
+      ...privateDeps,
+      // The planning and storage checks see heldAgain free; the journal check sees it hold its
+      // slot. A run created during the pass is read too, held as not settled.
+      holdsSlot: async (run) => {
+        if (run.id === stays && !created)
+          created = createRun({
+            flowType: 'fix-bug',
+            project: 'farmslot-farm',
+            mode: 'autonomous',
+            ticketOrPr: 'RETENTION-DURING-PASS',
+          }).id;
+        return run.id === heldAgain && ++slotChecks > 2;
+      },
+    },
+  );
   assert.deepEqual(after.runs, [], 'a repeat pass never destroys or duplicates archived storage');
+  assert.ok(journals?.released.includes(stays!));
+  assert.ok(!journals?.held.includes(stays!));
+  assert.ok(journals?.held.includes(heldAgain!));
+  assert.ok(!journals?.released.includes(heldAgain!));
+  assert.ok(created && journals?.held.includes(created));
   assert.equal(after.stores['task-dirs'].entries, 0);
   for (const record of originals) assert.ok(existsSync(record));
 });
@@ -1297,3 +1347,69 @@ test(
     assert.deepEqual(await f.manifest(), completed);
   },
 );
+
+test('the hourly pass cleans review caches and archives orphan scaffolding, each despite the other failing', async () => {
+  const calls: string[] = [];
+  const warn = () => assert.fail('nothing was skipped');
+  const failingCaches = await sharedStoreRetentionPass({
+    cleanReviewCaches: async () => {
+      calls.push('caches');
+      throw new Error('review cache store unreadable');
+    },
+    archiveScaffolding: async () => {
+      calls.push('scaffolding');
+      return {
+        archived: [{ source: '/runs/slot-scaffolding/s/c', bytes: 5 }],
+        pending: 0,
+        failed: [],
+      };
+    },
+    warn,
+  });
+  assert.deepEqual(calls, ['caches', 'scaffolding']);
+  assert.equal(failingCaches.reviewCaches, undefined);
+  assert.equal(failingCaches.scaffolding?.archived.length, 1);
+
+  const failingScaffolding = await sharedStoreRetentionPass({
+    cleanReviewCaches: async () => ['/runs/review-workspace-support/blobs/abc'],
+    archiveScaffolding: async () => {
+      throw new Error('scaffolding store unreadable');
+    },
+    warn,
+  });
+  assert.deepEqual(failingScaffolding.reviewCaches, ['/runs/review-workspace-support/blobs/abc']);
+  assert.equal(failingScaffolding.scaffolding, undefined);
+});
+
+test('a skipped scaffolding move raises a gateway warning with the waiting count', async () => {
+  const warnings: [string, string][] = [];
+  await sharedStoreRetentionPass({
+    cleanReviewCaches: async () => [],
+    archiveScaffolding: async () => ({
+      archived: [],
+      pending: 3,
+      skipped: 'Storage unavailable: /Volumes/c910ssd is not mounted.',
+      failed: [],
+    }),
+    warn: (type, summary) => warnings.push([type, summary]),
+  });
+  assert.deepEqual(warnings, [
+    [
+      'run-retention.scaffolding-archive-skipped',
+      '3 orphan slot scaffolding collection(s) stay on local disk: Storage unavailable: /Volumes/c910ssd is not mounted.',
+    ],
+  ]);
+});
+
+test('the hourly turn runs the shared-store pass after the run pass fails', async () => {
+  let shared = 0;
+  await retentionTurn(
+    async () => {
+      throw new Error('archive root unavailable');
+    },
+    async () => {
+      shared++;
+    },
+  );
+  assert.equal(shared, 1);
+});

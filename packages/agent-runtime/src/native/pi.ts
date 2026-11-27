@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 import type { NativeSessionTool, NativeToolKind } from '@farmslot/protocol';
 import { PI_THINKING_LEVELS } from '@farmslot/protocol/contracts/runs';
@@ -12,6 +13,12 @@ import type { NativeAdapter, NativeEventInput } from './types.js';
 const { piReadOnlyReviewArgs } = createRequire(import.meta.url)(
   '../../scripts/workspace-trust.cjs',
 ) as { piReadOnlyReviewArgs: readonly string[] };
+
+// Pi's bash tool has no default timeout; this extension gives a call without one 600 seconds.
+// Tmux workers get the same default from Farmslot's observability extension.
+const PI_BASH_TIMEOUT_EXTENSION = fileURLToPath(
+  new URL('../../scripts/pi-bash-timeout.mjs', import.meta.url),
+);
 
 const piString = (value: unknown) => (typeof value === 'string' ? value : undefined);
 
@@ -89,6 +96,8 @@ export const piNativeAdapter: NativeAdapter = {
       options,
       [
         ...(options.filesystemPolicy ? piReadOnlyReviewArgs : []),
+        '--extension',
+        PI_BASH_TIMEOUT_EXTENSION,
         '--mode',
         'rpc',
         ...(options.model ? ['--model', options.model] : []),

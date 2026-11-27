@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, execFileSync, fork } from 'node:child_process';
+import { closeSync, constants, createReadStream, openSync, writeSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { after, test, type TestContext } from 'node:test';
+import { createInterface } from 'node:readline';
+import { after, test as nodeTest, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { execLocal, signalProcessGroup } from '../../core/exec.js';
@@ -36,19 +38,59 @@ after(() => {
 });
 
 let fixtures = 0;
-function fixtureEnv(
-  mode: string,
-  extra: NodeJS.ProcessEnv = {},
-): { env: NodeJS.ProcessEnv; pidFile: string } {
-  const pidFile = path.join(directory, `pids-${++fixtures}`);
+/**
+ * A fixture child's environment and the FIFO its commands hold: they write their pids to it,
+ * and `closed()` resolves once every one of them has exited. No deadline of its own: the
+ * commands sleep 300 s, past the runner's 180 s file timeout, so only a kill ends them in time.
+ */
+function fixtureEnv(mode: string, extra: NodeJS.ProcessEnv = {}) {
+  const fifo = path.join(directory, `pipe-${++fixtures}`);
+  execFileSync('mkfifo', [fifo]);
+  const stream = createReadStream(fifo, { encoding: 'utf8' });
+  const lines = createInterface({ input: stream })[Symbol.asyncIterator]();
+  after(() => {
+    // Wake a read still waiting on commands that never wrote or never exited, then stop.
+    let writer: number | undefined;
+    try {
+      writer = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
+      writeSync(writer, '\n');
+    } catch (error) {
+      // ENXIO: no reader was left. EPIPE: the reader closed as this wrote. The stream ended.
+      if (
+        (error as NodeJS.ErrnoException).code !== 'ENXIO' &&
+        (error as NodeJS.ErrnoException).code !== 'EPIPE'
+      )
+        throw error;
+    } finally {
+      if (writer !== undefined) closeSync(writer);
+    }
+    stream.destroy();
+  });
+  const line = async () => {
+    const next = await lines.next();
+    if (next.done) throw new Error('the command pipe closed before the expected line');
+    return next.value;
+  };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...extra,
+    FIXTURE_MODE: mode,
+    FIXTURE_PIPE: fifo,
+    FARMSLOT_GATEWAY_BACKGROUND: '1',
+  };
   return {
-    pidFile,
-    env: {
-      ...process.env,
-      ...extra,
-      FIXTURE_MODE: mode,
-      FIXTURE_PID_FILE: pidFile,
-      FARMSLOT_GATEWAY_BACKGROUND: '1',
+    fifo,
+    env,
+    line,
+    /** The pids a hanging command wrote: the command (its group leader), then a descendant. */
+    async pids(count = 2): Promise<number[]> {
+      const found: number[] = [];
+      while (found.length < count) found.push(Number(await line()));
+      for (const pid of found) started.add(pid);
+      return found;
+    },
+    async closed(): Promise<void> {
+      while (!(await lines.next()).done);
     },
   };
 }
@@ -91,35 +133,9 @@ function alive(target: number): boolean {
   }
 }
 
-async function until(
-  condition: () => boolean | Promise<boolean>,
-  what: string,
-  ceilingMs = 30_000,
-): Promise<void> {
-  const deadline = Date.now() + ceilingMs;
-  while (!(await condition())) {
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-}
-
-async function readOptional(file: string): Promise<string> {
-  return readFile(file, 'utf8').catch((error: NodeJS.ErrnoException) => {
-    // Not written yet.
-    if (error.code === 'ENOENT') return '';
-    throw error;
-  });
-}
-
-/** The pids a hanging command wrote: the command (its group leader) and a descendant. */
-async function pids(pidFile: string, count = 2): Promise<number[]> {
-  let found: number[] = [];
-  await until(async () => {
-    found = (await readOptional(pidFile)).split('\n').filter(Boolean).map(Number);
-    return found.length >= count;
-  }, `${count} running process(es)`);
-  for (const pid of found) started.add(pid);
-  return found;
+/** Polls until `condition` holds; the runner's file timeout is the only bound. */
+async function until(condition: () => boolean | Promise<boolean>): Promise<void> {
+  while (!(await condition())) await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
 function processes(): { pid: number; ppid: number; pgid: number; command: string }[] {
@@ -151,17 +167,35 @@ function watchdogs(child: number): number[] {
     .map((p) => p.pid);
 }
 
-/** Killed by the child itself (it runs no watchdog), within the 5 s ceiling. */
-async function goneAtOnce(found: number[], cause: string): Promise<void> {
-  for (const pid of found) await until(() => !alive(pid), `${pid} to die after ${cause}`, 5_000);
+/**
+ * Every test here waits on processes dying, with no deadline of its own: one that never dies
+ * fails its test at this bound instead of taking the whole file down at the file timeout.
+ */
+function test(name: string, fn: (t: TestContext) => void | Promise<void>): void {
+  nodeTest(name, { timeout: 60_000 }, fn);
 }
 
 const probe = { entries: [], ssh: [] };
+
+/**
+ * Returns once the child has registered its running commands with its watchdog. The child
+ * registers a command in the same synchronous step that spawns it (and re-registers every command
+ * in the step that starts a replacement watchdog), so a command can already be running, and
+ * writing its pids, before its registration (core/exec.ts names this window). A reply to a later
+ * request means the child's event loop has moved past that step.
+ */
+async function registered(background: ForkedBackgroundHost): Promise<void> {
+  await background.request(
+    'commands.read',
+    { command: 'true', cwd: '/', timeout: 30_000 },
+    { deadlineMs: 30_000 },
+  );
+}
+
 /** No watchdog: only the child can kill its commands. */
 const ownCleanup = { FIXTURE_NO_WATCHDOG: '1' };
 
 test('a command run by the child answers exactly as without the child, and leaves no process', async () => {
-  const strayFile = path.join(directory, 'stray');
   const compared: FixtureCommand[] = [
     { command: 'echo out; echo err >&2; exit 0', timeout: 30_000 },
     { command: 'echo out; exit 3', timeout: 30_000 },
@@ -171,14 +205,12 @@ test('a command run by the child answers exactly as without the child, and leave
     { command: 'sleep 30', timeout: 300 },
   ];
   const out = path.join(directory, 'results.json');
-  const { env } = fixtureEnv('results', {
-    FIXTURE_OUT: out,
-    FIXTURE_COMMANDS: JSON.stringify([
-      ...compared,
-      { command: `echo $$ >> '${strayFile}'`, timeout: 30_000 },
-    ]),
-  });
-  const background = host(env);
+  const fixture = fixtureEnv('results', { FIXTURE_OUT: out });
+  fixture.env.FIXTURE_COMMANDS = JSON.stringify([
+    ...compared,
+    { command: `echo $$ > '${fixture.fifo}'`, timeout: 30_000 },
+  ]);
+  const background = host(fixture.env);
   background.start();
   await background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
   const results = JSON.parse(await readFile(out, 'utf8'));
@@ -190,22 +222,22 @@ test('a command run by the child answers exactly as without the child, and leave
   assert.equal(expected[2].exitCode, 1, 'a signalled command reads as exit 1');
   assert.equal(expected[4].exitCode, 124);
   // Nothing of the finished command's group remains.
-  const [leader] = await pids(strayFile, 1);
-  await until(() => !alive(-leader), 'the finished command group to empty');
+  const [leader] = await fixture.pids(1);
+  await until(() => !alive(-leader));
 });
 
 test('a command that survives TERM dies with a child SIGKILLed between its TERM and KILL', async (t) => {
   const groupSignals = watchGroupSignals(t);
   // The timeout sends TERM to the group after 300 ms; KILL would follow 30 s later.
-  const { env, pidFile } = fixtureEnv('resistant', {
+  const fixture = fixtureEnv('resistant', {
     FIXTURE_TIMEOUT_MS: '300',
     FIXTURE_CLOSEOUT_MS: '30000',
   });
-  const background = host(env);
+  const background = host(fixture.env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
-  const [leader] = await pids(pidFile, 1);
-  await until(async () => (await readOptional(`${pidFile}.term`)) !== '', 'the timeout TERM');
+  const [leader] = await fixture.pids(1);
+  assert.equal(await fixture.line(), 'term', 'the timeout TERM');
   // TERM reached the whole group, and the command lived through it. The group holds no guard
   // process; the watchdog sits outside it, so the group TERM did not reach it.
   assert.equal(alive(leader), true);
@@ -216,33 +248,36 @@ test('a command that survives TERM dies with a child SIGKILLed between its TERM 
   assert.ok(watchdog, 'the child runs one command watchdog');
   process.kill(child, 'SIGKILL');
   await assert.rejects(pending, /signal SIGKILL/);
-  await until(() => !alive(leader), 'the command to die by the watchdog', 5_000);
-  await until(() => !alive(watchdog), 'the watchdog to exit', 5_000);
+  // The command, and every sleep it started, died by the watchdog.
+  await fixture.closed();
+  await until(() => !alive(watchdog));
   groupSignals();
 });
 
 test('an untimed command and its descendant die with a SIGKILLed child', async (t) => {
   const groupSignals = watchGroupSignals(t);
-  const { env, pidFile } = fixtureEnv('untimed');
-  const background = host(env);
+  const fixture = fixtureEnv('untimed');
+  const background = host(fixture.env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
-  const found = await pids(pidFile);
+  await fixture.pids();
+  await registered(background);
   const child = background.status().pid;
   assert.ok(child);
   process.kill(child, 'SIGKILL');
   await assert.rejects(pending, /signal SIGKILL/);
-  for (const pid of found) await until(() => !alive(pid), `${pid} to die by the watchdog`, 5_000);
+  // The command and its descendant died by the watchdog.
+  await fixture.closed();
   groupSignals();
 });
 
 test('a watchdog that dies is replaced, and the replacement still kills the commands', async (t) => {
   const groupSignals = watchGroupSignals(t);
-  const { env, pidFile } = fixtureEnv('untimed');
-  const background = host(env);
+  const fixture = fixtureEnv('untimed');
+  const background = host(fixture.env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
-  const found = await pids(pidFile);
+  await fixture.pids();
   const child = background.status().pid;
   assert.ok(child);
   const [first] = watchdogs(child);
@@ -252,63 +287,66 @@ test('a watchdog that dies is replaced, and the replacement still kills the comm
   await until(() => {
     replacement = watchdogs(child).find((pid) => pid !== first);
     return replacement !== undefined;
-  }, 'a replacement watchdog');
+  });
   assert.ok(replacement);
-  // The replacement learns the running command before it is needed.
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  // The child starts the replacement and registers the running command with it in one step.
+  await registered(background);
   process.kill(child, 'SIGKILL');
   await assert.rejects(pending, /signal SIGKILL/);
-  for (const pid of found)
-    await until(() => !alive(pid), `${pid} to die by the replacement`, 5_000);
-  await until(() => !alive(replacement!), 'the replacement watchdog to exit', 5_000);
+  // The command and its descendant died by the replacement.
+  await fixture.closed();
+  await until(() => !alive(replacement!));
   groupSignals();
 });
 
 test('stopping the child kills the commands it is running at once', async (t) => {
   const groupSignals = watchGroupSignals(t);
-  const { env, pidFile } = fixtureEnv('hang', ownCleanup);
-  const background = host(env);
+  const fixture = fixtureEnv('hang', ownCleanup);
+  const background = host(fixture.env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
-  const found = await pids(pidFile);
+  const found = await fixture.pids();
   assert.equal(alive(found[0]), true);
   await background.stop();
   await assert.rejects(pending, /exited/);
-  await goneAtOnce(found, 'stop');
+  // Killed by the child itself: it runs no watchdog.
+  await fixture.closed();
   groupSignals();
 });
 
 test('a command with no timeout is killed when the child stops', async (t) => {
   const groupSignals = watchGroupSignals(t);
-  const { env, pidFile } = fixtureEnv('untimed', ownCleanup);
-  const background = host(env);
+  const fixture = fixtureEnv('untimed', ownCleanup);
+  const background = host(fixture.env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
-  const found = await pids(pidFile);
+  await fixture.pids();
   await background.stop();
   await assert.rejects(pending, /exited/);
-  await goneAtOnce(found, 'stop');
+  // Killed by the child itself: it runs no watchdog.
+  await fixture.closed();
   groupSignals();
 });
 
 test('a child whose process exits kills its commands on the way out', async (t) => {
   const groupSignals = watchGroupSignals(t);
-  const { env, pidFile } = fixtureEnv('hang', ownCleanup);
-  const background = host(env);
+  const fixture = fixtureEnv('hang', ownCleanup);
+  const background = host(fixture.env);
   background.start();
   const pending = background.request('fleet.probeMachine', probe, { deadlineMs: 120_000 });
-  const found = await pids(pidFile);
+  await fixture.pids();
   await assert.rejects(background.request('decisions.scan', {}, { deadlineMs: 120_000 }), /code 3/);
   await assert.rejects(pending, /exited \(code 3/);
-  await goneAtOnce(found, 'process.exit');
+  // Killed by the child itself: it runs no watchdog.
+  await fixture.closed();
   groupSignals();
 });
 
 test('a child whose gateway disconnects kills its commands itself', async () => {
-  const { env, pidFile } = fixtureEnv('hang', ownCleanup);
+  const fixture = fixtureEnv('hang', ownCleanup);
   // No supervisor: only the child can clean up.
   const child: ChildProcess = fork(entry, [], {
-    env,
+    env: fixture.env,
     execArgv: ['--import', 'tsx'],
     serialization: 'advanced',
     stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
@@ -323,11 +361,12 @@ test('a child whose gateway disconnects kills its commands itself', async () => 
     child.once('exit', (code) => reject(new Error(`child exited before ready (code ${code})`)));
   });
   child.send({ type: 'request', id: 1, operation: 'fleet.probeMachine', params: probe });
-  const found = await pids(pidFile);
+  await fixture.pids();
   const exited = new Promise((resolve) => child.once('exit', resolve));
   child.disconnect();
   await exited;
-  await goneAtOnce(found, 'the disconnect');
+  // Killed by the child itself: it runs no watchdog.
+  await fixture.closed();
 });
 
 // The spy above must be able to see a group signal from the supervisor.

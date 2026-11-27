@@ -9,9 +9,17 @@ import {
   NATIVE_WORKER_METHODS,
   NATIVE_WORKER_READ,
   NATIVE_WORKER_RESUME,
+  NATIVE_WORKER_SEND,
   NATIVE_WORKER_STATE,
+  NATIVE_WORKER_STEER,
   NATIVE_WORKER_TRANSFER,
 } from '@farmslot/agent-runtime/native';
+import {
+  NATIVE_HOST_START_TIMEOUT_MS,
+  NATIVE_NODE_ADMISSION_TIMEOUT_MS,
+  NATIVE_NODE_REQUEST_MARGIN_MS,
+} from '@farmslot/agent-runtime/native/host-runtime';
+import { NATIVE_HOST_VERSION_SKEW } from '@farmslot/agent-runtime/native/host-unavailable';
 import {
   NATIVE_PROFILE_METHODS,
   validateNativeProfileParams,
@@ -21,6 +29,7 @@ import { routeNativeWorkerSession } from '@farmslot/agent-runtime/native/worker-
 import {
   type ExecResult,
   Methods,
+  type NativeNodeSessionEnvelope,
   type NativeSessionInfo,
   type NativeSessionListResult,
   type NativeSessionReadResult,
@@ -52,11 +61,44 @@ import { machineRunnerPath } from '../launch-command.js';
 import { normalizeRunner } from '../registry.js';
 
 import { knownNativeExecutionNodes } from './execution-nodes.js';
+import { nodeLaunchRelease } from './host-refresh.js';
 import { nativeSessionManager, validateNativeRunner } from './manager.js';
 
 // Both modules route through this one (a cycle).
 const loadNativeObservations = lazyImport(() => import('../../resources/native-observations.js'));
 const loadNativeWorkspace = lazyImport(() => import('../../methods/native-workspace.js'));
+// Loaded once a node refuses a launch as skewed, for the release list.
+const loadRunStore = lazyImport(() => import('../../runs/store.js'));
+
+/** Launches a node may refresh its host on another runtime for. */
+const NODE_ADMISSION_METHODS: readonly string[] = [
+  Methods.NATIVE_SESSION_CREATE,
+  Methods.NATIVE_SESSION_ENSURE,
+  NATIVE_WORKER_ENSURE,
+  NATIVE_WORKER_RESUME,
+  NATIVE_WORKER_TRANSFER,
+];
+
+/** Requests a node holds while its host refreshes, on top of the launches. */
+const NODE_WORK_METHODS: readonly string[] = [
+  ...NODE_ADMISSION_METHODS,
+  Methods.NATIVE_SESSION_SEND,
+  Methods.NATIVE_SESSION_SET_APPROVAL_MODE,
+  NATIVE_WORKER_SEND,
+  NATIVE_WORKER_STEER,
+];
+
+/**
+ * How long the gateway waits for a node's answer. Any request may first wait for a host that is
+ * starting, up to the client's start timeout. On a node that refreshes its host, a launch or
+ * message may wait for that refresh first: up to 6 idle runners stopped, then a host start.
+ */
+export function nativeNodeSessionTimeout(method: string, refreshesHost: boolean): number {
+  if (method === NATIVE_WORKER_COMPACT) return 185_000;
+  return refreshesHost && NODE_WORK_METHODS.includes(method)
+    ? NATIVE_NODE_ADMISSION_TIMEOUT_MS
+    : NATIVE_HOST_START_TIMEOUT_MS + NATIVE_NODE_REQUEST_MARGIN_MS;
+}
 
 type AuthorizedNativeNode = ConnectedNode & {
   nativeSessions: NonNullable<ConnectedNode['nativeSessions']>;
@@ -352,22 +394,45 @@ export async function routeNativeExecution(
     method === Methods.NATIVE_PROFILE_STATUS
       ? await resolveTrustedNativeExecutablesForNode(executionNodeId)
       : undefined;
+  const observe = isNativeObservedRead() && params.model === undefined;
+  const send = (hostRelease?: string[]) => {
+    const envelope: NativeNodeSessionEnvelope = {
+      owner,
+      method,
+      params,
+      ...(requester ? { requester } : {}),
+      ...(remoteExecutable ? { executable: remoteExecutable } : {}),
+      ...(remoteExecutables ? { executables: remoteExecutables } : {}),
+      ...(observe ? { observe: true as const } : {}),
+      ...(hostRelease ? { hostRelease } : {}),
+    };
+    return sendNodeRequest(node, 'native.session', envelope, {
+      timeout: nativeNodeSessionTimeout(method, node.nativeSessions.supportsHostRefresh === true),
+      requireSameConnection: true,
+    });
+  };
   let result: unknown;
   try {
-    result = await sendNodeRequest(
-      node,
-      'native.session',
-      {
-        owner,
-        method,
-        params,
-        ...(requester ? { requester } : {}),
-        ...(remoteExecutable ? { executable: remoteExecutable } : {}),
-        ...(remoteExecutables ? { executables: remoteExecutables } : {}),
-        ...(isNativeObservedRead() && params.model === undefined ? { observe: true } : {}),
-      },
-      { timeout: method === NATIVE_WORKER_COMPACT ? 185_000 : 60_000, requireSameConnection: true },
-    );
+    try {
+      result = await send();
+    } catch (error) {
+      // A skew refusal comes before the host gets the launch, so it is sent once more with the
+      // sessions the node may stop to refresh that host.
+      if (
+        !(error instanceof Error) ||
+        !('code' in error) ||
+        error.code !== NATIVE_HOST_VERSION_SKEW ||
+        !node.nativeSessions.supportsHostRefresh ||
+        !NODE_ADMISSION_METHODS.includes(method)
+      )
+        throw error;
+      const { getAllRuns } = await loadRunStore();
+      // A run cancelled or paused while the first send waited is not launched for.
+      assertNodeReconnectCurrent();
+      assertNativeConnection(owner, executionNodeId, node);
+      // Read with no await before the send, so the node gets the current run census.
+      result = await send(nodeLaunchRelease(getAllRuns(), executionNodeId, owner, method, params));
+    }
   } catch (error) {
     // A timeout is retryable only while the same issued owner still has authority.
     // Structured node/protocol failures remain terminal regardless of connection state.
@@ -376,8 +441,7 @@ export async function routeNativeExecution(
     throw error;
   }
   assertNativeConnection(owner, executionNodeId, node);
-  if (isNativeObservedRead())
-    result = nativeObservations.unwrapRemote(node.ws, executionNodeId, result);
+  if (observe) result = nativeObservations.unwrapRemote(node.ws, executionNodeId, result);
   if (method === NATIVE_WORKER_STATE) {
     if (
       !result ||

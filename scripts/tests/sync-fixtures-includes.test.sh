@@ -16,6 +16,8 @@ cp -R "$REPO_ROOT/scripts" "$TMP/scripts"
 export FARMSLOT_CLI="$REPO_ROOT/packages/cli/bin/farmslot.mjs"
 export FARMSLOT_POOL_DIR="$TMP/pool"
 export FARMSLOT_PROJECTS_DIR="$TMP/projects"
+# A layout-2 FARMSLOT_HOME from a worker pane would override the pool and projects above.
+export FARMSLOT_HOME="$TMP/home"
 mkdir -p "$TMP/pool" "$TMP/projects/inc-test-farm/fixtures/domains/blue" "$TMP/repo"
 git init -q "$TMP/repo"
 

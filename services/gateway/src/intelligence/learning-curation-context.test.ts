@@ -14,7 +14,9 @@ Object.assign(process.env, {
 });
 const { createRun, getRun, updateRun, deleteRun } = await import('../runs/store.js');
 const { retainRunFixture } = await import('../run-engine/test-fixtures.js');
-const { loadLearningCurationContext } = await import('./learning-curation-context.js');
+const { loadLearningCurationContext, reviewRowsForRun } =
+  await import('./learning-curation-context.js');
+const { makeRun } = await import('../methods/run/test-fixtures.js');
 const { invalidateProjectVarsCache } = await import('@farmslot/slot-config');
 
 test('curation reads configured shared/overlay rules and retained evidence after staging cleanup', async (t) => {
@@ -68,6 +70,27 @@ test('curation reads configured shared/overlay rules and retained evidence after
     ),
   );
 
+  // The review rows decide a v1 lesson's kind: a pack family id, or a heading's anchor.
+  await writeFile(
+    path.join(task, 'artifacts/review-coverage.json'),
+    JSON.stringify({
+      rows: [
+        {
+          definition: { kind: 'criterion', label: 'Data Flow & State' },
+          value: { outcome: 'FINDING' },
+        },
+        {
+          definition: { kind: 'criterion', label: 'Ignored label', family: 'order-size' },
+          value: { outcome: 'PASS' },
+        },
+        {
+          definition: { kind: 'criterion', label: 'Sentry' },
+          value: { outcome: 'NOT_APPLICABLE' },
+        },
+        { definition: { kind: 'scope', path: 'src/order.ts' }, value: { outcome: 'PASS' } },
+      ],
+    }),
+  );
   updateRun(run.id, {
     taskFile: path.join(task, 'TASK.md'),
     status: 'done',
@@ -95,6 +118,10 @@ test('curation reads configured shared/overlay rules and retained evidence after
   const context = await loadLearningCurationContext(project, destination, run.id);
   assert.equal(context.unavailable, undefined);
   assert.equal(context.library.length, 2);
+  assert.deepEqual(context.results, [
+    { runId: run.id, family: 'data-flow-state', outcome: 'FINDING' },
+    { runId: run.id, family: 'order-size', outcome: 'PASS' },
+  ]);
   assert.equal(
     context.evidence.find((d) => d.path === 'artifacts/report.md')?.text,
     'Observed source failure.',
@@ -113,10 +140,100 @@ test('curation reads configured shared/overlay rules and retained evidence after
     'unowned worker files cannot supply reviewer confirmation',
   );
 
+  // A peer run whose evidence cannot be read is skipped; the source run's evidence stays.
+  const peer = createRun({ project, flowType: 'fix-bug', ticketOrPr: 'PEER-1' });
+  t.after(async () => {
+    updateRun(peer.id, { status: 'cancelled' });
+    await deleteRun(peer.id);
+  });
+  const peerTask = path.join(root, 'peer-task');
+  await mkdir(path.join(peerTask, 'artifacts'), { recursive: true });
+  await writeFile(path.join(peerTask, 'TASK.md'), '# Peer');
+  await writeFile(path.join(peerTask, 'artifacts/comments-triage.json'), '{unreadable');
+  updateRun(peer.id, { taskFile: path.join(peerTask, 'TASK.md'), status: 'done' });
+  const withPeer = await loadLearningCurationContext(project, destination, run.id);
+  assert.equal(withPeer.unavailable, undefined);
+  assert.equal(
+    withPeer.evidence.some((d) => d.runId === peer.id),
+    false,
+  );
+  assert.equal(
+    withPeer.evidence.some((d) => d.runId === run.id),
+    true,
+  );
+
+  // The source run's own review rows are required: unreadable rows would leave every kind
+  // claim unchecked.
+  const broken = createRun({ project, flowType: 'fix-bug', ticketOrPr: 'BROKEN-ROWS-1' });
+  t.after(async () => {
+    updateRun(broken.id, { status: 'cancelled' });
+    await deleteRun(broken.id);
+  });
+  const brokenTask = path.join(root, 'broken-task');
+  await mkdir(path.join(brokenTask, 'artifacts'), { recursive: true });
+  await writeFile(path.join(brokenTask, 'TASK.md'), '# Broken');
+  await writeFile(path.join(brokenTask, 'artifacts/review-coverage.json'), '{unreadable');
+  updateRun(broken.id, { taskFile: path.join(brokenTask, 'TASK.md'), status: 'done' });
+  assert.match(
+    (await loadLearningCurationContext(project, destination, broken.id)).unavailable ?? '',
+    /Curation evidence unavailable: .*JSON/,
+  );
+
   const missing = await loadLearningCurationContext(
     project,
     { ...destination, repo: 'git@github.com:example/absent.git' },
     run.id,
   );
   assert.match(missing.unavailable ?? '', /no configured readable library source/);
+});
+
+test('a review skill round gives its ledger rows to the lesson kind check', async (t) => {
+  const task = await mkdtemp(path.join(os.tmpdir(), 'skill-round-'));
+  t.after(() => rm(task, { recursive: true, force: true }));
+  await mkdir(path.join(task, 'artifacts'));
+  await writeFile(
+    path.join(task, 'artifacts/review-ledger.md'),
+    [
+      '# Review ledger',
+      '',
+      '## 1. Read the exact diff',
+      '',
+      'Outcome: PASS every changed file read.',
+      '',
+      '## 2. Order guards hold',
+      '',
+      'Outcome: FINDING',
+      '1. src/order.ts:4 skips the guard.',
+      '',
+      '## 3. Extension parity',
+      '',
+      'Outcome: NOT_APPLICABLE no extension code.',
+      '',
+    ].join('\n'),
+  );
+  const run = {
+    ...makeRun({ id: 'skill-round', flowType: 'review-pr', slotId: null }),
+    taskFile: path.join(task, 'TASK.md'),
+    reviewWorkspace: {
+      workspaceId: 'w',
+      machine: 'node',
+      executionNodeId: 'node',
+      checkoutPath: '/w/source',
+      taskPath: '/w/task',
+      artifactPath: '/w/task/artifacts',
+      reviewTask: {
+        folder: '/w/review-tasks/review/pr-1/r1',
+        round: 1,
+        mode: 'cold' as const,
+        headSha: 'a'.repeat(40),
+        revision: 'rev',
+        startedAt: new Date().toISOString(),
+        attemptId: 'skill-attempt',
+      },
+    },
+  };
+  assert.deepEqual(await reviewRowsForRun(run), [
+    { runId: 'skill-round', family: 'read-the-exact-diff', outcome: 'PASS' },
+    { runId: 'skill-round', family: 'order-guards-hold', outcome: 'FINDING' },
+  ]);
 });

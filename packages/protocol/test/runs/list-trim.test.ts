@@ -450,6 +450,21 @@ test('engine state on a row leaves out only the publish gate summary', () => {
   assert.equal(row.detailTrimmed, true);
 });
 
+test('engine state on a row leaves out the open review findings', () => {
+  const run = richRun();
+  const state = run.engineState;
+  const findings = [{ severity: 'blocker' as const, file: 'a.ts', description: 'Crashes.' }];
+  for (const engineState of [
+    { ...state, openReviewFindings: findings },
+    { generation: 2, openReviewFindings: findings },
+  ]) {
+    const row = runListRow({ ...run, engineState });
+    const { openReviewFindings: _findings, ...kept } = engineState;
+    assert.deepEqual(row.engineState, kept);
+    assert.equal(row.detailTrimmed, true);
+  }
+});
+
 // The frozen contract: small fields stay. A resolved decision keeps its resolution, an action
 // its description, a no-change payload its reason, and the row says what it left out.
 test('a decision on a row keeps its small fields and leaves out the selection and attestation', () => {
@@ -891,4 +906,19 @@ test('a row that left out a heavy detail key reads as trimmed; small keys stay a
   assert.deepEqual(plain.agentContexts, small.agentContexts);
   assert.equal('detailTrimmed' in plain, false);
   assert.equal(runHasTrimmedDetail(plain), false);
+});
+
+test('list rows leave out the per-session archive ref lists', () => {
+  const run = richRun();
+  const session = {
+    status: 'captured' as const,
+    sessionKey: 's1',
+    originalPath: '/home/w/s1.jsonl',
+  };
+  run.metrics.runnerSessionArchives = [session];
+  run.agentContexts![0]!.runnerSessionArchives = [session];
+  const row = runListRow(run);
+  assert.equal('runnerSessionArchives' in row.metrics, false);
+  assert.equal('runnerSessionArchives' in row.agentContexts![0]!, false);
+  assert.equal(row.detailTrimmed, true);
 });

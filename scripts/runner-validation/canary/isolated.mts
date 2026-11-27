@@ -6,8 +6,8 @@
 // - restart cases: a run held at a known point in a step, the gateway restarted (node up, or node
 //   away past recovery's node wait), the hold released; the run must end like a same-night
 //   no-restart baseline (scripted, so it costs nothing).
-// - review: one reviewed run (codex, two model calls) held at its review, its fix round and its
-//   re-review, restarting at each; its expected end is derived from the verdicts it recorded.
+// - review: one reviewed run held at its review, its fix round and its re-review, restarting at
+//   each; the test answers its codex reviewer's turns (loop 1 issues, loop 2 pass; no model call).
 // - review-past-wait: a reviewer whose turn the proxy answers itself (no model call), restarted
 //   with its node away past REVIEW's 120 s reconnect wait.
 // - worker-survives: a run held with its worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW,
@@ -53,7 +53,6 @@ import {
   LIFECYCLE_OUTCOME,
   outcomeDifferences,
   outcomeObservations,
-  reviewDriftExcuses,
   REVIEWED_OUTCOME,
   reviewVerdicts,
   type RunOutcome,
@@ -67,6 +66,7 @@ import {
   f324Shape,
   Inconclusive,
   judgeLifecycle,
+  type Log,
   nativeCheck,
   retire,
   type RunShape,
@@ -159,8 +159,11 @@ const contexts = (run: Run, role: string) =>
 
 // ---------------------------------------------------------------- run shapes
 interface Shape extends RunShape {
-  /** The proxy swallows every reviewer turn and the test answers it (scriptedReviewer). */
-  scriptedReview?: boolean;
+  /**
+   * The proxy swallows every reviewer turn and the test answers it (scriptedReviewer):
+   * `fix-then-pass` flags the review fixture's leftover helper in loop 1, `pass` passes at once.
+   */
+  scriptedReview?: 'fix-then-pass' | 'pass';
 }
 
 type ShapeName =
@@ -177,12 +180,26 @@ type ShapeName =
 const SHAPES: Record<ShapeName, Shape> = {
   canary: canaryShape('isolated lifecycle'),
   f324: f324Shape('isolated f324'),
-  pipe: { project: PIPE_PROJECT, create: pipeRunParams, decide: closeGate, timeoutMs: 20 * 60_000 },
-  pi: { project: PIPE_PROJECT, create: piRunParams, decide: closeGate, timeoutMs: 20 * 60_000 },
+  // ri-pipe runs still go through REVIEW (the reviewed profile opts in); the test passes it.
+  pipe: {
+    project: PIPE_PROJECT,
+    create: pipeRunParams,
+    decide: closeGate,
+    scriptedReview: 'pass',
+    timeoutMs: 20 * 60_000,
+  },
+  pi: {
+    project: PIPE_PROJECT,
+    create: piRunParams,
+    decide: closeGate,
+    scriptedReview: 'pass',
+    timeoutMs: 20 * 60_000,
+  },
   claude: {
     project: PIPE_PROJECT,
     create: claudeRunParams,
     decide: closeGate,
+    scriptedReview: 'pass',
     timeoutMs: 20 * 60_000,
   },
   // The test presses the card's Replay step once its hold is over, through run.resolveDecision.
@@ -191,6 +208,7 @@ const SHAPES: Record<ShapeName, Shape> = {
     create: claudeRunParams,
     decide: (decision) =>
       decision.type === WORKER_LEFT_RUNNING_CARD ? { resolve: 'replay-step' } : closeGate(decision),
+    scriptedReview: 'pass',
     timeoutMs: 20 * 60_000,
   },
   review: {
@@ -204,7 +222,7 @@ const SHAPES: Record<ShapeName, Shape> = {
     project: REVIEW_PROJECT,
     create: reviewRunParams,
     decide: () => undefined,
-    scriptedReview: true,
+    scriptedReview: 'fix-then-pass',
     timeoutMs: 20 * 60_000,
   },
   // A Claude-runner worker, the test pressing the card's Replay step when its hold is over.
@@ -213,7 +231,7 @@ const SHAPES: Record<ShapeName, Shape> = {
     create: claudeReviewRunParams,
     decide: (decision) =>
       decision.type === WORKER_LEFT_RUNNING_CARD ? { resolve: 'replay-step' } : undefined,
-    scriptedReview: true,
+    scriptedReview: 'fix-then-pass',
     timeoutMs: 20 * 60_000,
   },
 };
@@ -248,6 +266,8 @@ interface HoldPhase {
   needsSlot?: boolean;
   /** Armed before the run is created, whatever `armAt` says (an idle runner). */
   prepare?(context: HoldContext): Promise<void>;
+  /** The held reviewer turn is the hold: the scripted reviewer leaves it unanswered until release. */
+  keepsReviewer?: boolean;
   /** Watch the run's worker after the restart, before the release; `release` lifts what kept it. */
   survive?: {
     release?(context: HoldContext): Promise<void>;
@@ -303,9 +323,9 @@ export const HOLDS: Record<RestartStep | 'review' | 'review-fix', string> = {
   release:
     "git on the run's slot waits while holds/git exists, armed once the run is terminal, so the slot teardown cannot finish; released while the gateway is down",
   review:
-    "the codex proxy holds the reviewer's output once the node accepted its turn, while holds/review exists",
+    "the codex proxy swallows the loop-1 reviewer's turn once the node accepted it; the test answers it (issues) after the restart",
   'review-fix':
-    'the relaunched scripted worker commits its fix with the fix round live, then waits on holds/fix before marking it complete; the gateway restarts with the node up and the fix completes while it is down. Then the codex proxy holds the loop-2 re-review for a restart with the node away',
+    'the relaunched scripted worker commits its fix with the fix round live, then waits on holds/fix before marking it complete; the gateway restarts with the node up and the fix completes while it is down. Then the proxy swallows the loop-2 re-review for a restart with the node away, and the test answers it (pass)',
 };
 
 function restartPhase(
@@ -401,13 +421,18 @@ const fixRoundHold = (
 
 /**
  * The reviewed run's holds: its loop-1 reviewer (node up), its fix round (node up, the fix
- * completing while the gateway is down), its loop-2 re-review (node away). The review-fix
- * worker-survives variants cover a restart with the fix still running.
+ * completing while the gateway is down), its loop-2 re-review (node away). Each reviewer turn is
+ * the scripted reviewer's, kept unanswered while its hold lasts. The review-fix worker-survives
+ * variants cover a restart with the fix still running.
  */
-function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): HoldPhase[] {
-  const review = marker(stack, 'review');
+function reviewPhases(
+  stack: RemoteNodeStack,
+  reviewFixNodeAwayMs: number,
+  reviewer: ScriptedReviewer,
+): HoldPhase[] {
   // Past what the gateway can accept itself, so the fix leads to the re-review held below.
   const large = marker(stack, 'large-leftover');
+  const pendingLoop = (run: Run) => reviewer.pending(run)?.reviewLoopNumber ?? 1;
   return [
     {
       step: 'review',
@@ -415,13 +440,14 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
       nodeAwayMs: reviewFixNodeAwayMs,
       armAt: 'create',
       prepare: large.arm,
-      arm: review.arm,
+      arm: async () => {},
       held: ({ run }) =>
-        review.hit() &&
         stepStatus(run, 'review') === 'running' &&
-        contexts(run, 'review').some((context) => context.nativeSession?.acceptedAt),
+        reviewer.pending(run) !== undefined &&
+        pendingLoop(run) === 1,
       missed: reviewHoldMissed,
-      release: review.release,
+      release: async () => {},
+      keepsReviewer: true,
     },
     {
       step: 'review-fix',
@@ -450,28 +476,24 @@ function reviewPhases(stack: RemoteNodeStack, reviewFixNodeAwayMs: number): Hold
           },
           120_000,
         );
-        await review.arm(context);
       },
     },
     {
       step: 'review-fix',
       restarts: ['node-away'],
       nodeAwayMs: reviewFixNodeAwayMs,
-      // Armed by the fix phase above, while the gateway was down.
       armAt: 'create',
       arm: async () => {},
       held: ({ run }) =>
-        review.hit() &&
         stepStatus(run, 'review') === 'running' &&
-        contexts(run, 'review').some(
-          (context) => (context.reviewLoopNumber ?? 0) >= 2 && context.nativeSession?.acceptedAt,
-        ),
+        reviewer.pending(run) !== undefined &&
+        pendingLoop(run) >= 2,
       missed: ({ run }) => SETTLED_STEP.has(stepStatus(run, 'review') ?? ''),
       // Read after the restarts: recovery could still lose the fix before the re-review reads it.
       release: async (context) => {
         context.fixLanded = fixInCheckout(context.slotRepo);
-        await review.release(context);
       },
+      keepsReviewer: true,
     },
   ];
 }
@@ -537,8 +559,8 @@ function fixInCheckout(slotRepo: string): boolean {
       { encoding: 'utf8' },
     ).split('\n');
     return present.includes('src/format-name.ts') && !present.includes('src/debug-trace.ts');
-  } catch {
-    return false;
+  } catch (error) {
+    throw new Inconclusive(`could not read the slot checkout for the fix: ${String(error)}`);
   }
 }
 
@@ -750,6 +772,7 @@ function survivePhase(
         missed: reviewHoldMissed,
         // The scripted reviewer answers the turn once this phase is past.
         release: async () => {},
+        keepsReviewer: true,
         survive: {},
       } satisfies HoldPhase;
     case 'review-fix': {
@@ -833,21 +856,28 @@ function survivePhase(
 // ---------------------------------------------------------------- scripted reviewer
 type AgentContext = NonNullable<Run['agentContexts']>[number];
 
-interface ScriptedReviewer {
+export interface ScriptedReviewer {
   /** Arms holds/review to swallow every reviewer turn; clears what an earlier run left. */
   start(): Promise<void>;
   /** The accepted reviewer whose swallowed turn the test has not answered. */
   pending(run: Run): AgentContext | undefined;
   /** The reviewer turns the proxy swallowed: one per reviewer unless a prompt was sent again. */
   turns(): number;
-  /** Answers it as the fixture's review template asks: loop 1 issues, later loops pass. */
-  answer(run: Run, slotRepo: string): Promise<string | undefined>;
+  /** Answers it: `fix-then-pass` flags loop 1 and passes later loops; `pass` always passes. */
+  answer(
+    run: Run,
+    slotRepo: string,
+    mode: NonNullable<Shape['scriptedReview']>,
+  ): Promise<string | undefined>;
   stop(dir: string): Promise<void>;
 }
 
 const execFileAsync = promisify(execFile);
 
-function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
+/** The scripted reviewer itself could not answer: a harness fault, never the product's. */
+export class ScriptedReviewerFault extends Inconclusive {}
+
+export function scriptedReviewer(stack: RemoteNodeStack, log: Log): ScriptedReviewer {
   const hold = path.join(stack.holds, 'review');
   const answered = new Set<string>();
   // The proxy logs `… swallowed` per turn it answered and `… completed` per batch it ended.
@@ -868,12 +898,12 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
         (context) => context.nativeSession?.acceptedAt && !answered.has(context.id),
       );
     },
-    async answer(run, slotRepo) {
+    async answer(run, slotRepo, mode) {
       const context = this.pending(run);
       if (!context?.taskFile || !context.signalFile || !context.reviewResultFile) return undefined;
       answered.add(context.id);
       const loop = context.reviewLoopNumber ?? 1;
-      const issues = loop === 1;
+      const issues = mode === 'fix-then-pass' && loop === 1;
       const taskDir = path.join(slotRepo, path.dirname(context.taskFile));
       const finding = {
         file: 'src/debug-trace.ts',
@@ -889,9 +919,11 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
           `## Verdict: ${issues ? 'ISSUES' : 'PASS'}`,
           '',
           '## Summary',
-          issues
-            ? 'Adds formatName and leaves a debugging helper behind.'
-            : 'Adds formatName; the debugging helper is gone.',
+          mode === 'pass'
+            ? 'Nothing to flag.'
+            : issues
+              ? 'Adds formatName and leaves a debugging helper behind.'
+              : 'Adds formatName; the debugging helper is gone.',
           '',
           '## Issues',
           ...(issues ? [`- **${finding.file}:${finding.line}** — ${finding.description}`] : []),
@@ -906,8 +938,20 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
         `${JSON.stringify({ schemaVersion: 1, verdict: issues ? 'issues' : 'pass', issues: issues ? [finding] : [] })}\n`,
       );
       const checklist = path.basename(context.taskFile);
-      // In the environment the reviewer's own commands get (the proxy records it, secrets left out).
-      const env = JSON.parse(await readFile(`${hold}-env.json`, 'utf8')) as NodeJS.ProcessEnv;
+      // In the environment the reviewer's own commands get (the proxy records it per thread and
+      // last-seen, secrets left out).
+      const envFile =
+        context.runnerSessionId && existsSync(`${hold}.env-${context.runnerSessionId}.json`)
+          ? `${hold}.env-${context.runnerSessionId}.json`
+          : `${hold}-env.json`;
+      let env: NodeJS.ProcessEnv;
+      try {
+        env = JSON.parse(await readFile(envFile, 'utf8')) as NodeJS.ProcessEnv;
+      } catch (error) {
+        throw new ScriptedReviewerFault(
+          `the scripted reviewer could not read the reviewer's environment: ${String(error)}`,
+        );
+      }
       const mark = async (...args: string[]) => {
         try {
           await execFileAsync(
@@ -917,7 +961,7 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
           );
         } catch (error) {
           const { stdout, stderr } = error as { stdout?: string; stderr?: string };
-          throw new Inconclusive(
+          throw new ScriptedReviewerFault(
             `the scripted reviewer's mark ${args.join(' ')} failed: ${`${stdout ?? ''}${stderr ?? ''}`.trim() || String(error)}`,
           );
         }
@@ -930,17 +974,52 @@ function scriptedReviewer(stack: RemoteNodeStack): ScriptedReviewer {
       await mark('complete', '--mark-last');
       // End the swallowed turn, as the reviewer's own turn would end.
       const before = count(' completed');
-      await writeFile(hold, 'complete\n');
-      await poll(
-        'the proxy to end the swallowed turn',
-        async () => (count(' completed') > before ? true : undefined),
-        15_000,
-      ).catch(() => undefined);
+      // End this reviewer's thread first (the global `complete` would end any stale swallowed turn);
+      // the last attempt falls back to the global marker in case the thread id did not match. The
+      // proxy reacts to the marker's file event, so each attempt writes it again.
+      const thread = context.runnerSessionId
+        ? `${hold}.complete-${context.runnerSessionId}`
+        : undefined;
+      let ended = false;
+      let global = false;
+      for (let attempt = 0; attempt < 3 && !ended; attempt++) {
+        global = !thread || attempt === 2;
+        if (global) {
+          await writeFile(hold, 'swallow\n');
+          await writeFile(hold, 'complete\n');
+        } else {
+          await rm(thread!, { force: true });
+          await writeFile(thread!, 'complete\n');
+        }
+        ended = await poll(
+          'the proxy to end the swallowed turn',
+          async () => (count(' completed') > before ? true : undefined),
+          15_000,
+        ).catch(() => false);
+      }
+      // A later turn on the same thread (the loop-2 re-review) must be swallowed again.
+      if (thread) await rm(thread, { force: true });
       await writeFile(hold, 'swallow\n');
+      if (ended && global && thread)
+        await log('scripted reviewer: only the global marker ended a swallowed turn', {
+          runId: run.id,
+          loop,
+          // The proxy's `completed` line names no thread, so either cause fits.
+          cause: `thread ${context.runnerSessionId} did not end: its id did not match, or this reviewer is gone and an earlier run's stale turn ended instead (REVIEW then fails on inactivity)`,
+        });
+      // Then the run decides: REVIEW fails once its reviewer is gone or inactive past its limit.
+      if (!ended)
+        await log('scripted reviewer: the proxy never ended an answered reviewer turn', {
+          runId: run.id,
+          loop,
+          cause: 'the reviewer is gone, or the proxy missed three marker writes',
+        });
       return `loop ${loop}: ${issues ? 'issues' : 'pass'}`;
     },
     async stop(dir) {
-      await rm(hold, { force: true });
+      // Keep swallowing: a run still active after its scenario (retired only later) must not send a
+      // reviewer turn to a model.
+      await writeFile(hold, 'swallow\n');
       await rm(`${hold}-env.json`, { force: true });
       if (existsSync(`${hold}.hit`)) {
         await appendFile(path.join(dir, 'hold-review.hit'), await readFile(`${hold}.hit`, 'utf8'));
@@ -1100,22 +1179,57 @@ function cardObservations(scenario: ScenarioResult): string[] {
   ];
 }
 
+/** A ri-pipe run's REVIEW belongs to the test: one pass receipt, from a turn the proxy swallowed. */
+function passReviewDifferences(scenario: ScenarioResult): string[] {
+  const reviews = scenario.outcome.reviews.join(', ') || '-';
+  return [
+    ...(reviews === 'loop 1: pass' ? [] : [`reviews: expected loop 1: pass, observed ${reviews}`]),
+    ...((scenario.reviewerTurns ?? 0) >= 1 ? [] : ['the test answered no reviewer turn']),
+  ];
+}
+
+/** A run whose reviews the test answers makes no model call. */
+function failOnModelCalls(result: CheckResult): CheckResult {
+  if (result.modelCalls > 0) {
+    result.status = 'fail';
+    result.differences.push(`${result.modelCalls} model calls, expected none`);
+  }
+  return result;
+}
+
 /**
  * The reviews a survive hold must still have run: the outcome comparison doesn't see them. A
- * recovered fix costs what an uninterrupted one does: `extraReviewers` is only for the variants
- * whose reviewer is real work (a fix too large to accept, a worker lost before its fix).
- * `refusedResumes` is the proxy's doing, not recovery's: a swallowed turn never reaches codex, so
- * that thread cannot resume and its re-review falls back cold. With real turns the review row
- * resumes the same session, no fallback and no no-verdict receipt.
+ * recovered fix costs what an uninterrupted one does, the large fix and the lost worker included:
+ * as many reviewers as the same-night baseline, one turn each, none falling back cold. (The proxy
+ * persists a swallowed turn's input, so its thread resumes like a real one.)
  */
-function reviewRoundDifferences(
-  scenario: ScenarioResult,
-  baseline: ScenarioResult,
-  extraReviewers: number,
-  refusedResumes: number,
-): string[] {
+/**
+ * The large fix is past the gateway's 50-line limit: only a reviewer can accept it, so its loop 2
+ * must be a reviewer's verdict, not the gateway accepting the worker's fix.
+ */
+function reviewerAcceptedDifferences(run: Run): string[] {
+  const loop2 = (
+    (
+      run.steps.find((step) => step.name === 'review')?.outputs as
+        | { attempts?: Array<{ loopNumber?: number; timeline?: Array<{ kind?: string }> }> }
+        | undefined
+    )?.attempts ?? []
+  )
+    .filter((attempt) => attempt.loopNumber === 2)
+    .at(-1);
+  return [
+    ...(loop2?.timeline?.some((entry) => entry.kind === 'worker-fix')
+      ? ['loop 2 passed by gateway acceptance, not a reviewer verdict']
+      : []),
+    ...(contexts(run, 'review').some((context) => context.reviewLoopNumber === 2)
+      ? []
+      : ['no loop 2 reviewer ran']),
+  ];
+}
+
+function reviewRoundDifferences(scenario: ScenarioResult, baseline: ScenarioResult): string[] {
   const seen = reviewVerdicts(scenario.run);
-  const expected = reviewVerdicts(baseline.run).reviewers + extraReviewers + refusedResumes;
+  const expected = reviewVerdicts(baseline.run).reviewers;
   const fallbacks = contexts(scenario.run, 'review').flatMap((context) =>
     context.reviewFallback ? [context.reviewFallback.detail] : [],
   );
@@ -1126,15 +1240,10 @@ function reviewRoundDifferences(
     ...(seen.reviewers === expected
       ? []
       : [`${seen.reviewers} reviewers ran, expected ${expected}`]),
-    ...(scenario.reviewerTurns === seen.reviewers - refusedResumes
+    ...(scenario.reviewerTurns === seen.reviewers
       ? []
       : [`${scenario.reviewerTurns ?? 0} reviewer turns for ${seen.reviewers} reviewers`]),
-    ...(fallbacks.length === refusedResumes
-      ? []
-      : [`${fallbacks.length} reviewers fell back cold`]),
-    ...fallbacks
-      .filter((detail) => !detail?.includes('has not produced a live session'))
-      .map((detail) => `a refused resume the proxy does not explain: ${detail}`),
+    ...fallbacks.map((detail) => `a reviewer fell back cold: ${detail}`),
   ];
 }
 
@@ -1153,12 +1262,21 @@ function fixRoundDifferences(
   const held = scenario.cardRun ?? scenario.heldRun;
   if (!held) return ['the fix round was never held'];
   const before = fixContext(held)?.promptDeliveryStartedAt;
-  const final = fixContext(scenario.run)?.promptDeliveryStartedAt;
-  const sentAgain = before !== final;
+  const finalContext = fixContext(scenario.run);
+  const final = finalContext?.promptDeliveryStartedAt;
   const expectResend =
     step === 'review-fix-claude-card-dead' || step === 'review-fix-claude-card-silent';
+  // A kept worker keeps the held delivery; a resend is a newer delivery that its replacement
+  // attempt then signalled from. UTC ISO stamps of one width order as strings.
+  const sendsAsExpected = expectResend
+    ? !!before && !!final && final > before && (finalContext?.lastSignalAt ?? '') > final
+    : !!before && final === before;
   return [
-    ...(sentAgain === expectResend ? [] : [`fix sends: ${before ?? '-'} -> ${final ?? '-'}`]),
+    ...(sendsAsExpected
+      ? []
+      : [
+          `fix sends: ${before ?? '-'} -> ${final ?? '-'}, expected ${expectResend ? 'a newer delivery that signalled' : 'the held delivery kept'}`,
+        ]),
     ...(reviewDepth(scenario.run) === reviewDepth(baseline.run)
       ? []
       : [
@@ -1239,7 +1357,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     ...(options.onCleanup ? { onCleanup: options.onCleanup } : {}),
     log,
   });
-  const reviewer = scriptedReviewer(stack);
+  const reviewer = scriptedReviewer(stack, log);
   const slotCounter: Record<string, number> = {};
   const modelCalls = async () =>
     (await readFile(path.join(stack.holds, 'model-calls.log'), 'utf8').catch(() => ''))
@@ -1424,9 +1542,9 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
               await writeFile(path.join(task, 'canary-monitor-ready'), 'ready\n');
             }
             if (await watchPhase(view, summary, changedAt)) return 'again';
-            // A scripted review answers each reviewer turn, except one a REVIEW hold still keeps.
-            if (shape.scriptedReview && phases[current]?.step !== 'review') {
-              const answered = await reviewer.answer(run, hold.slotRepo);
+            // A scripted review answers each reviewer turn, except one a hold still keeps.
+            if (shape.scriptedReview && !phases[current]?.keepsReviewer) {
+              const answered = await reviewer.answer(run, hold.slotRepo, shape.scriptedReview);
               if (answered) {
                 await log(`${label}: scripted reviewer answered ${answered}`);
                 return 'again';
@@ -1484,6 +1602,8 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     judge: (
       result: ScenarioResult,
     ) => Pick<CheckResult, 'status' | 'differences' | 'observations'> & Partial<CheckResult>,
+    /** `noModelCalls`: every reviewer turn is the test's, so any model call fails the check. */
+    rules: { noModelCalls?: boolean } = {},
   ): Promise<CheckResult> {
     const callsBefore = await modelCalls();
     let result: CheckResult;
@@ -1517,6 +1637,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         runId: error.runId,
       };
     }
+    if (rules.noModelCalls) failOnModelCalls(result);
     if (options.fastScripted && (result.durationS ?? 0) > 5)
       result.observations.push(
         `SLOW ${result.case}: ${result.durationS}s; ${Object.entries(result.timingsS ?? {})
@@ -1584,7 +1705,10 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           },
           async () => (baseline = await runScenario(`baseline-${shapeName}`, shapeName, [])),
           (scenario) => {
-            const differences = outcomeDifferences(baselineExpected[shapeName], scenario.outcome);
+            const differences = [
+              ...outcomeDifferences(baselineExpected[shapeName], scenario.outcome),
+              ...(shapeName === 'pipe' ? passReviewDifferences(scenario) : []),
+            ];
             return {
               status: differences.length ? 'fail' : 'pass',
               differences,
@@ -1592,6 +1716,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
               expected: { ...baselineExpected[shapeName], superseded: [], reviews: [] },
             };
           },
+          { noModelCalls: shapeName === 'pipe' },
         );
         onCheck(result);
         if (!baseline || result.status !== 'pass')
@@ -1625,6 +1750,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
               const differences = [
                 ...unreachedDifferences(result),
                 ...outcomeDifferences(baseline.outcome, result.outcome),
+                ...passReviewDifferences(result),
               ];
               return {
                 status: differences.length ? 'fail' : 'pass',
@@ -1633,6 +1759,7 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
                 expected: baseline.outcome,
               };
             },
+            { noModelCalls: true },
           ),
         );
   }
@@ -1645,8 +1772,6 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
     const claudeFix = step.startsWith('review-fix-claude');
     const fixCard = step.startsWith('review-fix-claude-card');
     const reviewFix = step.startsWith('review-fix');
-    const large = step === 'review-fix-large';
-    const extraReviewers = large || step === 'review-fix-claude-card-dead' ? 1 : 0;
     let baseline: ScenarioResult;
     const result = await check(
       {
@@ -1713,8 +1838,11 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             card || fixCard ? withoutCard(scenario.outcome) : scenario.outcome,
           ),
           ...(scripted
-            ? reviewRoundDifferences(scenario, baseline, extraReviewers, large ? 1 : 0)
-            : []),
+            ? [
+                ...reviewRoundDifferences(scenario, baseline),
+                ...(step === 'review-fix-large' ? reviewerAcceptedDifferences(scenario.run) : []),
+              ]
+            : passReviewDifferences(scenario)),
           ...(card ? cardDifferences(scenario, step) : []),
           ...(fixCard && !scenario.cardRun ? ['the run never waited on the card'] : []),
           ...(reviewFix
@@ -1736,47 +1864,50 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           expected: baseline.outcome,
         };
       },
+      { noModelCalls: true },
     );
-    if (result.modelCalls > 0) {
-      result.status = 'fail';
-      result.differences.push(`${result.modelCalls} model calls, expected none`);
-    }
     onCheck(result);
   }
 
   if (options.review) {
-    // One reviewed run: two model calls, four restarts; its end is derived from its verdicts.
-    const model = `scripted worker, ${REVIEWER.runner} ${REVIEWER.model} reviewer`;
-    let verdicts: ReturnType<typeof reviewVerdicts> | undefined;
-    let procedural: string[] = [];
-    let fixLanded = false;
-    let retriesExhausted = false;
+    // One reviewed run, three restarts; the test answers both reviewer turns (no model call).
+    const model = `scripted worker, ${REVIEWER.runner} reviewer whose turns the test answers (no model call)`;
     const reviewCheck = await check(
       { case: 'review', variant: 'node-up', model, hold: HOLDS.review },
-      () => runScenario('review', 'review', reviewPhases(stack, options.reviewFixNodeAwayMs)),
+      () =>
+        runScenario(
+          'review',
+          'scripted-review',
+          reviewPhases(stack, options.reviewFixNodeAwayMs, reviewer),
+        ),
       (result) => {
-        verdicts = reviewVerdicts(result.run);
-        // No fix round when loop 1 passes: its holds are not reached, which is no difference.
-        const expectedReviewers = verdicts.loop1 === 'pass' ? 1 : 2;
-        procedural = verdicts.loop1 === 'pass' ? result.refused : unreachedDifferences(result);
-        fixLanded = result.fixLanded === true;
-        retriesExhausted =
-          result.run.steps.find((step) => step.name === 'review')?.outputs?.maxRetriesExhausted ===
-          true;
+        const verdicts = reviewVerdicts(result.run);
         const differences = [
-          ...procedural,
+          ...unreachedDifferences(result),
           ...outcomeDifferences(REVIEWED_OUTCOME, result.outcome),
-          ...(verdicts.reviewers > expectedReviewers
+          ...(verdicts.loop1 === 'issues' && verdicts.loop2 === 'pass'
+            ? []
+            : [
+                `verdicts: expected loop 1 issues, loop 2 pass; observed ${verdicts.loop1 ?? '-'}, ${verdicts.loop2 ?? '-'}`,
+              ]),
+          ...(verdicts.reviewers > 2
             ? [
-                `${verdicts.reviewers} reviewers ran, expected ${expectedReviewers}: a reviewer was re-launched after a restart`,
+                `${verdicts.reviewers} reviewers ran, expected 2: a reviewer was re-launched after a restart`,
               ]
+            : []),
+          ...(result.reviewerTurns === verdicts.reviewers
+            ? []
+            : [`${result.reviewerTurns ?? 0} reviewer turns for ${verdicts.reviewers} reviewers`]),
+          // The scripted re-review passes whatever it reads: the fix must still be in the checkout.
+          ...(result.fixLanded === false
+            ? ["the fix round's commit was gone from the checkout at the re-review"]
             : []),
         ];
         return {
           status: differences.length ? 'fail' : 'pass',
           differences,
           observations: [
-            `verdicts: loop 1 ${verdicts.loop1 ?? '?'}, loop 2 ${verdicts.loop2 ?? '-'}`,
+            `reviews: ${result.outcome.reviews.join(', ') || '-'}`,
             ...(result.outcome.superseded.length
               ? [`superseded cards: [${result.outcome.superseded.join(', ')}]`]
               : []),
@@ -1784,47 +1915,15 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
           expected: { ...REVIEWED_OUTCOME, superseded: [], reviews: [] },
         };
       },
+      { noModelCalls: true },
     );
-    if (reviewCheck.modelCalls > 2) {
-      reviewCheck.status = 'fail';
-      reviewCheck.differences.push(
-        `${reviewCheck.modelCalls} model calls, expected at most 2: a reviewer was re-launched after a restart`,
-      );
-    }
-    // Loop 2 returning issues can be the model's drift, not a restart's: that path is not modelled.
-    const loop1Pass = verdicts?.loop1 === 'pass';
-    const relaunched = reviewCheck.differences.some((entry) => entry.includes('re-launched'));
-    const loop2Drift = reviewDriftExcuses({
-      loop2: verdicts?.loop2,
-      fixLanded,
-      procedural,
-      relaunched,
-      retriesExhausted,
-    });
-    if (loop2Drift && reviewCheck.status === 'fail') {
-      reviewCheck.status = 'not-exercised';
-      reviewCheck.error = 'loop 2 returned issues (verdict drift): the restarts cannot be judged';
-    }
     onCheck(reviewCheck);
     onCheck({
       ...reviewCheck,
       case: 'review-fix',
       variant: 'node-up+node-away',
       hold: HOLDS['review-fix'],
-      // The same run as the review check, whose entry counts its model calls.
-      modelCalls: 0,
-      observations: [
-        ...reviewCheck.observations,
-        "shares the review check's run and its model calls",
-      ],
-      ...(loop1Pass || loop2Drift
-        ? {
-            status: 'not-exercised',
-            error: loop1Pass
-              ? 'loop 1 returned no issues (verdict drift): no fix round ran'
-              : reviewCheck.error,
-          }
-        : {}),
+      observations: [...reviewCheck.observations, "shares the review check's run"],
     });
   }
 
@@ -1881,7 +1980,13 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
             : undefined;
         },
         10 * 60_000,
-      );
+      ).catch((error: unknown) => {
+        if (error instanceof Inconclusive) throw error;
+        // The hold never caught: unverified, so the catch below retires the run and lifts the marker.
+        throw new Inconclusive(
+          `${label}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
       const reviewer = reviewerOf(run)!.id;
       await writeJson(path.join(dir, 'run-held.json'), run);
       const restart = await stack.restartGateway({ nodeAwayMs: options.reviewNodeAwayMs });
@@ -1902,8 +2007,10 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
       const differences = kept
         ? []
         : [`REVIEW did not keep its reviewer: ${stepStatus(run, 'review')} (${brief(run)})`];
-      await review.release(hold);
+      // Retire before the release: an active run could still send its reviewer a turn the proxy
+      // would no longer swallow.
       await retireRun(created.id);
+      await review.release(hold);
       const result: CheckResult = {
         ...base,
         target: 'isolated',
@@ -1916,20 +2023,23 @@ export async function runIsolated(options: IsolatedOptions): Promise<void> {
         failureText: failureText(run),
         evidence: dir,
       };
-      await log(`${label}: ${result.status.toUpperCase()}`, { differences });
+      failOnModelCalls(result);
+      await log(`${label}: ${result.status.toUpperCase()}`, { differences: result.differences });
       return result;
     } catch (error) {
       if (!(error instanceof Inconclusive)) throw error;
+      await retireRun(created.id);
       await review.release(hold);
-      return {
+      return failOnModelCalls({
         ...base,
         target: 'isolated',
         status: 'unverified',
-        modelCalls: 0,
+        modelCalls: (await modelCalls()) - callsBefore,
+        runId: created.id,
         differences: [],
         observations: [],
         error: error.message,
-      };
+      });
     }
   }
 }

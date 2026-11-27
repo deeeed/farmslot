@@ -52,6 +52,8 @@ export interface NativeAdapterSession {
   respond(requestId: string, response: NativeSessionResponse): Promise<void>;
   interrupt(): Promise<void>;
   close(): Promise<void>;
+  /** Recheck the process owner's final tree after exit without sending signals. */
+  verifyStoppedProcessTree?(): Promise<boolean>;
 }
 export interface NativeAdapter {
   capabilities: NativeSessionCapabilities;

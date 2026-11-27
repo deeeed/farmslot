@@ -43,6 +43,7 @@ import {
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
 import { rerequestChangesRequestedReviewers } from '../run-completion/review-rerequest.js';
+import { recordGradedOutputOnSlot, recordPrHead } from '../run-traces/output.js';
 import { workspaceSessionUsageArgv } from '../runners/native-session-usage-command.js';
 import { getRunnerSessionUsageProvider } from '../runners/registry.js';
 import { resolveRunnerSessionForRun } from '../runners/session-process.js';
@@ -304,17 +305,23 @@ export async function executeFinalizeStep(
   // 2. Restore slot lifecycle — may be stuck in 'review-gate' if gateway crashed mid human-gate
   emitWithBroadcast('substep', {
     name: 'slot-lifecycle',
-    detail: noCodeDisposition ? 'Releasing slot (no-code)' : 'Holding slot for ci-watch',
+    detail: noCodeDisposition
+      ? 'Releasing slot (no-code)'
+      : artifactOnly
+        ? 'Leaving slot to its release (artifact-only)'
+        : 'Holding slot for ci-watch',
   });
   try {
     if (noCodeDisposition) {
       const { releaseCompletedRunSlot } = await import('../methods/run/lifecycle-control.js');
       await releaseCompletedRunSlot(current);
-    } else {
-      // COMPLETE may already have released an artifact-only run's slot; only an owned one is held.
+    } else if (!artifactOnly) {
+      // ci-watch never watches an artifact-only run (no PR); its skip defers the release.
       await markRunSlotHeld(current.slotId, current.id, 'ci-watch');
     }
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+    broadcastFn(Events.FLEET_UPDATED, {
+      fleet: await loadFleetStatus(true, false, { newest: true }),
+    });
   } catch (err) {
     // Finalize continues so run completion is not lost, but slot lifecycle
     // drift is operator-actionable and must be logged.
@@ -566,6 +573,13 @@ export async function executeFinalizeStep(
     publishBodyPostProcessed = published.bodyPostProcessed;
     publishedHeadSha = approvedPackage.headSha;
     publishedBranch = approvedPackage.branch;
+    // ADR-039 Amendment 10: the published commit is the graded output and the PR head.
+    recordPrHead(runId, approvedPackage.headSha);
+    void recordGradedOutputOnSlot({
+      runId,
+      source: 'committed',
+      ref: approvedPackage.headSha ?? null,
+    });
     emitWithBroadcast('substep', { name: 'refresh-links', detail: 'Refreshing PR run links' });
     await refreshRunLinks(runId);
   }

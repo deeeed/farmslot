@@ -112,10 +112,11 @@ import {
   assertReviewWorkspaceAdmitted,
   assertReviewWorkspacePlacement,
   inspectReviewWorkspaceTarget,
-  resolveReviewWorkspacePlatform,
+  resolveWorkspaceReviewTemplate,
   type ReviewWorkspaceAdmission,
 } from '../review-workspaces/admission.js';
 import { resolveDirectWorkflowDefaults } from '../review-workspaces/direct-defaults.js';
+import { configuresReviewSkill } from '../review-workspaces/skills.js';
 import { useReviewWorkspaceStorage } from '../review-workspaces/storage-use.js';
 import {
   assertReadyGatePackageInputsCurrent,
@@ -624,6 +625,7 @@ export async function planRunCreation(
           effort: params.effort,
           transport: params.transport,
           nativeProfile: params.nativeProfile,
+          domain: params.domain,
         },
         reviewOwner().ownerId,
         options.replanningRunId,
@@ -659,17 +661,17 @@ export async function planRunCreation(
     );
   }
   let executionTemplateSnapshot: Run['executionTemplate'];
-  if (workspaceAdmission) {
-    const projectVars = await loadProjectVars(params.project);
-    executionTemplateSnapshot = (
-      await resolveConfiguredExecutionTemplateForSlot(projectVars, {
-        flow: 'review-pr',
-        platform: await resolveReviewWorkspacePlatform(workspaceAdmission.pool, params.project),
-        runMode: params.mode ?? 'autonomous',
-        explicitDomain: params.domain,
-        explicitId: params.executionTemplateId,
-      })
-    ).reference;
+  if (
+    workspaceAdmission &&
+    !configuresReviewSkill(workspaceAdmission.project.staticReview?.support, params.domain)
+  ) {
+    executionTemplateSnapshot = await resolveWorkspaceReviewTemplate({
+      project: params.project,
+      pool: workspaceAdmission.pool,
+      mode: params.mode ?? 'autonomous',
+      domain: params.domain,
+      executionTemplateId: params.executionTemplateId,
+    });
   }
   if (projectConfig?.executionTemplates && params.slotId) {
     const [projectVars, slotVars] = await Promise.all([
@@ -897,6 +899,7 @@ export async function planRunCreation(
         effort: params.effort,
         transport: params.transport,
         nativeProfile: params.nativeProfile,
+        domain: params.domain,
       },
       reviewOwner().ownerId,
       options.replanningRunId,

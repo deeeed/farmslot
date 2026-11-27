@@ -56,7 +56,7 @@ STATUS: pending
   git commit -m "fix: address CI feedback"
   {{BRANCH_UPDATE_PUSH_CMD}}
   ```
-- [ ] **8. Reply to each bot comment thread** (skip if CI-failures-only):
+- [ ] **8. Reply to each bot comment thread** [OPTIONAL: there are no bot comments] (skip with `{{TASK_DIR}}/mark --checklist CI-FIX.md 8 --skip "<why>"` when there are no bot comments):
   ```bash
   unset GH_TOKEN && gh api "repos/{{GH_REPO}}/pulls/{{PR_NUMBER}}/comments/{COMMENT_ID}/replies" -X POST -f body="Fixed in $(git rev-parse --short HEAD)"
   ```
@@ -71,7 +71,7 @@ STATUS: pending
   # - report.md when you changed code
   # - no-change-report.md when no code change was needed
   # Include the issue, what changed or why no change was needed, validation commands + results, and commit SHA if any.
-  # Also write learnings.md: one bullet per failure likely to recur that should change a template, reviewer or engine step, or "- None".
+  # Also write learnings.md in Learnings v1: "# Learnings v1", then "- None" or one "- <kind>: <lesson>" entry per failure likely to recur (./mark prints the kinds and fields).
   # Mark this item using its visible step number.
   ```
 
@@ -87,4 +87,4 @@ STATUS: pending
 
 ## Recipe proof + acceptance review
 
-Follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. Retain the recipe's results and resolve any refused check before marking this checklist complete.
+Follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. The proof this task claims is the attempt selected in `artifacts/latest-valid-recipe-run.json`; a task-root `evidence-manifest.json` is optional and only declares extra evidence. Retain the recipe's results and resolve any refused check before marking this checklist complete.

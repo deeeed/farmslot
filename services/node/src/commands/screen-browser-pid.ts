@@ -1,8 +1,20 @@
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type { ScreenCaptureConfig } from './screen-types.js';
+
+/**
+ * A lookup command's output, without blocking the node's event loop. With
+ * `outputDespiteFailure`, output printed before a non-zero exit still counts.
+ */
+function lookup(file: string, args: string[], outputDespiteFailure = false): Promise<string> {
+  return new Promise((resolveOutput, reject) => {
+    execFile(file, args, { timeout: 2000, encoding: 'utf-8' }, (error, stdout) =>
+      error && !(outputDespiteFailure && stdout.trim()) ? reject(error) : resolveOutput(stdout),
+    );
+  });
+}
 
 function isPidAlive(pid: number): boolean {
   if (!pid || !Number.isFinite(pid) || pid <= 0) return false;
@@ -14,7 +26,7 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-function resolvePidFromFiles(repo: string, runtimeDir: string): number | null {
+async function resolvePidFromFiles(repo: string, runtimeDir: string): Promise<number | null> {
   const pidDir = resolve(repo, runtimeDir);
   try {
     const raw = readFileSync(resolve(pidDir, 'chromium.pid'), 'utf-8').trim();
@@ -28,14 +40,11 @@ function resolvePidFromFiles(repo: string, runtimeDir: string): number | null {
     const parent = parseInt(raw, 10);
     if (isNaN(parent)) return null;
     try {
-      const children = execSync(`pgrep -P ${parent}`, { timeout: 2000 })
-        .toString()
-        .trim()
-        .split('\n');
+      const children = (await lookup('pgrep', ['-P', String(parent)])).trim().split('\n');
       for (const c of children) {
         const cp = parseInt(c, 10);
         if (isNaN(cp)) continue;
-        const comm = execSync(`ps -p ${cp} -o comm=`, { timeout: 2000 }).toString().trim();
+        const comm = (await lookup('ps', ['-p', String(cp), '-o', 'comm='])).trim();
         if (/[Cc]hrom/.test(comm) && isPidAlive(cp)) return cp;
       }
     } catch {
@@ -48,13 +57,13 @@ function resolvePidFromFiles(repo: string, runtimeDir: string): number | null {
   return null;
 }
 
-function resolvePidFromLsof(cdpPort: number): number | null {
+async function resolvePidFromLsof(cdpPort: number, lsof: string): Promise<number | null> {
   try {
-    const out = execSync(`/usr/sbin/lsof -ti tcp:${cdpPort} -sTCP:LISTEN | head -1`, {
-      timeout: 2000,
-    })
-      .toString()
-      .trim();
+    const out =
+      // lsof reports some errors through its exit status while still listing
+      // the socket; the `lsof … | head -1` this replaced ignored that status.
+      (await lookup(lsof, ['-ti', `tcp:${cdpPort}`, '-sTCP:LISTEN'], true)).trim().split('\n')[0] ??
+      '';
     if (!out) return null;
     const pid = parseInt(out, 10);
     if (!isNaN(pid) && isPidAlive(pid)) return pid;
@@ -66,14 +75,17 @@ function resolvePidFromLsof(cdpPort: number): number | null {
 
 /** Validate incoming browserPid; fall back to local pid files + lsof on cdpPort.
  * Throws a descriptive error when no live browser PID can be resolved. */
-export function ensureLiveBrowserPid(config: ScreenCaptureConfig): number {
+export async function ensureLiveBrowserPid(
+  config: ScreenCaptureConfig,
+  lsof = '/usr/sbin/lsof',
+): Promise<number> {
   const { slotId, browserPid, cdpPort, repo, runtimeDir } = config;
   if (browserPid && isPidAlive(browserPid)) return browserPid;
 
   const stale = browserPid ?? null;
 
   if (repo && runtimeDir) {
-    const fromFile = resolvePidFromFiles(repo, runtimeDir);
+    const fromFile = await resolvePidFromFiles(repo, runtimeDir);
     if (fromFile) {
       console.warn(
         `[screen] pid-stale slot=${slotId} requested=${stale} resolved=${fromFile} source=pid-file`,
@@ -83,7 +95,7 @@ export function ensureLiveBrowserPid(config: ScreenCaptureConfig): number {
   }
 
   if (cdpPort) {
-    const fromLsof = resolvePidFromLsof(cdpPort);
+    const fromLsof = await resolvePidFromLsof(cdpPort, lsof);
     if (fromLsof) {
       console.warn(
         `[screen] pid-stale slot=${slotId} requested=${stale} resolved=${fromLsof} source=lsof cdpPort=${cdpPort}`,

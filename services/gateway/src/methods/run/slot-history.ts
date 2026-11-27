@@ -25,6 +25,7 @@ export function buildSlotRunHistoryEntry(
     familyId: run.familyId,
     status: run.status,
     flowType: run.flowType,
+    ...(run.domain ? { domain: run.domain } : {}),
     ticketOrPr: run.ticketOrPr,
     linkedTicketRefs: runLinkedTicketRefs(run),
     summary: run.summary,

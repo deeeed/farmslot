@@ -84,6 +84,13 @@ export interface TaskStepSubtaskProgress {
   /** Recursive: the child's own step projection, built by the same parser. */
   progress: TaskProgressStructured;
   lastEventAt: string | null;
+  /**
+   * Display only: the unit is unsettled but the context that owns its parent checklist has
+   * ended (complete or failed) or the run is terminal, so nobody is working it. A stopped or
+   * replaced reviewer's unit reads as ended work, not live work. Gates never read it; the
+   * child's own status stays what `mark` wrote.
+   */
+  ownerEnded?: true;
 }
 
 /** Observed command execution; checklist completion and proof verdicts are separate. */

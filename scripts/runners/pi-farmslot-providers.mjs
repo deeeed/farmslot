@@ -15,6 +15,11 @@ const { normalizeLiteLlmModelInfo } = await import(
     ? './litellm-model-info.mjs'
     : '../../packages/slot-config/src/litellm-model-info.mjs'
 );
+const { liteLlmEndpointId } = await import(
+  existsSync(new URL('./litellm-endpoint.cjs', import.meta.url))
+    ? './litellm-endpoint.cjs'
+    : '../../packages/agent-runtime/scripts/litellm-endpoint.cjs'
+);
 
 /** Shared non-secret settings read by this helper and the Pi extension. */
 export const PI_CONFIG_ENVIRONMENT = Object.freeze([
@@ -39,7 +44,7 @@ const PI_PROVIDER_ENVIRONMENT = Object.fromEntries(
     kind,
     [
       ...names,
-      ...['CONTEXT', 'MAX_TOKENS', 'REASONING', 'MODEL_LIMITS'].map(
+      ...['CONTEXT', 'MAX_TOKENS', 'MAX_IMAGES', 'REASONING', 'MODEL_LIMITS'].map(
         (setting) => `FARMSLOT_PI_${kind.toUpperCase()}_${setting}`,
       ),
     ],
@@ -86,6 +91,45 @@ function piProviderKind(model, env) {
 /** Keep discovery configuration and authentication scoped to the same provider. */
 export function piProviderEnvironment(model, env = process.env) {
   return [...PI_CONFIG_ENVIRONMENT, ...(PI_PROVIDER_ENVIRONMENT[piProviderKind(model, env)] ?? [])];
+}
+
+/**
+ * A model's image caps for one request: what it declares in `inputLimits.images` (Pi's catalog,
+ * models.json, or a discovered source's setting), with a missing per-request cap taken from the
+ * pool: the model's `maxImages` in FARMSLOT_PI_<SOURCE>_MODEL_LIMITS, else
+ * FARMSLOT_PI_<SOURCE>_MAX_IMAGES. This reaches static-only models and a source whose discovery
+ * failed, which registered no capped entry.
+ */
+export function piModelImageCaps(model, env = process.env) {
+  const declared = (value) => (Number.isInteger(value) && value > 0 ? value : undefined);
+  const images = model?.inputLimits?.images;
+  const caps = {
+    perRequest: declared(images?.maxPerRequest),
+    perMessage: declared(images?.maxPerMessage),
+  };
+  const kind =
+    typeof model?.provider === 'string' && typeof model?.id === 'string'
+      ? piProviderKind(`${model.provider}/${model.id}`, env)
+      : undefined;
+  if (caps.perRequest !== undefined || !kind) return caps;
+  const prefix = `FARMSLOT_PI_${kind.toUpperCase()}`;
+  caps.perRequest =
+    configuredModelLimits(env[`${prefix}_MODEL_LIMITS`], `${prefix}_MODEL_LIMITS`).get(model.id)
+      ?.maxImages ?? positiveInteger(env[`${prefix}_MAX_IMAGES`], `${prefix}_MAX_IMAGES`);
+  return caps;
+}
+
+/**
+ * Refuse a bad `_MAX_IMAGES` or `_MODEL_LIMITS` value (any of its fields) when the extension
+ * loads. A source that is not configured skips discovery, so the image cap would otherwise first
+ * read them in a request, which Pi then sends untrimmed when the read throws.
+ */
+export function assertPiLimitSettings(env = process.env) {
+  for (const kind of Object.keys(PI_PROVIDER_ENVIRONMENT)) {
+    const prefix = `FARMSLOT_PI_${kind.toUpperCase()}`;
+    positiveInteger(env[`${prefix}_MAX_IMAGES`], `${prefix}_MAX_IMAGES`);
+    configuredModelLimits(env[`${prefix}_MODEL_LIMITS`], `${prefix}_MODEL_LIMITS`);
+  }
 }
 
 /** Bound worker HTTP requests through the final response byte. Pi owns retries. */
@@ -140,7 +184,10 @@ export function deadlinePiFetch(fetchImpl, timeoutMs = 5 * 60_000, onExhausted, 
         },
       });
       const bounded = new Response(body, response);
-      Object.defineProperty(bounded, 'url', { value: response.url });
+      Object.defineProperties(bounded, {
+        url: { value: response.url },
+        redirected: { value: response.redirected },
+      });
       return bounded;
     } catch (error) {
       clearTimeout(timer);
@@ -534,17 +581,18 @@ function configuredModelLimits(raw, name) {
         typeof settings !== 'object' ||
         Array.isArray(settings) ||
         Object.keys(settings).some(
-          (key) => !['contextWindow', 'maxTokens', 'reasoning'].includes(key),
+          (key) => !['contextWindow', 'maxTokens', 'maxImages', 'reasoning'].includes(key),
         )
       )
         throw new PiProviderConfigurationError(
-          `${name}/${id} must contain contextWindow, maxTokens or reasoning`,
+          `${name}/${id} must contain contextWindow, maxTokens, maxImages or reasoning`,
         );
       return [
         id,
         {
           contextWindow: positiveInteger(settings.contextWindow, `${name}/${id} contextWindow`),
           maxTokens: positiveInteger(settings.maxTokens, `${name}/${id} maxTokens`),
+          maxImages: positiveInteger(settings.maxImages, `${name}/${id} maxImages`),
           reasoning: reasoningSetting(settings.reasoning, `${name}/${id} reasoning`),
         },
       ];
@@ -618,6 +666,7 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
     ) ??
     configured.reasoning ??
     defaults.reasoning;
+  const maxImages = configured.maxImages ?? defaults.maxImages;
   if ((source.kind === 'router' || configured.reasoning === true) && !reasoning)
     throw new PiProviderConfigurationError(
       `Model ${provider}/${row.id} requires reasoning for code work`,
@@ -645,6 +694,8 @@ function modelEntry(row, source, defaults, info = {}, configured = {}) {
       defaults.maxTokens,
       `${provider}/${row.id} maxTokens`,
     ),
+    // Images one request may carry (Sparks vLLM: --vision-max-images); the extension trims to it.
+    ...(maxImages ? { inputLimits: { images: { maxPerRequest: maxImages } } } : {}),
   };
 }
 
@@ -659,6 +710,7 @@ async function resolvePiSources(sources, env, opts) {
       const defaults = {
         contextWindow: positiveInteger(env[`${prefix}_CONTEXT`], `${prefix}_CONTEXT`) ?? 128000,
         maxTokens: positiveInteger(env[`${prefix}_MAX_TOKENS`], `${prefix}_MAX_TOKENS`) ?? 8192,
+        maxImages: positiveInteger(env[`${prefix}_MAX_IMAGES`], `${prefix}_MAX_IMAGES`),
         reasoning:
           reasoningSetting(env[`${prefix}_REASONING`], `${prefix}_REASONING`) ??
           source.kind === 'router',
@@ -732,7 +784,7 @@ export function assertPiModelThinking(model, requestedEffort, kind = model?.prov
     );
 }
 
-/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effectiveReasoning?: import('@farmslot/protocol').EffectiveReasoning, effort?: string, requestedMaxTokens?: number, cost: PiModelCostMetadata | null }} PiModelRequestConfiguration */
+/** @typedef {{ provider: string, model: string, contextWindow: number, maxTokens: number, reasoning: boolean, effectiveReasoning?: import('@farmslot/protocol').EffectiveReasoning, effort?: string, requestedMaxTokens?: number, cost: PiModelCostMetadata | null, endpoint?: string }} PiModelRequestConfiguration */
 
 /**
  * Refuse undeclared effort changes before sending; record actual wire effort.
@@ -791,7 +843,7 @@ export function providerReasoningFetch(
           );
       }
       if (model) {
-        onRequest?.({
+        const request = {
           provider: provider.id,
           model: model.id,
           contextWindow: model.contextWindow,
@@ -808,7 +860,23 @@ export function providerReasoningFetch(
                 : undefined,
           effort,
           cost: model.cost ?? null,
-        });
+        };
+        let response;
+        try {
+          response = await fetchImpl(input, options);
+        } catch (error) {
+          // A failed request is still observed, with no endpoint: no later turn is priced by it.
+          onRequest?.(request);
+          throw error;
+        }
+        // Only a successful answer from the exact catalog URL, not a redirect, binds the endpoint
+        // digest that receipts quote gateway prices against.
+        onRequest?.(
+          response.ok && !response.redirected && response.url === url
+            ? { ...request, endpoint: liteLlmEndpointId(provider.baseUrl) }
+            : request,
+        );
+        return response;
       }
     }
     return fetchImpl(input, options);

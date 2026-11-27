@@ -42,9 +42,20 @@ function parseToolUsage(lines: string[]): Pick<RunnerSessionUsage, 'toolUsage' |
 
 export function parseSessionUsageOutput(
   stdout: string,
-  seed: Pick<RunnerSessionUsage, 'runner' | 'runnerSessionId' | 'runnerSessionPath'> = {},
+  seed: Pick<
+    RunnerSessionUsage,
+    'runner' | 'runnerSessionId' | 'runnerSessionPath' | 'pricingScope'
+  > = {},
 ): RunnerSessionUsage {
   const lines = stdout.split('\n');
+  const providerReportedCostUsd = parseNumberLine(lines, 'provider_reported_cost_usd=');
+  const toolUsage = parseToolUsage(lines);
+  // Pi's default breakdown contains SDK amounts without verified pricing provenance.
+  if (seed.pricingScope === 'remote-tmux-pi' && toolUsage.toolUsage) {
+    for (const step of toolUsage.toolUsage.steps) {
+      if (step && typeof step === 'object') step.costUsd = null;
+    }
+  }
   return {
     ...seed,
     actualModel: parseStringLine(lines, 'model='),
@@ -56,10 +67,11 @@ export function parseSessionUsageOutput(
     reasoningOutputTokens: parseNumberLine(lines, 'reasoning_output_tokens='),
     totalTokens: parseNumberLine(lines, 'total_tokens='),
     costUsd: parseNumberLine(lines, 'cost_usd='),
+    ...(providerReportedCostUsd === null ? {} : { providerReportedCostUsd }),
     ...(parseStringLine(lines, 'cost_reason=')
       ? { costStatus: 'unpriced', costReason: parseStringLine(lines, 'cost_reason=') ?? undefined }
       : {}),
-    ...parseToolUsage(lines),
+    ...toolUsage,
     ...(lines.includes('receipt_detail_limited=yes')
       ? { captureGaps: [REMOTE_USAGE_DETAIL_NOTE] }
       : {}),
@@ -128,6 +140,13 @@ export function workspaceUsageMetrics(run: Run): Run['metrics'] {
     runnerSessionId: receipt.runnerSessionId ?? null,
     runnerSessionPath: receipt.runnerSessionPath ?? null,
     ...runnerUsageMetrics(receipt),
+    // A successful remote Pi measurement supersedes an earlier unsafe estimate.
+    ...(receipt.pricingScope === 'remote-tmux-pi' &&
+    receipt.source === 'runner-transcript' &&
+    !receipt.error &&
+    receipt.costStatus === 'unpriced'
+      ? { costEstimate: undefined }
+      : {}),
     ...(usesReviewChainSessionTotal(run) ? { sessionUsageScope: 'review-generation-delta' } : {}),
     sessionUsageError: receipt.error,
   };

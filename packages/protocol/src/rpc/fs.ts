@@ -201,6 +201,24 @@ export interface NodeFsReadTextResult {
   content: string;
 }
 
+/** The most files one `fs.readFiles` request may name. */
+export const NODE_FS_READ_FILES_MAX_FILES = 64;
+
+/**
+ * Several `fs.read`s in one request. Nodes declare it as the `batchReads` observation
+ * capability. Each entry answers in order: the content, `missing` for a file that does not
+ * exist, or the error its own `fs.read` would have thrown.
+ */
+export interface NodeFsReadFilesParams {
+  files: NodeFsPathParams[];
+}
+
+export type NodeFsReadFileEntry = { content: string } | { missing: true } | { error: string };
+
+export interface NodeFsReadFilesResult {
+  files: NodeFsReadFileEntry[];
+}
+
 /** `[ -f path ]` without a shell: false for anything missing, unreadable or not a regular file. */
 export interface NodeFsIsFileResult {
   isFile: boolean;

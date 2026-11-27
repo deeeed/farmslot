@@ -33,7 +33,7 @@ import {
 import { getAllRuns, getRunWithArchived } from '../../runs/store.js';
 import { isActiveSlotHolder, slotPinIsRequestOnly } from '../dispatch/slot-scoring.js';
 
-import { REFRESH_REMOTE_REF_LOCKS_COMMAND } from './git-cleanup-commands.js';
+import { gitMaintenanceNotes, PRE_FETCH_CLEANUP_COMMAND } from './git-cleanup-commands.js';
 import { readMergedPreparePullRequests, refIncludedInMergedPullRequest } from './unmerged-work.js';
 import {
   invalidatePassiveDefaultAncestry,
@@ -154,10 +154,12 @@ export async function inspectSlotWorkspace(
     const fetched = await execOnSlot(
       vars,
       withFarmGitConfig(
-        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_REMOTE_REF_LOCKS_COMMAND}; } && git fetch --no-tags origin ${shellQuote(`+refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
+        `cd ${shellQuote(vars.remoteRepo)} && { ${PRE_FETCH_CLEANUP_COMMAND}; } && git fetch --no-tags origin ${shellQuote(`+refs/heads/${branch}:refs/remotes/origin/${branch}`)}`,
       ),
       { timeout: 120_000, noRetry: true },
     );
+    for (const note of gitMaintenanceNotes(fetched.stdout))
+      console.log(`[slot] ${vars.slotId}: git maintenance: ${note}`);
     if (fetched.exitCode !== 0)
       throw new Error(`Cannot fetch the default branch (exit ${fetched.exitCode})`);
   }

@@ -366,20 +366,43 @@ export function buildPrepareIdentityReapCommand(
   ];
   const awaitExit = opts.awaitExit
     ? [
-        `    ${PREPARE_GROUP_ALIVE_FN}`,
-        '    for group in $(printf "%s\\n" "$groups"); do',
-        '      n=0; while group_alive "$group" && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n+1)); done',
+        // Each round's groups are awaited together against one TERM budget shared by every
+        // round, so the initial pass plus three re-sweeps end inside the 15 s command timeout.
+        '    term_deadline=$(( $(date +%s) + 8 ))',
+        // One census per check for every pending group.
+        `    alive_of() { ps -A -o pgid= -o stat= 2>/dev/null | awk -v want="$(printf "%s\\n" "$1" | tr "\\n" " ")" 'BEGIN { n = split(want, list, " "); for (i = 1; i <= n; i++) wanted[list[i]] = 1 } ($1 in wanted) && $2 !~ /^Z/ { print $1 }' | sort -u; }`,
+        '    await_groups() {',
+        '      pending=$1',
+        '      while [ -n "$(alive_of "$pending")" ] && [ "$(date +%s)" -lt "$term_deadline" ]; do sleep 0.1; done',
+        '      alive=$(alive_of "$pending")',
+        '      if [ -n "$alive" ]; then',
         // A live scoped member anchors the group even after its leader exits.
-        '      if group_alive "$group"; then',
         '        live_groups=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
-        '        if ! printf "%s\\n" "$live_groups" | grep -Fxq -- "$group"; then echo "preflight group $group lost its ownership identity" >&2; exit 1; fi',
-        '        kill -KILL -"$group" 2>/dev/null || true',
+        '        for group in $(printf "%s\\n" "$alive"); do',
+        '          if ! printf "%s\\n" "$live_groups" | grep -Fxq -- "$group"; then echo "preflight group $group lost its ownership identity" >&2; exit 1; fi',
+        '          kill -KILL -"$group" 2>/dev/null || true',
+        '        done',
+        '        n=0; while [ -n "$(alive_of "$alive")" ] && [ "$n" -lt 10 ]; do sleep 0.1; n=$((n+1)); done',
+        '        survivor=$(alive_of "$alive" | head -1)',
+        '        if [ -n "$survivor" ]; then echo "preflight group $survivor survived SIGKILL" >&2; exit 1; fi',
         '      fi',
-        '      n=0; while group_alive "$group" && [ "$n" -lt 10 ]; do sleep 0.1; n=$((n+1)); done',
-        '      if group_alive "$group"; then echo "preflight group $group survived SIGKILL" >&2; exit 1; fi',
+        '    }',
+        '    await_groups "$groups"',
+        // A scoped process can start a new group while it is being stopped (run 00fd6488): the
+        // same scope is swept again, a bounded number of times, before cleanup fails.
+        '    round=0',
+        '    while :; do',
+        '      remaining=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
+        '      [ -z "$remaining" ] && break',
+        '      round=$((round+1))',
+        '      if [ "$round" -gt 3 ]; then echo "preflight groups still running: $remaining" >&2; exit 1; fi',
+        '      for group in $(printf "%s\\n" "$remaining"); do',
+        '        if [ "$group" = "$self_group" ]; then echo "Prepare cleanup cannot signal its own group" >&2; exit 1; fi',
+        '        kill -TERM -"$group" 2>/dev/null || true',
+        '      done',
+        '      echo "killed verified preflight group started during cleanup ($remaining)"',
+        '      await_groups "$remaining"',
         '    done',
-        '    remaining=$(scoped_groups) || { echo "Prepare process census unavailable" >&2; exit 1; }',
-        '    if [ -n "$remaining" ]; then echo "preflight groups still running: $remaining" >&2; exit 1; fi',
       ]
     : [];
   return [
@@ -432,6 +455,20 @@ export function prepareIdentityPath(remoteRepo: string, runtimeDir: string): str
   return path.posix.join(remoteRepo, runtimeDir || '.agent', 'preflight.identity');
 }
 
+/** The scope token of the slot's recorded prepare, or undefined when none is recorded. */
+export async function readRecordedPrepareScope(
+  vars: SlotVars,
+  identityPath: string,
+): Promise<string | undefined> {
+  const read = await execOnSlot(vars, `cat ${shellQuote(identityPath)} 2>/dev/null; true`, {
+    cwd: '/',
+    timeout: 5_000,
+  });
+  if (read.exitCode !== 0)
+    throw new Error(`Prepare scope cleanup failed: identity unreadable (exit ${read.exitCode})`);
+  return read.stdout.trim().split('\t')[PREPARE_IDENTITY_SCOPE_FIELD] || undefined;
+}
+
 /**
  * Stop a slot's recorded prepare scope: the preflight process group and its
  * nohup'd `farmslot-prepare-scope` holder, which outlive an aborted or
@@ -457,13 +494,7 @@ export async function reapSlotPrepareScope(
     prepareIdentityPath(vars.remoteRepo, await resolvePrepareRuntimeDir(vars.projectName));
   let expectedScope = opts.expectedScope;
   if (opts.stillOwned) {
-    const read = await execOnSlot(vars, `cat ${shellQuote(identityPath)} 2>/dev/null; true`, {
-      cwd: '/',
-      timeout: 5_000,
-    });
-    if (read.exitCode !== 0)
-      throw new Error(`Prepare scope cleanup failed: identity unreadable (exit ${read.exitCode})`);
-    const recorded = read.stdout.trim().split('\t')[PREPARE_IDENTITY_SCOPE_FIELD];
+    const recorded = await readRecordedPrepareScope(vars, identityPath);
     if (!recorded || !(await opts.stillOwned())) return false;
     expectedScope = recorded;
   }
@@ -863,8 +894,14 @@ export async function runPrepareCommand(
     const { NodeSupportPendingError, resolveRemoteFarmCommand } =
       await import('../../node-support/remote-command.js');
     try {
-      stagedCommand = await resolveRemoteFarmCommand(vars, wrappedCmd, { budgetMs: stageTimeout });
+      // No budget: wait for the delivery itself, bounded by its own deadline. A
+      // fixed 10 s wait lost to a normal re-delivery after a node redeploy (run
+      // 1a533f86), which finished seconds later.
+      stagedCommand = await resolveRemoteFarmCommand(vars, wrappedCmd, { signal: opts?.signal });
     } catch (error) {
+      // A cancel while the bundle is still arriving: nothing launched yet, and
+      // a release waiting to stop this prepare must not outwait the delivery.
+      if (opts?.signal?.aborted) return { stdout: '', stderr: 'aborted', exitCode: 130 };
       if (!(error instanceof NodeSupportPendingError)) throw error;
       return failSetup('stage prepare script', {
         stdout: '',
@@ -979,7 +1016,7 @@ export async function runPrepareCommand(
   // and (b) onOutput observers (e.g. preflight's progress-marker parser). Tail errors are
   // observability-only — never fail the prepare on a tail glitch.
   let lastSize = 0;
-  const readTailChunk = async (): Promise<void> => {
+  const readTailOnce = async (): Promise<void> => {
     const sizeR = await exec(`wc -c < ${shellQuote(slotHostLogPath)} 2>/dev/null`, {
       timeout: 5_000,
     });
@@ -989,10 +1026,21 @@ export async function runPrepareCommand(
       timeout: 10_000,
     });
     if (chunkR.stdout) {
-      void appendFile(logPath, chunkR.stdout);
+      // Awaited: the prepare's error can name this log as soon as the command returns, and a
+      // per-run copy of it must hold the final lines.
       opts?.onOutput?.('stdout', chunkR.stdout);
+      await appendFile(logPath, chunkR.stdout);
     }
     lastSize = size;
+  };
+  // One read at a time: the poll loop and the final drain must not append the same bytes twice,
+  // and the drain must wait for an append still in flight.
+  let tailing: Promise<void> = Promise.resolve();
+  const readTailChunk = (): Promise<void> => {
+    const read = tailing.then(readTailOnce, readTailOnce);
+    // The queue only orders reads; each caller still gets its own read's rejection.
+    tailing = read.catch(() => undefined);
+    return read;
   };
   let tailAborted = false;
   const tailPromise = (async () => {

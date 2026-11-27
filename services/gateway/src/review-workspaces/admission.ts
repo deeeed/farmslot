@@ -1,4 +1,6 @@
 import {
+  type ExecutionTemplateReference,
+  type ExecutionTemplateRunMode,
   isRecord,
   isTerminalRunStatus,
   type NativeProfileReference,
@@ -10,7 +12,7 @@ import {
   type WorkerTransport,
 } from '@farmslot/protocol';
 
-import { loadSlotVars } from '../core/config.js';
+import { loadProjectVars, loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
@@ -35,9 +37,11 @@ import { getAllRuns, getRun, persistRunNow, updateRun, updateRunStep } from '../
 import { withReviewWorkspaceExecutor } from '../runtime/workspace-terminal.js';
 import { ownsLocalNativeProfile } from '../security/native-owner.js';
 import { assertNativeRunOwner } from '../security/native-worker-owner.js';
+import { resolveConfiguredExecutionTemplateForSlot } from '../tasks/execution-template-catalog.js';
 
 import { resolveReviewWorkspacePool } from './pool.js';
 import { retainedWorkspaceIsIdle } from './retention-policy.js';
+import { configuresReviewSkill } from './skills.js';
 
 export interface ReviewWorkspaceAdmissionInput {
   project: string;
@@ -47,6 +51,8 @@ export interface ReviewWorkspaceAdmissionInput {
   effort?: string;
   transport?: WorkerTransport;
   nativeProfile?: NativeProfileReference;
+  /** The review's domain: one in a review skill's domain needs no static template. */
+  domain?: string | null;
 }
 
 export interface ReviewWorkspaceAdmission {
@@ -124,6 +130,7 @@ export async function admitReviewWorkspaceFollowup(
       effort: run.effort,
       transport: run.transport,
       nativeProfile: run.nativeProfile,
+      domain: run.domain,
     },
     run.nativeOwnerPrincipalId,
     runId,
@@ -289,6 +296,34 @@ export async function resolveReviewWorkspacePlatform(
   return member ? (await loadSlotVars(member.id)).platform : pool.platform;
 }
 
+/** The review-enabled pool a workspace review on this machine runs in. */
+export async function reviewWorkspacePoolFor(
+  machine: string,
+  project: string,
+): Promise<PoolConfig> {
+  return resolveReviewWorkspacePool(await loadPoolConfigs(), machine, project);
+}
+
+/** The current configured template a workspace review freezes at creation (run.create and re-review). */
+export async function resolveWorkspaceReviewTemplate(input: {
+  project: string;
+  pool: PoolConfig;
+  mode: ExecutionTemplateRunMode;
+  domain?: string;
+  executionTemplateId?: string;
+}): Promise<ExecutionTemplateReference> {
+  const projectVars = await loadProjectVars(input.project);
+  return (
+    await resolveConfiguredExecutionTemplateForSlot(projectVars, {
+      flow: 'review-pr',
+      platform: await resolveReviewWorkspacePlatform(input.pool, input.project),
+      runMode: input.mode,
+      explicitDomain: input.domain,
+      explicitId: input.executionTemplateId,
+    })
+  ).reference;
+}
+
 /** No device/slot reads: eligibility comes from machine opt-in, project, owner and runner. */
 export async function inspectReviewWorkspaceTarget(
   input: ReviewWorkspaceAdmissionInput,
@@ -297,7 +332,14 @@ export async function inspectReviewWorkspaceTarget(
 ): Promise<ReviewWorkspaceAdmission> {
   const [pools, project] = await Promise.all([loadPoolConfigs(), loadProjectConfig(input.project)]);
   const pool = resolveReviewWorkspacePool(pools, input.machine, input.project);
-  if (!project?.repoUrl || !project.staticReview?.templateId || !project.executionTemplates) {
+  if (
+    !project?.repoUrl ||
+    !(
+      project.staticReview?.templateId ||
+      configuresReviewSkill(project.staticReview?.support, input.domain)
+    ) ||
+    !project.executionTemplates
+  ) {
     throw new GatewayMethodError(
       'REVIEW_WORKSPACE_NEEDS_CONFIGURATION',
       'Configure the project repository and canonical static-review template',

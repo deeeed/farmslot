@@ -9,6 +9,7 @@ import {
   updateSlotStatusIf,
 } from '../core/index.js';
 import { loadPoolConfigs } from '../fleet/state.js';
+import { pruneSlotRemoteRefs } from '../methods/slot/idle-remote-prune.js';
 import { activePrepareSlots } from '../methods/slot/shared.js';
 import { workspaceProtectedReason } from '../methods/slot/workspace.js';
 import { runNeedsExecutionStorage } from '../review-workspaces/storage-use.js';
@@ -46,6 +47,8 @@ export async function parkedWorkRetentionPass(now = new Date()): Promise<void> {
         (await workspaceProtectedReason(slotId, row))
       )
         continue;
+      // The reads above awaited: another holder may have taken the guard since the first check.
+      if (activePrepareSlots.has(slotId)) continue;
       activePrepareSlots.add(slotId);
       let claimed = false;
       const owns = (current: Readonly<Record<string, unknown>>) =>
@@ -77,19 +80,23 @@ export async function parkedWorkRetentionPass(now = new Date()): Promise<void> {
           days,
           execOnSlot,
         );
+        // The same fence: remote refs whose branch origin deleted go here, at most once a day.
+        await pruneSlotRemoteRefs(slotId);
       } catch (error) {
         // Per-slot retention failure retains all remaining refs and does not skip other slots.
         console.error(
           `[parked-work retention] ${slotId}: ${error instanceof Error ? error.message : String(error)}`,
         );
       } finally {
+        // Free the prepare guard before the slot reads ready again, so a claim that lands
+        // right after the restore can prepare it.
+        activePrepareSlots.delete(slotId);
         if (claimed)
           await updateSlotStatusIf(slotId, owns, {
             lifecycle: row.lifecycle,
             phase: row.phase,
             releasing_since: null,
           });
-        activePrepareSlots.delete(slotId);
       }
     }
 }

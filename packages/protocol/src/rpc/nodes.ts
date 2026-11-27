@@ -1,6 +1,7 @@
 import type { NodeFarmPaths } from '../node/farm-paths.js';
 import type { PeerVersionDeclaration } from '../peer-versions.js';
 import type { NodeLinkCapabilities } from '../transport/node-link.js';
+import type { NodeObservationCapabilities } from '../transport/observations.js';
 
 export interface NodeInfo extends PeerVersionDeclaration {
   farmPaths?: NodeFarmPaths;
@@ -20,6 +21,10 @@ export interface NodeInfo extends PeerVersionDeclaration {
   conditionalWrites?: boolean;
   /** This node types a `tmux.send` carrying `seq` once per (pane, stream, n). */
   terminalInputSequence?: boolean;
+  /** The observations and reads this node declared when it connected, such as `batchReads`. */
+  observationCapabilities?: NodeObservationCapabilities;
+  /** The last connection refused because this node already held the machine. */
+  lastRefusedDuplicate?: { pid: number; at: string };
 }
 
 export interface NodesListResult {

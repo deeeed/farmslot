@@ -393,3 +393,139 @@ Check dataset/runtime equivalence, missing ACs and diagnostic exclusion. Then us
 one authorized Farm run on macpro or mini to observe feedback before completion,
 parameterization above 0.7 and a nonempty covered AC set. Preserve its before/after
 artifacts. This does not authorize a bulk run, a new hard gate or publication.
+
+## Amendment 4 (2026-11-26): Checked learnings and kinds from results
+
+**Status:** Proposed; implemented in this change at the lead's request. Builds on
+Amendment 2, which stays as accepted.
+
+### Context
+
+Amendment 2 curates lessons before drafting. In practice:
+
+- `learnings.md` was checked only for being non-empty (`check-task-artifact-contract.mjs`,
+  `validate-package.ts`). The format lived in prose (Amendment 1, the default task template).
+- `splitLearningsEntries` treated `- None` and "Nothing new." as lessons.
+- The only automatic batch in the live ledger on macwork (2026-11-10, run `6ae37c17`)
+  dropped 4 of 4 lessons: "Curation did not return one outcome per learning". Lessons
+  went to the model as a bare list and outcomes were matched by position. Replaying
+  that run's lessons through the same call dropped the whole batch in 2 of 8 tries:
+  the model returned 6 or 9 outcomes for 5 lessons. All 22 recorded landings came
+  from manual audits.
+- The destination was one path per project, from the first configured library. The rule
+  the curator cites for a tightening was checked and then discarded.
+  `parseReviewRuleProposal` had no caller outside tests.
+- In a test on three finished reviews of one public PR, agents wrote 17 product lessons
+  with real `file:line`. 16 cited their own review as confirmation, and at least 15
+  pointed at a rule that had already caught the problem.
+
+The review side is decided in MetaMask/decisions ADR 0073: teams own their rules, two
+rule types, and the loop shown there.
+
+### Decision
+
+1. **One format, one parser.** `@farmslot/protocol` owns the learnings v1 format and
+   its parser (`parseLearnings`, `@farmslot/protocol/contracts/learnings`). The terminal
+   artifact contract uses it, and mm-harness's mark will use the same parser, so a run
+   with or without Farmslot is checked the same way. A file opts in with its first line,
+   `# Learnings v1`; other files are read as today.
+
+   ```md
+   # Learnings v1
+
+   - edit: A price hook returned '$---' and a validator read it as a price.
+     evidence: metamask-mobile app/components/UI/Perps/hooks/usePerpsLiquidationPrice.ts:102
+     family: antipatterns.md#missing-numeric-data-stays-undefined
+     confirmation: run <id> artifacts/review-ledger.md:40
+   ```
+
+   Field names follow the review rule proposal: `evidence`, `family`, `confirmation`.
+   `- None` alone means nothing to report. A fix confirmation names a PR
+   (`fix <owner/repo#n>`): a bare commit cannot be told apart from the run's own.
+
+2. **Kinds.** `add`, `edit` and `retire` are the existing proposal kinds; `merge` and
+   `stale` stay audit-only. Three more kinds route elsewhere: `recipe-broken` and
+   `recipe-missing` go to the harness lane (mm-harness and the recipe libraries),
+   `workflow` to templates and tools. Each kind lists the fields it needs: `add` lists
+   the families it checked (`examined`), and `recipe-broken` names the recipe node and
+   the failed attempt.
+
+3. **The agent's kind is a claim; run results decide.**
+
+   | What the results show                                                              | Kind                  |
+   | ---------------------------------------------------------------------------------- | --------------------- |
+   | The covering rule recorded a FINDING                                               | none: the rule worked |
+   | A confirmed problem no rule covers                                                 | `add`                 |
+   | A rule recorded PASS and a later check found the problem                           | `edit`                |
+   | A rule's finding was rejected                                                      | `edit` or `retire`    |
+   | A recipe failed, then passed on the same product head with only the recipe changed | `recipe-broken`       |
+   | A recipe failed and never passed on the same product head                          | a person decides      |
+
+   The review rows are the `artifacts/review-coverage.json` rows of the lesson's run
+   family: each family's PASS or FINDING, named by its pack id or its heading's anchor.
+   They decide an `edit`; without a row, the claim stands. No retained record yet ties a
+   rejected finding to a family, so that row is not decided here and a `retire` claim
+   stands; the recipe rows are the harness lane's.
+
+4. **A run never confirms its own lesson.** A confirmation counts only when it points
+   outside the lesson's own run: a later run's finding or miss, a merged fix, a rejected
+   finding, or a run on a changed recipe. A lesson that cites only its own run or its
+   own PR is recorded as unconfirmed and never promoted. The curator applies the same
+   rule to free-text lessons: the source run's own review cannot confirm them, while a
+   PR comment the run fixed and its reviewer accepted still can.
+
+5. **Targeting.** The domain comes from the files in `evidence`, not from the project
+   that ran. A tightening targets the cited family's file and section; a new rule
+   targets the client file when the project maps every evidence repo to one client
+   (`vars.knowledge_clients`, `metamask-mobile` → `mobile` → `antipatterns.mobile.md`),
+   else the shared file. Requirements
+   are read for coverage and never edited. A lesson without a clear target is held for
+   a person. A kept lesson becomes a `ReviewRuleProposal`, validated by
+   `parseReviewRuleProposal` and recorded with its curation receipt.
+
+6. **Rollout.** Warn at every step mark and at completion, while the worker can still
+   fix the file. Require v1 per pack only once its template writes it. A finished run
+   never fails on format. The Farmslot pack templates and the default task template
+   write v1 from this change.
+
+7. **Order of work.** (1) Make the curation call return one outcome per lesson.
+   (2) Stop counting `- None` and "Nothing new." as lessons. (3) Parser and checks.
+   (4) Kinds from results and targeting, through the existing proposal format and
+   ledger. Whether the MetaMask skills ask for v1 is a separate decision for Arthur,
+   since it changes skill behaviour.
+
+### Consequences
+
+- Good: lessons arrive in one checked shape, and the same lesson is decided the same
+  way with or without Farmslot.
+- Good: an agent cannot promote its own opinion, and a rule that worked produces no
+  proposal.
+- Good: a confused model reply costs only the lessons it confuses, and one run whose
+  bundle retention pruned no longer makes the whole curation context unavailable.
+- Bad: two formats coexist until each pack's template writes v1. A family's composed
+  learnings (a fix round's root, rounds and delta) are read as free text.
+- Bad: deciding kinds from results needs the run's review rows and recipe attempts to
+  be retained and readable.
+
+### Measures
+
+Report the share of v1 entries with `evidence` and an outside `confirmation`, the
+curation keep rate, and rules added per batch with a real failure behind them, not
+entry counts.
+
+### Owners
+
+cx-engine for the protocol, curation and targeting; the harness lane for the
+mm-harness mark and the recipe kinds, in a separate harness change after this one.
+This joins the existing review-rules loop work (F382).
+
+### Public surface
+
+- `@farmslot/protocol`: `parseLearnings`, `LEARNINGS_V1_FORMAT`, `decideLearningKind`,
+  `learningConfirmationIsOutside` and their types, also at
+  `@farmslot/protocol/contracts/learnings`. `LearningsAntipatternDraft` gains optional
+  `targetSection` and `proposal`.
+- `@farmslot/agent-runtime`: `scripts/learnings-check.mjs`; `mark` and
+  `check-task-artifact-contract.mjs` print `LEARNINGS_V1_WARN` and never fail on it.
+- Feedback ledger curation receipts gain optional `unconfirmed` and `proposal`, which
+  earlier gateways ignore. No new RPC or CLI.

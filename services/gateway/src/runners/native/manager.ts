@@ -11,6 +11,8 @@ import type {
 
 import { assertNativeRunner, KNOWN_RUNNERS, runnerSupportsEffort } from '../registry.js';
 
+import { gatewayNativeRefreshPolicy } from './host-refresh.js';
+
 export { NativeSessionManager, resolveNativeExecutable } from '@farmslot/agent-runtime/native';
 export function validateNativeRunner(runner: string, model?: string, effort?: string) {
   assertNativeRunner(runner);
@@ -59,3 +61,6 @@ class GatewayNativeSessions extends NativeSessionClient {
   }
 }
 export const nativeSessionManager = new GatewayNativeSessions();
+// A host left on an older runtime by a deploy refreshes once its live sessions are idle,
+// except those an active run would need a person to resume.
+nativeSessionManager.setRefreshPolicy(gatewayNativeRefreshPolicy);

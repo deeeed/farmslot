@@ -58,8 +58,13 @@ reuses one ticket renderer for run list and detail. The supported admin metadata
 RPC `run.linkedTickets.set { runId, linkedTicketRefs }` replaces only the operator
 additions, persists the run and broadcasts `run.updated`, following `run.tags.set`.
 `RunMethods.setLinkedTickets` names it; CLI callers may use the existing generic
-`farmslot rpc` entry. There is no new worker/harness hook, task input, workflow
-action or wire version. The SDK addition requires a fresh minor package release.
+`farmslot rpc` entry. `TASK.md` renders the refs `runLinkedTicketsView` marks
+`named` — the fetched key, a recorded linked ticket or an operator addition. Keys
+already on the run when a task is written appear in that task, and keys added
+later reach the next task written for that run; metadata edits still never
+rewrite an existing task file. There is no new worker/harness hook, task
+variable, workflow action or wire version. The SDK addition requires a fresh
+minor package release.
 
 ## Run checklist progress
 
@@ -302,6 +307,8 @@ refuse that template, naming the step (ADR-064 Amendment 7).
 ### Publication and display
 
 Package preparation and publication MUST validate receipts on the selected checkout. An older node checker that cannot return verified records fails closed. The package carries one optional `deterministicChecks` projection with command, state, exit code and log path; Command Center and Companion render it and open logs through their existing artifact viewers. After role cleanup, the last completed source-fix checklist supplies the final receipt. Read-only review checklists do not replace it. Restoring the parent MUST retain its initialized command declarations. Source or receipt changes after review require package refresh. Evidence-only refreshes of already published packages retain their archived source proof.
+
+A refusal at COMPLETE or FINALIZE names each check the run still owes: checklist, step, reference, state and the `mark` command that records a current receipt on that checklist. A delivered run waits at its result decision; an undelivered one fails and keeps its worker and slot for recovery (ADR-065 Amendment 6). When every owed check is stale at COMPLETE, the engine sends the worker back once with those steps and records it in `engineState.staleReceiptSendBack`, which a replay keeps. A second stale refusal, or any failed, missing or interrupted check, waits for a person. A checker that returns no result names no check, and gate readiness keeps its generic reason.
 
 Receipts prevent skipped checks; they are not an attestation against a worker forging its task files. The existing trusted task initialization, artifact boundaries and publication authority still apply. Harnesses invoke the same mark/checker behavior and consume the same versioned records instead of implementing another checker.
 

@@ -92,6 +92,24 @@ export function tmuxAttachCommandForTarget(
   return `${executable} select-window -t ${shellQuote(target)} \\; attach -t ${shellQuote(`=${session}`)}`;
 }
 
+/** Check the exact session-scoped pane and attach in the same tmux command queue. */
+export function tmuxVerifiedWorkerAttachArgs(target: string, paneId: string): string[] {
+  const session = /^=(.+):\d+\.\d+$/.exec(target)?.[1];
+  if (!session || !/^%\d+$/.test(paneId))
+    throw new Error('Worker attachment requires an exact tmux target and stable pane ID');
+  // Even an exact target can fall back to a matching client TTY in tmux.
+  const expectedSession = session.replace(/[#,}]/g, '#$&');
+  return [
+    'if-shell',
+    '-F',
+    '-t',
+    target,
+    `#{&&:#{==:#{session_name},${expectedSession}},#{==:#{pane_id},${paneId}}}`,
+    `attach-session -t ${shellQuote(target)}`,
+    "display-message -p 'Worker pane changed before attachment'",
+  ];
+}
+
 /**
  * Sets TMUX_BIN from PATH or the usual install locations, empty when tmux is
  * absent. The text lives verbatim in scripts/lib/tmux-bin.sh, so deploy-node.sh

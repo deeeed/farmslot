@@ -1,0 +1,1 @@
+- The hourly retention pass archives node-hosted native session journals of released runs on their nodes, at most 50 per node a pass, recording confirmed sessions in `native-journals.json` under the run archive root (ADR-039 Amendment 11).

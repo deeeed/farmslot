@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { NODE_FS_READ_TEXT_MAX_BYTES } from '@farmslot/protocol';
+import { NODE_FS_READ_FILES_MAX_FILES, NODE_FS_READ_TEXT_MAX_BYTES } from '@farmslot/protocol';
 
 import {
   fsDelete,
@@ -15,6 +15,7 @@ import {
   fsIsFile,
   fsList,
   fsRead,
+  fsReadFiles,
   fsReadText,
   fsStat,
   fsWrite,
@@ -322,4 +323,38 @@ test('fsIsFile answers as [ -f ] did', async (t) => {
   for (const relPath of ['dir', 'missing.json', 'install.json/inner']) {
     assert.deepEqual(await fsIsFile({ root, relPath }), { isFile: false }, relPath);
   }
+});
+
+test('fsReadFiles answers each file in order: content, missing, or its own read error', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-batch-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'a.md'), 'alpha', 'utf-8');
+  await symlink(path.join(root, 'a.md'), path.join(root, 'link.md'));
+
+  const result = await fsReadFiles({
+    files: [
+      { root, relPath: 'a.md' },
+      { root, relPath: 'missing.json' },
+      { root, relPath: 'link.md' },
+      { root, relPath: '../escape' },
+    ],
+  });
+  assert.deepEqual(result.files.slice(0, 2), [{ content: 'alpha' }, { missing: true }]);
+  await assert.rejects(fsRead({ root, relPath: 'link.md' }), (error: Error) => {
+    assert.deepEqual(result.files[2], { error: error.message });
+    return true;
+  });
+  await assert.rejects(fsRead({ root, relPath: '../escape' }), (error: Error) => {
+    assert.deepEqual(result.files[3], { error: error.message });
+    return true;
+  });
+});
+
+test('fsReadFiles refuses more files than one request may name', async () => {
+  const files = Array.from({ length: NODE_FS_READ_FILES_MAX_FILES + 1 }, (_, index) => ({
+    root: tmpdir(),
+    relPath: `missing-${index}`,
+  }));
+  await assert.rejects(fsReadFiles({ files }), /at most 64 files/);
+  assert.equal((await fsReadFiles({ files: files.slice(1) })).files.length, 64);
 });

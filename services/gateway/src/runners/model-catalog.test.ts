@@ -491,3 +491,23 @@ test('Pi node helper catalog validates alias targets and the runner owns its lis
   ])
     assert.throws(() => parsePiModelCatalog(JSON.stringify(value)), ModelCatalogFormatError);
 });
+
+test('only runners with a per-node model catalog refuse a model at dispatch admission', () => {
+  // A fresh listing on this node leaves the model out while another node lists it: pi and
+  // opencode refuse it here. codex and grok read a model file and claude reports no catalog, so
+  // their model ids stay free-form at admission and a bad id fails only at launch.
+  for (const runner of ['pi', 'opencode', 'codex', 'grok', 'claude']) {
+    nodeModelCatalogs.record(runner, `admission-split-${runner}-here`, ['split/other']);
+    nodeModelCatalogs.record(runner, `admission-split-${runner}-there`, ['split/model']);
+    const blocker = runnerModelNodeBlocker(runner, 'split/model', `admission-split-${runner}-here`);
+    if (runner === 'pi' || runner === 'opencode')
+      assert.match(blocker ?? '', new RegExp(`only on admission-split-${runner}-there`), runner);
+    else assert.equal(blocker, null, runner);
+    // A model no node lists is refused by none of them.
+    assert.equal(
+      runnerModelNodeBlocker(runner, 'split/not-listed-anywhere', `admission-split-${runner}-here`),
+      null,
+      runner,
+    );
+  }
+});

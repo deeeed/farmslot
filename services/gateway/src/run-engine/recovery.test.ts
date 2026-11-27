@@ -1208,6 +1208,51 @@ test('recovery holds a human-gating run while its reviewer is still in flight', 
   assert.equal(calls.broadcasted, 0);
 });
 
+// Runs 37e53d61 and 02463b6e: the gate's dispatch review failed (a placeholder a late signal could
+// still replace) and the gateway restarted before the gate presented its decision. Holding the gate
+// for that reviewer left the operator nothing but cancel; startup presents the gate instead.
+test('startup presents a gate whose only reviewer failed instead of holding it', async () => {
+  const run = withRecoverableReviewer(
+    minimalActiveRun({
+      ticketOrPr: 'RECOVERY-REVIEW-FAILED-PLACEHOLDER',
+      familyRootTicketOrPr: 'RECOVERY-REVIEW-FAILED-PLACEHOLDER',
+      taskFile: '/tmp/farmslot-recovery-review-failed-placeholder/TASK.md',
+      status: 'human-gating',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [],
+    }),
+  );
+  run.agentContexts = run.agentContexts!.map((context) => ({
+    ...context,
+    status: 'failed',
+    artifactScope: 'dispatch-review',
+  }));
+  run.engineState = {
+    ...run.engineState,
+    publishGate: {
+      ...run.engineState?.publishGate,
+      reviews: [
+        {
+          id: 'dispatch-review',
+          source: 'dispatch',
+          mode: 'cold',
+          loopNumber: 1,
+          verdict: 'failed',
+          unresolvedCount: 0,
+          feedbackSent: false,
+          recoveryContinuationPending: true,
+        },
+      ],
+    },
+  };
+  const { deps, calls } = publicationReviewRecoveryDeps(run);
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(calls.replayed, [run.id]);
+  assert.deepEqual(calls.rearmed, []);
+});
+
 test('recovery clears a settled native run error before holding a gate whose reviewer is in flight', async () => {
   // TAT-4160 4f0ff296: the publication-review branch skips runtime reconciliation, so the
   // stale host-stop error from finished reviewers must clear before it.
@@ -1839,7 +1884,12 @@ interface PrepareRecoveryCalls {
 
 function buildPrepareRecoveryDeps(
   run: Run,
-  opts: { killed: boolean; healthExit?: number; healthStdout?: string },
+  opts: {
+    killed: boolean;
+    healthExit?: number;
+    healthStdout?: string;
+    projectJson?: Record<string, unknown>;
+  },
 ): { deps: RunRecoveryCollaborators; calls: PrepareRecoveryCalls } {
   const calls: PrepareRecoveryCalls = {
     healthChecked: false,
@@ -1863,7 +1913,7 @@ function buildPrepareRecoveryDeps(
     loadSlotVars: async () => ({ remoteRepo: '/repo', slotId: run.slotId }),
     loadProjectVarsOrNull: async () => ({
       runtimeDir: 'temp/recipe/runtime',
-      projectJson: {},
+      projectJson: opts.projectJson ?? {},
     }),
     getProjectFieldRaw: () => [],
     expandTemplate: (t: string) => t,
@@ -1936,6 +1986,47 @@ test('prepare recovery skips prepare only when nothing killed and sub-steps comp
     'run advances to dispatching',
   );
   assert.equal(calls.warmRecovery, false, 'no warm re-run when the skip is legitimate');
+});
+
+test('a pinned run with no recorded build prepares again after a restart', async () => {
+  // A healthy app says nothing about which build it is. Without the record a pinned
+  // prepare writes, recovery must not mark prepare done.
+  const BASE = '260bd3a5b20c3f9126510b7b71d0e5527f395b5d';
+  const pinned = (prepareArtifact: Run['prepareArtifact']) => {
+    const run = preparingRun([
+      { name: 'preflight', outcome: 'ok', durationMs: 1, detail: 'Preflight completed (log: x)' },
+      { name: 'health', outcome: 'ok', durationMs: 1, detail: 'Health check — OK' },
+    ]);
+    run.lane = 'comparison';
+    run.startRef = { requestedRef: '260bd3a5', resolvedSha: BASE };
+    run.prepareArtifact = prepareArtifact;
+    return run;
+  };
+  const mobile = { hooks: { artifact_check: 'probe' } };
+
+  const missing = buildPrepareRecoveryDeps(pinned(null), { killed: false, projectJson: mobile });
+  await recoverActiveRuns(missing.deps);
+  assert.equal(missing.calls.healthChecked, false, 'health is not trusted');
+  assert.equal(missing.calls.warmRecovery, true, 'prepare runs again');
+
+  const recorded = buildPrepareRecoveryDeps(
+    pinned({
+      kind: 'runway',
+      slotId: 'macwork-mmedev-2',
+      baseSha: BASE,
+      runId: '41900351233',
+      revision: BASE,
+      platform: 'ios',
+      installedAt: '2026-11-25T10:00:00.000Z',
+      enforced: true,
+    }),
+    { killed: false, projectJson: mobile },
+  );
+  await recoverActiveRuns(recorded.deps);
+  assert.ok(
+    recorded.calls.prepareStepUpdates.some((f) => f.detail === 'Recovered (slot healthy)'),
+    'a matching record keeps the warm recovery',
+  );
 });
 
 test('prepare recovery re-runs prepare when sub-steps show incomplete phases', async () => {
@@ -2493,6 +2584,7 @@ test('orphan reconcile leaves a releasing fence that is still young', async () =
     }),
     isTerminalTeardownInFlight: () => false,
     readSlotField: async () => new Date(Date.now() - 5_000).toISOString(),
+    getRun: () => undefined,
     resetSlot: async (slotId: string) => reset.push(slotId),
   } as unknown as RunRecoveryCollaborators;
 

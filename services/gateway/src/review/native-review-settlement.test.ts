@@ -48,6 +48,8 @@ type Ending =
   | 'stale-checklist'
   | 'accepted-start'
   | 'inactive'
+  | 'open-tool'
+  | 'hung-tool'
   | 'completion-turn'
   | 'completion-provider-error'
   | 'completion-unfinished'
@@ -57,12 +59,19 @@ type Ending =
   | 'completion-deferred'
   | 'completion-interrupted'
   | 'completion-invalid-idle'
+  | 'completion-unfinished-pass'
+  | 'completion-late-signal'
+  | 'completion-never-marked'
+  | 'completion-reask-missing'
+  | 'completion-invalid-schema'
+  | 'completion-infra'
   | 'reattach-config-changed'
   | 'completion-invalid';
 let ending: Ending = 'verdict';
 let completionReadWake: ((runId: string, contextId: string) => void) | undefined;
 let dispatchCalls = 0;
 let signalReadErrorProbes = 0;
+let lateSignalProbes = 0;
 let markerPresent = true;
 let provenancePresent = true;
 let restoreTaskFails = false;
@@ -99,8 +108,15 @@ let reviewNodeOffline = false;
 const completionCommands: string[] = [];
 let loseCompletionReply = false;
 let completionLaunches = 0;
+/**
+ * Runs while the reviewer's feedback is read, as a cancel or settlement landing mid-read; the
+ * feedback it returns, if any, replaces the scripted one.
+ */
+let onFeedbackRead: (() => Promise<{ verdict: 'pass'; issues: [] } | void>) | undefined;
 let completionActivityPages: NativeSessionEvent[][] | undefined;
 let deferredClock: { now: number; polls: number } | undefined;
+/** Advanced by each read of an ended completion turn whose signal check cannot run. */
+let infraClock: { now: number } | undefined;
 const completionCase = () => ending.startsWith('completion-');
 
 // The reviewer's host, slot files and runner are scripted; the run store and the
@@ -133,8 +149,28 @@ mock.module('../run-engine/run-monitor.js', {
         };
       if (completionCase()) {
         const context = getRun(runId)!.agentContexts?.find((entry) => entry.role === 'review');
+        const continued = context?.nativeSession?.commandId !== binding.commandId;
+        if (continued && ending === 'completion-infra')
+          return {
+            ok: false,
+            code: 'terminal_contract_infrastructure',
+            message: 'slot contract check unavailable',
+          };
+        // The reviewer writes its terminal mark after its turn has ended.
+        if (ending === 'completion-late-signal')
+          return ++lateSignalProbes <= 2
+            ? { ok: false, code: 'missing', message: 'review signal missing' }
+            : { ok: true };
+        if (
+          ending === 'completion-never-marked' ||
+          (continued && ending === 'completion-reask-missing')
+        )
+          return { ok: false, code: 'missing', message: 'review signal missing' };
+        if (!continued && ending === 'completion-invalid-schema')
+          return { ok: false, code: 'invalid_schema', message: 'review signal has no status' };
         if (
           ending !== 'completion-unfinished' &&
+          ending !== 'completion-unfinished-pass' &&
           ending !== 'completion-provider-error' &&
           ending !== 'completion-interrupted' &&
           ending !== 'completion-closed-restart' &&
@@ -152,7 +188,8 @@ mock.module('../run-engine/run-monitor.js', {
       if (ending === 'missing-terminal')
         return { ok: false, code: 'missing', message: 'review signal missing' };
       if (timeline) {
-        if (ending !== 'inactive' && timeline.polls >= 4) return { ok: true };
+        if (ending !== 'inactive' && ending !== 'hung-tool' && timeline.polls >= 4)
+          return { ok: true };
         return {
           ok: false,
           code: 'non_terminal',
@@ -289,17 +326,23 @@ mock.module('../runners/native/worker-control.js', {
       if (completionCase()) {
         const current = getRun(_runId)!.agentContexts!.find((entry) => entry.role === 'review')!;
         const continued = current.nativeSession!.commandId !== binding.commandId;
+        if (continued && infraClock) infraClock.now += 11 * 60_000;
+        // These first turns end cleanly and leave the session idle.
+        const idleEnding = [
+          'completion-live',
+          'completion-invalid-idle',
+          'completion-late-signal',
+          'completion-never-marked',
+        ].includes(ending);
         return {
           session: {
             state:
               ending === 'completion-closed-restart'
                 ? 'closed'
-                : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                : continued || idleEnding
                   ? 'idle'
                   : 'closed',
-            processStopped:
-              ending === 'completion-closed-restart' ||
-              (!continued && !['completion-live', 'completion-invalid-idle'].includes(ending)),
+            processStopped: ending === 'completion-closed-restart' || (!continued && !idleEnding),
             nativeSessionId: 'saved-review-conversation',
           },
           commands: [
@@ -310,7 +353,7 @@ mock.module('../runners/native/worker-control.js', {
               state:
                 continued && ending === 'completion-provider-error'
                   ? 'failed'
-                  : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                  : continued || idleEnding
                     ? 'completed'
                     : 'failed',
               outcome:
@@ -318,7 +361,7 @@ mock.module('../runners/native/worker-control.js', {
                   ? 'failed'
                   : continued && ending === 'completion-interrupted'
                     ? 'interrupted'
-                    : continued || ['completion-live', 'completion-invalid-idle'].includes(ending)
+                    : continued || idleEnding
                       ? 'completed'
                       : 'failed',
             },
@@ -339,8 +382,16 @@ mock.module('../runners/native/worker-control.js', {
           timeline.polls <= (timeline.maxPolls ?? Infinity),
           'Reviewer exceeded its millisecond inactivity limit',
         );
+        // One long tool call: started at the first read; open-tool ends it at the third.
+        const longTool =
+          (ending === 'open-tool' || ending === 'hung-tool') && timeline.polls === 1
+            ? 'tool.started'
+            : ending === 'open-tool' && timeline.polls === 3
+              ? 'tool.completed'
+              : undefined;
         const events: NativeSessionEvent[] = [
           {
+            ...(longTool ? { nativeId: 'toolu_long' } : {}),
             sessionId: binding.sessionId,
             generation: binding.generation,
             commandId: ending === 'foreign-tools' ? 'earlier-command' : binding.commandId,
@@ -348,8 +399,9 @@ mock.module('../runners/native/worker-control.js', {
             at: new Date(
               ending === 'paged-tools' && timeline.polls === 1 ? 0 : timeline.now,
             ).toISOString(),
-            type:
-              ending === 'accepted-start'
+            type: longTool
+              ? longTool
+              : ending === 'accepted-start'
                 ? timeline.polls === 1
                   ? 'command.accepted'
                   : 'tool.completed'
@@ -363,7 +415,7 @@ mock.module('../runners/native/worker-control.js', {
           commands:
             ending === 'never-started'
               ? [{ commandId: binding.commandId, state: 'accepted', accepted: true }]
-              : ending !== 'inactive' && timeline.polls >= 4
+              : ending !== 'inactive' && ending !== 'hung-tool' && timeline.polls >= 4
                 ? [{ commandId: binding.commandId, state: 'completed', outcome: 'completed' }]
                 : [],
           events: ending === 'never-started' ? [] : events,
@@ -481,8 +533,10 @@ mock.module('../tasks/watcher.js', { namedExports: { ...watcher, unwatchContext:
 mock.module('./feedback.js', {
   namedExports: {
     ...feedback,
-    readReviewFeedback: async () =>
-      ['completion-invalid', 'completion-invalid-idle'].includes(ending)
+    readReviewFeedback: async () => {
+      const replaced = await onFeedbackRead?.();
+      if (replaced) return replaced;
+      return ['completion-invalid', 'completion-invalid-idle'].includes(ending)
         ? {
             verdict: 'issues',
             issues: [],
@@ -491,7 +545,10 @@ mock.module('./feedback.js', {
           }
         : ['incomplete', 'command-error'].includes(ending)
           ? { verdict: 'pass', issues: [], incomplete: true }
-          : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] },
+          : ending === 'completion-unfinished-pass'
+            ? { verdict: 'pass', issues: [] }
+            : { verdict: 'issues', issues: [{ file: 'a.ts', description: 'finding' }] };
+    },
   },
 });
 mock.module('./native-reviewer-approvals.js', {
@@ -590,7 +647,7 @@ mock.module('../runtime/session-usage.js', {
 const { publishNativeSessionChange } = await import('../resources/native-session-changes.js');
 const { emitWorkerSignal } = await import('../tasks/watcher.js');
 const { runNativeReviewAgent } = await import('./native-review-agent.js');
-const { runReviewRoundBudget } = await import('./review-round-budget.js');
+const { reviewContextRoundId, runReviewRoundBudget } = await import('./review-round-budget.js');
 
 async function nativeRun(t: TestContext) {
   const previous = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
@@ -640,6 +697,7 @@ const review = (runId: string, runner = 'claude') =>
     reviewTimeoutMs: [
       'timeout',
       'missing-terminal',
+      'completion-never-marked',
       'completion-invalid-idle',
       'completion-interrupted',
     ].includes(ending)
@@ -773,12 +831,161 @@ test('a failed native turn with valid findings receives one completion turn in t
   assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
 });
 
-test('an unfinished completion turn fails instead of allocating another turn', async (t) => {
+// 961d55d3: a valid REQUEST_CHANGES result, then the re-asked turn ended without its mark.
+test('a completion turn that ends without its mark keeps its valid ISSUES result as the verdict', async (t) => {
   ending = 'completion-unfinished';
   completionCommands.length = 0;
   const run = await nativeRun(t);
-  await assert.rejects(review(run.id), /completion turn.*terminal signal/);
+  const result = await review(run.id);
+  assert.equal(result.verdict, 'issues');
+  assert.equal(completionCommands.length, 1, 'no second completion turn');
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.equal(context.status, 'complete');
+  assert.ok(context.reviewResultValidatedAt);
+  assert.equal((await runReviewRoundBudget(getRun(run.id)!)).used, 1);
+});
+
+test('a PASS result without its terminal mark is not accepted and settles no-verdict', async (t) => {
+  ending = 'completion-unfinished-pass';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /PASS result is not accepted without one/);
   assert.equal(completionCommands.length, 1);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.equal(context.status, 'failed');
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([budget.used, budget.noVerdict], [0, 1]);
+});
+
+test('valid findings whose signal reads invalid-schema get the one completion re-ask', async (t) => {
+  ending = 'completion-invalid-schema';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 1);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  assert.match(context.nativeCommandText ?? '', /Do not run start/);
+});
+
+test('a terminal mark written after the turn ended is accepted without a completion re-ask', async (t) => {
+  ending = 'completion-late-signal';
+  lateSignalProbes = 0;
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 0, 'a missing signal waits instead of re-asking');
+  assert.ok(lateSignalProbes > 2);
+});
+
+test('a clean turn that never writes its terminal mark gets no re-ask and fails at its deadline', async (t) => {
+  ending = 'completion-never-marked';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await assert.rejects(
+    review(run.id),
+    /completed its turn but its terminal signal remains unavailable: review signal missing/,
+  );
+  assert.equal(completionCommands.length, 0, 'a missing signal is not re-asked');
+});
+
+test('a completion re-ask that ends with its signal missing keeps its valid ISSUES result', async (t) => {
+  // A re-ask reserved before an upgrade, or one whose signal read fails, ends with `missing`.
+  ending = 'completion-reask-missing';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(completionCommands.length, 1);
+});
+
+test('an ended completion whose signal cannot be checked is re-read, then fails closed', async (t) => {
+  ending = 'completion-infra';
+  completionCommands.length = 0;
+  const clock = { now: Date.now() };
+  infraClock = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    infraClock = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /terminal signal could not be checked/);
+  assert.equal(completionCommands.length, 1);
+});
+
+test('a valid result is taken only from an active reviewer whose round has not settled', async (t) => {
+  ending = 'completion-turn';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await review(run.id);
+  ending = 'completion-unfinished';
+  t.after(() => {
+    onFeedbackRead = undefined;
+  });
+  const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
+  const control = await import('../runners/native/worker-control.js');
+  const reviewer = () => getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  const roundId = reviewContextRoundId(reviewer())!;
+  const settlements = getRun(run.id)!.reviewRoundSettlements!;
+  const setSettled = (settled: boolean) =>
+    updateRun(run.id, {
+      reviewRoundSettlements: Object.fromEntries(
+        Object.entries(settlements).filter(([id]) => settled || id !== roundId),
+      ),
+    });
+  const setStatus = (status: 'working' | 'failed') =>
+    upsertAgentContext(run.id, 'review', { id: reviewer().id, status });
+  const attempt = async () =>
+    continueNativeReviewCompletion({
+      runId: run.id,
+      vars,
+      context: reviewer(),
+      snapshot: await control.readNativeWorkerSnapshot(run.id, 'review', reviewer().id),
+      probe: { ok: false, code: 'non_terminal', message: 'running', signalFile: null },
+      assertCurrent: () => {},
+    });
+  const refused = /completion turn ended without a valid terminal signal/;
+  // Working, round settled: only the settlement guard refuses.
+  await setStatus('working');
+  await assert.rejects(attempt(), refused);
+  // Failed, round unsettled: only the status guard refuses.
+  setSettled(false);
+  await setStatus('failed');
+  await assert.rejects(attempt(), refused);
+  // A settlement or a failure that lands while the result is read is seen before it is taken.
+  await setStatus('working');
+  onFeedbackRead = async () => {
+    setSettled(true);
+  };
+  await assert.rejects(attempt(), refused);
+  setSettled(false);
+  onFeedbackRead = async () => {
+    await setStatus('failed');
+  };
+  await assert.rejects(attempt(), refused);
+  // Working, round unsettled: the result is taken.
+  onFeedbackRead = undefined;
+  await setStatus('working');
+  assert.equal(await attempt(), 'result');
+});
+
+test('an accepted result whose re-read verdict is no longer ISSUES is refused', async (t) => {
+  ending = 'completion-unfinished';
+  completionCommands.length = 0;
+  // Once the completion check has taken the ISSUES result, the agent's own read says PASS.
+  let accepted = false;
+  const warn = console.warn;
+  t.mock.method(console, 'warn', (...args: unknown[]) => {
+    if (String(args[0]).includes('accepting its valid ISSUES result')) accepted = true;
+    warn(...args);
+  });
+  onFeedbackRead = async () => (accepted ? { verdict: 'pass', issues: [] } : undefined);
+  t.after(() => {
+    onFeedbackRead = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(review(run.id), /only an ISSUES result is taken without one/);
+  assert.ok(accepted);
+  const budget = await runReviewRoundBudget(getRun(run.id)!);
+  assert.deepEqual([budget.used, budget.noVerdict], [0, 1]);
 });
 
 for (const progress of ['checklist-progress', 'tool-progress', 'paged-tools'] as const) {
@@ -935,6 +1142,82 @@ test('restart recovery enforces the completion inactivity limit and drains fresh
   assert.equal(completionCommands.length, 1);
 });
 
+/** A finished review read back after a restart, its completion turn still accepted and open. */
+async function recoveredCompletion(t: TestContext) {
+  ending = 'completion-turn';
+  completionCommands.length = 0;
+  const run = await nativeRun(t);
+  await review(run.id);
+  const context = getRun(run.id)!.agentContexts!.find((entry) => entry.role === 'review')!;
+  const acceptedAt = Date.parse(context.nativeSession!.acceptedAt!);
+  ending = 'completion-unfinished';
+  const control = await import('../runners/native/worker-control.js');
+  const monitor = await import('../run-engine/run-monitor.js');
+  const read = await control.readNativeWorkerSnapshot(run.id, 'review', context.id);
+  const snapshot = {
+    ...read,
+    commands: read.commands.map((command) => ({
+      ...command,
+      state: 'accepted' as const,
+      outcome: undefined,
+    })),
+  };
+  const probe = await monitor.probeWorkerSignalForRun(run.id, vars.slotId, context);
+  const toolEvent = (
+    type: 'tool.started' | 'tool.completed',
+    at: number,
+    sequence: number,
+  ): NativeSessionEvent => ({
+    nativeId: 'toolu_long',
+    sessionId: context.nativeSession!.sessionId,
+    generation: context.nativeSession!.generation!,
+    commandId: context.nativeCommandId!,
+    sequence,
+    at: new Date(at).toISOString(),
+    type,
+  });
+  t.after(() => {
+    completionActivityPages = undefined;
+  });
+  const input = {
+    runId: run.id,
+    vars,
+    context,
+    snapshot: { ...snapshot, cursor: 0, hasMore: true },
+    probe,
+    assertCurrent: () => {},
+    enforceProgressTimeout: true,
+  };
+  return { acceptedAt, toolEvent, input };
+}
+
+test('restart recovery waits on an open tool call up to the open-tool limit', async (t) => {
+  const { acceptedAt, toolEvent, input } = await recoveredCompletion(t);
+  let now = acceptedAt + 600001;
+  t.mock.method(Date, 'now', () => now);
+  const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
+  // One tool call started as the turn began and has not ended.
+  completionActivityPages = [[toolEvent('tool.started', acceptedAt, 1)]];
+  assert.equal(await continueNativeReviewCompletion(input), false);
+  now = acceptedAt + 1800001;
+  await assert.rejects(continueNativeReviewCompletion(input), /exceeded its open-tool limit/);
+});
+
+test('restart recovery reads every page before it trusts an open tool call', async (t) => {
+  const { acceptedAt, toolEvent, input } = await recoveredCompletion(t);
+  t.mock.method(Date, 'now', () => acceptedAt + 17 * 60_000);
+  const { continueNativeReviewCompletion } = await import('./native-review-completion.js');
+  // The tool opened on the first page closed on the second, eleven idle minutes ago.
+  completionActivityPages = [
+    [toolEvent('tool.started', acceptedAt + 5 * 60_000, 1)],
+    [toolEvent('tool.completed', acceptedAt + 6 * 60_000, 2)],
+  ];
+  await assert.rejects(
+    continueNativeReviewCompletion(input),
+    /exceeded its checklist\/tool inactivity limit/,
+  );
+});
+
 test('an accepted reviewer with no native turn reports never started', async (t) => {
   ending = 'never-started';
   const clock = { now: 0, polls: 0 };
@@ -962,6 +1245,35 @@ test('a completed native turn reports unavailable terminal signal at its existin
   ending = 'missing-terminal';
   const run = await nativeRun(t);
   await assert.rejects(review(run.id), /completed its turn but.*terminal signal/);
+});
+
+test('a reviewer waiting on one tool call past the inactivity limit is not stopped', async (t) => {
+  // 961d55d3: one Bash call ran ten minutes and the reviewer was killed 0.77 s before it ended.
+  ending = 'open-tool';
+  const clock = { now: 0, polls: 0 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  assert.equal((await review(run.id)).verdict, 'issues');
+  assert.equal(clock.polls >= 4, true);
+});
+
+test('a tool call that never ends is stopped at the open-tool limit', async (t) => {
+  ending = 'hung-tool';
+  const clock = { now: 0, polls: 0 };
+  timeline = clock;
+  t.mock.method(Date, 'now', () => clock.now);
+  t.after(() => {
+    timeline = undefined;
+  });
+  const run = await nativeRun(t);
+  await assert.rejects(
+    review(run.id),
+    /tool call made no progress for 1800000ms \(open-tool limit 1800000ms/,
+  );
 });
 
 test('a native reviewer with no checklist or tool progress fails at ten idle minutes, before a one-hour budget', async (t) => {

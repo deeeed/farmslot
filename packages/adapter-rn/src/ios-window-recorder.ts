@@ -147,7 +147,12 @@ export function createVisibleSimulatorRecorder(
         /^\d+\.mp4$/u.test(request.outputPath.slice(segmentPrefix.length));
       const selected =
         segment && recording ? recording.selection : await select({ signal: request.signal });
-      if (!segment) recording = { outputPath: request.outputPath, selection: selected };
+      if (!segment) {
+        recording = { outputPath: request.outputPath, selection: selected };
+        if (selected.kind === 'native') {
+          console.warn(`Falling back to simctl for iOS recording. ${selected.reason}`);
+        }
+      }
       const active = await (selected.kind === 'window'
         ? selected.recorder.start({ ...request, target: selected.target })
         : fallback.start(request));

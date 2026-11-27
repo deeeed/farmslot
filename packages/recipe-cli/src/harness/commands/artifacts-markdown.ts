@@ -19,12 +19,16 @@ import {
 import { isPathWithin } from '../paths.js';
 import { countRecipeNodes } from '../run-engine.js';
 
+import { renderRecipeTranscript } from './transcript.js';
+
 export interface TaskArtifactsMarkdownInput {
   taskDir: string;
   /** Exact package already selected by the caller; never reselect an attempt here. */
   artifactDir?: string;
   /** Invocation displayed above the retained run log. */
   command?: string;
+  /** Put the selected attempt's transcript above its full output. */
+  transcript?: boolean;
 }
 
 interface MarkdownArtifact {
@@ -52,8 +56,13 @@ export interface RetainedArtifactsMarkdownInput {
   /** Refuses to overwrite authored inputs or retained evidence. */
   out?: string;
   validate?: boolean;
-  /** `text` selects and validates the package without rendering authored task Markdown. */
-  format?: 'markdown' | 'text';
+  /**
+   * `text` selects and validates the package without rendering authored task Markdown;
+   * `transcript` renders the selected package's transcript only.
+   */
+  format?: 'markdown' | 'text' | 'transcript';
+  /** Markdown only: include the selected attempt's transcript in the validation logs. */
+  transcript?: boolean;
 }
 
 export interface RetainedArtifactsMarkdownResult extends Partial<TaskArtifactsMarkdownResult> {
@@ -62,6 +71,8 @@ export interface RetainedArtifactsMarkdownResult extends Partial<TaskArtifactsMa
   manifest?: unknown;
   validation?: ArtifactValidationResult;
   out?: string;
+  /** `format: 'transcript'` only, unless written to `out`. */
+  transcript?: string;
 }
 
 const RECIPE_HEADING = '## **Validation Recipe**';
@@ -147,6 +158,14 @@ export async function renderTaskArtifactsMarkdown(
     )
       provenance.push(`Recipe digest: ${escapeHtml(resolution.root.digest)}`);
   }
+  const transcript =
+    input.transcript && input.artifactDir
+      ? await renderRecipeTranscript({
+          artifactDir: input.artifactDir,
+          displayDir: path.relative(input.taskDir, input.artifactDir),
+          runLedgerDir: artifacts,
+        })
+      : undefined;
   const workflow = await optionalText(artifacts, 'workflow.mmd');
   const machine: Array<[string, string]> = [];
   let recipe: TaskArtifactsMarkdownResult['recipe'] = null;
@@ -192,6 +211,7 @@ export async function renderTaskArtifactsMarkdown(
       [
         ...(provenance.length ? [provenance.join('\n\n'), ''] : []),
         ...(input.command ? ['Command:', '', markdownFence(input.command, 'bash'), ''] : []),
+        ...(transcript ? ['Transcript:', '', markdownFence(transcript.trimEnd()), ''] : []),
         `<details><summary>${summary}</summary>`,
         '',
         markdownFence(report),
@@ -340,9 +360,10 @@ export async function renderRetainedArtifactsMarkdown(
         ])
         .filter((candidate) => existsSync(path.join(candidate, 'artifact-manifest.json')));
   const distinct = [...new Set(packages)];
+  const transcriptOnly = input.format === 'transcript';
   const authoredTask =
     taskDir &&
-    input.format !== 'text' &&
+    !input.format?.match(/^(text|transcript)$/) &&
     !existsSync(path.join(taskDir, 'artifact-manifest.json')) &&
     existsSync(path.join(taskDir, 'artifacts'));
   if (distinct.length > 1 || (distinct.length === 0 && (!authoredTask || input.validate)))
@@ -360,21 +381,41 @@ export async function renderRetainedArtifactsMarkdown(
     : undefined;
   const artifactPaths = artifactManifestPaths(manifest);
   const retained =
-    artifactDir && (input.validate || authoredTask || input.out)
+    artifactDir && (input.validate || authoredTask || transcriptOnly || input.out)
       ? await readRecordedEvidencePackage(artifactDir)
       : undefined;
   const checked =
-    artifactDir && retained && (input.validate || authoredTask)
+    artifactDir && retained && (input.validate || authoredTask || transcriptOnly)
       ? await validateRecipeArtifactRead(artifactDir, { requireRunnerProvenance: true }, retained)
       : undefined;
-  if (authoredTask && checked?.status === 'fail')
-    throw new Error('Artifact validation failed; Markdown was not rendered or written.');
+  if ((authoredTask || transcriptOnly) && checked?.status === 'fail')
+    throw new Error(
+      `Artifact validation failed; ${transcriptOnly ? 'the transcript' : 'Markdown'} was not rendered or written.`,
+    );
   const validation = input.validate ? checked : undefined;
   const markdown = authoredTask
-    ? await renderTaskArtifactsMarkdown({ taskDir, artifactDir, command: input.command })
+    ? await renderTaskArtifactsMarkdown({
+        taskDir,
+        artifactDir,
+        command: input.command,
+        transcript: input.transcript,
+      })
     : undefined;
+  const transcript =
+    transcriptOnly && artifactDir
+      ? await renderRecipeTranscript({
+          artifactDir,
+          displayDir:
+            taskDir && isPathWithin(taskDir, artifactDir)
+              ? path.relative(taskDir, artifactDir) || '.'
+              : artifactDir,
+          ...(taskDir ? { runLedgerDir: path.join(taskDir, 'artifacts') } : {}),
+        })
+      : undefined;
   const body =
-    markdown?.body ?? (artifactDir ? evidenceMarkdown(artifactDir, summary, artifactPaths) : '');
+    transcript ??
+    markdown?.body ??
+    (artifactDir ? evidenceMarkdown(artifactDir, summary, artifactPaths) : '');
   const out = input.out ? path.resolve(input.out) : undefined;
   if (out) {
     if (validation?.status === 'fail' || retained?.checks.some((check) => check.status === 'fail'))
@@ -394,6 +435,7 @@ export async function renderRetainedArtifactsMarkdown(
       manifest,
       ...(validation ? { validation } : {}),
       ...(markdown ? { ...markdown, ...(out ? { body: undefined } : {}) } : {}),
+      ...(transcript && !out ? { transcript } : {}),
       ...(out ? { out } : {}),
     },
     body,

@@ -20,7 +20,7 @@ import {
   staleFleet,
 } from '@farmslot/protocol';
 import { RESOURCE_REREAD_INTERVAL_MS } from '@farmslot/protocol/client-cache';
-import { poolDirectory } from '@farmslot/slot-config';
+import { effectiveSlotMode, poolDirectory } from '@farmslot/slot-config';
 
 import { summarizeAgentContexts } from '../agents/contexts.js';
 import {
@@ -66,6 +66,7 @@ import {
 } from '../fleet/state.js';
 import { backgroundHost } from '../host-services/background/client.js';
 import { BACKGROUND_OPERATIONS } from '../host-services/background/protocol.js';
+import { commandWaitsForNodeSupport } from '../node-support/remote-command.js';
 import { slotResourceChanges } from '../resources/slot-run-bindings.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { isRunArchiving } from '../run-lifecycle/archive-fence.js';
@@ -76,6 +77,7 @@ import {
   isActiveSlotHolder,
   slotClaimBlockedByRelease,
   slotPinIsRequestOnly,
+  warmChildAwaitsParentRow,
 } from './dispatch/slot-scoring.js';
 import { checkFixtureSteps } from './slot/check.js';
 import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
@@ -84,11 +86,7 @@ import {
   markFailedWorkspacesUnverified,
   observedFleetWorkspaces,
 } from './slot/workspace.js';
-import {
-  parseSlotProbeOutput,
-  type SlotProbeOutcome,
-  slotProbeScript,
-} from './slot-probe-batch.js';
+import { runSlotProbeBatches, type SlotProbeOutcome } from './slot-probe-batch.js';
 
 const loadExec = lazyImport(() => import('../core/exec.js'));
 
@@ -393,6 +391,7 @@ interface PreviousSlotStatus {
   cleanup_run_id?: unknown;
   cleanup_stop_unconfirmed?: boolean | null;
   held_reason?: unknown;
+  idle_prepare_scope?: unknown;
 }
 
 type RefreshSlotRow = ReturnType<typeof buildRefreshSlotRow>;
@@ -490,6 +489,8 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   // Before FIND_SLOT claims it, run.slotId is only a request. A refresh must not
   // manufacture that claim and make the request fail its own busy-slot check.
   if (slotPinIsRequestOnly(activeRun, row)) return row;
+  // Nor may it bind a warm child to its parent's row: the child's claim does that by CAS.
+  if (warmChildAwaitsParentRow(activeRun, row)) return row;
   // A releasing fence belongs to an in-flight teardown: overwriting it with
   // the active run's phase would reopen the slot mid-destruction. Preserve
   // the fence; the teardown's own CAS finalize decides what comes next.
@@ -785,7 +786,8 @@ function missingRunningStepLeases(
     const step = run.steps.find((entry) => entry.status === 'running');
     if (!step || !run.slotId || runReleasedSlot(run)) continue;
     const row = rows.find((entry) => entry.slot === run.slotId);
-    if (slotPinIsRequestOnly(run, row)) continue;
+    // A warm child runs its first steps on its parent's row; its own claim binds the slot.
+    if (slotPinIsRequestOnly(run, row) || warmChildAwaitsParentRow(run, row)) continue;
     if (row?.current_run_id === run.id || row?.handoff_run_id === run.id) continue;
     // Preserve the existing ci-watch release policy: it no longer occupies a ready row.
     if (run.status === 'ci-watching' && row?.lifecycle === 'ready' && !row.current_run_id) continue;
@@ -933,6 +935,8 @@ export function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus
     ...(prev.cleanup_run_id ? { cleanup_run_id: prev.cleanup_run_id } : {}),
     ...(prev.cleanup_stop_unconfirmed === true ? { [SLOT_CLEANUP_STOP_UNCONFIRMED]: true } : {}),
     ...(phase === 'occupied' && prev.held_reason ? { held_reason: prev.held_reason } : {}),
+    // The idle sweep's window for a run-less prepare scope: a refresh must not restart it.
+    ...(prev.idle_prepare_scope ? { idle_prepare_scope: prev.idle_prepare_scope } : {}),
     ...(r.resources ? { resources: r.resources } : {}),
   };
 }
@@ -1038,10 +1042,7 @@ export async function checkSSHPerMachine(
     seen.add(key);
 
     // Skip probe if all slots disabled
-    const hasEnabled = pool.slots.some((s) => {
-      const mode = s.mode || (s.enabled === false ? 'disabled' : 'dispatch');
-      return mode !== 'disabled';
-    });
+    const hasEnabled = pool.slots.some((s) => effectiveSlotMode(s) !== 'disabled');
 
     if (isLocal(pool.host, pool.machine)) {
       status.set(key, 'local');
@@ -1183,9 +1184,7 @@ async function checkSingleSlot(
   const sid = rawSlot.id;
   const slotProject = rawSlot.project || pool.project || '';
 
-  // Determine mode
-  let mode = rawSlot.mode || '';
-  if (!mode) mode = rawSlot.enabled === false ? 'disabled' : 'dispatch';
+  const mode = effectiveSlotMode(rawSlot);
 
   const platform = rawSlot.platform || pool.platform;
   const deviceName =
@@ -1359,35 +1358,24 @@ async function runSlotProbes(
   commands: ReadonlyArray<string | undefined>,
   timeoutMs: number,
 ): Promise<SlotProbeOutcome[]> {
-  const present = commands.flatMap((command, index) => (command ? [{ command, index }] : []));
-  const results: SlotProbeOutcome[] = commands.map(() => undefined);
-  if (!present.length) return results;
-  let stdout: string;
-  try {
-    stdout = (
-      await execOnSlot(
-        vars,
-        slotProbeScript(
-          present.map((entry) => entry.command),
-          timeoutMs / 1000,
-        ),
+  return runSlotProbeBatches(commands, {
+    needsBundle: (command) => commandWaitsForNodeSupport(vars, command),
+    timeoutSeconds: timeoutMs / 1000,
+    runBatch: async (script) => {
+      try {
         // The in-script deadline decides each probe; this one only bounds the batch.
-        { timeout: timeoutMs + 5_000 },
-      )
-    ).stdout;
-  } catch (error) {
-    // Transport failure is not evidence about any probe: each reads as unavailable, as when
-    // its own exec failed before probes were batched.
-    console.warn(
-      `[fleet.refresh] ${vars.slotId}: slot probes did not run`,
-      (error as Error).message ?? error,
-    );
-    return results;
-  }
-  parseSlotProbeOutput(stdout, present.length).forEach((result, position) => {
-    results[present[position].index] = result;
+        return (await execOnSlot(vars, script, { timeout: timeoutMs + 5_000 })).stdout;
+      } catch (error) {
+        // Transport failure is not evidence about any probe: each reads as unavailable, as when
+        // its own exec failed before probes were batched.
+        console.warn(
+          `[fleet.refresh] ${vars.slotId}: slot probes did not run`,
+          (error as Error).message ?? error,
+        );
+        return undefined;
+      }
+    },
   });
-  return results;
 }
 
 function readSlotDefaultBranch(

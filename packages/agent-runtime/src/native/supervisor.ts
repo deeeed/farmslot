@@ -9,6 +9,7 @@ import { RUNTIME_VERSION } from '../version.js';
 import { recoverStoppedNativeHost } from './host-cleanup-recovery.js';
 import { socketDirectory } from './ipc.js';
 import { NativeProcessTree } from './process-tree.js';
+import { currentRuntimeBuild } from './runtime-build.js';
 import {
   alive,
   appendDurable,
@@ -87,7 +88,9 @@ const socket = join(socketDirectory(root), 's');
 privateDirectory(socketDirectory(root));
 durableWrite(join(root, 'host.json'), {
   runtimeVersion: RUNTIME_VERSION,
+  runtimeBuild: currentRuntimeBuild(),
   supportsRuntimeUpgrade: true,
+  supportsIdleRunnerUpgrade: true,
   supportsApprovalMode: true,
   supportsStandaloneDelegation: true,
   conversationStreaming: 1,
@@ -99,6 +102,7 @@ durableWrite(join(root, 'host.json'), {
   supportsStructuredResults: true,
   supportsWorkerRelocation: true,
   supportsProfiles: true,
+  supportsSessionArchive: true,
   executionNodeId: process.env.FARMSLOT_NATIVE_EXECUTION_NODE_ID ?? 'local',
   pid: process.pid,
   token: randomBytes(32).toString('hex'),

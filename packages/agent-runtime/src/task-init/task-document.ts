@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import {
   DEFAULT_BRANCH,
+  enumerateChecklistCheckboxes,
   EXECUTION_CHECKLIST_DOCUMENT,
   type ExecutionTemplateReference,
   type FrozenReviewRulePack,
@@ -33,6 +34,112 @@ export const BUG_INPUT = 'inputs/bug-input.json';
 export const REFERENCE_CHECKOUTS_INPUT = 'inputs/reference-checkouts.json';
 /** Optional project-owned addendum rendered into TASK.md (relative to `templates/`). */
 export const TASK_DOCUMENT_ADDENDUM_TEMPLATE = 'task-document.md';
+/** The task document itself. Declared here, where it is rendered; `write.ts` re-exports it. */
+export const TASK_DOCUMENT = 'TASK.md';
+
+export const OPERATOR_NOTE_HEADING = '## Operator note';
+
+/**
+ * The agent-runtime release whose task init renders `operatorNote`.
+ *
+ * An older node ignores the field and silently drops the note, which is worse
+ * than the bug this fixes, so the gateway checks a node's reported runtime
+ * against this and falls back to the old end-of-document append below it.
+ */
+export const OPERATOR_NOTE_RUNTIME_VERSION = '0.51.0';
+
+/**
+ * The operator's note, as a section the worker reads before the task it changes.
+ *
+ * It used to be appended to the end of the document. In run 1b7b8662 that put a
+ * repin instruction on line 945 of a 947-line TASK.md, and the worker — following
+ * CHECKLIST.md, which never mentioned it — did everything else and not that. A
+ * note is an override, so it is read before what it overrides.
+ *
+ * The heading has to stay clear of CHECKLIST_SKIP_SECTIONS (`task`, `description`,
+ * `comments`, …) or the step below would stop counting as a step.
+ */
+export function operatorNoteSection(note: string | undefined): string {
+  const text = note?.trim();
+  if (!text) return '';
+  return [
+    OPERATOR_NOTE_HEADING,
+    '',
+    'From the operator who dispatched this run. It overrides the defaults below; where it',
+    'conflicts with a checklist step, follow the note and record that in the step.',
+    '',
+    text,
+  ].join('\n');
+}
+
+/**
+ * Put a section under the document's title.
+ *
+ * A rendered template may open with a frontmatter fence (`dev-interactive.md`
+ * does), so matching `^#` against the first line silently inserts nothing and
+ * loses the section. Skip the fence, insert after the first ATX heading, and
+ * fall back to prepending when the document has no heading at all.
+ */
+export function insertUnderTitle(markdown: string, section: string): string {
+  if (!section.trim()) return markdown;
+  const lines = markdown.split('\n');
+  let index = 0;
+  if (lines[0]?.trim() === '---') {
+    const close = lines.findIndex((line, at) => at > 0 && line.trim() === '---');
+    if (close > 0) index = close + 1;
+  }
+  const heading = lines.findIndex((line, at) => at >= index && /^#\s+\S/.test(line));
+  const at = heading === -1 ? index : heading + 1;
+  lines.splice(at, 0, '', section);
+  return lines.join('\n');
+}
+
+/** `- [ ] **12. Label**` and `- [ ] 12. Label` both carry the number the worker reads. */
+const CHECKBOX_NUMBER = /^(\s*- \[[ xX]\]\s*(?:\*\*)?)(\d+)\./;
+
+/**
+ * One markable step for the note, inserted just before the checklist's last step.
+ *
+ * Not appended: every farm template ends with its `mark complete --mark-last`
+ * row (`pr-complete.md:62`, `fix-bug.md:98`, `review-pr.md:91`, `dev.md:137`,
+ * `update-branch.md:41`). A step after that row leaves two boxes open, so
+ * `--mark-last` refuses (`mark-checklist-step.cjs:391-403`); and once the worker
+ * ticks the completion row to get past that, `--mark-last` ticks the last open
+ * box, which is this one (`:639-641`). The note would be claimed without being
+ * carried out — the failure this step exists to prevent.
+ *
+ * Inserting is safe for the frozen contract: `freezeChecklistDeclarations` runs
+ * on the final checklist text inside `writeTaskDir`, after this rewrite, so proof,
+ * deterministic and optional declarations are keyed off the numbers that ship.
+ * The labels of the steps that move are renumbered with them, so what the worker
+ * reads matches what `mark N` targets.
+ */
+export function insertOperatorNoteStep(
+  checklist: string,
+  taskDir: string,
+  note: string | undefined,
+): string {
+  if (!note?.trim()) return checklist;
+  const items = enumerateChecklistCheckboxes(checklist);
+  const lines = checklist.split('\n');
+  // No steps at all: there is no completion row to sit in front of.
+  const at = items.length ? items[items.length - 1].lineIndex : lines.length;
+  const stepNumber = items.length || 1;
+  lines.splice(
+    at,
+    0,
+    `- [ ] ${stepNumber}. Carry out the operator note`,
+    `  Read \`${OPERATOR_NOTE_HEADING}\` at the top of \`${taskDir}/${TASK_DOCUMENT}\` and do what it says.`,
+    '  It overrides the steps above. If you cannot, stop with `mark blocked` naming the conflict;',
+    '  never mark this step for a note you did not carry out.',
+  );
+  for (let line = at + 4; line < lines.length; line += 1)
+    lines[line] = lines[line].replace(
+      CHECKBOX_NUMBER,
+      (_match, prefix: string, number: string) => `${prefix}${Number(number) + 1}.`,
+    );
+  return lines.join('\n');
+}
 
 /** Shared instructions for a maintenance task and an inline CI-fix checklist. */
 /**
@@ -193,6 +300,8 @@ export interface TaskDocumentInput {
   /** Static review supplies its enforced completion command instead of development guidance. */
   completionInstructions?: string;
   hasTicketData: boolean;
+  /** Operator note from dispatch (`--task-note`), rendered ahead of the task it overrides. */
+  operatorNote?: string;
   /**
    * Read-only checkouts of other codebases this task compares against, one per
    * `reference_repos` key the project declares. An absent one is listed as absent:
@@ -265,6 +374,8 @@ export function buildTaskDocument(input: TaskDocumentInput): string {
   if (vars.MODE === 'interactive') {
     sections.push(buildOperatorWaitInstructions(taskDir), '');
   }
+  const operatorNote = operatorNoteSection(input.operatorNote);
+  if (operatorNote) sections.push(operatorNote, '');
   sections.push(
     '## Task',
     '',

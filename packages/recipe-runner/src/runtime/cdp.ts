@@ -341,12 +341,21 @@ const isolatedWorldContexts = new WeakMap<
   Map<string, { executionContextId: number }>
 >();
 
+// Call options whose timeout counts down from now: each call gets what is left.
+function remainingCallOptions(options: CdpCallOptions): () => CdpCallOptions {
+  if (options.timeoutMs === undefined) return () => options;
+  const deadline = Date.now() + options.timeoutMs;
+  return () => ({ ...options, timeoutMs: Math.max(1, deadline - Date.now()) });
+}
+
 async function evaluateCdpSessionInIsolatedWorld<T>(
   session: CdpCallSession,
   expression: string,
   worldName: string,
-  timeoutMs?: number,
+  options: CdpCallOptions = {},
 ): Promise<T> {
+  // One timeout for the whole evaluation, however many CDP calls it takes.
+  const callOptions = remainingCallOptions(options);
   let contexts = isolatedWorldContexts.get(session);
   if (!contexts) {
     contexts = new Map();
@@ -356,13 +365,13 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
   if (!isolatedWorld) {
     const frameTree = await session.call<{
       frameTree?: { frame?: { id?: string } };
-    }>('Page.getFrameTree', {}, { timeoutMs });
+    }>('Page.getFrameTree', {}, callOptions());
     const frameId = frameTree.frameTree?.frame?.id;
     if (!frameId) throw new Error('CDP evaluation could not resolve the page frame.');
     const created = await session.call<{ executionContextId?: number }>(
       'Page.createIsolatedWorld',
       { frameId, worldName },
-      { timeoutMs },
+      callOptions(),
     );
     if (created.executionContextId === undefined) {
       throw new Error('CDP evaluation could not create an isolated world.');
@@ -382,7 +391,7 @@ async function evaluateCdpSessionInIsolatedWorld<T>(
         awaitPromise: true,
         returnByValue: true,
       },
-      { timeoutMs },
+      callOptions(),
     );
     if (result.exceptionDetails) {
       throw new CdpPageEvaluationError(
@@ -509,7 +518,7 @@ export async function probeCdpCompositorInteractivity(
           async (remainingMs): Promise<EvaluationResult> => {
             const value = await evaluateCdpSessionInIsolatedWorld<
               Omit<CdpCompositorProbe, 'status'>
-            >(session, expression, COMPOSITOR_WORLD, remainingMs);
+            >(session, expression, COMPOSITOR_WORLD, { timeoutMs: remainingMs });
             return { result: { value } };
           },
         );
@@ -683,7 +692,7 @@ export class CdpWebPage {
               this.session,
               expression,
               DOM_SETTLEMENT_WORLD,
-              attemptTimeoutMs + 25,
+              { timeoutMs: attemptTimeoutMs + 25 },
             ),
             attemptTimeoutMs + 50,
             timeoutReason,
@@ -720,12 +729,23 @@ export class CdpWebPage {
     return result.result?.value as T;
   }
 
-  async evaluateInIsolatedWorld<T = unknown>(expression: string, worldName: string): Promise<T> {
+  async evaluateInIsolatedWorld<T = unknown>(
+    expression: string,
+    worldName: string,
+    options: CdpCallOptions = {},
+  ): Promise<T> {
+    // The retry after a navigation shares the caller's timeout, never a fresh one.
+    const remaining = remainingCallOptions(options);
     try {
-      return await evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName);
+      return await evaluateCdpSessionInIsolatedWorld<T>(
+        this.session,
+        expression,
+        worldName,
+        remaining(),
+      );
     } catch (error) {
       if (!isTransientCdpContextError(error)) throw error;
-      return evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName);
+      return evaluateCdpSessionInIsolatedWorld<T>(this.session, expression, worldName, remaining());
     }
   }
 
@@ -777,7 +797,7 @@ export class CdpWebPage {
               this.session,
               expression,
               'farmslot-click-readiness',
-              attemptTimeoutMs,
+              { timeoutMs: attemptTimeoutMs },
             ),
           ),
           remainingMs,
@@ -795,16 +815,24 @@ export class CdpWebPage {
       } else {
         const geometry = JSON.stringify(target);
         if (geometry !== previousGeometry) {
-          await this.session.call(
-            'Input.dispatchMouseEvent',
-            {
-              type: 'mouseMoved',
-              x: target.x,
-              y: target.y,
-              button: 'none',
-            },
-            { timeoutMs: Math.max(1, deadline - Date.now()) },
-          );
+          try {
+            await this.session.call(
+              'Input.dispatchMouseEvent',
+              {
+                type: 'mouseMoved',
+                x: target.x,
+                y: target.y,
+                button: 'none',
+              },
+              { timeoutMs: Math.max(1, deadline - Date.now()) },
+            );
+          } catch (error) {
+            // Same leftover-budget limit as the readiness probe above.
+            if (error instanceof CdpCallTimeoutError) {
+              throw new Error(`Click target readiness timed out: ${label}`, { cause: error });
+            }
+            throw error;
+          }
           previousGeometry = geometry;
           stableSince = Date.now();
         } else if (Date.now() - stableSince >= 50 && Date.now() < deadline) {
@@ -998,15 +1026,28 @@ export class CdpWebPage {
     const deadline = Date.now() + timeoutMs;
     const expression = `(() => { ${deepQueryHelpersExpression()} return ${waitForPredicateExpression(options)}; })()`;
     let lastEnabled: boolean | undefined;
+    let answered = false;
+    let pollTimeout: CdpCallTimeoutError | undefined;
     do {
       options.signal?.throwIfAborted();
-      const observed = await this.evaluate<boolean | { matched: boolean; enabled?: boolean }>(
-        expression,
-        {
-          signal: options.signal,
-          timeoutMs: Math.max(1, deadline - Date.now()),
-        },
-      );
+      let observed: boolean | { matched: boolean; enabled?: boolean };
+      try {
+        observed = await this.evaluate<boolean | { matched: boolean; enabled?: boolean }>(
+          expression,
+          {
+            signal: options.signal,
+            timeoutMs: Math.max(1, deadline - Date.now()),
+          },
+        );
+      } catch (error) {
+        // Each poll's limit is the remaining budget, so its expiry is this wait's timeout.
+        if (error instanceof CdpCallTimeoutError) {
+          pollTimeout = error;
+          break;
+        }
+        throw error;
+      }
+      answered = true;
       options.signal?.throwIfAborted();
       if (typeof observed === 'object' && typeof observed.enabled === 'boolean')
         lastEnabled = observed.enabled;
@@ -1020,12 +1061,17 @@ export class CdpWebPage {
         signal: options.signal,
       });
     } while (Date.now() <= deadline);
+    const cause = pollTimeout ? { cause: pollTimeout } : undefined;
+    // A page that never answered says nothing about the subject: keep it a transport diagnostic.
+    if (!answered)
+      throw new Error(`ui.wait_for timed out: the page answered no poll in ${timeoutMs}ms`, cause);
     if (options.enabled !== undefined)
       throw new RecipeExecutionError(
         'subject',
         `ui.wait_for timed out: expected enabled=${options.enabled}, last observed enabled=${lastEnabled ?? 'unavailable'}.`,
+        cause,
       );
-    throw new Error('ui.wait_for timed out');
+    throw new Error('ui.wait_for timed out', cause);
   }
 
   async waitForSelector(selector: string, options: { timeoutMs?: number } = {}): Promise<unknown> {
@@ -1760,6 +1806,11 @@ interface CdpHudState {
   last?: HudFinishedStep;
 }
 
+// The HUD shares the page's DOM from its own world: page policy (LavaMoat scuttling
+// on MetaMask Extension pages) can make main-world globals such as
+// requestAnimationFrame throw, and the paint wait needs real frames.
+const CDP_HUD_WORLD = 'farmslot-recipe-hud';
+
 async function renderCdpHud(
   page: CdpWebPage,
   node: Record<string, unknown>,
@@ -1768,8 +1819,9 @@ async function renderCdpHud(
 ): Promise<unknown> {
   if (node.clear === true) {
     delete hud.last;
-    return page.evaluate(
+    return page.evaluateInIsolatedWorld(
       "(() => { document.getElementById('farmslot-recipe-hud')?.remove(); document.getElementById('farmslot-recipe-hud-reserved-space')?.remove(); document.documentElement.style.removeProperty('--farmslot-recipe-hud-height'); document.body?.style.removeProperty('padding-bottom'); return { hud: false, cleared: true }; })()",
+      CDP_HUD_WORLD,
     );
   }
   const title = hudSecondaryText(asOptionalString(node.title, 'app.hud.title') ?? 'Recipe run');
@@ -1808,7 +1860,7 @@ async function renderCdpHud(
   // A failing step stays the main line in the fail colour; a completed run shows its outcome.
   const intentColor =
     status === 'fail' ? HUD_COLORS.fail : complete && status === 'pass' ? HUD_COLORS.pass : '#fff';
-  return page.evaluate(
+  return page.evaluateInIsolatedWorld(
     `(() => {
       const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines, intentStyle: intent.webStyle, intentColor, finished, colors: HUD_COLORS, bounds: HUD_PANEL_BOUNDS })};
       const id = 'farmslot-recipe-hud';
@@ -1961,6 +2013,7 @@ async function renderCdpHud(
       return (${waitForHudPaint.toString()})(requestAnimationFrame).then(() =>
         ({ hud: true, status: payload.status, nodeId: payload.nodeId, flow: payload.flow }));
     })()`,
+    CDP_HUD_WORLD,
     // Navigation/hydration may occupy the main thread before the paint wait starts.
     { timeoutMs: 10_000, signal: context.signal },
   );

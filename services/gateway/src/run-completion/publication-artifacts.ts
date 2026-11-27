@@ -923,6 +923,22 @@ export function preWorkBaseSeed(
   return /^[a-f0-9]{40}$/iu.test(worktreeHeadAtDispatch) ? worktreeHeadAtDispatch : undefined;
 }
 
+/**
+ * ADR-062: before-only evidence may also use the merge base of the exact selected head and
+ * its publication base, from the frozen local comparison. Publication admission and review
+ * guidance accept the same identity.
+ */
+export function publicationMergeBase(comparison?: ReviewDiffSnapshot): string | undefined {
+  return comparison?.source === 'local-git' &&
+    comparison.baseRef?.startsWith('origin/') &&
+    typeof comparison.baseSha === 'string' &&
+    /^[a-f0-9]{40}$/iu.test(comparison.baseSha) &&
+    typeof comparison.headSha === 'string' &&
+    /^[a-f0-9]{40}$/iu.test(comparison.headSha)
+    ? comparison.baseSha
+    : undefined;
+}
+
 export function publicationBaselineContext(
   run: Run,
   inventory: readonly ArtifactRef[] | null = run.output?.artifactManifest ?? [],
@@ -1110,13 +1126,8 @@ export async function assertPublicationManifestOwnership(
             const mergedBefore =
               beforeOnly &&
               provenance.git_ref !== baseline?.baseSha &&
-              comparison?.source === 'local-git' &&
-              comparison.baseRef?.startsWith('origin/') &&
-              typeof comparison.baseSha === 'string' &&
-              /^[a-f0-9]{40}$/iu.test(comparison.baseSha) &&
-              typeof comparison.headSha === 'string' &&
-              /^[a-f0-9]{40}$/iu.test(comparison.headSha) &&
-              provenance.git_ref === comparison.baseSha;
+              publicationMergeBase(comparison) !== undefined &&
+              provenance.git_ref === publicationMergeBase(comparison);
             if (!beforeOnly || mergedBefore) {
               if (headSha === null)
                 throw new RecordedEvidenceReadError(

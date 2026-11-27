@@ -6,12 +6,14 @@ import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
 
 import {
   DEFAULT_BRANCH,
+  isTerminalRunStatus,
   nativeWorkerBindingIsHeld,
   type PreparePhase,
   READINESS_RECORD,
   type ReadinessRecord,
   SLOT_DESTRUCTIVE_OPS,
   type SlotPrepareParams,
+  type TempScrubReceipt,
 } from '@farmslot/protocol';
 import { literalReplacement } from '@farmslot/protocol/scripts/literal-replacement.mjs';
 import { loadMachineSlots, resolveEffectiveDomain } from '@farmslot/slot-config';
@@ -37,6 +39,7 @@ import {
   withProjectMachineEnv,
 } from '../../core/index.js';
 import { assertNoNativeWorkerRecovery } from '../../core/native-worker-exclusion.js';
+import { slotReadFileIfExists } from '../../core/slot-io.js';
 import { assertStorageVolumePresent } from '../../core/storage-volume.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { farmCommandRootsForSlot } from '../../fleet/farm-paths.js';
@@ -51,6 +54,7 @@ import {
   resolveSandboxPorts,
   siblingPortsFromDevServer,
 } from '../../prepare/farmslot-port-provisioning.js';
+import { projectPinsPrepare } from '../../projects/pinned-prepare-policy.js';
 import { farmslotRuntimeLogDir } from '../../projects/repo-root.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
 import {
@@ -67,7 +71,7 @@ import {
   retireNativeWorkersForSlot,
 } from '../../runners/native/worker.js';
 import { NativeWorkerOperationUncertainError } from '../../runners/native/worker-error.js';
-import { getRun } from '../../runs/store.js';
+import { getRun, getRunWithArchived } from '../../runs/store.js';
 import { assertNativeRunOwner } from '../../security/native-worker-owner.js';
 import { withSlotSources } from '../../sources/runtime.js';
 
@@ -75,6 +79,8 @@ import { runFixtureSync } from './fixtures.js';
 import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
+  FETCH_MAINTENANCE_COMMAND,
+  gitMaintenanceNotes,
   recreateBranchCommand,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
@@ -84,6 +90,15 @@ import {
   loadGitIdentity,
   syncGitIdentity,
 } from './git-identity.js';
+import {
+  checkPrepareArtifactReceipt,
+  deleteStaleReceipt,
+  parseJsonObject,
+  PREPARE_ARTIFACT_RECEIPT,
+  receiptRefusal,
+  resolvePinnedProfile,
+  sourceBuildRefusal,
+} from './pinned-prepare.js';
 import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
@@ -99,6 +114,15 @@ import { checkPrepareDevice } from './prepare-device.js';
 import { openDevServerLogTailWindow, resolveDevServerLogPath } from './prepare-devserver-log.js';
 import { createPrepareGitTimer } from './prepare-git-timing.js';
 import { verifyPrepareHealth } from './prepare-health.js';
+import { prepareHookEnvExports } from './prepare-hook-env.js';
+import {
+  isLockfile,
+  LOCKFILE_DRIFT_FALLBACK_MARKER,
+  lockfileDrift,
+  lockfileDriftAllowed,
+  lockfileRewrittenCommand,
+  readLogTail,
+} from './prepare-lockfile-drift.js';
 import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
@@ -106,6 +130,7 @@ import {
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
+import { assertRunMatchesSlotProject, withRunPrepareContext } from './prepare-run-context.js';
 import { syncPrepareFixtures } from './prepare-runtime-context.js';
 import {
   acquirePrepareSentinel,
@@ -114,6 +139,18 @@ import {
   startPrepareSentinelHeartbeat,
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
+import {
+  buildChangedPathsCommand,
+  buildDirtyPathsCommand,
+  buildTrackedFilesSnapshotCommand,
+  changedSubmodules,
+  changedTrackedFiles,
+  parseNulPaths,
+  parseTrackedFilesSnapshot,
+  snapshotsEqual,
+  trackedFilesChangedMessage,
+  type TrackedFilesSnapshot,
+} from './prepare-tracked-files.js';
 import { checkProjectPrerequisites } from './prerequisites.js';
 import {
   activePrepareAborts,
@@ -136,6 +173,13 @@ import {
   shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
+import {
+  scrubTempForRun,
+  shouldScrubTempForRun,
+  tempScrubLines,
+  tempScrubReceipt,
+  tempScrubSummary,
+} from './temp-scrub.js';
 import { assertPublishedPrepareBranchContained } from './unmerged-work.js';
 
 export { type PrepareHealthCommands, verifyPrepareHealth } from './prepare-health.js';
@@ -157,7 +201,12 @@ export async function slotPrepare(
   opts?: SlotPrepareInternalOptions,
 ): Promise<SlotPrepareResult> {
   await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
-  return withSlotSources(params.slotId, () => slotPrepareWithSources(params, emit, signal, opts));
+  // A prepare for a run takes that run's context: the first of runId / bindRunId naming a live run.
+  const run = [params.runId, params.bindRunId]
+    .map((id) => (id ? getRun(id) : undefined))
+    .find((found) => found !== undefined);
+  const forRun = withRunPrepareContext(params, run);
+  return withSlotSources(params.slotId, () => slotPrepareWithSources(forRun, emit, signal, opts));
 }
 
 async function slotPrepareWithSources(
@@ -183,6 +232,7 @@ async function slotPrepareWithSources(
   try {
     const stop = new AbortController();
     activePrepareAborts.set(params.slotId, {
+      runId: params.runId,
       abort: () => stop.abort(),
       settled: new Promise<void>((resolve) => (settle = resolve)),
     });
@@ -197,8 +247,30 @@ async function slotPrepareWithSources(
         `Slot ${params.slotId} is being released; prepare it once the release finishes`,
       );
     }
+    // The engine prepares only a slot its run still holds: a cancel may already have released
+    // it, and the picker may have handed it to another run. Other callers (load-run binding)
+    // name the run for its context (flow, domain, app; see slotPrepare) and keep their existing
+    // ownership checks.
+    if (params.runId && opts?.requireRunOwnership) {
+      const row = await readSlotRow(params.slotId);
+      // A run evicted from the live store is read from the archive: it has ended too.
+      const owner = getRun(params.runId) ?? (await getRunWithArchived(params.runId));
+      if (
+        !row ||
+        (row.current_run_id !== params.runId && row.handoff_run_id !== params.runId) ||
+        (owner && isTerminalRunStatus(owner.status))
+      )
+        throw new Error(
+          `Slot ${params.slotId} no longer belongs to run ${params.runId.slice(0, 8)}; refusing to prepare it`,
+        );
+    }
     await assertWorkspaceRecoverySettled(params.slotId, opts?.duringRelease);
     const vars = await loadSlotVars(params.slotId);
+    // Every live run the prepare names must be of the slot's project, before any phase.
+    for (const id of new Set([params.runId, params.bindRunId])) {
+      const named = id ? getRun(id) : undefined;
+      if (named) assertRunMatchesSlotProject(named, params.slotId, vars.projectName);
+    }
     if (isLocal(vars.host, vars.machine)) assertStorageVolumePresent(vars.remoteRepo);
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.
@@ -207,8 +279,15 @@ async function slotPrepareWithSources(
     let projectVars: ProjectVars | undefined;
     try {
       projectVars = await loadProjectVars(vars.projectName);
-    } catch {
-      /* no project config: retain default prepare behavior */
+    } catch (error) {
+      // No project config: retain default prepare behavior, except for a pinned
+      // run, which would otherwise read as a project that takes no part and run
+      // on whatever build the slot has.
+      if (opts?.pinned) {
+        throw new Error(
+          `A pinned comparison run cannot prepare: the config of project ${vars.projectName} failed to load (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
     }
     assertNativeSlotReplacementOwner(params.slotId, params.runId);
     const preparingRun = params.runId ? getRun(params.runId) : null;
@@ -360,6 +439,11 @@ async function slotPrepareInner(
   let resolvedStartRef: StartRefResolution | undefined;
   let resolvedStackBase: StartRefResolution | undefined;
   let branchCreatedFromBase = false;
+  // The work branch was on origin when prepare checked it out: an existing PR branch.
+  let workBranchPublished = false;
+  let replayBranchOnOrigin: boolean | undefined;
+  // Lockfiles the deps phase rewrote on a PR branch, for the worker to commit.
+  let lockfilesRewritten: string[] = [];
   const runtimeDir = projectVars?.runtimeDir || '.agent';
   const effectiveDomain = resolveEffectiveDomain(params.domain, vars.domain);
   const applyCommandEnv = (command: string) =>
@@ -399,6 +483,10 @@ async function slotPrepareInner(
   };
 
   const step = stream.step.bind(stream);
+  /** A kept or removed tmp pack, or auto-maintenance left on, is a prepare step, not a silent fact. */
+  const noteGitMaintenance = (output: string) => {
+    for (const note of gitMaintenanceNotes(output)) step('branch', `Git maintenance: ${note}`);
+  };
   const timeGit = createPrepareGitTimer((record) =>
     stream.step(record.name, record.detail, record),
   );
@@ -445,26 +533,118 @@ async function slotPrepareInner(
   const profileName = (): string => prepareProfile?.name ?? 'full';
   const phaseEnabled = (phase: PreparePhase): boolean =>
     !prepareProfile || prepareProfile.phases.has(phase);
-  // Every hook a prepare runs sees the selected profile, so a single project
-  // script can branch on FARMSLOT_PREPARE_PROFILE instead of per-profile hooks.
+  // The deps, preflight, health and unlock hooks see the selected profile and the flow type, so a
+  // single project script can branch on FARMSLOT_PREPARE_PROFILE / FARMSLOT_FLOW_TYPE instead of
+  // per-profile hooks. Prerequisites, signing and the profile requirement probes don't.
   // Subshell form keeps the wrapper safe inside `a && b` chains.
   const withProfileEnv = (cmd: string): string =>
-    `( export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}; ${cmd} )`;
+    `( ${prepareHookEnvExports(profileName(), params.flowType).join('; ')}; ${cmd} )`;
 
   const expandPrepareHook = (hookName: string): string => {
     const cmd = expandPrepareProfileHook(hookName, prepareProfile, projectJson, vars, projectVars);
     return remapHookSupport(cmd);
   };
 
-  const installEvalRecipeHarness = async () => {
-    if (!params.runId) return;
+  const installEvalRecipeHarness = async (): Promise<boolean> => {
+    if (!params.runId) return false;
     const run = getRun(params.runId);
-    if (!run?.engineState?.evalExperiment) return;
+    if (!run?.engineState?.evalExperiment) return false;
     step('recipe-harness-install', 'Installing eval recipe harness');
     const result = await executeEvalHarnessLifecycle(run, 'install');
     if (!result.skipped) {
       step('recipe-harness-install', `Eval recipe harness installed (log: ${result.logPath})`);
     }
+    return true;
+  };
+
+  // `known` lets a phase check reuse the previous snapshot's submodule discovery.
+  const snapshotTrackedFiles = async (
+    known?: TrackedFilesSnapshot,
+  ): Promise<TrackedFilesSnapshot | null> => {
+    checkAborted();
+    const r = await execOnSlot(vars, buildTrackedFilesSnapshotCommand(vars.remoteRepo, known), {
+      signal,
+    });
+    checkAborted();
+    if (r.exitCode !== 0)
+      throw new Error(
+        `tracked-file snapshot failed on ${vars.slotId} (${vars.remoteRepo}): exit ${r.exitCode} ${(r.stderr || r.stdout).slice(-300)}`,
+      );
+    return parseTrackedFilesSnapshot(r.stdout);
+  };
+
+  const trackedPaths = async (command: string): Promise<string[]> => {
+    const r = await execOnSlot(vars, command, { signal });
+    checkAborted();
+    if (r.exitCode !== 0)
+      throw new Error(
+        `tracked-file diff failed on ${vars.slotId} (${vars.remoteRepo}): ${r.stderr.slice(-200) || `exit ${r.exitCode}`}`,
+      );
+    return parseNulPaths(r.stdout);
+  };
+
+  // Fails the phase that changed a tracked file; returns the state the next phase is checked against.
+  const checkTrackedFiles = async (
+    baseline: TrackedFilesSnapshot | null,
+    phase: string,
+    command: string,
+    allowed?: (file: string) => Promise<boolean>,
+  ): Promise<TrackedFilesSnapshot | null> => {
+    if (!baseline) return null;
+    const after = await snapshotTrackedFiles(baseline);
+    const fail = (message: string): never => {
+      step('tracked-files', message);
+      throw new Error(message);
+    };
+    if (!after)
+      return fail(
+        `prepare ${phase} left ${vars.remoteRepo} without its git work tree on ${vars.slotId} — command: ${command}`,
+      );
+    // HEAD and branch always compare; trees only once both sides have a merged index.
+    const moved =
+      baseline.head !== after.head || baseline.branch !== after.branch
+        ? trackedFilesChangedMessage(phase, command, vars.slotId, baseline, after, [])
+        : null;
+    if (moved) fail(moved);
+    if (after.unmerged) {
+      if (!baseline.unmerged)
+        fail(
+          `prepare ${phase} left unmerged index entries on ${vars.slotId} — command: ${command}`,
+        );
+      return after;
+    }
+    // Conflicts resolved during this phase: full checks resume from here.
+    if (baseline.unmerged) return after;
+    if (snapshotsEqual(baseline, after)) return after;
+    const files = [
+      ...new Set([
+        ...changedTrackedFiles(
+          await trackedPaths(buildChangedPathsCommand(vars.remoteRepo, baseline, after)),
+          await trackedPaths(buildDirtyPathsCommand(vars.remoteRepo, after)),
+        ),
+        ...changedSubmodules(baseline, after),
+      ]),
+    ].sort();
+    const kept = allowed
+      ? (await Promise.all(files.map(async (file) => ((await allowed(file)) ? [file] : [])))).flat()
+      : [];
+    if (kept.length) {
+      lockfilesRewritten = kept;
+      step(
+        'tracked-files',
+        `LOCKFILE DRIFT: prepare ${phase} rewrote ${kept.join(', ')} on this PR branch; the worker must commit it`,
+      );
+    }
+    const message = trackedFilesChangedMessage(
+      phase,
+      command,
+      vars.slotId,
+      baseline,
+      after,
+      files.filter((file) => !kept.includes(file)),
+    );
+    if (message) fail(message);
+    return after;
   };
 
   if (selectedApp) {
@@ -504,6 +684,20 @@ async function slotPrepareInner(
   step(signing.name, signing.detail);
   if (signing.status === 'fail') throw new Error(`Commit signing is not ready: ${signing.detail}`);
 
+  // A pinned comparison run prepares only with a profile its project lists for this
+  // platform, and its preflight, not the selection probe, proves the build.
+  const pinned =
+    opts?.pinned && projectPinsPrepare(projectJson)
+      ? resolvePinnedProfile(projectJson, vars.platform, params.prepareProfile)
+      : undefined;
+  if (pinned) {
+    if (!opts?.startRef) throw new Error('A pinned comparison run prepares only from a start ref');
+    step(
+      'profile',
+      `Pinned comparison run: profile '${pinned.name}' installs a ${pinned.kind} build of start ${opts.startRef.requestedRef}`,
+    );
+  }
+
   // 1b. Resolve prepare profile (ADR-037): explicit request → prepare.default →
   // implicit full. Precondition failures walk the project's declared fallback
   // chain; every check and transition is logged as a prepare sub-step.
@@ -520,15 +714,21 @@ async function slotPrepareInner(
       prepareRef: branch,
       prepareDefaultRef: defaultBranch,
       prepareBaseSha: opts?.blindBaseSha,
+      // required_skills_present selects the same rules task init will freeze,
+      // which needs the flow and domain this prepare serves.
+      ...(params.flowType ? { flow: params.flowType } : {}),
+      ...(effectiveDomain ? { domain: effectiveDomain } : {}),
     },
-    params.prepareProfile,
+    pinned?.name ?? params.prepareProfile,
     (candidate, result) =>
       step(
         'profile',
         `[${candidate}] ${result.requirement} ${result.ok ? 'ok' : 'fail'} — ${result.detail}`,
       ),
     checkPrepareRequirement,
-    { strict: params.strictProfile === true },
+    pinned
+      ? { strict: true, skip: ['artifact_available'] }
+      : { strict: params.strictProfile === true },
   );
   for (const fb of profileSelection.fallbacks) {
     step(
@@ -562,8 +762,9 @@ async function slotPrepareInner(
   let fixturesSynced = false;
   // Fixtures are framework file materialization (template render + copy), not a
   // project hook invocation, so they intentionally do not receive
-  // FARMSLOT_PREPARE_PROFILE — ADR-037's "every hook" covers deps/preflight/
-  // health/unlock, which run project-owned commands.
+  // FARMSLOT_PREPARE_PROFILE or FARMSLOT_FLOW_TYPE (the flow reaches fixture sync as an
+  // argument) — ADR-037's "every hook" covers deps/preflight/health/unlock, which run
+  // project-owned commands.
   const syncFixtures = async () => {
     if (fixturesSynced) return;
     if (!phaseEnabled('fixtures')) {
@@ -605,6 +806,35 @@ async function slotPrepareInner(
   };
 
   await excludeSlotScaffolding(vars, projectJson);
+
+  // 1d. A new run starts on a temp/ holding nothing of another run's: a held-out trial must not
+  // read an earlier task, its scratch or its traces. Farm state and the task dirs of this run,
+  // its parent chain and runs still bound to the slot stay. A nested Git checkout is deleted
+  // and named. A warm handoff, a replay or a resumed task keeps its files. Anything that cannot
+  // be deleted fails prepare, by name.
+  // The clear-out's receipt goes to the run's prepare step first, which outlives this stream, so
+  // a refusal below still leaves it. Its lines (up to 50 removed and 50 kept, then counts; this
+  // cap also covers the checkout and task-dir lines) go out as one output chunk under one step.
+  const scrubbingRun = params.runId ? getRun(params.runId) : undefined;
+  let tempScrub: TempScrubReceipt | undefined;
+  if (shouldScrubTempForRun(scrubbingRun)) {
+    checkAborted();
+    const scrub = await scrubTempForRun(vars, projectJson, scrubbingRun);
+    if (scrub) {
+      tempScrub = tempScrubReceipt(scrub);
+      opts?.onTempScrubbed?.(tempScrub);
+      const lines = tempScrubLines(tempScrub);
+      if (lines.length) stream.output('stdout', lines.map((line) => `[clean] ${line}\n`).join(''));
+      const summary = tempScrubSummary(tempScrub);
+      if (summary) step('clean', summary);
+      if (scrub.refused.length)
+        throw new Error(
+          `temp/ still holds another run's files: ${scrub.refused
+            .map((entry) => `${entry.path} (${entry.reason})`)
+            .join('; ')}`,
+        );
+    }
+  }
 
   // 2. Verify clean state / checkout branch
   let current = (
@@ -702,8 +932,10 @@ async function slotPrepareInner(
   // A requested start ref must resolve to structured provenance on every branch
   // path: a slot already on the work branch, a preserved replay branch, or a
   // fresh branch. The dispatch refuses a run without it.
+  // Resolved once: a branch name that moves between two calls would otherwise leave
+  // the work branch on one commit and preflight's base on another.
   const resolveRequestedStartRef = async () => {
-    if (!opts?.startRef) return;
+    if (!opts?.startRef || resolvedStartRef) return;
     step('start-ref', `Resolving base ref ${opts.startRef.requestedRef}...`);
     if (opts.blindBaseSha) {
       if (!opts.preserveBranch || opts.startRef.requestedRef !== opts.blindBaseSha)
@@ -770,6 +1002,71 @@ async function slotPrepareInner(
     }
     step('branch', `Reset ${branch} to stack base ${sha}`);
   };
+  // A run's work branch with no commits beyond the project base carries no work,
+  // only an old base: a replay of a run whose base has since gained a fix (for
+  // example a sorted manifest the tracked-file check needs) must not keep
+  // preparing the old tree. Once the branch is checked out (by the usual path),
+  // move it forward to the current base. Branches with their own commits,
+  // published branches, and runs with an explicit start ref or stack base are
+  // never moved. The move is `git reset --keep` (no merge configuration applies)
+  // after checking HEAD is still the probed branch and tip, is an ancestor of
+  // the base, nothing is staged (reset --keep resets the index), and no local
+  // file sits at a path the base adds or where it needs a directory (reset --keep
+  // would overwrite an ignored one); pipefail makes a failed scan refuse. reset --keep refuses local edits
+  // to changed files; any refusal keeps the branch where it was.
+  const advanceEmptyWorkBranch = async () => {
+    if (!branch || opts?.startRef || opts?.stackBase) return;
+    const base = `origin/${defaultBranch}`;
+    // Every caller has just put the slot on the work branch. Anything else means the
+    // checkout changed under prepare, which cannot vouch for the tree it would continue on.
+    // HEAD, its tip and the ancestry come from one command, so they describe one moment.
+    const probe = await execGit(
+      'probe-empty-work-branch',
+      vars,
+      withFarmGitConfig(
+        `cd ${shellQuote(vars.remoteRepo)} && printf '%s\\n' "$(git symbolic-ref -q HEAD)" && git rev-list --count ${shellQuote(`${base}..HEAD`)} && git rev-parse HEAD ${shellQuote(`${base}^{commit}`)}`,
+      ),
+    );
+    const [headRef = '', own, tip = '', baseSha = ''] = probe.stdout.split('\n');
+    if (headRef !== `refs/heads/${branch}`)
+      throw new Error(
+        `${vars.slotId} is not on ${branch} after checkout (HEAD ${headRef || 'detached'}); refusing to continue on an unverified checkout`,
+      );
+    if (probe.exitCode !== 0) return;
+    if (own !== '0' || !tip || !baseSha || tip === baseSha) return;
+    // The flag sweep ends with `exit`, so it runs as its own command before the merge.
+    const sweep = await mutateGit(
+      'clear-advance-index-flags',
+      `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
+    );
+    const moved =
+      sweep.exitCode !== 0
+        ? sweep
+        : await mutateGit(
+            'advance-empty-work-branch',
+            // Re-checked inside the guarded command: the guard can rerun it after recapturing a
+            // checkout that changed since the probe.
+            `set -o pipefail; cd ${shellQuote(vars.remoteRepo)} && { [ "$(git symbolic-ref -q HEAD)" = ${shellQuote(`refs/heads/${branch}`)} ] && [ "$(git rev-parse HEAD)" = ${shellQuote(tip)} ] || { echo 'the checkout changed since the probe' >&2; exit 3; }; } && git merge-base --is-ancestor HEAD ${shellQuote(baseSha)} && { git diff --cached --quiet --ignore-submodules=none HEAD -- || { echo 'staged changes would be reset' >&2; exit 1; }; } && { git diff --no-renames --diff-filter=A --name-only -z HEAD ${shellQuote(baseSha)} | while IFS= read -r -d '' p; do covered=; rest="$p"; pre=; while [ "$rest" != "\${rest#*/}" ]; do pre="\${pre:+$pre/}\${rest%%/*}"; rest="\${rest#*/}"; if [ -L "$pre" ] || { [ -e "$pre" ] && [ ! -d "$pre" ]; }; then if git cat-file -e "HEAD:$pre" 2>/dev/null; then covered=1; break; fi; echo "$pre is a local file where the new base needs a directory" >&2; exit 1; fi; done; [ -n "$covered" ] && continue; if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then echo "$p exists locally and the new base tracks it" >&2; exit 1; elif [ -d "$p" ]; then others=$(git ls-files --others -- "$p") || exit 1; if [ -n "$others" ]; then echo "$p holds local files and the new base tracks it as a file" >&2; exit 1; fi; fi; done; } && git reset --keep ${shellQuote(baseSha)} && [ "$(git rev-parse HEAD)" = ${shellQuote(baseSha)} ]`,
+            [baseSha],
+          );
+    // Exit 3: the checkout is no longer the probed branch and tip. Prepare cannot vouch
+    // for the tree it would continue on, so it stops instead of reporting success.
+    if (moved.exitCode === 3)
+      throw new Error(
+        `${branch} on ${vars.slotId} changed while prepare was moving it to ${base}; refusing to continue on an unverified checkout`,
+      );
+    if (moved.exitCode !== 0) {
+      step(
+        'branch',
+        `${branch} has no commits beyond ${base} but stays at ${tip.slice(0, 12)}: ${(moved.stderr || moved.stdout).trim().slice(-200)}`,
+      );
+      return;
+    }
+    step(
+      'branch',
+      `${branch} had no commits beyond ${base}; fast-forwarded from ${tip.slice(0, 12)} to ${baseSha.slice(0, 12)}`,
+    );
+  };
   // A start ref means two different things. For dev/fix-bug it is an
   // artifact-only replay base: the work branch must be local-only, and the
   // policy below refuses a remote-published branch on every non-replay path (a
@@ -777,11 +1074,55 @@ async function slotPrepareInner(
   // the frozen validation head the gateway derived from the PR: the slot lands
   // on that exact commit, on the PR branch, and nothing is pushed.
   const startRefPolicyApplies = params.flowType === 'dev' || params.flowType === 'fix-bug';
+  // Release keeps a work branch that holds unpushed commits, so a new run of the ticket finds
+  // it (dropParkedBranch). Before prepare deletes or resets a branch, those commits get a
+  // branch of their own: the guard's parked ref alone is pruned after the retention window.
+  // `name` defaults to the run's branch; `null` means whatever branch the checkout is on.
+  // `target` is where the branch moves; commits it still reaches are not stranded. One command:
+  // probe, keep and report, so a re-prepare pays one round trip per site.
+  const keptBranches: string[] = [];
+  const keepUnpushedBranch = async ({
+    name = branch,
+    target,
+  }: { name?: string | null; target?: string } = {}) => {
+    if (name === undefined) return;
+    const which = name === null ? '$(git symbolic-ref -q --short HEAD)' : shellQuote(name);
+    const keep = await execGit(
+      'keep-unpushed-branch',
+      vars,
+      withFarmGitConfig(
+        [
+          `cd ${shellQuote(vars.remoteRepo)} || exit 2`,
+          `b=${which}; [ -n "$b" ] || exit 0`,
+          // show-ref exits 1 for a missing ref; anything else is a failed check.
+          'git show-ref --verify --quiet "refs/heads/$b"; found=$?; [ "$found" -eq 1 ] && exit 0; [ "$found" -eq 0 ] || exit 2',
+          'head=$(git rev-parse --verify "refs/heads/$b") || exit 2',
+          `stranded=$(git rev-list --max-count=1 "$head" --not --remotes ${target ? shellQuote(target) : ''}) || exit 2`,
+          '[ -n "$stranded" ] || exit 0',
+          // A kept branch that is itself about to move gets a second suffix: naming the copy
+          // after the moving branch would leave its commits nowhere.
+          `kept="$b-kept-$(printf '%.12s' "$head")"`,
+          '[ "$(git rev-parse --verify --quiet "refs/heads/$kept")" = "$head" ] || git branch "$kept" "$head" || exit 3',
+          `printf '%s\\n' "$b" "$kept"`,
+        ].join('\n'),
+      ),
+    );
+    if (keep.exitCode !== 0)
+      throw new Error(
+        `${keep.exitCode === 3 ? 'Cannot keep' : 'Cannot check'} the unpushed commits of ${name ?? 'the current branch'} on ${vars.slotId}; the branch was not changed: ${(keep.stderr || keep.stdout).trim().slice(-200)}`,
+      );
+    const [source, kept] = keep.stdout.trim().split('\n');
+    if (!source || !kept) return;
+    keptBranches.push(kept);
+    opts?.onBranchKept?.(kept);
+    step('branch', `Kept unpushed commits of ${source} on ${kept}`);
+  };
   // Whatever path put the slot on the branch, the provenance must describe the
   // tree the run executes on: with a start ref the branch is reset to the
   // resolved commit, never left at whatever origin or the local branch holds.
   const resetBranchToStartRef = async () => {
     if (!resolvedStartRef) return;
+    await keepUnpushedBranch({ target: resolvedStartRef.resolvedSha });
     // The same index refresh every other reset --hard in this file runs first,
     // so a stale index.lock cannot fail it (the flag sweep runs as its own
     // command on the paths that need it: it ends with exit).
@@ -851,9 +1192,10 @@ async function slotPrepareInner(
         'fetch-replay-default',
         vars,
         withFarmGitConfig(
-          `git -C ${shellQuote(vars.remoteRepo)} fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+          `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
         ),
       );
+      noteGitMaintenance(fetch.stdout);
       if (fetch.exitCode !== 0)
         throw new Error(`Replay base fetch failed: ${fetch.stderr || fetch.stdout}`);
       await resolveRequestedStartRef();
@@ -885,9 +1227,53 @@ async function slotPrepareInner(
     }
     if (localExists) {
       step('branch', `Replay preserving existing local ${branch} without reset or clean`);
+      // Only a local-only branch may move; a failed probe or fetch keeps it as it is.
+      if (!opts.startRef && !opts.stackBase) {
+        const remote = await execGit(
+          'probe-replay-remote-branch',
+          vars,
+          withFarmGitConfig(
+            `git -C ${shellQuote(vars.remoteRepo)} ls-remote --exit-code --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
+          ),
+        );
+        replayBranchOnOrigin = remote.exitCode === 0;
+        const fetchBase =
+          remote.exitCode === 2
+            ? await execGit(
+                'fetch-replay-base',
+                vars,
+                withFarmGitConfig(
+                  `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+                ),
+              )
+            : null;
+        if (fetchBase) noteGitMaintenance(fetchBase.stdout);
+        if (fetchBase?.exitCode === 0) await advanceEmptyWorkBranch();
+        else if (remote.exitCode !== 0 && remote.exitCode !== 2)
+          step('branch', `Replay kept ${branch} as is: could not tell whether origin has it`);
+        else if (fetchBase)
+          step('branch', `Replay kept ${branch} as is: fetching origin/${defaultBranch} failed`);
+      }
     }
   }
   if (branch && opts?.preserveBranch) {
+    // A replay keeps its branch: it is a PR branch when origin has it. Only a flow whose
+    // permission depends on that (dev) needs to ask origin.
+    if (
+      replayBranchOnOrigin === undefined &&
+      lockfileDriftAllowed(params.flowType, true) !== lockfileDriftAllowed(params.flowType, false)
+    )
+      replayBranchOnOrigin =
+        (
+          await execGit(
+            'probe-replay-published',
+            vars,
+            withFarmGitConfig(
+              `git -C ${shellQuote(vars.remoteRepo)} ls-remote --exit-code --heads origin ${shellQuote(`refs/heads/${branch}`)}`,
+            ),
+          )
+        ).exitCode === 0;
+    workBranchPublished = replayBranchOnOrigin === true;
     await resolveRequestedStartRef();
   } else if (branch) {
     step('branch', `Checking out ${branch}...`);
@@ -896,10 +1282,12 @@ async function slotPrepareInner(
         'fetch-current-branch',
         vars,
         withFarmGitConfig(
-          `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(branch))}`,
+          `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(branch))}`,
         ),
       );
+      noteGitMaintenance(fetchBranchR.stdout);
       if (fetchBranchR.exitCode === 0) {
+        workBranchPublished = true;
         const refreshCurrentBranchR = await mutateGit(
           'clear-current-index-flags',
           `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND}; }`,
@@ -909,6 +1297,7 @@ async function slotPrepareInner(
             `failed to clear skip-worktree/assume-unchanged flags on ${vars.slotId} (${vars.remoteRepo}): ${refreshCurrentBranchR.stderr.slice(-200) || refreshCurrentBranchR.stdout.slice(-200)}`,
           );
         }
+        await keepUnpushedBranch();
         const resetBranchR = await mutateGit(
           'reset-current-branch',
           `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(`origin/${branch}`)} && git clean -fd`,
@@ -949,6 +1338,17 @@ async function slotPrepareInner(
           );
         }
         step('branch', `Remote branch ${branch} not found; using existing local ${branch}`);
+        if (!opts?.startRef && !opts?.stackBase) {
+          const fetchBase = await execGit(
+            'fetch-current-base',
+            vars,
+            withFarmGitConfig(
+              `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+            ),
+          );
+          if (fetchBase.exitCode === 0) await advanceEmptyWorkBranch();
+          else step('branch', `Kept ${branch} as is: fetching origin/${defaultBranch} failed`);
+        }
         await resolveRequestedStartRef();
         if (startRefPolicyApplies) {
           assertStartRefWorkBranchIsLocalOnly({
@@ -975,9 +1375,10 @@ async function slotPrepareInner(
         'fetch-default',
         vars,
         withFarmGitConfig(
-          `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+          `cd ${shellQuote(vars.remoteRepo)} && { ${FETCH_MAINTENANCE_COMMAND}; } && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
         ),
       );
+      noteGitMaintenance(fetchDefaultR.stdout);
       if (fetchDefaultR.exitCode !== 0)
         throw new Error(
           `git fetch origin ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${fetchDefaultR.stderr.slice(-200) || fetchDefaultR.stdout.slice(-200)}`,
@@ -1074,6 +1475,7 @@ async function slotPrepareInner(
       if (linkedWorktree) {
         // Git worktrees cannot checkout `main` when it is active in the primary clone.
         // Reset the current worktree branch directly to the resolved base commit instead.
+        await keepUnpushedBranch({ name: null, target: baseResetRef });
         const ffR = await mutateGit(
           'reset-linked-base',
           `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseResetRef)}; }`,
@@ -1134,6 +1536,8 @@ async function slotPrepareInner(
       // The work-branch fetch above already answered whether origin has the branch: it
       // succeeded, or it failed only because the ref is absent (any other failure threw).
       const remoteExists = fetchBranchR.exitCode === 0;
+      // A forced new branch replaces the published one with a fresh branch from the base.
+      workBranchPublished = remoteExists && !forceNewBranch;
       const newBranchBase =
         resolvedStartRef?.resolvedSha ??
         resolvedStackBase?.resolvedSha ??
@@ -1156,6 +1560,7 @@ async function slotPrepareInner(
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
           );
         }
+        await keepUnpushedBranch({ target: newBranchBase });
         await mutateGit(
           'delete-local-branch',
           `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
@@ -1186,6 +1591,7 @@ async function slotPrepareInner(
             )
           ).exitCode === 0;
         if (localExists) {
+          await keepUnpushedBranch();
           const coR = await mutateGit(
             'reset-tracking-branch',
             `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} && git reset --hard ${shellQuote(`origin/${branch}`)}`,
@@ -1224,6 +1630,7 @@ async function slotPrepareInner(
         if (localExists) {
           if (forceNewBranch) {
             branchCreatedFromBase = true;
+            await keepUnpushedBranch({ target: newBranchBase });
             if (linkedWorktree) {
               await mutateGit(
                 'delete-local-replay-branch',
@@ -1253,6 +1660,7 @@ async function slotPrepareInner(
               'checkout-local-branch',
               `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)}`,
             );
+            await advanceEmptyWorkBranch();
             step('branch', `Switched to existing local ${branch}`);
             await resetBranchToStartRef();
           }
@@ -1404,10 +1812,33 @@ async function slotPrepareInner(
   // always running is bounded; the cost of skipping incorrectly is a 240s
   // preflight timeout on the next webpack run. Profiles that skip this phase
   // declare deps_current so the fallback chain catches stale trees.
+  // Tracked files must leave prepare as checkout and fixtures left them; a step
+  // that rewrites one fails here, naming it, instead of at run completion.
+  let trackedBaseline =
+    phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health')
+      ? await snapshotTrackedFiles()
+      : null;
+  if (
+    !trackedBaseline &&
+    (phaseEnabled('deps') || phaseEnabled('preflight') || phaseEnabled('health'))
+  )
+    step(
+      'tracked-files',
+      'Tracked-file check skipped: the slot is not the root of a git work tree',
+    );
+  if (trackedBaseline?.unmerged)
+    step(
+      'tracked-files',
+      'The index has unmerged entries: only HEAD and branch are checked until they are resolved',
+    );
   if (!phaseEnabled('deps')) {
     step('deps', `Deps install skipped (profile ${profileName()})`);
   } else {
     const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
+    // A run on an existing PR branch must start even when that branch's lockfile drifted: fixing
+    // it may be the run's job. The install hook reads the flag and may update the lockfile.
+    const driftAllowed = lockfileDriftAllowed(params.flowType, workBranchPublished);
+    const driftEnv = driftAllowed ? 'export FARMSLOT_PREPARE_LOCKFILE_DRIFT=allow; ' : '';
     checkAborted();
     step('deps', `Installing deps: ${installCmd}`);
     const depsLogPath = phaseLog('deps');
@@ -1421,7 +1852,9 @@ async function slotPrepareInner(
       installR = await runPrepareCommand(
         vars,
         depsLogPath,
-        withProfileEnv(`cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`),
+        withProfileEnv(
+          `cd ${shellQuote(vars.remoteRepo)} && ${driftEnv}${applyCommandEnv(installCmd)}`,
+        ),
         {
           cwd: vars.remoteRepo,
           timeout: depsTimeoutMs,
@@ -1437,25 +1870,58 @@ async function slotPrepareInner(
     } finally {
       clearInterval(depsHeartbeat);
     }
+    // A hook prints LOCKFILE_DRIFT_FALLBACK_MARKER once it updated the lockfile: a failure after
+    // that is not drift. A lockfile change is accepted only when drift is in the log.
+    const depsLog = driftAllowed || installR.exitCode !== 0 ? await readLogTail(depsLogPath) : '';
+    const fellBack = depsLog.includes(LOCKFILE_DRIFT_FALLBACK_MARKER);
+    const drift = installR.exitCode !== 0 && !fellBack ? lockfileDrift(depsLog) : null;
+    const driftSeen = fellBack || lockfileDrift(depsLog) !== null;
     if (installR.exitCode !== 0) {
       const setupDetail = installR.stderr.trim();
       const setupFailed = /^(tmux |stage prepare)/.test(setupDetail);
       const err: PrepareCommandError = new Error(
         setupFailed
           ? `prepare deps setup failed: ${setupDetail} — log: ${depsLogPath}`
-          : `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
+          : drift
+            ? `lockfile drift${driftAllowed ? ' on PR branch' : ''}: ${drift.package ?? 'a dependency'} in package.json does not match the lockfile (${installCmd} failed, exit ${installR.exitCode}); ${driftAllowed ? `commit the updated lockfile on ${branch ?? 'the branch'}` : `a ${params.flowType ?? 'prepare'} run on ${workBranchPublished ? 'a published' : 'a new'} branch may not update it, so fix the lockfile on the branch`} — log: ${depsLogPath}`
+            : `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
       );
       err.failedCommand = installCmd;
       err.failedLogPath = depsLogPath;
+      if (drift && !setupFailed) err.failureKind = 'lockfile-drift';
       throw err;
     }
     // Record the lockfile hash so deps_current precondition checks can prove
     // the installed tree matches the checked-out lockfiles.
+    trackedBaseline = await checkTrackedFiles(
+      trackedBaseline,
+      'deps',
+      installCmd,
+      driftAllowed && driftSeen
+        ? async (file) =>
+            isLockfile(file) &&
+            (
+              await execGit(
+                'probe-rewritten-lockfile',
+                vars,
+                withFarmGitConfig(lockfileRewrittenCommand(vars.remoteRepo, file)),
+              )
+            ).exitCode === 0
+        : undefined,
+    );
     await execOnSlot(vars, buildDepsSentinelWriteCommand(vars.remoteRepo, runtimeDir));
     step('deps', `Dependencies installed (log: ${depsLogPath})`);
   }
 
-  await installEvalRecipeHarness();
+  // An eval trial's harness install is an intended change; later phases are checked against it.
+  if ((await installEvalRecipeHarness()) && trackedBaseline) {
+    trackedBaseline = await snapshotTrackedFiles(trackedBaseline);
+    if (!trackedBaseline) {
+      const message = `eval recipe harness install left ${vars.remoteRepo} without its git work tree on ${vars.slotId}`;
+      step('tracked-files', message);
+      throw new Error(message);
+    }
+  }
 
   // Native workers have no terminal session. Project preparation still runs normally.
   let session: string | undefined;
@@ -1558,6 +2024,16 @@ async function slotPrepareInner(
     preflightHook = preflightHook.replace(/\s*--clean\b/g, '');
     step('preflight', 'Recovery mode — skipping --clean rebuild');
   }
+  // A pinned preflight installs the build of this commit and reports it in a receipt.
+  // An older receipt must not stand in for one this preflight did not write.
+  const receiptPath = path.posix.join(vars.remoteRepo, runtimeDir, PREPARE_ARTIFACT_RECEIPT);
+  const pinnedBaseSha = (): string => {
+    if (!resolvedStartRef)
+      throw new Error('A pinned prepare reached preflight with no resolved start');
+    return resolvedStartRef.resolvedSha;
+  };
+  const readReceipt = (): Promise<string | null> => slotReadFileIfExists(vars, receiptPath);
+  if (pinned) await deleteStaleReceipt(vars, receiptPath);
   if (preflightHook) {
     const preflightPidPath = path.join(vars.remoteRepo, runtimeDir, 'preflight.pid');
     const preflightIdentityPath = prepareIdentityPath(vars.remoteRepo, runtimeDir);
@@ -1574,7 +2050,10 @@ async function slotPrepareInner(
     let currentPreflightPhase = '';
     let phaseBuffer = '';
     const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-    const varExports: string[] = [`export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}`];
+    const varExports: string[] = [
+      ...prepareHookEnvExports(profileName(), params.flowType),
+      ...(pinned ? [`export FARMSLOT_PREPARE_BASE_SHA=${shellQuote(pinnedBaseSha())}`] : []),
+    ];
     for (const [rawKey, rawValue] of Object.entries(params.vars ?? {})) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(rawKey)) {
         throw new Error(`Invalid --var key '${rawKey}' (must match [A-Za-z_][A-Za-z0-9_]*)`);
@@ -1696,6 +2175,14 @@ async function slotPrepareInner(
           ? [path.join(vars.remoteRepo, runtimeDir, 'ios-expo-build.log')]
           : [path.join(vars.remoteRepo, runtimeDir, 'android-build.log')]),
       ];
+      err.relatedLogsOnGateway = slotIsLocal;
+      // A pinned preflight that refused the build says why in its receipt; that
+      // reason, not the bare exit code, is what the operator needs.
+      // Best effort: the preflight error stays primary if the receipt cannot be read.
+      const refusal = pinned
+        ? receiptRefusal(parseJsonObject(await readReceipt().catch(() => null)))
+        : undefined;
+      if (refusal) err.message = `Pinned build refused: ${refusal} — log: ${preflightLogPath}`;
       throw err;
     }
     const phaseSuffix = currentPreflightPhase ? ` after ${currentPreflightPhase}` : '';
@@ -1712,6 +2199,52 @@ async function slotPrepareInner(
       step('preflight', tail.detail);
     }
   }
+
+  // Read outside the preflight block: a pinned profile with no preflight wrote no
+  // receipt, and that fails the prepare like any other missing receipt.
+  let prepareArtifact: SlotPrepareResult['prepareArtifact'];
+  if (pinned) {
+    const baseSha = pinnedBaseSha();
+    const receiptLogPath = preflightHook ? phaseLog('preflight') : undefined;
+    const receiptRejection = (message: string, cause?: unknown): PrepareCommandError => {
+      const error: PrepareCommandError = new Error(
+        `${message}${receiptLogPath ? ` — log: ${receiptLogPath}` : ''}`,
+        cause === undefined ? undefined : { cause },
+      );
+      if (receiptLogPath) error.failedLogPath = receiptLogPath;
+      return error;
+    };
+    let artifact: ReturnType<typeof checkPrepareArtifactReceipt>;
+    try {
+      artifact = checkPrepareArtifactReceipt(await readReceipt(), {
+        kind: pinned.kind,
+        baseSha,
+        platform: vars.platform,
+      });
+    } catch (error) {
+      throw receiptRejection(error instanceof Error ? error.message : String(error), error);
+    }
+    // A prepare replay keeps the worker's commits, so a source build may sit on a
+    // descendant of the start; anything else is a build of some other commit.
+    const sourceRefusal =
+      artifact.kind === 'source'
+        ? await sourceBuildRefusal(vars.remoteRepo, baseSha, artifact.revision, (command) =>
+            execGit('verify-source-build', vars, withFarmGitConfig(command)),
+          )
+        : undefined;
+    if (sourceRefusal) throw receiptRejection(sourceRefusal);
+    prepareArtifact = { ...artifact, installedAt: new Date().toISOString() };
+    step(
+      'preflight',
+      `Pinned build installed: ${artifact.kind}${artifact.runId ? ` run ${artifact.runId}` : ''} at ${artifact.revision} for start ${baseSha}`,
+    );
+  }
+
+  trackedBaseline = await checkTrackedFiles(
+    trackedBaseline,
+    'preflight',
+    preflightHook || 'prepare steps after deps',
+  );
 
   // 6. Verify health
   const healthHook = phaseEnabled('health') ? expandPrepareHook('health_check') : '';
@@ -1734,6 +2267,7 @@ async function slotPrepareInner(
       { signal },
     );
     step('health', `Health check — ${healthValue}`);
+    await checkTrackedFiles(trackedBaseline, 'health', healthHook);
   }
 
   // Operator-driven warm switch: bind this run to the slot so resume / recipe
@@ -1764,6 +2298,10 @@ async function slotPrepareInner(
     },
     ...(resolvedStartRef ? { startRef: resolvedStartRef } : {}),
     ...(resolvedStackBase ? { stackBase: resolvedStackBase } : {}),
+    ...(lockfilesRewritten.length ? { lockfilesRewritten } : {}),
+    ...(keptBranches.length ? { keptBranches } : {}),
+    ...(prepareArtifact ? { prepareArtifact } : {}),
+    ...(tempScrub ? { tempScrub } : {}),
   };
 }
 

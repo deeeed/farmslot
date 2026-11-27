@@ -28,12 +28,15 @@ import {
   type RunContextBundleParams,
   type RunCreateParams,
   type RunDeleteParams,
+  type RunEpisodeRecaptureParams,
   type RunForceCompleteParams,
   type RunForSlotParams,
   type RunGetGradeParams,
   type RunGetParams,
+  type RunGradeExternalRecordParams,
   type RunGradeParams,
   type RunInteractiveDevResolveParams,
+  type RunInterviewRecordParams,
   type RunLinkedTicketsSetParams,
   type RunListParams,
   type RunPauseParams,
@@ -123,6 +126,11 @@ import { runRereviewLatestHead } from '../methods/run/rereview.js';
 import { runSessionCommand } from '../methods/run/session-command.js';
 import { runSlotHistory } from '../methods/run/slot-history.js';
 import {
+  runEpisodeRecapture,
+  runGradeExternalRecord,
+  runInterviewRecord,
+} from '../methods/run/traces.js';
+import {
   runBundleExport,
   runBundleImport,
   runBundleList,
@@ -132,10 +140,14 @@ import { refreshPublishedEvidence } from '../run-completion/published-evidence-r
 
 export interface RouteRunMethodContext {
   authorizeReviewBudgetExtension?: () => import('@farmslot/protocol').Principal;
+  /** The authenticated caller of a trace record method, named as its `recordedBy`. */
+  authorizeTraceRecord?: (method: string) => import('@farmslot/protocol').Principal;
   authorizeSourceSelections?: () => void;
   /** Caller-only emitter retained in the routing context; shared run mutations use broadcast. */
   emit: (event: string, payload: unknown) => void;
   broadcast: (frame: EventFrame) => void;
+  /** Whether the caller's connection is still open; a long wait for it stops once it is not. */
+  callerConnected: () => boolean;
   authorizeEvidenceAttestation?: (action?: string) => EvidenceAttestationApprover;
   authorizeVisualClaimReview?: import('../methods/run/claim-reviews.js').VisualClaimReviewDependencies['authorizeVisualClaimReview'];
 }
@@ -314,7 +326,11 @@ export async function routeRunMethod(
     case Methods.RUN_REREVIEW_LATEST_HEAD:
       return handled(runRereviewLatestHead(p as RunRereviewLatestHeadParams));
     case Methods.RUN_REFRESH_PUBLISH_PACKAGE:
-      return handled(runRefreshPublishPackage(p as RunRefreshPublishPackageParams, emit));
+      return handled(
+        runRefreshPublishPackage(p as RunRefreshPublishPackageParams, emit, {
+          callerConnected: context.callerConnected,
+        }),
+      );
     case Methods.RUN_REFRESH_PUBLISHED_EVIDENCE:
       return handled(refreshPublishedEvidence(p as RunRefreshPublishedEvidenceParams, emit));
     case Methods.RUN_REFRESH_MIRROR:
@@ -325,6 +341,23 @@ export async function routeRunMethod(
       return handled(runInteractiveDevResolve(p as RunInteractiveDevResolveParams, emit));
     case Methods.RUN_GRADE:
       return handled(runGrade(p as RunGradeParams, emit));
+    case Methods.RUN_GRADE_EXTERNAL_RECORD: {
+      if (!context.authorizeTraceRecord)
+        throw new GatewayMethodError(
+          'AUTH_REQUIRED',
+          'Recording a grade requires an authenticated caller',
+        );
+      return handled(
+        runGradeExternalRecord(
+          p as RunGradeExternalRecordParams,
+          context.authorizeTraceRecord(method),
+        ),
+      );
+    }
+    case Methods.RUN_INTERVIEW_RECORD:
+      return handled(runInterviewRecord(p as RunInterviewRecordParams));
+    case Methods.RUN_EPISODE_RECAPTURE:
+      return handled(runEpisodeRecapture(p as RunEpisodeRecaptureParams));
     case Methods.RUN_GET_GRADE:
       return handled(runGetGrade(p as RunGetGradeParams));
     case Methods.RUN_PROPOSE_IMPROVEMENT:

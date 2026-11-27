@@ -64,6 +64,7 @@ import {
   getRun,
   getRunWithArchived,
   persistRunNow,
+  returnReviewWorkspaceTransfer,
   updateRun,
   updateRunStep,
 } from '../runs/store.js';
@@ -271,6 +272,7 @@ async function admittedRun(runId: string, generation: number) {
       effort: run.effort,
       transport: run.transport,
       nativeProfile: run.nativeProfile,
+      domain: run.domain,
     },
     run.nativeOwnerPrincipalId,
     runId,
@@ -389,12 +391,103 @@ function reviewWorkspaceNeverLaunched(run: Run): boolean {
   );
 }
 
+/**
+ * A continuation that never launched its reviewer does not keep the workspace it bound:
+ * - its live predecessor still names it: the workspace goes back to the predecessor;
+ * - its claim never landed or was lost to another continuation: it records the run that holds the
+ *   workspace and stops or releases nothing;
+ * - its predecessor named it but is archived (or being archived): it owns the checkout and is
+ *   retained and released as before.
+ * This run is marked before the predecessor, so an interrupted hand-back never releases the checkout
+ * and a retry completes it. Returns true when this run no longer owns the workspace.
+ */
+async function releaseNeverLaunchedContinuation(run: Run): Promise<boolean> {
+  const generation = run.engineState?.generation ?? 0;
+  const predecessorId = run.reviewWorkspace?.continuedFrom?.runId;
+  const handedOn = run.reviewWorkspace?.transferredTo;
+  if (
+    !predecessorId ||
+    run.reviewWorkspace?.cleanedAt ||
+    (handedOn && handedOn.runId !== predecessorId) ||
+    !reviewWorkspaceNeverLaunched(run)
+  )
+    return false;
+  // Not currentWorkspaceRun: a half-done hand-back already marks this run as not owning it.
+  const sameGeneration = () => {
+    const latest = getRun(run.id);
+    if (!latest?.reviewWorkspace || (latest.engineState?.generation ?? 0) !== generation)
+      throw new Error('Review workspace execution no longer owns this run generation');
+    return latest;
+  };
+  const predecessor = await getRunWithArchived(predecessorId);
+  const current = sameGeneration();
+  const binding = current.reviewWorkspace!;
+  if (binding.cleanedAt || !reviewWorkspaceNeverLaunched(current)) return false;
+  const mark = async (holder: { runId: string; generation: number } | undefined) => {
+    const latest = sameGeneration().reviewWorkspace!;
+    const { transferredTo: _previous, executionStoppedAt, ...unclaimed } = latest;
+    // Taking ownership back drops the stop a hand-back recorded, unless the run was already
+    // retained: teardown then stops and retains it, and retention expires it as before.
+    const stoppedAt = holder
+      ? (executionStoppedAt ?? new Date().toISOString())
+      : latest.retainedAt
+        ? executionStoppedAt
+        : undefined;
+    await persistRunNow(
+      updateRun(run.id, {
+        reviewWorkspace: {
+          ...unclaimed,
+          ...(stoppedAt ? { executionStoppedAt: stoppedAt } : {}),
+          ...(holder ? { transferredTo: holder } : {}),
+        },
+        reviewWorkspaceCleanupError: undefined,
+      }),
+      holder
+        ? 'never-launched review continuation does not own its workspace'
+        : 'never-launched review continuation owns the workspace its archived predecessor gave it',
+    );
+  };
+  if (!predecessor) {
+    // An unreadable predecessor cannot be named as the holder: this run keeps the checkout.
+    if (binding.transferredTo) await mark(undefined);
+    return false;
+  }
+  const claim = predecessor.reviewWorkspace?.transferredTo;
+  if (claim?.runId !== run.id) {
+    // The claim never landed, or another continuation won it: the predecessor or that run holds it.
+    const holder = claim ?? {
+      runId: predecessorId,
+      generation: predecessor.engineState?.generation ?? 0,
+    };
+    if (binding.transferredTo?.runId !== holder.runId) await mark(holder);
+    return true;
+  }
+  if (!getRun(predecessorId) || isRunArchiving(predecessorId)) {
+    if (binding.transferredTo) await mark(undefined);
+    return false;
+  }
+  if (!binding.transferredTo)
+    await mark({ runId: predecessorId, generation: predecessor.engineState?.generation ?? 0 });
+  try {
+    await returnReviewWorkspaceTransfer(predecessorId, run.id);
+  } catch (error) {
+    // Archived while handing back: this run still owns the checkout.
+    if (!getRun(predecessorId) || isRunArchiving(predecessorId)) {
+      await mark(undefined);
+      return false;
+    }
+    throw error;
+  }
+  return true;
+}
+
 export async function teardownReviewWorkspace(
   runId: string,
   options: { preserveInvalidOutput?: boolean } = {},
 ): Promise<void> {
   const run = getRun(runId);
   if (!run?.reviewWorkspace) return;
+  if (await releaseNeverLaunchedContinuation(run)) return;
   if (
     !run.reviewWorkspace.cleanedAt &&
     !run.reviewWorkspace.continuedFrom &&
@@ -477,9 +570,14 @@ export async function teardownReviewWorkspace(
 
 /** Explicit archive releases the source checkout after the existing execution stop. */
 export async function cleanupReviewWorkspaceForArchive(runId: string): Promise<void> {
-  const run = getRun(runId);
-  const workspace = run?.reviewWorkspace;
-  if (!run || !workspace || workspace.cleanedAt) return;
+  const found = getRun(runId);
+  if (!found?.reviewWorkspace || found.reviewWorkspace.cleanedAt) return;
+  assertRunArchivable(found);
+  assertNativeRunOwner(found);
+  if (!isRunArchiving(runId)) throw new Error('Review history archive no longer owns its request');
+  // Runs that failed before the hand-back existed give up their workspace here.
+  const run = (await releaseNeverLaunchedContinuation(found)) ? getRun(runId)! : found;
+  const workspace = run.reviewWorkspace!;
   if (workspace.transferredTo) {
     assertRunArchivable(run);
     assertNativeRunOwner(run);
@@ -825,7 +923,11 @@ async function executeOwnedReviewWorkspaceStep(
       await preflightReviewWorkspaceAccount(run, check);
       await ensureReviewWorkspaceSupport(runId, check);
       check();
-      const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
+      const subject = run.reviewWorkspaceSubject;
+      const task = await waitForWorkspaceOperation(
+        () => materializeReviewWorkspaceTask(runId, subject),
+        check,
+      );
       check();
       const qualifiedContext =
         task.interdiff && run.repeatReviewContext
@@ -861,7 +963,9 @@ async function executeOwnedReviewWorkspaceStep(
           `Operator replay of this retained review, generation ${generation}.`,
           `Continue the original task at ${run.reviewWorkspace.taskPath}; do not start another review.`,
           `Validation failure (data): ${JSON.stringify(retained.reason)}.`,
-          'Keep the existing findings and attempt identity. Repair the requested output, record findings once in review-result.json issues with the full problem, evidence and concrete ask, and finish through ./mark complete --mark-last.',
+          run.reviewWorkspace.reviewTask
+            ? `Keep the existing findings. Repair the round in ${run.reviewWorkspace.reviewTask.folder} and run its finish command again.`
+            : 'Keep the existing findings and attempt identity. Repair the requested output, record findings once in review-result.json issues with the full problem, evidence and concrete ask, and finish through ./mark complete --mark-last.',
         ].join('\n');
         const binding = context.nativeSession;
         const commandId = binding ? retained.commandId : undefined;
@@ -930,7 +1034,11 @@ async function executeOwnedReviewWorkspaceStep(
       }
       await ensureReviewWorkspaceSupport(runId, check);
       check();
-      const task = await materializeReviewWorkspaceTask(runId, run.reviewWorkspaceSubject);
+      const subject = run.reviewWorkspaceSubject;
+      const task = await waitForWorkspaceOperation(
+        () => materializeReviewWorkspaceTask(runId, subject),
+        check,
+      );
       const project = await loadProjectVars(run.project);
       check();
       const config = resolveMonitorConfig(project.projectJson.monitoring, run.project, 'review-pr');
@@ -1076,7 +1184,10 @@ async function executeOwnedReviewWorkspaceStep(
             throw error;
           check();
           const current = currentWorkspaceRun(runId, generation);
-          const text = `In the original task directory ${current.reviewWorkspace!.taskPath}: ${artifactContractWorkerInstruction(error.message)}`;
+          const round = current.reviewWorkspace!.reviewTask;
+          const text = round
+            ? `In the review skill round ${round.folder}: ${error.message} Correct it, then run its finish command again.`
+            : `In the original task directory ${current.reviewWorkspace!.taskPath}: ${artifactContractWorkerInstruction(error.message)}`;
           const binding = current.agentContexts?.find(
             (entry) => entry.id === 'review',
           )?.nativeSession;

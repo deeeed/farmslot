@@ -12,6 +12,7 @@ import {
   contextIdFor,
   isReviewerAgentRole,
   isReviewerWindowName,
+  PipelineSteps,
   primaryRoleForFlow,
   type Run,
   selectLatestReviewerContext,
@@ -32,6 +33,7 @@ import {
   canonicalAgentContextTarget,
   isDevServerLogTarget,
 } from '../methods/dispatch/role-target.js';
+import { noteCostActorUpsert } from '../runs/cost-accounting-revision.js';
 import { getRun, listRuns, updateRunAgentContexts } from '../runs/store.js';
 import { resolveReviewWorkspaceOwner } from '../security/native-worker-owner.js';
 
@@ -122,6 +124,7 @@ export function synthesizePrimaryContext(run: Run): AgentContext | null {
     runnerSessionId: run.metrics.runnerSessionId,
     runnerSessionPath: run.metrics.runnerSessionPath,
     runnerSessionArchive: run.metrics.runnerSessionArchive,
+    runnerSessionArchives: run.metrics.runnerSessionArchives,
     nudgeCount: run.metrics.nudgeCount,
     updatedAt: run.updatedAt,
   };
@@ -440,7 +443,9 @@ export async function upsertAgentContext(
       }
       if (!context.startedAt) context.startedAt = now;
       nextContext = context;
-      return [...contexts, context];
+      const next = [...contexts, context];
+      noteCostActorUpsert(currentContexts, next, existing, context);
+      return next;
     });
     if (!nextContext) return null;
     if (!updated?.slotId) return nextContext;
@@ -531,5 +536,28 @@ export function contextLaunched(context: AgentContext): boolean {
     context.runnerSessionArchive ||
     context.nativeSession ||
     context.nativeSessionHistory?.length,
+  );
+}
+
+/**
+ * Whether a run's worker was ever dispatched. Replay resets the dispatch step's timing, so
+ * the records a dispatch leaves on the run and its workers also count. A run without a
+ * dispatch step, or whose dispatch step ran or finished, counts as dispatched.
+ */
+export function runReachedDispatch(
+  run: Pick<Run, 'steps' | 'engineState' | 'worktreeHeadAtDispatch' | 'metrics' | 'agentContexts'>,
+): boolean {
+  const dispatch = run.steps.find((step) => step.name === PipelineSteps.DISPATCH);
+  if (!dispatch || dispatch.startedAt || dispatch.outputs) return true;
+  if (dispatch.status !== 'pending' && dispatch.status !== 'skipped') return true;
+  return Boolean(
+    run.engineState?.taskExecution ||
+    run.engineState?.workspaceReviewDispatchGeneration !== undefined ||
+    run.worktreeHeadAtDispatch ||
+    run.metrics?.runnerSessionId ||
+    run.agentContexts?.some(
+      (context) =>
+        contextLaunched(context) || context.attemptStartedAt || context.promptDeliveryStartedAt,
+    ),
   );
 }

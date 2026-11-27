@@ -6,19 +6,23 @@ import path from 'node:path';
 
 import {
   createEvidenceReviewModel,
+  type EvidenceReviewPendingFlow,
   type RunEvidenceView,
   runEvidenceView,
   type RunEvidenceViewRun,
 } from '@farmslot/adapter-sdk/evidence';
 import {
   type AcceptanceCriterionRef,
+  isRecipeFlowUpdate,
   isRecord,
+  type RecipeResolutionDocument,
   type RecordedEvidencePackageInput,
   type ReviewDiffSnapshot,
 } from '@farmslot/protocol';
-import { readRecordedEvidencePackage } from '@farmslot/recipe-runner';
+import { readRecordedEvidencePackage, RECIPE_PENDING_FLOW_FILE } from '@farmslot/recipe-runner';
 import { groupRecipeCaptureComparisons } from '@farmslot/recipe-runner/evidence';
 
+import { readContainedJsonArtifact } from './artifact-files.js';
 import { harnessContext } from './context-state.js';
 import { harnessHost } from './host.js';
 import { shellQuoteArg } from './parse-args.js';
@@ -87,21 +91,13 @@ function packageComplete(dir: string): boolean {
 }
 
 /**
- * What the folder says about the run without reading its evidence. The runner writes
- * summary.json before both manifests, so the run is still finishing until the artifact
- * manifest reads whole; an unreadable summary is `unknown`, never `running`.
+ * The artifact manifest closes the package. An unreadable summary remains unknown.
  */
-function runFacts(dir: string): { run: RunEvidenceViewRun; errors: string[] } {
+function runState(dir: string) {
   const errors: string[] = [];
   const summary = readJson(path.join(dir, 'summary.json'), errors);
   const summaryUnreadable = errors.length > 0;
-  const recipe = readJson(path.join(dir, 'recipe.json'), errors);
-  const invocation = readJson(path.join(dir, 'recipe-invocation.json'), errors);
-  const title = isRecord(recipe) ? (text(recipe.title) ?? text(recipe.description)) : undefined;
-  const startedAt =
-    (isRecord(summary) ? text(summary.startedAt) : undefined) ??
-    (isRecord(invocation) ? text(invocation.startedAt) : undefined);
-  const status =
+  const status: RunEvidenceViewRun['status'] =
     summary === undefined && !summaryUnreadable
       ? 'running'
       : !isRecord(summary) || (summary.status !== 'pass' && summary.status !== 'fail')
@@ -109,6 +105,16 @@ function runFacts(dir: string): { run: RunEvidenceViewRun; errors: string[] } {
         : packageComplete(dir)
           ? summary.status
           : 'running';
+  return { summary, status, errors };
+}
+
+function runFacts(dir: string, { summary, status, errors } = runState(dir)) {
+  const recipe = readJson(path.join(dir, 'recipe.json'), errors);
+  const invocation = readJson(path.join(dir, 'recipe-invocation.json'), errors);
+  const title = isRecord(recipe) ? (text(recipe.title) ?? text(recipe.description)) : undefined;
+  const startedAt =
+    (isRecord(summary) ? text(summary.startedAt) : undefined) ??
+    (isRecord(invocation) ? text(invocation.startedAt) : undefined);
   return {
     run: {
       id: path.basename(dir),
@@ -121,12 +127,17 @@ function runFacts(dir: string): { run: RunEvidenceViewRun; errors: string[] } {
         : {}),
     },
     errors,
+    invocation,
   };
 }
 
 /** Whether the page keeps following the folder: until the run finishes, or its summary reads. */
 export function runEvidenceLive(view: Pick<RunEvidenceView, 'run'>): boolean {
-  return view.run?.status === 'running' || view.run?.status === 'unknown';
+  return isLiveRunStatus(view.run?.status);
+}
+
+function isLiveRunStatus(status: RunEvidenceViewRun['status'] | undefined): boolean {
+  return status === 'running' || status === 'unknown';
 }
 
 /** A running run lists the criteria its recipe declares, none judged yet. */
@@ -164,12 +175,78 @@ function recordedComparisonSnapshot(
   return baseSha && headSha ? { baseSha, headSha } : undefined;
 }
 
+async function readPendingFlow(
+  dir: string,
+  invocation: unknown,
+  errors: string[],
+): Promise<EvidenceReviewPendingFlow | undefined> {
+  const maxBytes = 4 * 1024 * 1024;
+  try {
+    const update = await readContainedJsonArtifact<unknown>(
+      dir,
+      RECIPE_PENDING_FLOW_FILE,
+      maxBytes,
+      RECIPE_PENDING_FLOW_FILE,
+    );
+    if (
+      !isRecipeFlowUpdate(update) ||
+      !isRecord(invocation) ||
+      invocation.version !== 1 ||
+      invocation.recipeRunId !== update.recipeRunId ||
+      typeof invocation.recipeDigest !== 'string'
+    ) {
+      errors.push('Pending recipe flow is unavailable: incompatible update or execution identity.');
+      return undefined;
+    }
+    const resolution = await readContainedJsonArtifact<RecipeResolutionDocument>(
+      dir,
+      'recipe-resolution.json',
+      maxBytes,
+      'Recipe resolution',
+    );
+    if (
+      !isRecord(resolution) ||
+      resolution.schema_version !== 1 ||
+      !isRecord(resolution.root) ||
+      resolution.root.digest !== invocation.recipeDigest
+    ) {
+      errors.push('Pending recipe flow is unavailable: incompatible recipe resolution.');
+      return undefined;
+    }
+    // The SDK checks the prepared tree before projecting it.
+    return resolution.flow === undefined ? undefined : { tree: resolution.flow, update };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      errors.push(`Pending recipe flow is unreadable: ${(error as Error).message}`);
+    return undefined;
+  }
+}
+
 /** One run folder as the shared view-model; read-only. */
 export async function readRunEvidenceView(runDir: string): Promise<RunEvidenceView> {
   const dir = path.resolve(runDir);
-  const { run, errors } = runFacts(dir);
+  return projectRunEvidenceFolder(dir, runFacts(dir));
+}
+
+/** Capture the live version before reading the facts that the HTML page will render. */
+export async function readRunEvidencePageSnapshot(
+  runDir: string,
+): Promise<{ view: RunEvidenceView; version: string | null }> {
+  const dir = path.resolve(runDir);
+  const state = runState(dir);
+  const version = isLiveRunStatus(state.status) ? runEvidenceSignature(dir) : null;
+  // A live run can finalize during the signature read. Sample its state again before projection.
+  const facts = runFacts(dir, version === null ? state : runState(dir));
+  return { view: await projectRunEvidenceFolder(dir, facts), version };
+}
+
+async function projectRunEvidenceFolder(
+  dir: string,
+  { run, errors, invocation }: ReturnType<typeof runFacts>,
+): Promise<RunEvidenceView> {
   if (run.status === 'running') {
     // The runner republishes trace.json whole after each step, so its steps so far read live.
+    const pendingFlow = await readPendingFlow(dir, invocation, errors);
     const pendingTrace = readJson(path.join(dir, 'trace.json'), errors);
     const model = createEvidenceReviewModel({
       context: 'artifact',
@@ -177,6 +254,7 @@ export async function readRunEvidenceView(runDir: string): Promise<RunEvidenceVi
       criteria: declaredCriteria(dir, []),
       evidencePending: true,
       ...(pendingTrace === undefined ? {} : { pendingTrace }),
+      ...(pendingFlow ? { pendingFlow } : {}),
       readErrors: errors,
     });
     return runEvidenceView(model, run);
@@ -237,7 +315,11 @@ export function runEvidenceSignature(dir: string): string {
       const file = path.join(folder, entry.name);
       const stat = fs.statSync(file, { throwIfNoEntry: false });
       if (!stat) continue;
-      parts.push(`${prefix}${entry.name}:${stat.size}:${Math.trunc(stat.mtimeMs)}`);
+      const revision =
+        entry.name === RECIPE_PENDING_FLOW_FILE
+          ? `${stat.ino}:${stat.mtimeMs}`
+          : String(Math.trunc(stat.mtimeMs));
+      parts.push(`${prefix}${entry.name}:${stat.size}:${revision}`);
       if (entry.isDirectory() && depth > 0) visit(file, `${prefix}${entry.name}/`, depth - 1);
     }
   };

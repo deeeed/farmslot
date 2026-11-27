@@ -8,7 +8,10 @@ export const RUNNER_OBSERVABILITY_COPY_PATHS = [
   'scripts/runners/pi-farmslot-hook-writer.mjs',
   'scripts/runners/pi-farmslot-providers.mjs',
   'packages/slot-config/src/litellm-model-info.mjs',
+  // The Pi request entry's LiteLLM endpoint digest, read beside pi-farmslot-providers.mjs.
+  'packages/agent-runtime/scripts/litellm-endpoint.cjs',
   'scripts/runners/pi-farmslot-task.mjs',
+  'scripts/runners/pi-image-cap.mjs',
 ];
 export const RUNNER_OBSERVABILITY_SUPPORT_PATHS = [
   'scripts/install-runner-observability.mjs',

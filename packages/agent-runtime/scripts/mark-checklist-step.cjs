@@ -35,6 +35,7 @@ const {
   requireHandoffAcceptanceCriteria,
 } = require('./acceptance-ledger.cjs');
 const {
+  completingParentSignal,
   openSubtaskRefusal,
   openSubtaskUnits,
   runSubtaskCommand,
@@ -47,6 +48,7 @@ const TERMINAL_COMMANDS = new Set(['complete', 'no-change', 'blocked']);
 const NO_CHANGE_REPORT = path.join('artifacts', 'no-change-report.md');
 const LEARNINGS_ARTIFACT = path.join('artifacts', 'learnings.md');
 const ARTIFACT_CONTRACT_SCRIPT = path.resolve(__dirname, 'check-task-artifact-contract.mjs');
+const LEARNINGS_CHECK_SCRIPT = path.resolve(__dirname, 'learnings-check.mjs');
 
 const FLOW_REPORT_ARTIFACTS = {
   qa: ['report.html', 'qa-report.md', 'report.md'],
@@ -86,7 +88,8 @@ function printHelp() {
       '  stays done; only --skip waives one, and the two cannot be given together.',
       'Existing evidence manifests are validated before progress or success marks, with field errors on refusal.',
       'Operator: ./mark wait --who "name" --reason "..."; ./mark resume clears the wait without marking a row.',
-      'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <n> | complete [--report PATH] [--mark-last] | blocked --reason "..." | status.',
+      'Child units: ./mark sub start <id> --step N --from <path|inline:text>, then ./mark sub <id> <rows> | complete [--report PATH] [--mark-last | --rows <rows>] | blocked --reason "..." | status.',
+      '  <rows> is one token: n, or a comma list of n and a-b (2,4-6); one call marks them all.',
       '  While a child owns step N, ./mark N is refused; the child complete ticks it. Run ./mark sub --help for the child verbs.',
       'Terminal:',
       '  ./mark complete [--mark-last] [--no-review] [--skip-learnings] [--skip-checklist]',
@@ -458,10 +461,93 @@ function assertArtifactContract(taskDir, taskPath, contract, terminalCommand) {
     if (result.stdout) process.stdout.write(result.stdout);
     process.exit(result.status ?? 1);
   }
+  // A passing contract can still carry warnings, such as learnings v1 issues.
+  if (result.stderr) process.stderr.write(result.stderr);
+}
+
+/** Learnings v1 issues, shown on any step mark while the worker can still fix the file. */
+function warnLearnings(taskDir) {
+  if (!fs.existsSync(path.join(taskDir, LEARNINGS_ARTIFACT))) return;
+  const result = spawnSync(process.execPath, [LEARNINGS_CHECK_SCRIPT, taskDir], {
+    encoding: 'utf8',
+  });
+  if (result.stderr) process.stderr.write(result.stderr);
+}
+
+// Engine proof attempts that nothing selects are evidence completion never checks and
+// publication cannot use. Completion names the attempt to select; it never picks one.
+function assertRecipeAttemptSelected(taskDir) {
+  const runs = path.join(taskDir, 'artifacts', 'recipe-runs');
+  const directories = (dir) => {
+    try {
+      return fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
+  };
+  const isAttempt = (name) => taskFileExists(runs, path.join(name, 'evidence-manifest.json'));
+  // An attempt is any directory under recipe-runs holding a manifest (`<id>`, the harness's
+  // `attempts/<id>`, or a deeper --artifacts-dir).
+  const attempts = [];
+  const visit = (relative) => {
+    for (const name of directories(path.join(runs, relative))) {
+      const child = relative ? `${relative}/${name}` : name;
+      if (isAttempt(child)) attempts.push(child);
+      visit(child); // a retry may sit inside a failed attempt (recipe-runs/first/retry)
+    }
+  };
+  // Recipe-free tasks load nothing: the selection helper needs the built protocol package.
+  const pointerFile = path.join(taskDir, 'artifacts', 'latest-valid-recipe-run.json');
+  if (!fs.existsSync(pointerFile) && !fs.existsSync(runs)) return;
+  const pointer = fs.existsSync(pointerFile)
+    ? require('./retained-recipe-attempt.cjs').readRecipeAttemptSelection(taskDir)
+    : null;
+  const taskRecipe = taskFileExists(taskDir, 'artifacts/recipe.json');
+  if (pointer && taskRecipe) return;
+  visit('');
+  attempts.sort();
+  if (attempts.length === 0) return;
+  if (pointer) {
+    const selected = `artifacts/${pointer.relativeArtifactRoot}`;
+    console.error(
+      `artifacts/recipe.json is missing, so completion checks no evidence for the selected proof attempt ${selected}. Copy ${selected}/recipe.json to artifacts/recipe.json, then complete again.`,
+    );
+    process.exit(1);
+  }
+  const passed = [];
+  const unreadable = [];
+  for (const name of attempts) {
+    try {
+      const summary = JSON.parse(fs.readFileSync(path.join(runs, name, 'summary.json'), 'utf8'));
+      if (summary.status === 'pass') passed.push(name);
+    } catch (error) {
+      unreadable.push(`recipe-runs/${name}/summary.json (${error.message})`);
+    }
+  }
+  const quote = (value) => `'${value.replaceAll("'", `'\\''`)}'`;
+  const select = (name) =>
+    `node ${quote(path.join(__dirname, 'retained-recipe-attempt.cjs'))} ${quote(taskDir)} ${quote(path.join(runs, name))}`;
+  const next =
+    passed.length === 0
+      ? `${unreadable.length ? 'No passing attempt could be verified' : 'None of them passed'}: rerun the proof with RECIPE_TASK_DIR set in the same command so its passing attempt is selected.`
+      : `Select the proof attempt this task claims, for example:\n  ${select(passed[0])}\nPassing attempts: ${passed.map((name) => `recipe-runs/${name}`).join(', ')}.`;
+  const unread = unreadable.length ? `\nUnreadable summaries: ${unreadable.join('; ')}.` : '';
+  console.error(
+    `artifacts/recipe-runs holds proof attempts (${attempts.map((name) => `recipe-runs/${name}`).join(', ')}) but artifacts/latest-valid-recipe-run.json selects none. ${next}${unread}`,
+  );
+  process.exit(1);
 }
 
 function assertTerminalPackagedEvidence(taskPath, taskDir, terminalCommand) {
   if (terminalCommand === 'blocked') return;
+  // Review flows judge others' evidence; the QA contract selects its own packages.
+  const flowType = loadTerminalContract(taskDir, taskPath)?.flowType;
+  if (terminalCommand === 'complete' && flowType !== 'review' && flowType !== 'qa')
+    assertRecipeAttemptSelected(taskDir);
 
   const contract = loadTerminalContract(taskDir, taskPath);
   if (contract) {
@@ -637,6 +723,63 @@ function resolveTarget(taskPath, stepNumber, markLast) {
 }
 
 const taskDir = path.dirname(signalPath);
+
+/**
+ * The flags of the `mark complete` a final row tells the worker to run, when
+ * `mark N` names that row, every other row is checked, and the signal is
+ * running. Null otherwise.
+ *
+ * Every template ends with a row that tells the worker to run `<task>/mark
+ * complete --mark-last`, on the row's own line or under it, some with
+ * `--checklist`/`--signal` before `complete`. A worker that ticks it with
+ * `mark N` instead claims the run is done, yet the signal stays running and the
+ * gateway waits for it forever (run ee26591f, fix round 2). Re-marking a row
+ * already ticked that way is the same claim, so a worker stuck there recovers
+ * by repeating it. Only the command form counts (`/mark`), so prose such as
+ * "do not mark complete" never routes.
+ */
+function completionRowFlags() {
+  if (stepNumber == null || skipReason !== null) return null;
+  const { items } = parseChecklist(fs.readFileSync(taskPath, 'utf8'));
+  const last = items[items.length - 1];
+  if (!last || last.stepNumber !== stepNumber) return null;
+  if (items.slice(0, -1).some((entry) => !entry.checked)) return null;
+  if (readJson(signalPath).status !== 'running') return null;
+  const instruction = `${last.rawLabel}\n${last.detail ?? ''}`.match(
+    /\/mark(?:[ \t]+--(?:checklist|signal)[ \t]+\S+)*[ \t]+complete\b((?:[ \t]+--[a-z-]+)*)/,
+  );
+  if (!instruction) return null;
+  // The current checklist and signal are passed below, so only the flags are kept.
+  const flags = instruction[1].trim().split(/\s+/).filter(Boolean);
+  return [...new Set(['--mark-last', ...flags])].filter((flag) =>
+    ['--mark-last', '--no-review', '--skip-learnings'].includes(flag),
+  );
+}
+
+const completionFlags = completionRowFlags();
+if (completionFlags) {
+  // Run the instructed command itself, so the claim passes every check
+  // `mark complete` makes. A refusal says why, and marking the row again retries.
+  console.log(
+    `step ${stepNumber} is the completion row: running mark complete ${completionFlags.join(' ')}`,
+  );
+  const completed = spawnSync(
+    process.execPath,
+    [
+      __filename,
+      taskDir,
+      '--checklist',
+      path.basename(taskPath),
+      '--signal',
+      path.basename(signalPath),
+      'complete',
+      ...completionFlags,
+    ],
+    { stdio: 'inherit' },
+  );
+  process.exit(completed.status ?? 1);
+}
+
 function autonomousContract() {
   try {
     return loadTerminalContract(taskDir, taskPath)?.mode === 'autonomous';
@@ -776,6 +919,7 @@ function assertEvidenceManifests() {
 if (stepNumber != null || terminalCommand === 'complete' || terminalCommand === 'no-change') {
   assertEvidenceManifests();
 }
+if (stepNumber != null) warnLearnings(taskDir);
 
 /**
  * A step owned by a child unit belongs to that child until it is settled
@@ -798,9 +942,12 @@ function assertStepNotOwnedBySubtask(stepNumber) {
   process.exit(1);
 }
 
-/** Every registered child must be settled before the parent reports success. */
+/** Every child of the completing checklist must be settled before it reports success. */
 function assertNoOpenSubtasks(command) {
-  const open = openSubtaskUnits(taskDir);
+  const open = openSubtaskUnits(
+    taskDir,
+    completingParentSignal(path.basename(taskPath), path.basename(signalPath)),
+  );
   if (open.length === 0) return;
   console.error(openSubtaskRefusal(open, command));
   process.exit(1);

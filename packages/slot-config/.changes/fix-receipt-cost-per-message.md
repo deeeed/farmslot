@@ -1,0 +1,1 @@
+- A Claude session that switches models is now priced per message at each model's rate, instead of entirely at its first model's rate. A session with tokens on an unpriced model shows no cost.

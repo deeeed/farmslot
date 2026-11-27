@@ -104,5 +104,8 @@ test('a transferred predecessor cannot replay against the successor source', () 
     },
   };
   for (const stepName of ['find-slot', 'write-task', 'prepare', 'dispatch', 'monitor'])
-    assert.match(staticReviewReplayBlock(transferred, { stepName }) ?? '', /successor/);
+    assert.match(
+      staticReviewReplayBlock(transferred, { stepName }) ?? '',
+      /belongs to run successor\./,
+    );
 });

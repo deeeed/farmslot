@@ -80,6 +80,7 @@ interface SessionTotals {
   total_tokens: number;
   cost_usd: number | null;
   cost_reason?: string;
+  provider_reported_cost_usd?: number;
 }
 
 function emptyTotals(): SessionTotals {
@@ -400,9 +401,20 @@ async function summarizeClaude(
 ): Promise<SessionTotals> {
   const totals = emptyTotals();
   let state = emptyIncrementalSessionUsageState();
+  let cost: number | null = 0;
+  let lastModel: string | undefined;
+  let pending: ClaudeTokens | null = null;
   const seen = new Set<string>();
   for await (const obj of safeJsonLines(filePath)) {
     const message = obj.message;
+    const messageModel =
+      obj.type === 'assistant' &&
+      message &&
+      typeof message === 'object' &&
+      'model' in message &&
+      typeof message.model === 'string'
+        ? message.model
+        : undefined;
     if (window) {
       if (
         obj.type !== 'assistant' ||
@@ -416,18 +428,40 @@ async function summarizeClaude(
       if (seen.has(message.id)) continue;
       // Deduplicate before applying the window. A replayed old message is still old work.
       seen.add(message.id);
-      if (!inUsageWindow(usageTimestamp(obj), window)) continue;
+      if (!inUsageWindow(usageTimestamp(obj), window)) {
+        // Earlier work is not this run's, but its model still prices a later model-less message.
+        if (messageModel) lastModel = messageModel;
+        continue;
+      }
     }
-    if (
-      obj.type === 'assistant' &&
-      message &&
-      typeof message === 'object' &&
-      'model' in message &&
-      typeof message.model === 'string' &&
-      totals.model === 'unknown'
-    )
-      totals.model = message.model;
+    if (messageModel && totals.model === 'unknown') totals.model = messageModel;
+    // A replayed record is not new work, and its model must not become the current model.
+    const id = object(message) && typeof message.id === 'string' ? message.id : undefined;
+    const replay = id !== undefined && (state.claudeMessageIds ?? []).includes(id);
+    if (messageModel && !replay) {
+      lastModel = messageModel;
+      // Tokens recorded before any message named its model belong to the first model named.
+      if (pending) {
+        cost = addClaudeCost(cost, messageModel, pending);
+        pending = null;
+      }
+    }
+    const before = state;
     state = applyClaudeAssistantUsage(state, obj);
+    // Price each counted message at its own model, so a session that switches models (a Haiku
+    // sub-agent, an Opus fallback) is not billed entirely at its first model's rate. A message
+    // without a model is priced at the most recent model named.
+    if (state !== before) {
+      const tokens: ClaudeTokens = {
+        input: state.inputTokens - before.inputTokens,
+        output: state.outputTokens - before.outputTokens,
+        cacheWrite: state.cacheCreation - before.cacheCreation,
+        cacheRead: state.cacheRead - before.cacheRead,
+      };
+      const model = messageModel ?? lastModel;
+      if (model) cost = addClaudeCost(cost, model, tokens);
+      else pending = addClaudeTokens(pending, tokens);
+    }
   }
   totals.turns = state.turns;
   totals.input_tokens = state.inputTokens;
@@ -435,17 +469,52 @@ async function summarizeClaude(
   totals.cache_creation = state.cacheCreation;
   totals.cache_read = state.cacheRead;
   totals.total_tokens = state.totalTokens;
-  const prices = Object.entries(CLAUDE_PRICING).find(
-    ([k]) => totals.model !== 'unknown' && totals.model.includes(k),
-  )?.[1];
-  if (prices) {
-    totals.cost_usd =
-      (totals.input_tokens * prices.input) / 1_000_000 +
-      (totals.output_tokens * prices.output) / 1_000_000 +
-      (totals.cache_creation * prices.cache_write) / 1_000_000 +
-      (totals.cache_read * prices.cache_read) / 1_000_000;
-  }
+  // A message with tokens on a model without a listed price leaves the session unpriced; a session
+  // with no tokens yet costs 0 when its model is priced, as before.
+  const modelPriced = Object.keys(CLAUDE_PRICING).some(
+    (k) => totals.model !== 'unknown' && totals.model.includes(k),
+  );
+  // Tokens from a session that never names its model have no price.
+  if (pending && claudeTokenCount(pending) > 0) cost = null;
+  if (cost !== null && (state.totalTokens > 0 || modelPriced)) totals.cost_usd = cost;
   return totals;
+}
+
+interface ClaudeTokens {
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+}
+
+function claudeTokenCount(tokens: ClaudeTokens): number {
+  return tokens.input + tokens.output + tokens.cacheWrite + tokens.cacheRead;
+}
+
+function addClaudeTokens(sum: ClaudeTokens | null, tokens: ClaudeTokens): ClaudeTokens {
+  return sum
+    ? {
+        input: sum.input + tokens.input,
+        output: sum.output + tokens.output,
+        cacheWrite: sum.cacheWrite + tokens.cacheWrite,
+        cacheRead: sum.cacheRead + tokens.cacheRead,
+      }
+    : tokens;
+}
+
+/** Adds these tokens at the model's listed rate; tokens on an unlisted model leave no cost. */
+function addClaudeCost(cost: number | null, model: string, tokens: ClaudeTokens): number | null {
+  if (cost === null || claudeTokenCount(tokens) === 0) return cost;
+  const prices = Object.entries(CLAUDE_PRICING).find(([k]) => model.includes(k))?.[1];
+  if (!prices) return null;
+  return (
+    cost +
+    (tokens.input * prices.input +
+      tokens.output * prices.output +
+      tokens.cacheWrite * prices.cache_write +
+      tokens.cacheRead * prices.cache_read) /
+      1_000_000
+  );
 }
 
 // ─── Codex summarizer ─────────────────────────────────────────────────────────
@@ -612,6 +681,8 @@ interface LiteLlmPricingOptions {
   cacheDir?: string;
   now?: () => number;
   fetchImpl?: typeof fetch;
+  /** Require a direct pricing response and isolate its cache from legacy lookups. */
+  requireDirectResponse?: boolean;
 }
 
 /** A failed refresh leaves work explicitly unpriced, rather than silently using expired prices. */
@@ -630,7 +701,10 @@ export async function loadLiteLlmPrices(
     environment.FARMSLOT_LITELLM_PRICING_CACHE_DIR ??
     path.join(os.homedir(), '.cache', 'farmslot', 'litellm-prices');
   const identity = createHash('sha256').update(`${baseUrl}\n${apiKey}`).digest('hex');
-  const file = path.join(cacheDir, `${identity}.json`);
+  const file = path.join(
+    cacheDir,
+    `${identity}${options.requireDirectResponse ? '-direct' : ''}.json`,
+  );
   const now = (options.now ?? Date.now)();
   try {
     const cached: unknown = JSON.parse(await readFile(file, 'utf8'));
@@ -651,8 +725,13 @@ export async function loadLiteLlmPrices(
     const response = await (options.fetchImpl ?? fetch)(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(5000),
+      ...(options.requireDirectResponse ? { redirect: 'error' } : {}),
     });
-    if (!response.ok) return new Map();
+    if (
+      !response.ok ||
+      (options.requireDirectResponse && (response.redirected || response.url !== new URL(url).href))
+    )
+      return new Map();
     payload = await response.json();
   } catch {
     // Network/JSON failures cannot justify a charge. Callers retain tokens with an unpriced reason.
@@ -677,6 +756,26 @@ export async function loadLiteLlmPrices(
 }
 
 type PiRequestCost = PiModelCostMetadata | null | 'legacy';
+
+/**
+ * Gateway LiteLLM prices bound to the endpoint they were loaded from. A Pi turn is quoted from them
+ * only when the request entry it answers recorded that endpoint; any other turn keeps its tokens and
+ * is unpriced unless its provider reported the charge.
+ */
+export interface LiteLlmRoutePrices {
+  /** `liteLlmEndpointId` of the base URL the prices were loaded from. */
+  endpointId: string;
+  prices: ReadonlyMap<string, PiModelCostMetadata>;
+}
+
+const NO_ROUTE_PRICES: ReadonlyMap<string, PiModelCostMetadata> = new Map();
+
+/** The request entry's provider, model and endpoint digest, keyed by the entry id. */
+interface PiRequestRoute {
+  provider: string;
+  model: string;
+  endpoint?: string;
+}
 
 function piNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -789,6 +888,7 @@ export interface PiAssistantUsage {
   totalTokens: number;
   costUsd: number | null;
   costReason?: string;
+  providerReportedCostUsd?: number;
   model: string | null;
 }
 
@@ -818,13 +918,31 @@ export function readPiAssistantUsage(
     typeof cost === 'object' &&
     'totalFromProvider' in cost &&
     cost.totalFromProvider === true;
-  // Pi initializes this counter to zero even when a stream supplies no usage.
+  const noUsage = inputTokens + outputTokens + cacheCreation + cacheRead === 0;
+  // A request that failed before any response (an HTTP error such as a 520, no content streamed)
+  // billed nothing: it is a zero-cost turn, not an unpriced one that voids the session's cost.
   if (
     !providerCharge &&
-    costUsd === 0 &&
-    inputTokens + outputTokens + cacheCreation + cacheRead === 0
+    noUsage &&
+    // Local providers stay unpriced (below), so this zero is never their cost.
+    !(provider && ['ollama', 'sparks', 'localsparks', 'lmstudio'].includes(provider)) &&
+    'stopReason' in message &&
+    message.stopReason === 'error' &&
+    'content' in message &&
+    Array.isArray(message.content) &&
+    message.content.length === 0
   )
-    costUsd = null;
+    return {
+      inputTokens,
+      outputTokens,
+      cacheCreation,
+      cacheRead,
+      totalTokens: 0,
+      costUsd: 0,
+      model,
+    };
+  // Pi initializes this counter to zero even when a stream supplies no usage.
+  if (!providerCharge && costUsd === 0 && noUsage) costUsd = null;
   if (!providerCharge && pricing !== undefined) {
     if (
       pricing === 'legacy'
@@ -878,8 +996,29 @@ export function readPiAssistantUsage(
       : {}),
     totalTokens: inputTokens + outputTokens + cacheCreation + cacheRead,
     costUsd,
+    ...(providerCharge && costUsd !== null ? { providerReportedCostUsd: costUsd } : {}),
     model,
   };
+}
+
+/**
+ * The gateway prices for one Pi turn under route binding: the route's prices when the request entry
+ * the turn answers (its parent) recorded the route's endpoint for the same provider and model.
+ */
+function piRoutePrices(
+  record: Record<string, unknown>,
+  routes: ReadonlyMap<string, PiRequestRoute>,
+  route: LiteLlmRoutePrices,
+): ReadonlyMap<string, PiModelCostMetadata> {
+  const message = record.message;
+  const request = typeof record.parentId === 'string' ? routes.get(record.parentId) : undefined;
+  return request?.endpoint === route.endpointId &&
+    object(message) &&
+    ['stop', 'length', 'toolUse'].includes(String(message.stopReason)) &&
+    message.provider === request.provider &&
+    message.model === request.model
+    ? route.prices
+    : NO_ROUTE_PRICES;
 }
 
 async function summarizePi(
@@ -887,21 +1026,31 @@ async function summarizePi(
   environment: NodeJS.ProcessEnv,
   liteLlmPrices?: Map<string, PiModelCostMetadata>,
   window?: ParsedSessionUsageWindow,
+  liteLlmRoute?: LiteLlmRoutePrices,
 ): Promise<SessionTotals> {
   const totals = emptyTotals();
   let cost = 0;
   let completeCost = true;
   const prices = new Map<string, PiRequestCost>();
   let gatewayPrices = liteLlmPrices;
+  const routes = new Map<string, PiRequestRoute>();
   const seen = new Set<string>();
   for await (const record of safeJsonLines(filePath)) {
     const quote = piRequestCost(record);
     if (quote) {
       prices.set(quote.key, quote.cost);
+      const data = record.data;
+      if (liteLlmRoute && typeof record.id === 'string' && object(data))
+        routes.set(record.id, {
+          provider: String(data.provider),
+          model: String(data.model),
+          ...(typeof data.endpoint === 'string' ? { endpoint: data.endpoint } : {}),
+        });
       continue;
     }
     const message = record.message;
     if (
+      !liteLlmRoute &&
       message &&
       typeof message === 'object' &&
       'provider' in message &&
@@ -911,7 +1060,11 @@ async function summarizePi(
       gatewayPrices ??= await loadLiteLlmPrices({
         environment,
       });
-    const usage = readPiAssistantUsage(record, prices, gatewayPrices);
+    const usage = readPiAssistantUsage(
+      record,
+      prices,
+      liteLlmRoute ? piRoutePrices(record, routes, liteLlmRoute) : gatewayPrices,
+    );
     if (!usage) continue;
     if (window) {
       if (typeof record.id !== 'string') throw new Error('Run usage requires Pi entry ids');
@@ -926,6 +1079,13 @@ async function summarizePi(
     totals.cache_read += usage.cacheRead;
     totals.total_tokens += usage.totalTokens;
     if (usage.model) totals.model = usage.model;
+    if (
+      !window &&
+      (liteLlmRoute || liteLlmPrices?.size === 0) &&
+      usage.providerReportedCostUsd !== undefined
+    )
+      totals.provider_reported_cost_usd =
+        (totals.provider_reported_cost_usd ?? 0) + usage.providerReportedCostUsd;
     if (usage.costUsd === null) {
       completeCost = false;
       totals.cost_reason = usage.costReason;
@@ -1044,6 +1204,7 @@ async function summarize(
   environment: NodeJS.ProcessEnv,
   liteLlmPrices?: Map<string, PiModelCostMetadata>,
   window?: SessionUsageWindow,
+  liteLlmRoute?: LiteLlmRoutePrices,
 ): Promise<SessionTotals> {
   const parsed = window
     ? {
@@ -1053,7 +1214,8 @@ async function summarize(
     : undefined;
   if (runner === 'claude') return summarizeClaude(sessionPath, parsed);
   if (runner === 'codex') return summarizeCodex(sessionPath, parsed);
-  if (runner === 'pi') return summarizePi(sessionPath, environment, liteLlmPrices, parsed);
+  if (runner === 'pi')
+    return summarizePi(sessionPath, environment, liteLlmPrices, parsed, liteLlmRoute);
   if (window) throw new Error('Runner has no run-window accounting provider');
   if (runner === 'grok') return summarizeGrok(sessionPath, home);
   if (runner === 'cursor') return summarizeCursor(sessionPath);
@@ -1114,6 +1276,8 @@ function formatTotals(totals: SessionTotals): string[] {
   if (totals.cost_usd !== null) {
     lines.push(`cost_usd=${totals.cost_usd.toFixed(10)}`);
   }
+  if (totals.provider_reported_cost_usd !== undefined)
+    lines.push(`provider_reported_cost_usd=${totals.provider_reported_cost_usd.toFixed(10)}`);
   if (totals.cost_reason) lines.push(`cost_reason=${totals.cost_reason}`);
   return lines;
 }
@@ -1583,6 +1747,11 @@ export async function runSessionUsage(params: {
   environment?: NodeJS.ProcessEnv;
   /** Credential-free prices resolved through the owning worker's environment. */
   liteLlmPrices?: Map<string, PiModelCostMetadata>;
+  /**
+   * Endpoint-bound gateway prices for a remote tmux Pi receipt. When set, `liteLlmPrices`
+   * and the environment's LiteLLM lookup are not used for that receipt.
+   */
+  liteLlmRoute?: LiteLlmRoutePrices;
   /** Attribute only usage first recorded during this run. No shared snapshot files. */
   usageWindow?: SessionUsageWindow;
   /** Checklist marks of the run's attempt; `total` splits tool calls, tokens and time at them. */
@@ -1613,7 +1782,15 @@ export async function runSessionUsage(params: {
   const name = await sessionName(sessionFile);
 
   if (action === 'snapshot') {
-    const totals = await summarize(runner, sessionFile, home, environment, params.liteLlmPrices);
+    const totals = await summarize(
+      runner,
+      sessionFile,
+      home,
+      environment,
+      params.liteLlmPrices,
+      undefined,
+      params.liteLlmRoute,
+    );
     const data: SnapshotData = { runner, session: name, path: sessionFile, totals };
     await writeFile(snapshotFile, JSON.stringify(data), 'utf-8');
     return `Snapshot saved: ${name}\n`;
@@ -1631,7 +1808,15 @@ export async function runSessionUsage(params: {
       throw err;
     }
     const snapData = JSON.parse(snapshotRaw) as SnapshotData;
-    const current = await summarize(runner, sessionFile, home, environment, params.liteLlmPrices);
+    const current = await summarize(
+      runner,
+      sessionFile,
+      home,
+      environment,
+      params.liteLlmPrices,
+      undefined,
+      params.liteLlmRoute,
+    );
     const base = snapData.totals;
     const header = [
       `Session:  ${name}`,
@@ -1676,6 +1861,7 @@ export async function runSessionUsage(params: {
       environment,
       params.liteLlmPrices,
       window,
+      params.liteLlmRoute,
     );
     const lines = await sessionLineCount(sessionFile);
     const header = [`Session:  ${name}`, `Runner:   ${runner}`, `Lines:    ${lines}`, `---`];

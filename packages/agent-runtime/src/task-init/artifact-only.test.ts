@@ -44,3 +44,51 @@ test('artifact replay instructions preserve replacement patterns and the heading
   assert.ok(rendered.includes(`This task is an artifact-only comparison replay from \`${base}\`.`));
   assert.ok(rendered.includes(`Inspect \`git diff ${base}\`.`));
 });
+
+// Run 6562483b (pinned startRef): fix-bug step 7 said `git diff "$(git merge-base origin/main HEAD)"`
+// beside a guardrail that forbids `main` as the baseline. The merge base matched the pin only
+// by chance; the instruction must name the replay base.
+test('artifact replay rewrites merge-base-with-main diffs to the replay base', () => {
+  const template = [
+    '# Synthetic task',
+    '',
+    'Review `git diff "$(git merge-base origin/main HEAD)"` and `git status --short`.',
+    'Include untracked files (`git diff "$(git merge-base origin/develop HEAD)" && git status`).',
+    'Count `git log --oneline $(git merge-base origin/main HEAD)..HEAD`.',
+    '',
+  ].join('\n');
+  const pinned = applyArtifactOnlyTaskPolicy(template, { base: 'f6c148ef' });
+  assert.equal(/merge-base/.test(pinned), false, pinned);
+  assert.ok(pinned.includes('Review `git diff f6c148ef` and'));
+  assert.ok(pinned.includes('(`git diff f6c148ef && git status`)'));
+  assert.ok(pinned.includes('`git log --oneline f6c148ef..HEAD`'));
+  const unpinned = applyArtifactOnlyTaskPolicy(template, { base: undefined });
+  assert.ok(unpinned.includes('Review `git diff` and'));
+});
+
+// Dependent commands stay coherent: a variable holding the merge base, a range, and a
+// substitution inside a larger quoted word.
+test('artifact replay keeps merge-base dependent commands runnable', () => {
+  const template = [
+    '# Synthetic task',
+    '',
+    'review_merge_base="$(git merge-base origin/main HEAD)"',
+    'git diff "$review_merge_base"',
+    'git diff "$(git merge-base origin/main HEAD)"..HEAD',
+    'echo "Base $(git merge-base origin/main HEAD)"',
+    'git log $(git merge-base origin/release origin/hotfix)..HEAD',
+    'git diff "$(git merge-base origin/main HEAD)" HEAD -- src',
+    '',
+  ].join('\n');
+  const pinned = applyArtifactOnlyTaskPolicy(template, { base: 'f6c148ef' });
+  assert.ok(pinned.includes('review_merge_base=f6c148ef'));
+  assert.ok(pinned.includes('git diff f6c148ef..HEAD'));
+  assert.ok(pinned.includes('echo "Base f6c148ef"'));
+  assert.ok(
+    pinned.includes('$(git merge-base origin/release origin/hotfix)'),
+    'other merge-bases stay',
+  );
+  const unpinned = applyArtifactOnlyTaskPolicy(template, { base: undefined });
+  for (const line of template.split('\n').slice(2, 8)) assert.ok(unpinned.includes(line), line);
+  assert.ok(pinned.includes('git diff f6c148ef HEAD -- src'), 'a two-revision diff keeps both');
+});

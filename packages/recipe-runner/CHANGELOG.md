@@ -6,11 +6,60 @@ All notable changes to `@farmslot/recipe-runner` (published as `@farmslot/recipe
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.52.5 - 2026-11-25
+
+- mm-harness 0.96.46 consumes the protocol 0.92.1 cohort: recipe-runner 0.52.4, Recipe CLI 0.35.34, agent-runtime 0.51.1, adapter-web 0.19.34 (one copy of each). The recipe HUD works on LavaMoat-scuttled MetaMask Extension dist builds, so Extension full prepares pass the runner smoke again.
+- `ui.wait_for` on a busy page ends with its own timeout instead of a raw `CDP Runtime.evaluate timed out after <N>ms` that read like a CDP failure; the CDP error is kept as `cause`. A page that answered no poll fails with `ui.wait_for timed out: the page answered no poll in <N>ms`, a transport diagnostic rather than a `subject` failure. Click target readiness reports `Click target readiness timed out` when the hover move stalls, too.
+
+## 0.52.4 - 2026-11-25
+
+- Republished in the 25 Nov cohort release with the other @farmslot packages, so an install resolves one copy of each.
+
+## 0.52.3 - 2026-11-25
+
+- mm-harness 0.96.40 keeps recipe-runner 0.52.0 and Recipe CLI 0.35.30 with protocol 0.91.0. The HTML evidence viewer jumps to the active step when live flow data is available.
+- mm-harness 0.96.41 consumes recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0. `logs` exits unless `--follow` is passed.
+- mm-harness 0.96.42 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0. `help` shows a minimal task recipe.
+- mm-harness 0.96.43 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0, and consumes adapter-web 0.19.32: the Terminal login with the injected test wallet starts again.
+- mm-harness 0.96.44 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0, and consumes adapter-web 0.19.33. A locked macOS screen no longer blocks Terminal proofs: with no display chosen, the browser starts headless.
+- mm-harness 0.96.45 keeps recipe-runner 0.52.2 and Recipe CLI 0.35.32 with protocol 0.92.0, and adapter-web 0.19.33. Pinned Mobile Runway provisioning matches builds on native inputs only, can keep a resolved build (`--pin`), and can build and cache the checkout when nothing matches (`--build-fallback`).
+- The CDP HUD renders and clears from its own isolated world. On a MetaMask Extension page under LavaMoat scuttling, main-world globals such as `requestAnimationFrame` throw, so every `app.hud` update failed and an Extension recipe smoke stopped with `APP_LOGIC_FAILURE`. The isolated world shares the page DOM and has real frames and timers, so the HUD still waits for its caption to paint. `CdpWebPage.evaluateInIsolatedWorld` accepts call options (abort signal, and a timeout that covers the whole evaluation: world creation, the evaluation and one retry after a navigation).
+
+## 0.52.2 - 2026-11-23
+
+- State-only proof follows the capture rule: with a frozen review head, `validateRecordedEvidencePackage` reports `comparison-source-mismatch` when a package without before/after captures records a product checkout that is dirty or on another commit. Gates already refuse that finding, so a transcript can no longer prove an older commit.
+- Export `evaluateAtomicValue` and `getJsonPathValue` so hosts read and check asserted values with the runner's own rules.
+
+## 0.52.1 - 2026-11-21
+
+- mm-harness 0.96.39 consumes recipe-runner 0.52.0 and Recipe CLI 0.35.30 with protocol 0.91.0. The HTML evidence viewer shows the active invocation while the recipe HUD is hidden.
+
+## 0.52.0 - 2026-11-21
+
+- Record mm-harness 0.96.37 as a consumer of recipe-runner 0.51.0 and protocol 0.91.0. It uses the structural inventory export and pins recipe-cli 0.35.27 for named recipe identity.
+- mm-harness 0.96.38 keeps recipe-runner 0.51.0 and protocol 0.91.0. It pins Recipe CLI 0.35.29 for grouped action discovery and uses the existing runtime and recipe commands in the local workspace.
+- Index verified recording coverage for evidence readers that seek across many trace pages.
+- Replay the latest HUD state after runtime context resets and reject stale acknowledgements from replaced contexts or sockets.
+- Publish run-local invocation progress independently of HUD for live evidence viewers.
+
+## 0.51.0 - 2026-11-19
+
+- Add a read-only structural inventory export using the resolved recipe dependency closure and shared invocation tree.
+
+## 0.50.0 - 2026-11-19
+
+- Project recorded inclusive/self timing and explicit claim/unassigned rollups from the prepared invocation tree on existing flow updates.
+
+## 0.49.0 - 2026-11-19
+
+- Expose the existing invocation ancestry helper through the portable evidence entry for shared viewer projections.
+
 ## 0.48.0 - 2026-11-18
 
 - Project invocation ancestry once from the prepared flow tree and carry labeled breadcrumbs on existing HUD flow updates, keeping repeated calls distinct.
 - mm-harness 0.96.34 consumes runner 0.48.0 and protocol 0.90.0 for overall HUD progress and invocation ancestry.
 - mm-harness 0.96.35 pins this runner release and protocol 0.90.0.
+- mm-harness 0.96.36 keeps this runner release and protocol 0.90.0, and updates recipe-cli to 0.35.22 for Mobile prepare sequencing.
 
 ## 0.47.0 - 2026-11-18
 

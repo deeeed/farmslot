@@ -110,7 +110,17 @@ mock.module('../runtime/session-usage.js', {
   },
 });
 const core = await import('../core/index.js');
-mock.module('../core/index.js', { namedExports: { ...core, markSlotHeld: async () => {} } });
+const ciWatchHolds: string[] = [];
+mock.module('../core/index.js', {
+  namedExports: {
+    ...core,
+    markSlotHeld: async () => {},
+    markRunSlotHeld: async (slotId: string, _runId: string, phase: string) => {
+      ciWatchHolds.push(`${slotId}:${phase}`);
+      return true;
+    },
+  },
+});
 const fleet = await import('../fleet/state.js');
 mock.module('../fleet/state.js', { namedExports: { ...fleet, loadFleetStatus: async () => ({}) } });
 const publication = await import('./pr-publication.js');
@@ -449,6 +459,26 @@ test('artifact-only finalize does not require branch publication', async () => {
   run.completionPolicy = 'artifact-only';
   await executeFinalizeStep(run.id, context);
   assert.equal(commands.length, 0);
+});
+
+test('artifact-only finalize leaves the slot to its release instead of holding it for ci-watch', async () => {
+  ciWatchHolds.length = 0;
+  run.completionPolicy = 'artifact-only';
+  const result = await executeFinalizeStep(run.id, context);
+  assert.deepEqual(ciWatchHolds, [], 'ci-watch never watches an artifact-only run');
+  const subSteps = result.outputs.subSteps as { name: string; detail: string }[];
+  assert.equal(
+    subSteps.find((step) => step.name === 'slot-lifecycle')?.detail,
+    'Leaving slot to its release (artifact-only)',
+  );
+});
+
+test('a run that is not artifact-only, with no PR yet, still holds its slot for ci-watch', async () => {
+  ciWatchHolds.length = 0;
+  // ci-watch can still find this run's PR, so finalize keeps the slot for it.
+  run.prNumber = undefined;
+  await executeFinalizeStep(run.id, context);
+  assert.deepEqual(ciWatchHolds, [`${run.slotId}:ci-watch`]);
 });
 
 test('Pi completion followed by finalize retains all worker-session tokens and cost', async () => {

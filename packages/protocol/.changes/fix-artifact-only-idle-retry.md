@@ -1,0 +1,1 @@
+- `slotRecoveryEligibility` reports a busy slot's named protection (an unconfirmed closeout, a parked predecessor) before its busy state. A busy slot with no named protection reads "Slot is returning to idle" while an ownerless recovery runs, and "Slot is busy for an unfinished run" otherwise, rather than "Slot is working".

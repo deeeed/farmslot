@@ -1,8 +1,10 @@
 #!/usr/bin/env tsx
 import { RECOVERY_CASES, runRecoveryMatrix } from './recovery.mjs';
 import { runPerformanceCanary } from './performance.mjs';
+import { runNodeHostRefresh } from './node-host-refresh.mjs';
 import { FULLFLOW_CASES, runFullflow } from './fullflow.mjs';
 import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
+import { dismissReaper, runProofs } from './proofs.mjs';
 // Farmslot canary profiles.
 //
 //   canary   after every dev gateway update; zero inference, a few minutes. Against the deployed
@@ -17,13 +19,17 @@ import { FULLFLOW_MODEL } from './fullflow-fixture.mjs';
 //            a restart with the worker or reviewer mid-turn in DISPATCH, MONITOR, REVIEW, its fix
 //            round, HUMAN_GATE prep and FINALIZE, which must leave it alive (no model call: the test
 //            answers the reviewer), and a Pi-runner worker in MONITOR whose model stream drops as
-//            the gateway restarts. --with-review adds one reviewed run (two codex gpt-6-luna calls):
-//            REVIEW and its fix round.
+//            the gateway restarts, and node-host-refresh: a node host left on an older runtime build by
+//            a busy runner across a node restart is refreshed at launch (node-host-refresh.mts).
+//            --with-review adds one reviewed run whose reviewer turns the test answers
+//            (no model call): REVIEW and its fix round. `proofs` runs the opt-in proofs nothing else
+//            runs (proofs.mts): two e2e gateway proofs and the warm-review proof, whose codex reviewer
+//            uses config.json proofs.reviewModel (the only nightly model calls).
 //
 //   recovery  seven concurrent recovery cases on disposable slots, zero inference.
 //             Hard ceiling 120 s including cleanup; cases over 5 s print step attribution.
 //   fullflow  isolated only: real farmslot-farm fix-bug and QA templates on a tiny Node repo.
-//             Pi LiteLLM DeepSeek workers (150 turns), Luna low reviewers; 25/15 min per case.
+//             Pi LiteLLM DeepSeek workers (150 turns), scripted reviewers (no model call); 25/15 min per case.
 //             --model haiku selects Claude instead, for hosts with an existing valid login.
 //             Refreshes package prep, holds publication, cancels, verifies retention, then releases.
 //             Baseline/acceptance refusals fail normally; never publish, post or push.
@@ -52,7 +58,6 @@ import { fileURLToPath } from 'node:url';
 
 import { cleanupOnExit, startReaper } from '../lib/isolated-stack.mjs';
 
-import { REVIEWER } from './fixtures.mjs';
 import {
   RESTART_STEPS,
   runIsolated,
@@ -107,6 +112,8 @@ const config = JSON.parse(readFileSync(new URL('./config.json', import.meta.url)
   modelAllowlist: string[];
   budgetsS: Record<string, number>;
   knownFailures: KnownFailure[];
+  /** The warm-review proof's codex reviewer model (never luna). */
+  proofs: { reviewModel: string };
   live: {
     profileHome: string;
     profile: string;
@@ -128,6 +135,7 @@ const CASES = [
   ...FULLFLOW_CASES,
   ...RECOVERY_CASES,
   'performance',
+  'node-host-refresh',
   'lifecycle',
   'f324',
   'native-check',
@@ -135,6 +143,7 @@ const CASES = [
   'review',
   'review-past-wait',
   'worker-survives',
+  'proofs',
 ] as const;
 const only = arg('only')?.split(',') ?? (fastScripted ? ['lifecycle'] : undefined);
 if (fastScripted && only!.some((name) => name !== 'lifecycle'))
@@ -145,16 +154,18 @@ const available: readonly string[] =
   profile === 'fullflow'
     ? ['marker-contract', ...FULLFLOW_CASES]
     : profile === 'recovery'
-    ? RECOVERY_CASES
-    : profile === 'canary'
-      ? ['lifecycle', 'f324', 'native-check', 'monitor']
-      : [
-          'performance',
-          ...RESTART_STEPS,
-          'review-past-wait',
-          'worker-survives',
-          ...(withReview ? ['review'] : []),
-        ];
+      ? RECOVERY_CASES
+      : profile === 'canary'
+        ? ['lifecycle', 'f324', 'native-check', 'monitor']
+        : [
+            'performance',
+            'node-host-refresh',
+            ...RESTART_STEPS,
+            'review-past-wait',
+            'worker-survives',
+            'proofs',
+            ...(withReview ? ['review'] : []),
+          ];
 for (const name of only ?? [])
   if (!available.includes(name)) throw new Error(`Case ${name} does not run in profile ${profile}`);
 const wants = (name: (typeof CASES)[number]) => !only || only.includes(name);
@@ -190,18 +201,25 @@ const plan =
         survive: wants('worker-survives') ? surviveSteps : [],
       };
 
-// The models those cases would use, checked before anything is dispatched.
-const reviews =
-  plan.review ||
-  plan.reviewPastWait ||
-  plan.survive.some((step) => step === 'review' || step === 'review-fix');
-const fullflowWorker = arg('model') === 'haiku'
-  ? { runner: 'claude', model: 'haiku' }
-  : FULLFLOW_MODEL;
-if (profile === 'fullflow' && arg('model') && !['haiku', FULLFLOW_MODEL.model].includes(arg('model')!))
+// The models those cases would use, checked before anything is dispatched. Every canary reviewer
+// turn is answered by the test or the proxy; only fullflow's worker and the warm-review proof's
+// codex reviewer call a model.
+const fullflowWorker =
+  arg('model') === 'haiku' ? { runner: 'claude', model: 'haiku' } : FULLFLOW_MODEL;
+if (
+  profile === 'fullflow' &&
+  arg('model') &&
+  !['haiku', FULLFLOW_MODEL.model].includes(arg('model')!)
+)
   throw new Error('--model for fullflow must be haiku or litellm/deepseek-v4p1-flash');
 const fullflowModels = profile === 'fullflow' && FULLFLOW_CASES.some(wants);
-const models = profile === 'fullflow' ? (fullflowModels ? [fullflowWorker.model, REVIEWER.model] : []) : ['scripted', ...(reviews ? [REVIEWER.model] : [])];
+const proofs = profile === 'nightly' && wants('proofs');
+const models =
+  profile === 'fullflow'
+    ? fullflowModels
+      ? [fullflowWorker.model]
+      : []
+    : ['scripted', ...(proofs ? [config.proofs.reviewModel] : [])];
 const refused = models.filter((model) => !config.modelAllowlist.includes(model));
 
 await mkdir(evidence, { recursive: true });
@@ -223,6 +241,7 @@ const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: '
 const reaper = startReaper();
 let stopStack: (() => Promise<string[]>) | undefined;
 let stopLive: (() => Promise<string[]>) | undefined;
+let stopProofs: (() => Promise<string[]>) | undefined;
 let markerContract: Promise<void> | undefined;
 const checks: CheckResult[] = [];
 const cleanupErrors: string[] = [];
@@ -252,10 +271,10 @@ const finish = () =>
         profile === 'fullflow'
           ? 'canary-fullflow'
           : profile === 'canary'
-          ? 'canary'
-          : profile === 'recovery'
-            ? 'canary-recovery'
-            : 'canary-nightly',
+            ? 'canary'
+            : profile === 'recovery'
+              ? 'canary-recovery'
+              : 'canary-nightly',
       head,
       startedAt,
       resultsFile,
@@ -276,10 +295,12 @@ const cleanup = cleanupOnExit(async () => {
     cleanupErrors.push(`marker-contract: ${String(error)}`);
   }
   cleanupErrors.push(...((await stopLive?.()) ?? []));
+  const proofErrors = (await stopProofs?.()) ?? [];
+  cleanupErrors.push(...proofErrors);
   const stackErrors = (await stopStack?.()) ?? [];
   cleanupErrors.push(...stackErrors);
   // What could not be stopped stays with the reaper, which tries again when this process exits.
-  if (!stackErrors.length) reaper.done();
+  dismissReaper(reaper, stackErrors, proofErrors);
   // A signal exits right after this, so the report is written here on both paths.
   await finish();
 });
@@ -298,13 +319,19 @@ try {
   }
   if (fullflowModels)
     await runFullflow({
-      root, evidence, log, reaper, onCheck,
+      root,
+      evidence,
+      log,
+      reaper,
+      onCheck,
       worker: fullflowWorker,
       cases: FULLFLOW_CASES.filter(wants),
       ownerTag: process.env.CANARY_STAMP ?? String(process.pid),
       cliSnapshots: expand(arg('cli-snapshots') ?? path.join(evidence, 'cli-snapshots')),
       ...(arg('cli-snapshot') ? { cliSnapshot: expand(arg('cli-snapshot')!) } : {}),
-      onCleanup: (stop) => { stopStack = stop; },
+      onCleanup: (stop) => {
+        stopStack = stop;
+      },
     });
   if (profile === 'recovery')
     await runRecoveryMatrix({
@@ -326,6 +353,20 @@ try {
         root,
         evidence,
         reaper,
+        onCleanup: (stop) => {
+          stopStack = stop;
+        },
+      }),
+    );
+  if (profile === 'nightly' && wants('node-host-refresh'))
+    onCheck(
+      await runNodeHostRefresh({
+        root,
+        evidence,
+        reaper,
+        log,
+        cliSnapshots: expand(arg('cli-snapshots') ?? '~/farmslot-canary/cli-snapshots'),
+        ...(arg('cli-snapshot') ? { cliSnapshot: expand(arg('cli-snapshot')!) } : {}),
         onCleanup: (stop) => {
           stopStack = stop;
         },
@@ -381,6 +422,20 @@ try {
       onCleanup: (stop) => {
         stopStack = stop;
       },
+    });
+  // Last: each proof boots its own isolated gateway or fixture farm.
+  if (proofs)
+    await runProofs({
+      root,
+      evidence,
+      reviewModel: config.proofs.reviewModel,
+      reaper,
+      cleaning: () => cleaning,
+      onCleanup: (stop) => {
+        stopProofs = stop;
+      },
+      log,
+      onCheck,
     });
   completed = !cleaning;
 } catch (error) {

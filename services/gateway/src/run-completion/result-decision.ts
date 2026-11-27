@@ -22,6 +22,7 @@ import {
   type RunGatePrerequisiteReason,
   supersedePendingResultDecisions,
 } from '@farmslot/protocol';
+import { reviewSeverityCounts } from '@farmslot/protocol/review-approval-policy.cjs';
 
 import { findingsDigest } from '../core/findings-digest.js';
 import { ownsRunSlotCleanup, readSlotRow } from '../core/state.js';
@@ -39,7 +40,7 @@ import {
   RunTransitionRefusedError,
 } from '../run-lifecycle/transition-router.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
-import { currentSessionPrincipal } from '../security/work-originator.js';
+import { currentSessionPrincipal, runWithSystemOriginator } from '../security/work-originator.js';
 
 import { retainFinalRunArtifacts } from './output.js';
 
@@ -101,14 +102,15 @@ function refusal(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionPayload
   // refused publish package only says why.
   const step = run.steps.find((entry) => entry.name === stoppedAt && entry.status === 'failed');
   if (!step) return undefined;
-  const readiness = (
-    step.outputs?.gatePrerequisiteRefusal as
-      | { readiness?: { reasons?: RunGatePrerequisiteReason[] } }
-      | undefined
-  )?.readiness;
+  const refused = step.outputs?.gatePrerequisiteRefusal as
+    | {
+        reasons?: RunGatePrerequisiteReason[];
+        readiness?: { reasons?: RunGatePrerequisiteReason[] };
+      }
+    | undefined;
   return {
     message: step.detail ?? run.error ?? 'A completion prerequisite was refused.',
-    reasons: readiness?.reasons ?? [],
+    reasons: refused?.reasons ?? refused?.readiness?.reasons ?? [],
   };
 }
 
@@ -148,6 +150,25 @@ function acceptState(run: Run, stoppedAt: ResultDecisionStop): ResultDecisionAct
     : { id: 'accept-result', available: true, requiresReason: true };
 }
 
+/**
+ * Why review stopped with findings open, so Send back is an informed click (961d55d3):
+ * spent fix rounds, a spent review round budget, the no-verdict cap, or fixing that is
+ * off or stopped. An undelivered fix says so on its own.
+ */
+function reviewStopText(review: Record<string, unknown> | undefined): string {
+  if (review?.verdict !== 'issues' || typeof review.fixDeliveryFailure === 'string') return '';
+  const { retryCount, maxRetries, reason } = review;
+  const because = typeof reason === 'string' ? `: ${reason}` : '.';
+  if (typeof maxRetries === 'number' && maxRetries <= 0)
+    return ' Automatic fix rounds are off for this run.';
+  if (typeof retryCount === 'number' && typeof maxRetries === 'number' && retryCount >= maxRetries)
+    return ' The fix rounds are spent.';
+  if (review.maxRetriesExhausted === true) return ` The review rounds are spent${because}`;
+  return typeof reason === 'string'
+    ? ` Automatic reviews stopped before the fix rounds were spent${because}`
+    : ' Automatic fixing stopped before the fix rounds were spent.';
+}
+
 /** One line on why the run stopped; the findings or refused prerequisites follow it. */
 function decisionReason(
   run: Run,
@@ -167,8 +188,19 @@ function decisionReason(
       typeof review?.fixDeliveryFailure === 'string'
         ? ` The fix was not delivered: ${review.fixDeliveryFailure}`
         : '';
-    if (budgetStop) return undelivered ? `${undelivered.trim()} ${budgetStop}` : budgetStop;
-    return `Review found ${plural(findings?.length ?? 0, 'issue')}${attempts}.${undelivered}`;
+    // A refused launch ran no review; its findings are the last verdict's, perhaps since fixed.
+    const lastReview =
+      review?.findingsFromLastReview === true
+        ? ' The findings listed are from the last review.'
+        : '';
+    if (budgetStop)
+      return `${undelivered ? `${undelivered.trim()} ` : ''}${budgetStop}${lastReview}`;
+    const counts = Object.entries(reviewSeverityCounts(findings ?? []))
+      .filter(([, count]) => count > 0)
+      .map(([severity, count]) => `${count} ${severity}`);
+    const severities = counts.length ? ` (${counts.join(', ')})` : '';
+    const stop = reviewStopText(review);
+    return `Review found ${plural(findings?.length ?? 0, 'issue')}${severities}${attempts}.${stop}${undelivered}`;
   }
   const step = stoppedAt === 'complete' ? 'COMPLETE' : 'FINALIZE';
   const unmet = refused?.reasons.length ?? 0;
@@ -234,7 +266,7 @@ export async function holdRunForResultDecision(
   runId: string,
   stoppedAt: ResultDecisionStop,
   reason: string,
-  options: { settlingStatus?: Run['status']; patch?: Partial<Run> } = {},
+  options: { settlingStatus?: Run['status']; patch?: Partial<Run>; announce?: boolean } = {},
 ): Promise<Run | null> {
   const run = getRun(runId);
   if (!run) return null;
@@ -271,7 +303,9 @@ export async function holdRunForResultDecision(
         },
         ...(options.settlingStatus ? { settlingStatus: options.settlingStatus } : {}),
         persist: (next) => persistRunNow(next, 'held for a result decision'),
-        collaborators: operatorCompletionCollaborators((next) => publishDecision(next, decision)),
+        collaborators: operatorCompletionCollaborators((next) =>
+          publishDecision(next, options.announce === false ? undefined : decision),
+        ),
       }),
     );
     held = result.run;
@@ -381,10 +415,43 @@ export interface ResolveResultDecisionParams {
   reason?: string;
 }
 
+/** The attested adoption receipt an acceptance is bound to, and the generation it was recorded at. */
+export interface AdoptedPublicationAcceptance {
+  principalId: string;
+  receiptId: string;
+  generation: number;
+}
+
+/**
+ * A recorded attested adoption is the person's acceptance of a REVIEW hold: the
+ * publication the gate would have produced already exists (ADR-065 Amendment 2).
+ */
+function adoptedAcceptState(
+  run: Run,
+  stoppedAt: ResultDecisionStop,
+  adopted: AdoptedPublicationAcceptance,
+): ResultDecisionActionState {
+  const unavailableReason =
+    stoppedAt !== 'review'
+      ? 'A refused completion prerequisite cannot be accepted. Send it back once it is fixed, or close it.'
+      : run.engineState?.publishGate?.humanPublicationAdoption?.id !== adopted.receiptId ||
+          (run.engineState?.generation ?? 0) !== adopted.generation
+        ? 'The run changed since the publication was adopted. Refresh the run.'
+        : undefined;
+  return unavailableReason
+    ? { id: 'accept-result', available: false, unavailableReason, requiresReason: true }
+    : { id: 'accept-result', available: true, requiresReason: true };
+}
+
 /** Settle a held run through one result-decision action (ADR-065 Amendment 7). */
 export async function resolveResultDecision(
   params: ResolveResultDecisionParams,
-  options: { releaseSlot?: boolean } = {},
+  options: {
+    releaseSlot?: boolean;
+    adoptedPublication?: AdoptedPublicationAcceptance;
+    /** The engine's one automatic send-back for stale CI receipts. */
+    staleReceiptSendBack?: true;
+  } = {},
 ): Promise<Run> {
   const actionId = params.actionId;
   if (!isResultDecisionActionId(actionId))
@@ -424,7 +491,9 @@ export async function resolveResultDecision(
         actionId === 'send-back'
           ? await sendBackState(run, payload.stoppedAt)
           : actionId === 'accept-result'
-            ? acceptState(run, payload.stoppedAt)
+            ? options.adoptedPublication
+              ? adoptedAcceptState(run, payload.stoppedAt, options.adoptedPublication)
+              : acceptState(run, payload.stoppedAt)
             : { id: actionId, available: true, requiresReason: false };
       if (!state.available) throw new Error(state.unavailableReason ?? 'Action unavailable');
       if (actionId === 'send-back' && payload.stoppedAt === 'review') {
@@ -457,15 +526,27 @@ export async function resolveResultDecision(
       const now = new Date().toISOString();
       const receipt = {
         action: actionId,
-        principalId: currentSessionPrincipal()?.id ?? 'system',
+        principalId:
+          options.adoptedPublication?.principalId ?? currentSessionPrincipal()?.id ?? 'system',
         ...(reason ? { reason } : {}),
         decidedAt: now,
         delivered: payload.delivered,
         findingsDigest: payload.findingsDigest,
       };
       const { bumpRunGeneration, cancelRunEngine } = await import('../run-engine/orchestrator.js');
+      // After the last await: the adopted receipt and generation still hold for this decision.
+      const adopted = options.adoptedPublication;
+      if (adopted) {
+        const latest = getRun(params.runId);
+        if (
+          !latest ||
+          pendingResultDecision(latest)?.id !== decision.id ||
+          !adoptedAcceptState(latest, payload.stoppedAt, adopted).available
+        )
+          throw new Error('The run changed since the publication was adopted. Refresh the run.');
+      }
       cancelRunEngine(params.runId);
-      bumpRunGeneration(params.runId);
+      const settledGeneration = bumpRunGeneration(params.runId);
       const resolveDecisions = (outputReviewAction: string | null) =>
         run.decisions.map((entry) =>
           entry.id === decision.id
@@ -481,6 +562,14 @@ export async function resolveResultDecision(
         const updated = updateRun(params.runId, {
           decisions: resolveDecisions(null),
           resultDecisionReceipt: receipt,
+          ...(options.staleReceiptSendBack
+            ? {
+                engineState: {
+                  ...getRun(params.runId)?.engineState,
+                  staleReceiptSendBack: { decisionId: decision.id, sentAt: now },
+                },
+              }
+            : {}),
           error: undefined,
           // Whatever the run ends as next gets its own analytics record.
           analyticsEmittedAt: undefined,
@@ -513,6 +602,28 @@ export async function resolveResultDecision(
           actor: 'operator',
           patch,
           settlingStatus: 'needs-decision',
+          // An adoption-bound acceptance rechecks its receipt at the mutation boundary.
+          ...(options.adoptedPublication
+            ? {
+                before: [
+                  {
+                    name: 'adopted-publication-current',
+                    severity: 'required' as const,
+                    apply: ({ run: latest }: { run: Run }) => {
+                      if (
+                        pendingResultDecision(latest)?.id !== decision.id ||
+                        latest.engineState?.publishGate?.humanPublicationAdoption?.id !==
+                          options.adoptedPublication!.receiptId ||
+                        (latest.engineState?.generation ?? 0) !== settledGeneration
+                      )
+                        throw new Error(
+                          'The run changed since the publication was adopted. Refresh the run.',
+                        );
+                    },
+                  },
+                ],
+              }
+            : {}),
           persist: (next) => persistRunNow(next, `result decision ${actionId}`),
           collaborators: operatorCompletionCollaborators(async (next) => {
             await publishCompletedRun(next);
@@ -537,6 +648,65 @@ export async function resolveResultDecision(
   return getRun(params.runId) ?? settled;
 }
 
+/** Every refused prerequisite is a stale CI receipt. */
+function onlyStaleReceipts(reasons: readonly RunGatePrerequisiteReason[] | undefined): boolean {
+  return (
+    Boolean(reasons?.length) && reasons!.every((reason) => reason.code === 'deterministic-stale')
+  );
+}
+
+/** A COMPLETE refusal whose every owed check is a stale CI receipt. */
+function staleReceiptRefusal(decision: RunDecision): boolean {
+  const payload = decision.payload;
+  return (
+    payload?.kind === 'result-decision' &&
+    payload.stoppedAt === 'complete' &&
+    onlyStaleReceipts(payload.refusal?.reasons)
+  );
+}
+
+/** COMPLETE's recorded refusal will be sent back at once: its hold needs no card. */
+export function staleReceiptSendBackDue(run: Run): boolean {
+  return (
+    !run.engineState?.staleReceiptSendBack && onlyStaleReceipts(refusal(run, 'complete')?.reasons)
+  );
+}
+
+/**
+ * A stale CI receipt is the worker's to rerun: a held run sends it back once with the
+ * steps to mark again, and any later stale refusal waits for a person (961d55d3).
+ * The marker lives in engineState because a completion replay drops resolved decisions.
+ * Returns false only when its decision is still pending unannounced: a send-back that
+ * failed after resolving re-holds and announces on its own.
+ */
+export async function sendBackStaleReceiptOnce(run: Run): Promise<boolean> {
+  const decision = pendingResultDecision(run);
+  if (!decision || !staleReceiptRefusal(decision) || run.engineState?.staleReceiptSendBack)
+    return false;
+  try {
+    // The engine decides this, not the person whose session started the run.
+    await runWithSystemOriginator(() =>
+      resolveResultDecision(
+        { runId: run.id, decisionId: decision.id, actionId: 'send-back' },
+        { staleReceiptSendBack: true },
+      ),
+    );
+    return true;
+  } catch (error) {
+    console.warn(
+      `[result-decision] automatic send-back for ${run.id.slice(0, 8)} did not complete: ${(error as Error).message}`,
+    );
+    return pendingResultDecision(getRun(run.id) ?? run)?.id !== decision.id;
+  }
+}
+
+/** Announce the run's pending result decision, after a quiet hold the engine did not settle. */
+export async function announcePendingResultDecision(runId: string): Promise<void> {
+  const run = getRun(runId);
+  const decision = run && pendingResultDecision(run);
+  if (run && decision) await publishDecision(run, decision);
+}
+
 /** A recapture replaced the output snapshot the decision was presented on. */
 export class StaleResultDecisionError extends Error {
   constructor() {
@@ -559,6 +729,22 @@ async function sendBack(
     try {
       await sendBackCompletion(run, decisionId, feedback, broadcastEvent, note);
     } catch (error) {
+      // An instruction the worker already has cannot be un-sent. Re-presenting
+      // the refusal it is acting on is what run 1ad82ba1 (audiolab#526) did: the
+      // same stale decision came back 6 s later, and because monitoring never
+      // resumed, the worker's corrected signal 7 minutes later was never read —
+      // the lead recovered it by replaying monitor by hand. So that is what the
+      // engine does now: resume monitoring and let the worker's next signal
+      // settle it, instead of holding the old refusal again.
+      // `sendBackCompletion` resumes monitoring itself for an instruction the
+      // worker may already have, under its own ownership checks. The run is
+      // monitoring again, so it must not be held on the refusal it just left.
+      // Only a plain delivery error means the resume succeeded. An AggregateError
+      // is `sendBackCompletion` reporting that it could NOT resume, so the run
+      // must be held again: round 10 found that treating it as resumed left the
+      // operator with neither a decision nor a Replay action.
+      const { CompletionFeedbackDeliveryError } = await import('./completion-send-back.js');
+      if (error instanceof CompletionFeedbackDeliveryError && error.handedOver) throw error;
       if (isHeldForResultDecision(getRun(run.id) ?? run)) {
         try {
           await holdRunForResultDecision(run.id, stoppedAt, reason);

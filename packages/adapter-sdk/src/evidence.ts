@@ -1,4 +1,11 @@
 /** The shared package-validation surface used by CLI, gateway and both review clients. */
+export {
+  evidenceRecordingRevision,
+  type EvidenceReviewerTimeline,
+  evidenceReviewerTimeline,
+  type EvidenceReviewerTimelineRow,
+  restoreRecordingTimeMs,
+} from './evidence-recording-rows.js';
 export type {
   EvidenceReviewArtifact,
   EvidenceReviewClaim,
@@ -51,6 +58,7 @@ export type {
   RunEvidenceFlowNode,
   RunEvidenceFlowOccurrence,
   RunEvidenceFlowStatus,
+  RunEvidenceInvocationTiming,
 } from './run-evidence-flow.js';
 export type {
   RunEvidenceCriterion,

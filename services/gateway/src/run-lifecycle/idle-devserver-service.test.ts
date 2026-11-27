@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, mock, test } from 'node:test';
 
 import type { ActiveResourcePointer, Run, SlotResource } from '@farmslot/protocol';
@@ -27,9 +30,23 @@ let outsideRepo = false;
 let pagedOwner = false;
 let foreign = false;
 let unhealthyBoot = false;
+let pidFileWatch = false;
+let pidFileAge = 60;
+let pidFilePort: string | undefined = '{{port}}';
+let listenerGroup = '101';
 let closedHistory = false;
 let realStatus = false;
 let promptDelivered = false;
+let slotRunsGone = false;
+let identityReads = 0;
+let identityReadFails = false;
+let siblingStatus: 'running' | 'stopped' | 'unknown' | undefined;
+let serverStatus: 'unknown' | 'error' | undefined;
+let reapFindsNothing = false;
+let simulatorUp = false;
+let reapThrows = false;
+// A real prepare scope token: 32 hex characters.
+let recordedScope = '0123456789abcdef0123456789abcdef';
 const run: Run = {
   id: 'run-a',
   familyId: 'family-a',
@@ -48,16 +65,45 @@ const run: Run = {
   createdAt: '2024-01-01',
   updatedAt: '2024-01-01',
 };
+const devServer = (id: string, status: SlotResource['status']): SlotResource => ({
+  id,
+  status,
+  definition: {
+    type: 'dev-server',
+    label: id,
+    controllable: true,
+    streamable: false,
+    // No boot hook: the cap never stops it, but it may run in the slot's prepare scope.
+    watch: { type: 'port-listen', port: '9100' },
+  },
+});
 const resources = (): SlotResource[] => [
+  ...(siblingStatus ? [devServer('metro', siblingStatus)] : []),
+  ...(simulatorUp
+    ? [
+        {
+          id: 'ios-sim',
+          status: 'running' as const,
+          definition: {
+            type: 'device' as const,
+            label: 'iOS Sim',
+            controllable: true,
+            streamable: true,
+          },
+        },
+      ]
+    : []),
   {
     id: 'server',
-    status: alive ? 'running' : 'stopped',
+    status: serverStatus ?? (alive ? 'running' : 'stopped'),
     definition: {
       type: 'dev-server',
       label: 'Fixture server',
       controllable: true,
       streamable: false,
-      watch: { type: 'port-listen', port: '{{port}}' },
+      watch: pidFileWatch
+        ? { type: 'pid-file', path: '{{runtime_dir}}/next-dev.pid', port: pidFilePort }
+        : { type: 'port-listen', port: '{{port}}' },
       hooks: { boot: 'fixture-prepare', health: 'fixture-health' },
     },
   },
@@ -85,6 +131,16 @@ mock.module('../core/state.js', {
       const applied = predicate(row);
       if (applied) row = { ...row, ...fields };
       return { applied, epoch: row.slot_epoch };
+    },
+    updateSlotStatusIf: async (
+      _slot: string,
+      predicate: (row: Record<string, unknown>) => boolean,
+      fields: Record<string, unknown>,
+    ) => {
+      if (realStatus) return realState.updateSlotStatusIf(_slot, predicate, fields);
+      const applied = predicate(row);
+      if (applied) row = { ...row, ...fields };
+      return applied;
     },
   },
 });
@@ -117,8 +173,33 @@ const fixtureExec = async (_vars: unknown, command: string) => {
     };
   if (realStatus && command.includes('list-panes'))
     return { exitCode: 0, stdout: '%7\n', stderr: '' };
+  if (command.startsWith("f='/fixture/.agent/next-dev.pid'")) {
+    // The PID file stays through a stop; the recorded process is 2 minutes old.
+    if (!alive) return { stdout: '', stderr: '', exitCode: 3 };
+    return {
+      stdout: `101 ${pidFileAge} 02:00 Mon Jan 1 00:00:${foreign ? '02' : '00'} 2024\n`,
+      stderr: '',
+      exitCode: 0,
+    };
+  }
+  if (command.startsWith('for p in $(lsof -nP -iTCP:9001 -sTCP:LISTEN -t')) {
+    return { stdout: alive ? `${listenerGroup}\n` : '', stderr: '', exitCode: 0 };
+  }
   if (command.startsWith('lsof -a'))
     return { stdout: `p101\nn${foreign ? '/foreign' : '/fixture'}\n`, stderr: '', exitCode: 0 };
+  if (command === "cat '/fixture/.agent/preflight.identity' 2>/dev/null; true") {
+    identityReads++;
+    return { stdout: `500\t501\t${recordedScope}\n`, stderr: '', exitCode: 0 };
+  }
+  if (command.startsWith("for f in '/fixture/.agent/preflight.identity'; do")) {
+    identityReads++;
+    if (identityReadFails) return { stdout: '', stderr: 'ssh: connect timed out', exitCode: 255 };
+    return {
+      stdout: `/fixture/.agent/preflight.identity\t500\t501\t${recordedScope}\n`,
+      stderr: '',
+      exitCode: 0,
+    };
+  }
   if (command.startsWith('ps -p'))
     return {
       stdout: `101 101 Mon Jan 1 00:00:${foreign ? '02' : '00'} 2024`,
@@ -249,45 +330,70 @@ mock.module('../runners/session-process.js', {
     probeRunnerDescendantPid: async () => ({ state: unrecordedWorker ? 'present' : 'absent' }),
   },
 });
+function fixtureRuns() {
+  if (slotRunsGone) return [];
+  return [
+    run,
+    ...(closedHistory
+      ? [
+          {
+            ...run,
+            id: 'old-run',
+            status: 'done',
+            agentContexts: [
+              {
+                id: 'primary',
+                role: 'primary',
+                target: {
+                  target: '%7',
+                  paneId: '%7',
+                  session: 'fixture-session',
+                  window: 'worker',
+                },
+              },
+            ],
+          },
+        ]
+      : []),
+  ];
+}
 const realRuns = await import('../runs/store.js');
+const scopeReaps: string[] = [];
+const scopeReapScopes: Array<string | undefined> = [];
+const realPrepareCommand = await import('../methods/slot/prepare-command.js');
+mock.module('../methods/slot/prepare-command.js', {
+  namedExports: {
+    ...realPrepareCommand,
+    reapSlotPrepareScope: async (
+      _vars: unknown,
+      options: { identityPath?: string; expectedScope?: string },
+    ) => {
+      // The reap runs under the upkeep fence: prepare's guard and a releasing mark.
+      assert.equal(activePrepareSlots.has('slot-a'), true, 'prepare guard held');
+      assert.equal(row.phase, 'releasing', 'claims fenced off');
+      if (reapThrows) throw new Error('Prepare scope cleanup failed: group survived');
+      scopeReaps.push(options.identityPath ?? '');
+      scopeReapScopes.push(options.expectedScope);
+      return !reapFindsNothing;
+    },
+  },
+});
 mock.module('../runs/store.js', {
   namedExports: {
     ...realRuns,
     listRuns: (filter?: { limit?: number }) => ({
-      runs:
-        pagedOwner && (filter?.limit ?? 500) <= 500
-          ? []
-          : [
-              run,
-              ...(closedHistory
-                ? [
-                    {
-                      ...run,
-                      id: 'old-run',
-                      status: 'done',
-                      agentContexts: [
-                        {
-                          id: 'primary',
-                          role: 'primary',
-                          target: {
-                            target: '%7',
-                            paneId: '%7',
-                            session: 'fixture-session',
-                            window: 'worker',
-                          },
-                        },
-                      ],
-                    },
-                  ]
-                : []),
-            ],
+      runs: pagedOwner && (filter?.limit ?? 500) <= 500 ? [] : fixtureRuns(),
     }),
+    getAllRuns: () => fixtureRuns(),
   },
 });
 const { withRunTransitionWhileMachineHeld } = await import('./transition-coordinator.js');
-const { reapIdleDevServers, restoreIdleDevServers } = await import('./idle-devserver-service.js');
+const { reapIdleDevServers, reapIdlePrepareScopes, restoreIdleDevServers } =
+  await import('./idle-devserver-service.js');
+const { activePrepareSlots } = await import('../core/native-worker-exclusion.js');
 mock.method(Date, 'now', () => clock);
-const { DEVSERVER_IDLE_LIMIT_MS } = await import('./idle-devserver.js');
+const { DEVSERVER_IDLE_LIMIT_MS, WARM_DEVSERVER_IDLE_LIMIT_MS } =
+  await import('./idle-devserver.js');
 
 beforeEach(() => {
   clock += DEVSERVER_IDLE_LIMIT_MS;
@@ -310,6 +416,21 @@ beforeEach(() => {
   closedHistory = false;
   realStatus = false;
   promptDelivered = false;
+  pidFileWatch = false;
+  pidFileAge = 60;
+  pidFilePort = '{{port}}';
+  listenerGroup = '101';
+  scopeReaps.length = 0;
+  scopeReapScopes.length = 0;
+  slotRunsGone = false;
+  identityReads = 0;
+  identityReadFails = false;
+  siblingStatus = undefined;
+  serverStatus = undefined;
+  simulatorUp = false;
+  reapThrows = false;
+  reapFindsNothing = false;
+  recordedScope = '0123456789abcdef0123456789abcdef';
 });
 
 test('port watch resolves once, expires through the real identity reaper and resumes through boot', async () => {
@@ -322,9 +443,413 @@ test('port watch resolves once, expires through the real identity reaper and res
   await reapIdleDevServers('slot-a');
   assert.equal(stops, 1);
   assert.equal(alive, false);
+  assert.deepEqual(scopeReaps, [], "a run's own preflight scope is its release's to stop");
   await restoreIdleDevServers('slot-a', run.id);
   assert.equal(boots, 1);
   assert.equal(alive, true);
+});
+
+// macpro-mmt-2/mmt-5: after a gateway restart a pid-file dev server has no cached pointer,
+// so it was never reaped and outlived its runs by days.
+test('a pid-file dev server with no cached pointer is still reaped after the idle limit', async () => {
+  pidFileWatch = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  assert.equal(alive, false);
+});
+
+const SCOPE = '0123456789abcdef0123456789abcdef';
+const ownerless = (extra: Record<string, unknown> = {}) => ({
+  current_run_id: null,
+  slot_epoch: epoch,
+  lifecycle: 'ready',
+  phase: null,
+  ...extra,
+});
+const fleetSlot = (extra: Record<string, unknown> = {}) => ({
+  slot: 'slot-a',
+  machine: 'fixture-node',
+  health: { ssh: 'LOCAL', device: '-', devserver: 'OFF', cdp: '-', fixtures: '-' },
+  ...extra,
+});
+const scopePass = () => reapIdlePrepareScopes([fleetSlot()]);
+
+test('a pid-file dev server on an ownerless ready slot is reaped, and its scope with it', async () => {
+  pidFileWatch = true;
+  slotRunsGone = true;
+  row = ownerless({ warm: true });
+  await reapIdleDevServers('slot-a');
+  clock += WARM_DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  // mini-mmt-3: no run owns the slot, so the preflight scope that kept the server goes too.
+  assert.equal(stops, 1);
+  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
+  assert.deepEqual(scopeReapScopes, [SCOPE], 'fenced to the scope read before the stop');
+  assert.equal(row.phase, null, 'the fence is lifted');
+  assert.equal(row.lifecycle, 'ready');
+  assert.equal(row.warm, false, 'nothing is left warm');
+  assert.equal(activePrepareSlots.has('slot-a'), false);
+});
+
+// #2500's parent hold: no current owner while child C is still live on the slot.
+test("an ownerless slot's dev server stops but a live run keeps its scope", async () => {
+  pidFileWatch = true;
+  row = ownerless();
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  assert.deepEqual(scopeReaps, []);
+});
+
+test("one dev server's timeout keeps the scope while a sibling dev server is up", async () => {
+  pidFileWatch = true;
+  slotRunsGone = true;
+  siblingStatus = 'running';
+  row = ownerless();
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  assert.deepEqual(scopeReaps, [], 'the sibling may run in that scope');
+});
+
+// mini-mmt-3: a run-less prepare scope outlives its dev server, which the cap no longer sees.
+test('a run-less scope whose dev server is stopped is timed on the slot row, then stopped', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  const window = row.idle_prepare_scope;
+  assert.deepEqual(window, { scope: SCOPE, epoch, since: clock }, 'the window survives a restart');
+  clock += DEVSERVER_IDLE_LIMIT_MS - 1;
+  await scopePass();
+  assert.deepEqual(row.idle_prepare_scope, window, 'the same window, not restarted');
+  assert.deepEqual(scopeReaps, [], 'kept inside the idle window');
+  clock += 1;
+  await scopePass();
+  assert.deepEqual(scopeReapScopes, [SCOPE], 'fenced to the scope that was timed');
+  assert.equal(row.idle_prepare_scope, null);
+  assert.equal(row.phase, null);
+  assert.equal(activePrepareSlots.has('slot-a'), false);
+  assert.equal(stops, 0);
+});
+
+test('a keep-warm run-less scope gets the warm window, then the slot is no longer warm', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless({ warm: true });
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  assert.deepEqual(scopeReaps, [], 'kept past the plain idle limit');
+  clock += WARM_DEVSERVER_IDLE_LIMIT_MS - DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  assert.deepEqual(scopeReaps, ['/fixture/.agent/preflight.identity']);
+  assert.equal(row.warm, false);
+});
+
+test('a new scope token or slot epoch restarts the window', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  recordedScope = 'fedcba9876543210fedcba9876543210';
+  await scopePass();
+  assert.deepEqual(scopeReaps, [], 'another prepare recorded a new scope');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  row = { ...row, slot_epoch: epoch + 100 };
+  await scopePass();
+  assert.deepEqual(scopeReaps, [], 'a new epoch is a new slot owner history');
+});
+
+test('no scope is read or stopped on a slot that is not quiet and ready', async () => {
+  alive = false;
+  slotRunsGone = true;
+  const blocked: Array<[string, () => void]> = [
+    ['owned', () => (row = ownerless({ current_run_id: run.id }))],
+    ['releasing', () => (row = ownerless({ phase: 'releasing' }))],
+    ['handoff', () => (row = ownerless({ handoff_run_id: 'run-b' }))],
+    ['cleanup', () => (row = ownerless({ cleanup_run_id: 'run-b' }))],
+    ['manual', () => (row = ownerless({ lifecycle: 'manual' }))],
+    ['held', () => (row = ownerless({ lifecycle: 'held' }))],
+    ['disabled', () => (row = ownerless({ lifecycle: 'disabled' }))],
+    ['agent working', () => (row = ownerless({ agent: 'working' }))],
+    ['live run', () => ((slotRunsGone = false), (row = ownerless()))],
+    ['preparing', () => (activePrepareSlots.add('slot-a'), (row = ownerless()))],
+    ['unknown dev server', () => ((serverStatus = 'unknown'), (row = ownerless()))],
+    ['sibling up', () => ((siblingStatus = 'running'), (row = ownerless()))],
+    ['leased', () => ((warmLease = true), (row = ownerless()))],
+  ];
+  for (const [label, setUp] of blocked) {
+    setUp();
+    await scopePass();
+    clock += WARM_DEVSERVER_IDLE_LIMIT_MS;
+    await scopePass();
+    assert.equal(identityReads, 0, label);
+    assert.deepEqual(scopeReaps, [], label);
+    activePrepareSlots.delete('slot-a');
+    slotRunsGone = true;
+    serverStatus = undefined;
+    siblingStatus = undefined;
+    warmLease = false;
+  }
+});
+
+test('ghost, misconfigured and offline slots are skipped without a read', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  for (const skipped of [
+    fleetSlot({ missingFromPool: true }),
+    fleetSlot({ configError: 'bad pool' }),
+    fleetSlot({ health: { ssh: 'FAIL', device: '-', devserver: '-', cdp: '-', fixtures: '-' } }),
+  ])
+    await reapIdlePrepareScopes([skipped]);
+  assert.equal(identityReads, 0);
+});
+
+test('an unreachable machine or a failed reap is warned; the guard and fence are freed', async (t) => {
+  t.mock.method(console, 'info', () => {});
+  t.mock.method(console, 'warn', () => {});
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  identityReadFails = true;
+  await scopePass();
+  assert.equal(row.idle_prepare_scope, undefined, 'nothing read, nothing timed');
+  identityReadFails = false;
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  reapThrows = true;
+  await scopePass();
+  assert.equal(activePrepareSlots.has('slot-a'), false, 'guard freed on throw');
+  assert.equal(row.phase, null, 'fence lifted on throw');
+  assert.equal(row.lifecycle, 'ready');
+});
+
+test('an unrecorded worker pane found at expiry keeps the scope and restarts its window', async () => {
+  alive = false;
+  slotRunsGone = true;
+  unrecordedWorker = true;
+  row = ownerless();
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  assert.deepEqual(scopeReaps, []);
+  assert.deepEqual(row.idle_prepare_scope, { scope: SCOPE, epoch, since: clock });
+});
+
+// A gateway restart or node reconnect reports every resource unknown until its watch answers.
+test('an unreported or failed dev server probe keeps a timed window; only activity clears it', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  const window = row.idle_prepare_scope;
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  for (const status of ['unknown', 'error'] as const) {
+    serverStatus = status;
+    await scopePass();
+    assert.deepEqual(row.idle_prepare_scope, window, `kept while ${status}`);
+  }
+  // Parked-work retention's fence marks a ready slot releasing: no run activity either.
+  serverStatus = undefined;
+  row = { ...row, phase: 'releasing' };
+  await scopePass();
+  assert.deepEqual(row.idle_prepare_scope, window, 'kept through a retention fence');
+  assert.deepEqual(scopeReaps, [], 'but not stopped');
+  row = { ...row, phase: null };
+  await scopePass();
+  assert.deepEqual(scopeReapScopes, [SCOPE], 'the original window, not a new one');
+});
+
+test('a running dev server clears the window even when an unreported one is listed first', async () => {
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  // The unreported sibling is listed before the running server.
+  siblingStatus = 'unknown';
+  alive = true;
+  await scopePass();
+  assert.equal(row.idle_prepare_scope, null);
+});
+
+test('warm clears when the cap stops the last dev server with no recorded scope or nothing left', async () => {
+  pidFileWatch = true;
+  slotRunsGone = true;
+  recordedScope = '';
+  row = ownerless({ warm: true });
+  await reapIdleDevServers('slot-a');
+  clock += WARM_DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  assert.deepEqual(scopeReaps, [], 'no scope recorded');
+  assert.equal(row.warm, false);
+
+  alive = false;
+  recordedScope = SCOPE;
+  reapFindsNothing = true;
+  row = ownerless({ warm: true, slot_epoch: epoch + 1 });
+  await scopePass();
+  clock += WARM_DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  assert.deepEqual(scopeReapScopes, [SCOPE]);
+  assert.equal(row.warm, false, 'a reap that found nothing left still ends warm');
+});
+
+test('a simulator or browser left up does not keep a run-less scope', async () => {
+  alive = false;
+  slotRunsGone = true;
+  simulatorUp = true;
+  row = ownerless();
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  assert.deepEqual(scopeReapScopes, [SCOPE]);
+});
+
+test('a scope stop that keeps failing backs off a full window and is warned per attempt', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  t.mock.method(console, 'info', () => {});
+  alive = false;
+  slotRunsGone = true;
+  row = ownerless();
+  await scopePass();
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  reapThrows = true;
+  await scopePass();
+  assert.deepEqual(row.idle_prepare_scope, { scope: SCOPE, epoch, since: clock }, 'restarted');
+  await scopePass();
+  assert.equal(warn.mock.callCount(), 1, 'no fence again inside the new window');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await scopePass();
+  const warned = warn.mock.calls.map((call) => String(call.arguments[0]));
+  assert.equal(warned.length, 2);
+  assert.match(warned[1]!, /slot-a: Prepare scope cleanup failed: group survived/);
+});
+
+test('a PID file older than the process it names grants no stop authority', async () => {
+  // The recorded PID was reused by a process started after the stale file was written.
+  pidFileWatch = true;
+  pidFileAge = 3 * 24 * 60 * 60;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a watcher-cached PID with a stale PID file grants no stop authority', async () => {
+  // After a restart the node watcher rebuilds the cache from the PID file and liveness alone.
+  pidFileWatch = true;
+  pidFileAge = 3 * 24 * 60 * 60;
+  pointer = { pid: 101 } as ActiveResourcePointer;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a capped pid-file dev server resumes through boot', async () => {
+  pidFileWatch = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+  await restoreIdleDevServers('slot-a', run.id);
+  assert.equal(boots, 1);
+  assert.equal(alive, true);
+});
+
+test('the PID-file probe runs on this host and rejects a file older than its process', async (t) => {
+  const { pidFileProbeCommand, parsePidFileProbe } = await import('./idle-devserver-service.js');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'idle-devserver-pid-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'next-dev.pid');
+  await writeFile(file, `${process.pid}\n`);
+  const probe = () => {
+    const result = spawnSync('bash', ['-c', pidFileProbeCommand(file)], { encoding: 'utf8' });
+    assert.ok(result.status === 0 || result.status === 3, result.stderr);
+    return result.status === 0 ? result.stdout : '';
+  };
+  assert.equal(parsePidFileProbe(probe())?.pid, process.pid);
+  await writeFile(file, `12\n34\n`);
+  assert.equal(parsePidFileProbe(probe()), undefined, 'one decimal PID per file');
+  await writeFile(file, '12 34\n');
+  assert.equal(parsePidFileProbe(probe()), undefined, 'no whitespace inside the PID');
+  await writeFile(file, `  ${process.pid}  \n`);
+  assert.equal(parsePidFileProbe(probe())?.pid, process.pid, 'surrounding whitespace is fine');
+  await writeFile(file, `${process.pid}\n`);
+  const stale = new Date('2020-01-01T00:00:00Z'); // Date.now is mocked in this file.
+  await utimes(file, stale, stale);
+  assert.equal(parsePidFileProbe(probe()), undefined);
+});
+
+test('a pid-file watch that declares no port grants no stop authority after a restart', async () => {
+  pidFileWatch = true;
+  pidFilePort = undefined;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a watcher-cached PID for a pid-file watch without a port keeps its existing cleanup', async () => {
+  // Extension's webpack watcher declares no port; its cached PID still qualifies by checkout cwd.
+  pidFileWatch = true;
+  pidFilePort = undefined;
+  pointer = { pid: 101 } as ActiveResourcePointer;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 1);
+});
+
+test('a recorded PID whose group does not hold the declared listener is preserved', async () => {
+  // A harness can rewrite the PID file with a reused PID; the listener stays elsewhere.
+  pidFileWatch = true;
+  listenerGroup = '555';
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('a pid-file dev server outside the checkout is preserved', async () => {
+  pidFileWatch = true;
+  foreign = true;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  assert.equal(stops, 0);
+});
+
+test('the cap logs one structured line per changed decision', async (t) => {
+  const lines: string[] = [];
+  const info = t.mock.method(console, 'info', (line: unknown) => {
+    if (String(line).startsWith('[idle-devserver] slot=slot-a resource=server '))
+      lines.push(String(line));
+  });
+  await reapIdleDevServers('slot-a');
+  clock++;
+  await reapIdleDevServers('slot-a');
+  clock += DEVSERVER_IDLE_LIMIT_MS;
+  await reapIdleDevServers('slot-a');
+  info.mock.restore();
+  assert.equal(stops, 1);
+  assert.equal(lines.length, 2, lines.join('\n'));
+  assert.match(
+    lines[0]!,
+    /^\[idle-devserver\] slot=slot-a resource=server decision=idle: pid 101 stops after /,
+  );
+  assert.equal(
+    lines[1],
+    '[idle-devserver] slot=slot-a resource=server decision=stopped pid 101 after the idle limit',
+  );
 });
 
 test('a worker active at expiry keeps its server', async () => {
@@ -528,4 +1053,12 @@ test('WARM reservation carries the capped server through the actual claim and re
   const restored = await realState.readSlotRow(vars.slotId);
   assert.equal(restored?.idle_devservers, null);
   assert.equal(restored?.handoff_run_id, 'follow-up');
+});
+
+test('ps etime parses into seconds', async () => {
+  const { elapsedSeconds } = await import('./idle-devserver-service.js');
+  assert.equal(elapsedSeconds('02:00'), 120);
+  assert.equal(elapsedSeconds('01:02:03'), 3723);
+  assert.equal(elapsedSeconds('2-14:35:18'), 2 * 86400 + 14 * 3600 + 35 * 60 + 18);
+  assert.equal(elapsedSeconds('bogus'), undefined);
 });

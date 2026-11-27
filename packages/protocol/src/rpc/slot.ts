@@ -103,9 +103,14 @@ export interface SlotPrepareParams {
   /** Overrides project merge_main_strategy for this prepare (ADR-042). */
   mergeMainStrategy?: MergeMainStrategy;
   forceNewBranch?: boolean;
+  /** The flow this prepare serves. Unset or blank with `runId`/`bindRunId`: the run's flow type. */
   flowType?: string;
+  /** App to select. Unset or blank with `runId`/`bindRunId`: the run's app. */
   app?: string;
-  /** Named domain overlay — forwarded to fixture sync as the `DOMAIN` compose variable. */
+  /**
+   * Named domain overlay — forwarded to fixture sync as the `DOMAIN` compose variable. Unset or
+   * blank with `runId`/`bindRunId`: the run's domain.
+   */
   domain?: string;
   /**
    * Named prepare profile from the project's prepare.profiles (ADR-037).
@@ -119,10 +124,11 @@ export interface SlotPrepareParams {
    */
   vars?: Record<string, string>;
   /**
-   * Optional run id of the run this prepare belongs to. Used to label tmux
-   * prepare windows so an attached operator can correlate the prepare-<label>
-   * window in the slot session to the run-detail page. Free-form when omitted —
-   * a timestamp is used so window names stay unique across concurrent prepares.
+   * Optional run id of the run this prepare belongs to. It labels the tmux prepare windows, so an
+   * attached operator can correlate the prepare-<label> window in the slot session with the
+   * run-detail page; when omitted, a timestamp keeps window names unique across concurrent
+   * prepares. A live run it names also supplies `flowType`, `domain` and `app` where they are
+   * unset, and must belong to the slot's project.
    */
   runId?: string;
   /**
@@ -130,7 +136,8 @@ export interface SlotPrepareParams {
    * to this run after a successful prepare, so resume / recipe-replay target it.
    * Pure association — no pipeline re-drive, unlike run.activateOnSlot. By
    * default the bind only applies to a free or self-owned slot; pass `rebind`
-   * to take over a slot currently bound to a different (non-working) run.
+   * to take over a slot currently bound to a different (non-working) run. Like `runId`, a live run
+   * it names supplies the prepare's flow, domain and app, and must belong to the slot's project.
    */
   bindRunId?: string;
   /**
@@ -169,6 +176,10 @@ export interface SlotPrepareResult {
     resolvedSha: string;
     resolvedAt: string;
   };
+  lockfilesRewritten?: string[];
+  keptBranches?: string[];
+  /** The new run's temp/ clear-out, when prepare ran for a run. */
+  tempScrub?: import('../recipes/step-io.js').TempScrubReceipt;
 }
 
 export interface SlotReleaseParams {

@@ -62,7 +62,12 @@ import {
   measureSlotRetention,
   retainTaskCheckouts,
 } from '../../fleet/slot-scaffolding.js';
-import { cleanupSlotStorage, normalizeTaskRelativeDir } from '../../fleet/slot-storage-cleanup.js';
+import {
+  cleanupSlotStorage,
+  normalizeTaskRelativeDir,
+  parkTaskScratch,
+} from '../../fleet/slot-storage-cleanup.js';
+import { deleteTempScratch, TEMP_TASK_ROOT } from '../../fleet/temp-scrub.js';
 import { publicationStatusForRun } from '../../run-completion/publication-status.js';
 import {
   findActiveGateHeldRunForSlot,
@@ -85,6 +90,11 @@ import {
   recordReleasedCheckout,
 } from '../../run-lifecycle/validation-run-commits.js';
 import {
+  recordCompletionAcceptance,
+  recordGradedOutput,
+  recordParkedRef,
+} from '../../run-traces/output.js';
+import {
   assertNativeSlotReplacementOwner,
   cancelNativeRunWorkers,
   retireNativeWorkersForSlot,
@@ -104,6 +114,7 @@ import {
   listRunsForSlotHistory,
   runsDirectory,
   runSessionArchiveDir,
+  timeRunSlotRelease,
 } from '../../runs/store.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
@@ -213,42 +224,47 @@ export async function slotRelease(
   // this, a release that outlived the stale-fence bound would be reclaimed
   // mid-teardown, now that refresh keeps the fence stamp it ages.
   let recoverFailure: ((confirmed: boolean, reason: string) => Promise<void>) | undefined;
-  const teardown = withTerminalTeardown(
-    params.slotId,
-    () =>
-      slotReleaseImpl(params, emit, options, (recover) => {
-        recoverFailure = recover;
-      }),
-    params.keepWarm ? null : undefined,
-    async (confirmed, error) => {
-      if (!recoverFailure) return;
-      const recover = recoverFailure;
-      try {
-        const reason =
-          error instanceof TerminalTeardownTimeoutError
-            ? 'Cleanup timed out'
-            : `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
-        await withoutCleanupSignal(() => recover(confirmed, reason));
-      } catch (recoveryError) {
-        throw new AggregateError(
-          [error, recoveryError],
-          'Terminal teardown and release-fence settlement failed',
-        );
-      }
-    },
-  )
-    .catch((error: unknown) => {
+  const releaseOnce = () =>
+    withTerminalTeardown(
+      params.slotId,
+      () =>
+        slotReleaseImpl(params, emit, options, (recover) => {
+          recoverFailure = recover;
+        }),
+      params.keepWarm ? null : undefined,
+      async (confirmed, error) => {
+        if (!recoverFailure) return;
+        const recover = recoverFailure;
+        try {
+          const reason =
+            error instanceof TerminalTeardownTimeoutError
+              ? 'Cleanup timed out'
+              : `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+          await withoutCleanupSignal(() => recover(confirmed, reason));
+        } catch (recoveryError) {
+          throw new AggregateError(
+            [error, recoveryError],
+            'Terminal teardown and release-fence settlement failed',
+          );
+        }
+      },
+    ).catch((error: unknown) => {
       // A bound teardown losing its claim is an expected no-op for archive and
       // replay rollback. The new owner's workspace has already been left alone.
       if (error instanceof BoundReleaseClaimLostError)
         return { released: false, reason: error.message };
       throw error;
-    })
-    .finally(() => {
-      if (inflightReleases.get(params.slotId)?.promise === teardown) {
-        inflightReleases.delete(params.slotId);
-      }
     });
+  // A release bound to its run records how long it took on that run.
+  const teardown = (
+    params.expectedRunId
+      ? timeRunSlotRelease(params.expectedRunId, params.slotId, releaseOnce)
+      : releaseOnce()
+  ).finally(() => {
+    if (inflightReleases.get(params.slotId)?.promise === teardown) {
+      inflightReleases.delete(params.slotId);
+    }
+  });
   inflightReleases.set(params.slotId, { key, promise: teardown });
   return teardown;
 }
@@ -908,35 +924,36 @@ async function slotReleaseImpl(
       if (!stopped)
         holdReason = `In-flight prepare did not stop within ${Math.round(stopMs / 1000)}s`;
     }
+    // Each reap below runs even when an earlier one could not finish: a surviving preflight
+    // group must not leave the run's detached browser session and runner runtimes behind
+    // (macpro-mmt-1). The slot is still held with every reason that remains.
     if (!holdReason) {
-      await assertReleaseClaim();
-      try {
+      const reasons: string[] = [];
+      const reap = async (stop: () => Promise<string | null | undefined>) => {
+        await assertReleaseClaim();
+        try {
+          const reason = await stop();
+          if (reason) reasons.push(reason);
+        } catch (error) {
+          reasons.push(error instanceof Error ? error.message : String(error));
+        }
+      };
+      await reap(async () => {
         const stopped = await reapSlotPrepareScope(vars, {
           identityPath: prepareIdentityPath(vars.remoteRepo, projectVars?.runtimeDir ?? ''),
         });
         step('prepare', stopped ? 'Prepare scope stopped' : 'No live prepare scope');
-      } catch (error) {
-        holdReason = error instanceof Error ? error.message : String(error);
-      }
-    }
-    // A run's browser session (browser, wallet host, console collector) is
-    // detached from the agent just killed, so it is stopped here or named.
-    if (!holdReason) {
-      await assertReleaseClaim();
-      try {
-        const stillOwned = async () => {
-          await assertReleaseClaim();
-          return true;
-        };
-        holdReason = await cleanupSlotRunnerRuntimes(vars, { stillOwned });
-        if (!holdReason)
-          holdReason = await reapSlotBrowserSession(vars, {
-            stillOwned,
-            includeSlotProfiles: true,
-          });
-      } catch (error) {
-        holdReason = error instanceof Error ? error.message : String(error);
-      }
+        return null;
+      });
+      // A run's browser session (browser, wallet host, console collector) is
+      // detached from the agent just killed, so it is stopped here or named.
+      const stillOwned = async () => {
+        await assertReleaseClaim();
+        return true;
+      };
+      await reap(() => cleanupSlotRunnerRuntimes(vars, { stillOwned }));
+      await reap(() => reapSlotBrowserSession(vars, { stillOwned, includeSlotProfiles: true }));
+      holdReason = reasons.join('; ') || null;
     }
     if (holdReason) {
       const reason = holdReason;
@@ -978,6 +995,17 @@ async function slotReleaseImpl(
           runId: archiveRunId,
         });
         step('session-archive', archive.summary);
+        // ADR-039 Amendment 10: an unpublished output is graded from the tree before reset.
+        if (!getRun(archiveRunId)?.gradedOutput) {
+          const output = await recordGradedOutput({
+            runId: archiveRunId,
+            vars,
+            source: 'working-tree',
+            ref: null,
+          });
+          if (output) step('graded-output', `Graded diff ${output.sizeBytes} bytes`);
+        }
+        void recordCompletionAcceptance(archiveRunId);
       } catch (err) {
         // Recycle must finish even if the transcript copy fails. The live file is
         // about to disappear with the slot workspace; aborting here would strand
@@ -1020,6 +1048,8 @@ async function slotReleaseImpl(
         discard: namedDiscard,
       })
     : null;
+  // ADR-039 Amendment 10: a graded working tree names the ref its commits were parked under.
+  if (parked && parkOwner) recordParkedRef(parkOwner.id, parked.ref);
   // A recovery started to park a run's commits never resets a checkout that turned out not to be them.
   if (options?.workspaceRecovery?.parkRunId && !parked) {
     await markSlotBusy(params.slotId, 'working');
@@ -1156,9 +1186,37 @@ async function slotReleaseImpl(
       step('clean', `Task dir ${taskDirName}/${taskRel} cleaned`);
     }
 
+    // Before the age prune, so stale scratch is cleared rather than pruned; refused scratch
+    // is kept out of the prune, and the prune skips task dirs when that failed. The temp/tasks
+    // layout deletes scratch, which a later trial must not read; others park it. Full release
+    // only: a preserveAgents release keeps workers that may still own it.
+    let scratchKeep: string[] = [];
+    let scratchFailed = false;
+    if (!preserveAgents) {
+      await assertReleaseClaim();
+      try {
+        const scratch =
+          taskDirName.replace(/\/+$/, '') === TEMP_TASK_ROOT
+            ? await deleteTempScratch(vars)
+            : await parkTaskScratch(vars, projectJson);
+        scratchKeep = scratch.refused.map((entry) => entry.path);
+        for (const entry of 'parked' in scratch ? scratch.parked : [])
+          step('storage-clean', `Parked scratch ${entry.path} at ${entry.to}`);
+        for (const entry of 'deleted' in scratch ? scratch.deleted : [])
+          step('storage-clean', `Deleted scratch ${entry}`);
+        for (const entry of scratch.refused)
+          step('storage-clean', `Left scratch ${entry.path}: ${entry.reason}`);
+      } catch (err) {
+        scratchFailed = true;
+        step('storage-clean', `Scratch clean-up failed: ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
+
     await assertReleaseClaim();
     try {
       const storageCleanup = await cleanupSlotStorage(vars, projectJson, {
+        keepPaths: scratchKeep,
+        skipTaskPrune: scratchFailed,
         // Release keeps warm resources alive, so only prune completed task
         // copies and runtime artifact buckets. Browser profile directories are
         // reserved for explicit slot.cleanup after resource shutdown.

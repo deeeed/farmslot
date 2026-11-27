@@ -7,6 +7,9 @@ import {
   fsyncSync,
   openSync,
   readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { access, realpath, stat } from 'node:fs/promises';
@@ -21,6 +24,7 @@ import type {
   NativeContextCompactionRecord,
   NativeContextCompactionRequest,
   NativeProfileInfo,
+  NativeSessionArchiveReceipt,
   NativeSessionCreateParams,
   NativeSessionEnsureParams,
   NativeSessionEvent,
@@ -256,10 +260,15 @@ interface SessionRecord {
   turnEnd?: { done: Promise<void>; abandon(reason: string): void };
 }
 
+/** How long an idle-runner upgrade fence holds without the stop that should follow it. */
+const IDLE_RUNNER_FENCE_MS = Number(process.env.FARMSLOT_NATIVE_IDLE_FENCE_MS) || 60_000;
+
 /** Runs only inside the local host. Synchronous fsync orders intent before native input. */
 export class NativeSessionManager {
   private sessions = new Map<string, SessionRecord>();
   private upgradePrepared = false;
+  /** Lifts the idle-runner fence; cleared when another fence replaces it, so it lifts only its own. */
+  private idleRunnerFence?: ReturnType<typeof setTimeout>;
   private pendingAdmissions = 0;
 
   /** Atomically fence new admissions only when no live or pre-reservation work exists. */
@@ -276,13 +285,63 @@ export class NativeSessionManager {
       )
         return false;
     this.upgradePrepared = true;
+    // This fence holds for good: an earlier idle-runner fence must not lift it.
+    clearTimeout(this.idleRunnerFence);
+    this.idleRunnerFence = undefined;
     return true;
+  }
+
+  /**
+   * Fence admissions and new input for a refresh that stops idle runners too: a live runner
+   * whose session is idle, with nothing being sent, configured, compacted, finished or asked,
+   * doesn't block it; the supervisor's cleanup stops that runner. Returns the busy sessions
+   * and fences only when there are none.
+   */
+  prepareIdleRunnerUpgrade(): string[] {
+    // Already fenced for good (every runner stopped): nothing to add, and no timer may lift it.
+    if (this.upgradePrepared && !this.idleRunnerFence) return [];
+    const busy: string[] = [];
+    if (this.pendingAdmissions) busy.push(`${this.pendingAdmissions} launch(es) starting`);
+    for (const record of this.sessions.values()) {
+      if (record.info.processStopped) continue;
+      const reason =
+        record.info.state !== 'idle'
+          ? record.info.state
+          : record.sending
+            ? 'sending'
+            : record.configuring
+              ? 'configuring'
+              : record.compacting
+                ? 'compacting'
+                : record.turnEnd
+                  ? 'finishing a turn'
+                  : record.pendingRequests.size
+                    ? 'waiting on a request'
+                    : record.info.approvalModePending
+                      ? 'approval mode change pending'
+                      : undefined;
+      if (reason) busy.push(`${record.info.id} (${reason})`);
+    }
+    if (!busy.length) {
+      this.upgradePrepared = true;
+      // The supervisor's stop follows at once. If it never comes (the stop failed, or the
+      // service that fenced died), the fence lifts so the idle sessions take input again.
+      clearTimeout(this.idleRunnerFence);
+      this.idleRunnerFence = setTimeout(() => {
+        this.idleRunnerFence = undefined;
+        this.upgradePrepared = false;
+      }, IDLE_RUNNER_FENCE_MS);
+      this.idleRunnerFence.unref();
+    }
+    return busy;
   }
 
   private assertAdmissionOpen(): void {
     if (this.upgradePrepared)
       throw Object.assign(
-        new Error('Native host is fenced for a runtime upgrade; new admission is blocked'),
+        new Error(
+          'Native host is fenced for a runtime upgrade; new launches and input are blocked while it refreshes',
+        ),
         { code: NATIVE_HOST_VERSION_SKEW },
       );
   }
@@ -319,59 +378,15 @@ export class NativeSessionManager {
     privateDirectory(root);
     for (const name of readdirSync(root).filter((name) => name.endsWith('.journal'))) {
       const path = join(root, name);
-      const entries = readJournal(path).map((line) => JSON.parse(line) as JournalEntry);
-      // The first durable record precedes process launch; a torn first write owned no input.
-      if (!entries.length) continue;
-      let info: NativeSessionInfo | undefined;
-      let context: Record<string, string> | undefined;
-      const processes = journalProcesses(entries);
-      let pending: NativeSessionEvent[] = [];
-      const commands = new Map<string, StoredCommand>();
-      const events: NativeSessionEvent[] = [];
-      const workerHistory = new NativeWorkerHistory();
-      const conversations = new Map<string, NativeConversationJournal>();
-      for (const entry of entries) {
-        workerHistory.observe(entry);
-        info = entry.info ?? info;
-        context = entry.context ?? context;
-        pending = entry.pending ?? pending;
-        for (const command of entry.commands ?? []) commands.set(command.commandId, command);
-        if (entry.event) events.push(entry.event);
-        if (info)
-          this.updateConversation(
-            {
-              info,
-              events,
-              commands,
-              pendingRequests: new Map(pending.map((event) => [event.request!.id, event])),
-              workerHistory,
-              conversations,
-            },
-            entry.event,
-            Boolean(entry.info || entry.commands || entry.pending),
-          );
+      // A settled session's summary stands in for its journal until something reads it.
+      const dormant = this.dormantRecord(path);
+      if (dormant) {
+        this.sessions.set(dormant.info.id, dormant);
+        continue;
       }
-      if (!info || !context) throw new Error('Native journal has no durable session identity');
-      if (info.executionNodeId !== executionNodeId)
-        throw new Error('Native journal belongs to another execution node');
-      const record: SessionRecord = {
-        workerHistory,
-        conversations,
-        info,
-        context,
-        processes,
-        commands,
-        events,
-        pendingRequests: new Map(pending.map((event) => [event.request!.id, event])),
-        sending: false,
-      };
-      this.persisted.set(record, {
-        info: JSON.stringify(info),
-        context: JSON.stringify(context),
-        processes,
-        pending: JSON.stringify(pending),
-        commands: new Map([...commands].map(([id, command]) => [id, JSON.stringify(command)])),
-      });
+      const record = this.replayJournal(path);
+      // The first durable record precedes process launch; a torn first write owned no input.
+      if (!record) continue;
       this.sessions.set(record.info.id, record);
       if (!['closed', 'failed'].includes(record.info.state)) {
         record.info.state = 'failed';
@@ -384,11 +399,165 @@ export class NativeSessionManager {
           status: 'failed',
           text: record.info.recovery,
         });
-      }
+      } else this.writeSummary(record, path);
     }
+    // A summary whose journal is gone (archived, or removed by hand) is not kept.
+    const summaries = join(this.root, 'summaries');
+    if (existsSync(summaries))
+      for (const name of readdirSync(summaries))
+        if (
+          name.endsWith('.json') &&
+          !existsSync(join(this.root, `${basename(name, '.json')}.journal`))
+        )
+          rmSync(join(summaries, name), { force: true });
     durableWrite(join(this.root, 'metadata.json'), { revision: randomUUID() });
   }
+  /** Records whose journal run retention archived; nothing writes their journal again. */
+  private readonly archived = new WeakSet<SessionRecord>();
+  /** Journals of settled sessions not yet replayed in this host, by record. */
+  private readonly dormant = new WeakMap<SessionRecord, string>();
+  private archiveDirectory(): string {
+    return join(dirname(this.root), 'archive');
+  }
+  private summaryPath(journal: string): string {
+    return join(this.root, 'summaries', `${basename(journal, '.journal')}.json`);
+  }
+  /**
+   * A settled session (closed or failed, its process confirmed stopped, nothing pending) needs
+   * only its identity until something reads it, so host startup records that summary instead of
+   * replaying the whole journal on every start.
+   */
+  private writeSummary(record: SessionRecord, journal: string): void {
+    if (
+      !['closed', 'failed'].includes(record.info.state) ||
+      record.info.processStopped !== true ||
+      record.pendingRequests.size
+    )
+      return;
+    privateDirectory(join(this.root, 'summaries'));
+    durableWrite(this.summaryPath(journal), {
+      version: 1,
+      journalBytes: statSync(journal).size,
+      info: record.info,
+      context: record.context,
+    });
+  }
+  /** The summary record of a settled session whose journal is unchanged since it was written. */
+  private dormantRecord(journal: string): SessionRecord | undefined {
+    const file = this.summaryPath(journal);
+    if (!existsSync(file)) return undefined;
+    let summary: {
+      version?: number;
+      journalBytes?: number;
+      info?: NativeSessionInfo;
+      context?: Record<string, string>;
+    };
+    try {
+      summary = readJson(file);
+    } catch (error) {
+      // An unreadable or torn summary only costs a full replay of its journal, which is the
+      // authority; anything else (a foreign or unsafe file) still stops the host.
+      if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT')
+        return undefined;
+      throw error;
+    }
+    const { info, context } = summary;
+    if (
+      summary.version !== 1 ||
+      summary.journalBytes !== statSync(journal).size ||
+      !info ||
+      !context ||
+      info.id !== basename(journal, '.journal') ||
+      !['closed', 'failed'].includes(info.state) ||
+      info.processStopped !== true
+    )
+      return undefined;
+    if (info.executionNodeId !== this.executionNodeId)
+      throw new Error('Native journal belongs to another execution node');
+    const record: SessionRecord = {
+      workerHistory: new NativeWorkerHistory(),
+      conversations: new Map(),
+      info,
+      context,
+      commands: new Map(),
+      events: [],
+      pendingRequests: new Map(),
+      sending: false,
+    };
+    this.dormant.set(record, journal);
+    return record;
+  }
+  /** Replay a dormant session's journal into its record, the first time anything reads it. */
+  private hydrate(record: SessionRecord): SessionRecord {
+    const journal = this.dormant.get(record);
+    if (!journal) return record;
+    const replayed = this.replayJournal(journal);
+    if (!replayed || replayed.info.id !== record.info.id)
+      throw new Error('Native session journal changed since its summary');
+    this.dormant.delete(record);
+    Object.assign(record, replayed);
+    this.persisted.set(record, this.persisted.get(replayed)!);
+    return record;
+  }
+  /** Replay one journal into a record, recording what was persisted; undefined for an empty one. */
+  private replayJournal(path: string): SessionRecord | undefined {
+    const entries = readJournal(path).map((line) => JSON.parse(line) as JournalEntry);
+    if (!entries.length) return undefined;
+    let info: NativeSessionInfo | undefined;
+    let context: Record<string, string> | undefined;
+    const processes = journalProcesses(entries);
+    let pending: NativeSessionEvent[] = [];
+    const commands = new Map<string, StoredCommand>();
+    const events: NativeSessionEvent[] = [];
+    const workerHistory = new NativeWorkerHistory();
+    const conversations = new Map<string, NativeConversationJournal>();
+    for (const entry of entries) {
+      workerHistory.observe(entry);
+      info = entry.info ?? info;
+      context = entry.context ?? context;
+      pending = entry.pending ?? pending;
+      for (const command of entry.commands ?? []) commands.set(command.commandId, command);
+      if (entry.event) events.push(entry.event);
+      if (info)
+        this.updateConversation(
+          {
+            info,
+            events,
+            commands,
+            pendingRequests: new Map(pending.map((event) => [event.request!.id, event])),
+            workerHistory,
+            conversations,
+          },
+          entry.event,
+          Boolean(entry.info || entry.commands || entry.pending),
+        );
+    }
+    if (!info || !context) throw new Error('Native journal has no durable session identity');
+    if (info.executionNodeId !== this.executionNodeId)
+      throw new Error('Native journal belongs to another execution node');
+    const record: SessionRecord = {
+      workerHistory,
+      conversations,
+      info,
+      context,
+      processes,
+      commands,
+      events,
+      pendingRequests: new Map(pending.map((event) => [event.request!.id, event])),
+      sending: false,
+    };
+    this.persisted.set(record, {
+      info: JSON.stringify(info),
+      context: JSON.stringify(context),
+      processes,
+      pending: JSON.stringify(pending),
+      commands: new Map([...commands].map(([id, command]) => [id, JSON.stringify(command)])),
+    });
+    return record;
+  }
   private persist(record: SessionRecord, event?: NativeSessionEvent): void {
+    // A late event from an archived session's stopped adapter must not recreate its journal.
+    if (this.archived.has(record)) return;
     const previous = this.persisted.get(record) ?? { commands: new Map<string, string>() };
     const info = JSON.stringify(record.info);
     const context = JSON.stringify(record.context);
@@ -556,6 +725,8 @@ export class NativeSessionManager {
         );
       if (!previous || previous.info.ownerPrincipalId !== ownerPrincipalId)
         throw new Error('Resume requires an owned native session');
+      // A resume continues the saved history, so a dormant session is replayed first.
+      this.hydrate(previous);
       if (previous.info.workerManaged && !workerLaunch)
         throw new Error('Worker recovery requires pinned worker controls');
       this.reconcileMissingProcess(previous);
@@ -893,8 +1064,14 @@ export class NativeSessionManager {
     reservedId?: string,
     workerLaunch?: NativeWorkerLaunch,
   ): SessionRecord | undefined {
-    const record = reservedId ? this.sessions.get(reservedId) : undefined;
-    if (!record) return undefined;
+    const found = reservedId ? this.sessions.get(reservedId) : undefined;
+    if (!found) {
+      // A reserved id whose journal run retention archived is never reused for a new session.
+      if (reservedId && existsSync(join(this.archiveDirectory(), `${reservedId}.journal`)))
+        throw new Error('Reserved sessionId belongs to an archived native session');
+      return undefined;
+    }
+    const record = this.hydrate(found);
     if (record.info.ownerPrincipalId !== owner)
       throw new Error('Reserved sessionId belongs to another owner');
     if (record.info.workerLeaseId !== workerLaunch?.leaseId)
@@ -1039,25 +1216,32 @@ export class NativeSessionManager {
   }
 
   /** Explicit operator attestation covers legacy journals without descendant evidence. */
-  confirmWorkerStopped(
+  async confirmWorkerStopped(
     owner: string,
     id: string,
     generation: string,
     leaseId: string,
-  ): NativeSessionInfo {
+  ): Promise<NativeSessionInfo> {
     this.assertWorkerLease(owner, id, generation, leaseId, true);
     const record = this.owned(owner, id);
     if (record.info.processStopped) return this.snapshot(record);
-    const pid = record.info.processPid;
-    if (
-      !pid ||
-      record.adapter ||
-      record.startup ||
-      !['closed', 'failed'].includes(record.info.state) ||
-      this.recordedLeaderAlive(record) ||
-      this.recordedGroupAlive(record)
-    )
-      throw new Error('Stop confirmation requires an absent native process and process group');
+    const adapter = record.adapter;
+    const absent = 'Stop confirmation requires an absent native process and process group';
+    const terminal = () =>
+      !!record.info.processPid && ['closed', 'failed'].includes(record.info.state);
+    if (!terminal()) throw new Error(absent);
+    if (adapter || record.startup) {
+      // Only the process owner has the descendants discovered during termination.
+      const observedExit =
+        typeof record.info.exitCode === 'number' || typeof record.info.signal === 'string';
+      if (!observedExit || !(await adapter?.verifyStoppedProcessTree?.())) throw new Error(absent);
+      this.assertWorkerLease(owner, id, generation, leaseId, true);
+      if (this.owned(owner, id) !== record || record.adapter !== adapter || !terminal())
+        throw new Error(absent);
+      if (record.info.processStopped) return this.snapshot(record);
+    }
+    if (this.recordedLeaderAlive(record) || this.recordedGroupAlive(record))
+      throw new Error(absent);
     if (record.processes?.some((child) => processIdentityAlive(child.pid, child.identity)))
       throw new Error('An observed native descendant is still alive; stop confirmation is refused');
     this.append(record, {
@@ -1099,7 +1283,8 @@ export class NativeSessionManager {
     const marker = existsSync(markerPath)
       ? readJson<{ owner: string; leaseId: string; generation?: string }>(markerPath)
       : undefined;
-    const record = this.sessions.get(id);
+    const found = this.sessions.get(id);
+    const record = found && this.hydrate(found);
     if (resumeCommandId !== undefined) {
       if (!generation)
         throw new Error('Native recovery cancellation requires its source generation');
@@ -1374,7 +1559,7 @@ export class NativeSessionManager {
       throw Object.assign(new Error('Native session not found for this principal'), {
         code: 'NOT_FOUND',
       });
-    return record;
+    return this.hydrate(record);
   }
   private owned(owner: string, id: string, observations?: ProcessMetadataCache): SessionRecord {
     const record = this.sessionRecord(owner, id);
@@ -1502,6 +1687,61 @@ export class NativeSessionManager {
       },
     };
   }
+  /**
+   * Move settled sessions' journals out of startup replay into `archive/` beside this root, for
+   * run retention. Only a closed or failed session whose process is confirmed stopped, with no
+   * pending request, open input or conversation listener, is archived; any other is kept with
+   * its reason. Idempotent: an archived session reports so again.
+   */
+  archiveSessions(owner: string, ids: readonly string[]): NativeSessionArchiveReceipt[] {
+    const archive = this.archiveDirectory();
+    return ids.map((sessionId): NativeSessionArchiveReceipt => {
+      const record = this.sessions.get(sessionId);
+      if (!record) {
+        return existsSync(join(archive, `${sessionId}.journal`))
+          ? { sessionId, outcome: 'already-archived' }
+          : { sessionId, outcome: 'missing' };
+      }
+      if (record.info.ownerPrincipalId !== owner)
+        return { sessionId, outcome: 'kept', reason: 'owned by another principal' };
+      const reason = !['closed', 'failed'].includes(record.info.state)
+        ? `state ${record.info.state}`
+        : !record.info.processStopped && (record.adapter || record.startup)
+          ? 'live process'
+          : record.info.processPid && !record.info.processStopped
+            ? 'process stop unconfirmed'
+            : record.pendingRequests.size ||
+                record.sending ||
+                record.configuring ||
+                record.compacting ||
+                record.turnEnd
+              ? 'input in progress'
+              : [...record.conversations.values()].some((journal) => journal.listenerCount)
+                ? 'conversation open'
+                : undefined;
+      if (reason) return { sessionId, outcome: 'kept', reason };
+      const destination = join(archive, `${sessionId}.journal`);
+      // An archived journal is never replaced, even by a later session under the same id.
+      if (existsSync(destination)) return { sessionId, outcome: 'kept', reason: 'archive exists' };
+      privateDirectory(archive);
+      const journal = join(this.root, `${sessionId}.journal`);
+      renameSync(journal, destination);
+      for (const directory of [this.root, archive]) {
+        const fd = openSync(directory, 'r');
+        try {
+          fsyncSync(fd);
+        } finally {
+          closeSync(fd);
+        }
+      }
+      this.archived.add(record);
+      this.sessions.delete(sessionId);
+      this.dormant.delete(record);
+      this.persisted.delete(record);
+      rmSync(this.summaryPath(journal), { force: true });
+      return { sessionId, outcome: 'archived' };
+    });
+  }
   list(owner: string): NativeSessionInfo[] {
     return [...this.sessions.values()]
       .filter((record) => record.info.ownerPrincipalId === owner)
@@ -1571,6 +1811,7 @@ export class NativeSessionManager {
     id: string,
     mode: NativeApprovalMode,
   ): Promise<NativeSessionInfo> {
+    this.assertAdmissionOpen();
     if (mode !== 'ask' && mode !== 'bypass') throw new Error('Unknown native approval mode');
     const record = this.owned(owner, id);
     this.assertUnmanagedSession(owner, id);
@@ -1611,6 +1852,7 @@ export class NativeSessionManager {
     leaseId: string,
     request: NativeContextCompactionRequest,
   ): Promise<NativeContextCompactionRecord> {
+    this.assertAdmissionOpen();
     this.assertWorkerLease(owner, id, generation, leaseId);
     const record = this.owned(owner, id);
     this.assertAccountCurrent(record);
@@ -1840,6 +2082,8 @@ export class NativeSessionManager {
         ...(existing.steered ? { steered: true } : {}),
       };
     }
+    // A fenced host takes no new input; a replay of a command it already has is answered above.
+    this.assertAdmissionOpen();
     if (
       record.compacting ||
       record.info.contextCompactions?.some((row) => ['pending', 'unconfirmed'].includes(row.status))
@@ -1904,6 +2148,9 @@ export class NativeSessionManager {
       record.sending
     )
       return this.send(owner, id, commandId, text);
+    // A replay goes through send above, which answers it. Defensive: a fence is only taken with
+    // no session running, and steering needs a running one.
+    this.assertAdmissionOpen();
     this.assertAccountCurrent(record);
     const command: StoredCommand = {
       text,

@@ -6,7 +6,7 @@
 
 ### Early no-change exit (before code/PR mutations)
 
-After `mark 1`, and not before it, decide whether a code fix is still needed. If the bug is already fixed or cannot be reproduced in a valid target environment, do not create a fake commit/PR. Write `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md` (one bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none), then:
+After `mark 1`, and not before it, decide whether a code fix is still needed. If the bug is already fixed or cannot be reproduced in a valid target environment, do not create a fake commit/PR. Write `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md` (in Learnings v1, as step 19 describes), then:
 
 ```bash
 {{TASK_DIR}}/mark no-change --reason "<one sentence>"
@@ -54,23 +54,23 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
 - [ ] **7. Implement the fix** — make the minimal change needed. No refactoring, no cleanup beyond the fix.
 - [ ] **8. Changed-file CI** [DETERMINISTIC: ci.local_check] - call `{{TASK_DIR}}/mark 8`. The engine runs the frozen command and records its receipt. Read the retained failure log and fix failures, then repeat this mark. Do not select or launch tests, builds, lint or validation scripts yourself.
   Run the step 4 recipe separately when one was authored; retain its result.
-- [ ] **9. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only: skip and state why.
+- [ ] **9. PR-grade proof run** (only when step 3 listed `command-center` or `companion-device`) [OPTIONAL: step 3 listed no UI or device surface, or no project action exercises the bug] — Command Center: slow + video. Companion device: real sim/device screenshots (not catalog-only). Gateway-cli-only, or no project action exercises the bug: skip with `{{TASK_DIR}}/mark 9 --skip "<why>"`.
   ```bash
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
-- [ ] **10. Evidence** — inspect the selected attempt’s engine-derived screenshots/video when step 3 listed a UI/device surface. Empty media is not visual proof.
-- [ ] **11. Recipe proof + acceptance review** — follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. Retain recipe results and resolve refused checks before continuing.
+- [ ] **10. Evidence** [OPTIONAL: step 3 listed no UI or device surface, or no project action exercises the bug] — inspect the selected attempt’s engine-derived screenshots/video when step 3 listed a UI/device surface. Empty media is not visual proof.
+- [ ] **11. Recipe proof + acceptance review** — follow TASK.md for task-bound recipe proof, registered criteria, coverage and completion commands. The proof this task claims is the attempt selected in `artifacts/latest-valid-recipe-run.json`; a task-root `evidence-manifest.json` is optional and only declares extra evidence. Retain recipe results and resolve refused checks before continuing.
 - [ ] **12. Review** — read the diff (`git diff`) against `{{review_quality_path}}`.
 - [ ] **13. Blast radius** — list every caller, shared-state reader/writer, schema/doc, and test that
       references what you changed; verify each and fix sibling instances in the same pass.
-- [ ] **14. Extend + re-run the recipe for anything changed since the baseline** — each fix needs a node
-      proving its claim, then a full re-run; act on what it shows. Prove each new node can fail. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
-      Update affected AC verdicts and regenerate `recipe-coverage.md` from `ac render` after the final proof run.
+- [ ] **14. Extend + re-run the recipe for anything changed since the baseline** — when step 4 authored a recipe, each fix needs a node
+      proving its claim, then a full re-run; act on what it shows. Prove each new node can fail. Always check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
+      Update affected AC verdicts and, with a recipe, regenerate `recipe-coverage.md` from `ac render` after the final proof run.
 
 - [ ] **15. Commit** — single commit following the repo's Lore commit protocol.
 - [ ] **16. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
 - [ ] **17. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.
-- [ ] **18. Optional external evidence declarations** — recipe evidence is engine-derived. Only non-recipe captures and comparison labels need the task-root declaration below. Recipe references must point into the selected attempt.
+- [ ] **18. Optional external evidence declarations** [OPTIONAL: no external captures or comparison labels] — recipe evidence is engine-derived. Only non-recipe captures and comparison labels need the task-root declaration below. Recipe references must point into the selected attempt.
   ```json
   {
     "version": 1,
@@ -94,6 +94,6 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
     }
   }
   ```
-- [ ] **19. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
+- [ ] **19. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Write it in Learnings v1: first line `# Learnings v1`, then `- None` when there is none, or one entry per failure in this run that is likely to recur: `- <kind>: <one-line lesson>` with two-space-indented fields. Kinds: `add`, `edit` or `retire` for a review rule (`evidence: <repo> <path>:<line>`; `family: <file>.md#<section>`, or `examined: <file>.md#<section>, ...` for an add; `confirmation: run <other run id> <path>:<line>`, `fix <owner/repo#n>` or `none`, where this run's own report or review is `none`), `recipe-broken` or `recipe-missing` for a recipe, `workflow` for a template, tool or setup step. `./mark` prints the full format and warns on a malformed file.
 - [ ] **20. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, pr-description, checklist, artifact contract)
       **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.

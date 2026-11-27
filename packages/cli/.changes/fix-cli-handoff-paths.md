@@ -1,0 +1,3 @@
+- `farmslot runs traces export` runs from the installed CLI. It no longer loads the handoff scrub patterns, whose `dist/` the install never builds (it failed with `ERR_MODULE_NOT_FOUND`).
+- Trace export applies a basic scrub: a small fixed set of obvious secret shapes over text, in time linear in the input. Image payloads are kept. Full scanning is an optional scan hook, `FARMSLOT_TRACE_SCAN_HOOK`, a command run on the written export that can redact files or refuse the export.
+- In the legacy layout the installed CLI refuses an export unless `FARMSLOT_ROOT` (or `FARMSLOT_PROJECTS_DIR` and `FARMSLOT_POOL_DIR`) names the gateway checkout's projects and pool.

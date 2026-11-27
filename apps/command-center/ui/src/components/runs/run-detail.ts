@@ -6,6 +6,7 @@ import {
   type EvidenceReviewModel,
   readEvidenceReviewReport,
   runEvidencePending,
+  runEvidenceView,
 } from '@farmslot/adapter-sdk/evidence';
 import {
   buildRunResolveDecisionParams,
@@ -47,6 +48,7 @@ import './run-pipeline-mini.js';
 import './run-tag-editor.js';
 import '../shared/evidence-reviewer.js';
 import '../shared/media-lightbox.js';
+import './composed-evidence-view.js';
 import '../shared/step-artifacts.js';
 import '../workspace/review-workspace.js';
 import '../workspace/ready-workspace.js';
@@ -74,12 +76,14 @@ import {
   emptyArtifactBrowserView,
   hasArtifactBrowserView,
 } from '../shared/artifact-browser-model.js';
+import { evalRunBadgeStyles } from '../shared/eval-run-badge.js';
 import { type EvidenceReviewerSelection } from '../shared/evidence-reviewer.js';
 import { evidenceReviewerSelection } from '../shared/evidence-reviewer-recording.js';
 import {
   type EvidenceReviewerView,
   evidenceReviewerViewFromHash,
   evidenceReviewerViewKey,
+  reviewLinkMatchesRun,
   writeEvidenceReviewerHash,
 } from '../shared/evidence-reviewer-url-state.js';
 import { subscribeFileTransferStore } from '../shared/file-transfer-progress-store.js';
@@ -95,6 +99,11 @@ import { recipeRunArtifactUrl, runArtifactUrl } from '../workspace/workspace-art
 import type { WorkspaceEvidenceComparison } from '../workspace/workspace-evidence-preview.js';
 
 import { CIWatchPokeController } from './ci-watch-actions.js';
+import {
+  type ComposedEvidencePosition,
+  composedEvidencePositionFromHash,
+  composedEvidenceRecipeGroup,
+} from './composed-evidence-model.js';
 import { LiveArtifactRefresh, liveArtifactRefreshActive } from './run-artifact-live-refresh.js';
 import {
   checkInteractiveHandoffSignal,
@@ -121,6 +130,7 @@ import {
   pendingCITimeoutDecision,
   persistedCiStatusFromRun,
   readCiWatchOutputs,
+  recipeReviewLinkFailure,
   resolveEvidenceLightboxLink,
   runArtifactsWithOperationLogs,
   runDetailDesiredRecipeRunId,
@@ -217,6 +227,8 @@ export class RunDetail extends RunDetailState {
   private _viewVersion = 0;
   private _viewConnectionId?: string | number;
   private _recipeRequestedId = '';
+  private _restoredRecipeCall = '';
+  private _linkRecipeOverride = '';
   private readonly detailQuery = new ResourceQueryController<RunGetResult>(this, (state) => {
     this._runObservation = state;
   });
@@ -310,6 +322,11 @@ export class RunDetail extends RunDetailState {
         comparisonSnapshot: this._recordedEvidence?.comparisonSnapshot,
         criterionSourceUrl: this.run?.links?.find((link) => link.label === 'Jira')?.url,
         package: this._recordedEvidence?.input,
+        // Saved recipe reads have no resource stamp. Hold only a gateway-observed graph.
+        pendingFlow:
+          !output && this.recipeQuery.belongsToWorkspace && this._recipeObservation.resourceState
+            ? this._recipeObservation.data?.pendingFlow
+            : undefined,
         contractVersion: this._recordedEvidence?.contractVersion,
         claimOverrideAuthority: this._recordedEvidence?.claimOverrideAuthority,
         visualReviewAuthority: this._recordedEvidence?.visualReviewAuthority,
@@ -326,7 +343,7 @@ export class RunDetail extends RunDetailState {
       });
     }
   }
-  static styles = runDetailStyles;
+  static styles = [runDetailStyles, evalRunBadgeStyles];
 
   private readonly _ciPoke = new CIWatchPokeController((state) => {
     this._ciPoking = state.poking;
@@ -435,6 +452,8 @@ export class RunDetail extends RunDetailState {
       changed.has('run') ||
       changed.has('taskProgress') ||
       changed.has('selectedStepProgress') ||
+      changed.has('_recipeObservation') ||
+      changed.has('_recordedEvidence') ||
       changed.has('acceptanceStatus') ||
       changed.has('acceptanceCriteria') ||
       changed.has('acceptanceEvidenceLinks') ||
@@ -960,6 +979,8 @@ export class RunDetail extends RunDetailState {
 
   private _resetRecipeRuns(): void {
     this._recipeRequestedId = '';
+    this._restoredRecipeCall = '';
+    this._linkRecipeOverride = '';
     this._pendingRecipeRunSelectionId = '';
     this.recipeQuery.setQuery(undefined);
     this._recipeRuns = [];
@@ -993,6 +1014,26 @@ export class RunDetail extends RunDetailState {
 
   private _acceptRecipeObservation(state: ResourceQueryState<RunRecipeRunsForRunResult>): void {
     const run = this.run;
+    const outputDecision = run ? pendingOutputReview(run) : undefined;
+    const position =
+      run && !outputDecision ? composedEvidencePositionFromHash(run.id, location.hash) : null;
+    const reviewGroup =
+      run && !outputDecision && !runMountsPublicationGate(run) && isRunDetailHashForRun(run.id)
+        ? evidenceReviewerViewFromHash()?.recipeGroupId
+        : undefined;
+    if (run && !position && !reviewGroup && this._linkRecipeOverride) {
+      const stillSelected = this._recipeRequestedId === this._linkRecipeOverride;
+      this._linkRecipeOverride = '';
+      this._restoredRecipeCall = '';
+      if (stillSelected) {
+        this._recipeRequestedId = '';
+        this._selectedRecipeRunId = '';
+        this._evidenceGroupId = null;
+        this._recordedEvidence = undefined;
+        this._bindRecipeRuns(run);
+        return;
+      }
+    }
     const result = this.recipeQuery.belongsToWorkspace ? state.data : undefined;
     const failure = readFailureText(this.recipeQuery, this._now);
     if (!run || !result) {
@@ -1010,7 +1051,6 @@ export class RunDetail extends RunDetailState {
       return;
     }
     this._recipeRuns = result.recipeRuns;
-    const outputDecision = pendingOutputReview(run);
     if (
       !outputDecision &&
       this._recipeRequestedId &&
@@ -1021,6 +1061,17 @@ export class RunDetail extends RunDetailState {
       // hint error never replaces the retained package that remains readable.
       this._recipeRequestedId = result.selectedRecipeRunId;
       this._selectedRecipeRunId = result.selectedRecipeRunId;
+      this._recordedEvidence = undefined;
+      this._bindRecipeRuns(run);
+      return;
+    }
+    const linkedGroup = reviewGroup
+      ? result.recipeRuns.find((group) => group.id === reviewGroup)?.id
+      : this._recipeCallGroup(position, result);
+    if (linkedGroup && linkedGroup !== result.selectedRecipeRunId) {
+      this._linkRecipeOverride = linkedGroup;
+      this._recipeRequestedId = linkedGroup;
+      this._selectedRecipeRunId = linkedGroup;
       this._recordedEvidence = undefined;
       this._bindRecipeRuns(run);
       return;
@@ -1040,6 +1091,22 @@ export class RunDetail extends RunDetailState {
       this._recipeRequestedId = desired;
       this._bindRecipeRuns(run);
     }
+  }
+
+  private _recipeCallGroup(
+    position: ComposedEvidencePosition | null,
+    result: RunRecipeRunsForRunResult,
+  ): string | undefined {
+    const key = position ? JSON.stringify(position) : '';
+    if (!key) this._restoredRecipeCall = '';
+    if (key === this._restoredRecipeCall) return undefined;
+    const group = composedEvidenceRecipeGroup(
+      result.recipeRuns,
+      position,
+      result.selectedRecipeRunId,
+    );
+    if (group) this._restoredRecipeCall = key;
+    return group;
   }
 
   private _handleRecipeRunArtifacts(run: Run, detail: RecipeCompleteDetail): void {
@@ -1075,6 +1142,7 @@ export class RunDetail extends RunDetailState {
         this.runId,
         'conversation',
       );
+      this._acceptRecipeObservation(this._recipeObservation);
       this._applySelectedStepFromHash();
       this._applyEvidenceArtifactFromHash();
       this._sharedPanelFocusKey = '';
@@ -1137,7 +1205,7 @@ export class RunDetail extends RunDetailState {
   }
 
   private _applyEvidenceArtifactFromHash(preserveCurrent = false): void {
-    if (!this.run) return;
+    if (!this.run || !isRunDetailHashForRun(this.run.id)) return;
     if (this._applyReviewFromHash()) return;
     const { artifactRun, artifact, artifactView, artifactAc } =
       artifactSelectionFromRunDetailHash();
@@ -1344,13 +1412,18 @@ export class RunDetail extends RunDetailState {
    * Evidence link for the acceptance panel. The ledger records task-dir relative
    * paths, which is exactly what the run-artifact endpoint serves.
    */
-  private _captureEvidenceResolver(): (path: string) => string {
+  private _captureEvidenceResolver(pinCurrentGroup = false): (path: string) => string {
     const runId = this.runId;
     const group = this._evidenceTaskRelative
       ? null
       : this._recipeRuns.find((group) => group.id === this._evidenceGroupId);
+    const bundleDigest = pendingOutputReview(this.run)
+      ? this.run?.output?.artifactBundle?.bundleDigest
+      : undefined;
     return (path) =>
-      group ? recipeRunArtifactUrl(runId, group, { path }) : runArtifactUrl(runId, { path });
+      group
+        ? recipeRunArtifactUrl(runId, group, { path }, { pinCurrentGroup })
+        : runArtifactUrl(runId, { path, bundleDigest });
   }
 
   private _acceptanceEvidenceHref = (evidencePath: string): string => {
@@ -1603,14 +1676,24 @@ export class RunDetail extends RunDetailState {
     const claimId = this._evidenceLightboxCriterionId;
     const model = this.evidenceModel;
     if (!this._evidenceLightboxOpen || this._evidenceGallery || !claimId || !model) return null;
+    const resolveUrl = this._captureEvidenceResolver(true);
+    const opened = this._evidenceLightboxItems[this._evidenceLightboxIndex];
+    const currentGroup =
+      !this._evidenceTaskRelative && this._evidenceGroupId === 'current-artifacts';
     return {
       ...evidenceReviewerSelection({
         model,
         claimId,
-        resolveUrl: this._captureEvidenceResolver(),
-        opened: this._evidenceLightboxItems[this._evidenceLightboxIndex],
+        resolveUrl,
+        opened:
+          opened && currentGroup
+            ? { ...opened, url: resolveUrl(opened.path), resolveArtifactUrl: resolveUrl }
+            : opened,
+        recordingPath: this._reviewLink?.recordingPath,
+        recordingRevision: this._reviewLink?.recordingRevision,
       }),
       ...this._reviewLink,
+      allowHistoricalTimeline: !this._evidenceTaskRelative && Boolean(this._evidenceGroupId),
     };
   }
 
@@ -1627,15 +1710,34 @@ export class RunDetail extends RunDetailState {
   }
 
   /** The link the review last applied: where it left the recording and the open step check. */
-  private _reviewLink?: Pick<EvidenceReviewerSelection, 'atMs' | 'check' | 'link'>;
+  private _reviewLink?: Pick<
+    EvidenceReviewerSelection,
+    'atMs' | 'check' | 'link' | 'timelinePage' | 'recordingPath' | 'recordingRevision'
+  >;
   /** The view the hash holds as applied or reported, so only a new link reapplies. */
   private _reviewLinkKey = '';
 
   /** The review reports its view; the link follows unless the gate owns review links. */
-  private _onReviewerView(view: EvidenceReviewerView): void {
-    if (this.run && runMountsPublicationGate(this.run)) return;
-    this._reviewLinkKey = evidenceReviewerViewKey(view);
-    writeEvidenceReviewerHash(view);
+  private _onReviewerView(view: EvidenceReviewerView, runId: string): void {
+    if (
+      !reviewLinkMatchesRun(runId) ||
+      this.run?.id !== runId ||
+      runMountsPublicationGate(this.run)
+    )
+      return;
+    const linkedGroup = evidenceReviewerViewFromHash()?.recipeGroupId;
+    if (linkedGroup && linkedGroup !== this._evidenceGroupId) return;
+    const linkedView = {
+      ...view,
+      recipeGroupId: this._evidenceTaskRelative ? undefined : (this._evidenceGroupId ?? undefined),
+    };
+    this._reviewLink = {
+      ...this._reviewLink,
+      recordingPath: linkedView.recordingPath,
+      recordingRevision: linkedView.recordingRevision,
+    };
+    this._reviewLinkKey = evidenceReviewerViewKey(linkedView);
+    writeEvidenceReviewerHash(linkedView);
   }
 
   /**
@@ -1647,8 +1749,31 @@ export class RunDetail extends RunDetailState {
     const run = this.run;
     const model = this.evidenceModel;
     const view = evidenceReviewerViewFromHash();
-    if (!view) this._reviewLinkKey = '';
-    if (!run || !model || !view || runMountsPublicationGate(run)) return false;
+    if (!view) {
+      this._reviewLinkKey = '';
+      this._reviewLink = undefined;
+    }
+    if (!run || !view || runMountsPublicationGate(run)) return false;
+    if (view.recipeGroupId && view.recipeGroupId !== this._evidenceGroupId) {
+      const reason = recipeReviewLinkFailure(
+        this.recipeQuery,
+        view.recipeGroupId,
+        Boolean(pendingOutputReview(run)),
+        this._now,
+      );
+      if (reason) {
+        this._evidenceLightboxOpen = false;
+        this._evidenceArtifactUnavailable = { path: view.recipeGroupId, reason };
+      }
+      return true;
+    }
+    if (!model) return true;
+    if (
+      (view.recordingPath || view.atMs !== undefined || view.timelinePage !== undefined) &&
+      !this._recordedEvidence &&
+      this.recipeQuery.state.status === 'loading'
+    )
+      return true;
     if (!model.claims.some((claim) => claim.id === view.claimId)) return false;
     const key = evidenceReviewerViewKey(view);
     if (this._evidenceLightboxOpen && key === this._reviewLinkKey) return true;
@@ -1656,6 +1781,9 @@ export class RunDetail extends RunDetailState {
     this._reviewLink = {
       atMs: view.atMs,
       check: view.check,
+      timelinePage: view.timelinePage,
+      recordingPath: view.recordingPath,
+      recordingRevision: view.recordingRevision,
       link: (this._reviewLink?.link ?? 0) + 1,
     };
     this._openEvidenceLightbox(
@@ -1715,6 +1843,7 @@ export class RunDetail extends RunDetailState {
     this._evidenceGallery = false;
     this._evidenceArtifactUnavailable = null;
     this._updateEvidenceArtifactHash(null);
+    if (this._linkRecipeOverride) this._acceptRecipeObservation(this._recipeObservation);
   }
 
   private _navigateEvidenceLightbox(index: number): void {
@@ -1782,7 +1911,7 @@ export class RunDetail extends RunDetailState {
       artifactUrl: this._artifactUrl,
       onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
       closeEvidenceLightbox: () => this._closeEvidenceLightbox(),
-      reviewerView: (view) => this._onReviewerView(view),
+      reviewerView: (view) => this._onReviewerView(view, run.id),
       evidenceReviewer: this._evidenceReviewer(),
       showEvidenceGallery: (claimId) => this._openClaimFiles(claimId),
       reviewEvidence:
@@ -1810,8 +1939,18 @@ export class RunDetail extends RunDetailState {
     };
   }
 
+  private _composedEvidenceUrl = (path: string): string => this._captureEvidenceResolver()(path);
+
   private _renderRunEvidence(run: Run) {
-    return renderRunEvidence(run, this._runEvidenceContext(run), false);
+    const model = this.evidenceModel;
+    const ctx = this._runEvidenceContext(run);
+    if (model?.flow)
+      ctx.composedEvidence = html`<composed-evidence-view
+        .view=${runEvidenceView(model)}
+        .runId=${run.id}
+        .resolveUrl=${this._composedEvidenceUrl}
+      ></composed-evidence-view>`;
+    return renderRunEvidence(run, ctx, false);
   }
 
   private _renderInteractivePackets(run: Run) {

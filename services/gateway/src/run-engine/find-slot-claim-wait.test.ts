@@ -3,11 +3,16 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
+import type { CleanupHoldRun } from '../run-lifecycle/cleanup-hold.js';
+
 import {
+  CLEANUP_HOLD_WAIT_MS,
   commitSlotClaim,
   EXPLICIT_SLOT_RELEASE_WAIT_MS,
   previewWhenSlotClaimable,
   slotClaimAllowed,
+  splitGuardedFreeSlots,
+  waitForPrepareGuard,
 } from './find-slot-step.js';
 
 const SLOT = 'macpro-mm-pixel6';
@@ -79,6 +84,58 @@ test('an explicit slot mid-release is previewed only after the release lands', a
   assert.equal(h.state.sleeps, 3);
   assert.equal(h.state.waits, 1, 'the wait counts as queue time');
   assert.ok(h.state.nowMs < EXPLICIT_SLOT_RELEASE_WAIT_MS);
+});
+
+// 1b542e2f picked macpro-mmt-4 while a finished recovery still held its prepare guard; prepare
+// then refused it 'already preparing' and the run failed.
+test('an explicit slot under a prepare guard is previewed only after the guard clears', async () => {
+  const h = harness([readyRow]);
+  let guarded = 2;
+  const sleep = h.deps.sleep;
+  const deps = {
+    ...h.deps,
+    preparing: () => guarded > 0,
+    sleep: async (ms: number) => {
+      assert.equal(h.state.previews, 0, 'preview must not run while the slot is still preparing');
+      guarded -= 1;
+      await sleep(ms);
+    },
+  };
+  const result = await previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, deps);
+  assert.equal(result, 'previewed');
+  assert.equal(h.state.previews, 1);
+  assert.equal(h.state.sleeps, 2);
+  assert.equal(h.state.waits, 1, 'the wait counts as queue time');
+});
+
+test('a slot whose guard clears into a release waits for the release, not a refusal', async () => {
+  const h = harness([readyRow, releasingRow, readyRow]);
+  let guarded = 1;
+  const sleep = h.deps.sleep;
+  const deps = {
+    ...h.deps,
+    preparing: () => guarded > 0,
+    sleep: async (ms: number) => {
+      guarded -= 1;
+      await sleep(ms);
+    },
+  };
+  assert.equal(await previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, deps), 'previewed');
+  assert.equal(h.state.sleeps, 2, 'one wait for the guard, one for the release');
+});
+
+test('scored selection skips a free slot that a prepare guard still holds', () => {
+  const slot = (id: string, lifecycle: 'ready' | 'busy') =>
+    ({ slot: id, lifecycle, agent: 'idle', enabled: true }) as const;
+  const split = splitGuardedFreeSlots(
+    [slot('free', 'ready'), slot('guarded', 'ready'), slot('busy', 'busy')],
+    (slotId) => slotId === 'guarded',
+  );
+  assert.deepEqual(
+    split.free.map((slot) => slot.slot),
+    ['free'],
+  );
+  assert.deepEqual(split.guarded, ['guarded']);
 });
 
 test('a release that never lands fails after the bound, naming when it started', async () => {
@@ -675,4 +732,184 @@ test('a pinned new run reclaims a cancelled holder before previewing', async () 
   });
   assert.equal(result, 'previewed');
   assert.equal(h.state.previews, 1);
+});
+
+test('a guard that outlasts the claim wait is a conflict, so find-slot selects again', async () => {
+  let nowMs = 0;
+  let sleeps = 0;
+  const waited = waitForPrepareGuard('new-run', 0, SLOT, {
+    preparing: () => true,
+    runLookup: () => ({ status: 'slot-finding' }),
+    now: () => nowMs,
+    sleep: async (ms) => {
+      nowMs += ms;
+      sleeps++;
+    },
+    timeoutMs: 6_000,
+    wrapWait: (wait) => wait(),
+  });
+  await assert.rejects(waited, (error: { claimConflict?: { slotId: string } }) => {
+    assert.equal(error.claimConflict?.slotId, SLOT);
+    return true;
+  });
+  assert.equal(sleeps, 3);
+});
+
+// The hold a finished run's cleanup leaves while a process it started is still exiting.
+const censusHold = {
+  slot: SLOT,
+  lifecycle: 'held',
+  phase: 'occupied',
+  current_run_id: null,
+  cleanup_run_id: 'leaver-run',
+  held_reason: 'Process 50176 still uses the slot repository; slot teardown was skipped',
+};
+const leaver: CleanupHoldRun = { id: 'leaver-run', slotId: SLOT, status: 'done' };
+
+/** The harness for a pinned run whose previous run left `leaver` as the cleanup holder. */
+function pinnedHarness(rows: Array<Record<string, unknown>>, holder: CleanupHoldRun = leaver) {
+  const h = harness(rows);
+  return {
+    ...h,
+    deps: {
+      ...h.deps,
+      waitForCleanupHold: true,
+      cleanupHoldRun: async (id: string) => (id === holder.id ? holder : undefined),
+    },
+  };
+}
+
+test('a pinned slot waits for the previous run cleanup that the held-slot pass clears', async () => {
+  // eed987a0, 12afdc85: a replay a minute later worked because the next pass released the slot.
+  const h = pinnedHarness([censusHold, censusHold, censusHold, readyRow]);
+  assert.equal(await previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps), 'previewed');
+  assert.equal(h.state.previews, 1);
+  assert.equal(h.state.waits, 1, 'the wait counts as queue time');
+  assert.equal(h.state.sleeps, 3);
+});
+
+test('a cleanup hold that never clears is refused after its bound, naming the run that left it', async () => {
+  const h = pinnedHarness([censusHold]);
+  h.deps.listSlotRuns = async () => [
+    {
+      id: 'leaver-run',
+      status: 'done',
+      slotId: SLOT,
+      slotTeardownSkipped: censusHold.held_reason,
+      statusChangedAt: '2026-11-24T17:07:13.000Z',
+      steps: [{ name: 'find-slot', status: 'done' }] as Run['steps'],
+    },
+  ];
+  await assert.rejects(
+    previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps),
+    (error: Error & { claimConflict?: unknown }) => {
+      assert.match(error.message, /left by run leaver-run \(done\): Process 50176 still uses/);
+      assert.match(error.message, /still held after 2m/);
+      assert.equal(error.claimConflict, undefined, 'the run fails; it does not wait again');
+      return true;
+    },
+  );
+  assert.ok(h.state.nowMs >= CLEANUP_HOLD_WAIT_MS);
+  assert.ok(h.state.nowMs < EXPLICIT_SLOT_RELEASE_WAIT_MS);
+  assert.equal(h.state.previews, 0);
+});
+
+test('the cleanup bound runs from the first hold, through the held-slot pass releasing fences', async () => {
+  // Each minute the pass fences the slot, finds the process still there and writes the hold again.
+  const h = pinnedHarness([censusHold, releasingRow, censusHold, releasingRow, censusHold]);
+  await assert.rejects(
+    previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps),
+    /still held after 2m/,
+  );
+  assert.ok(h.state.nowMs < EXPLICIT_SLOT_RELEASE_WAIT_MS);
+});
+
+test('a scored pick does not wait for a cleanup hold', async () => {
+  const h = pinnedHarness([censusHold, readyRow]);
+  await assert.rejects(
+    previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, {
+      ...h.deps,
+      waitForCleanupHold: false,
+    }),
+    /slot remains occupied/,
+  );
+  assert.equal(h.state.sleeps, 0);
+});
+
+for (const [hold, row, holder] of [
+  [
+    'one for another reason',
+    { ...censusHold, held_reason: 'Another active run child-run uses this slot' },
+    leaver,
+  ],
+  [
+    'a census reason joined to another blocker',
+    { ...censusHold, held_reason: `${censusHold.held_reason}; Browser session still open` },
+    leaver,
+  ],
+  ['one with no cleanup run', { ...censusHold, cleanup_run_id: null }, leaver],
+  ['one whose stop is unconfirmed', { ...censusHold, cleanup_stop_unconfirmed: true }, leaver],
+  ['one left by a run still finishing', censusHold, { ...leaver, status: 'completing' }],
+  [
+    'one left by a refused completion prerequisite',
+    censusHold,
+    {
+      ...leaver,
+      status: 'failed',
+      steps: [
+        { name: 'complete', status: 'failed', outputs: { gatePrerequisiteRefusal: 'review' } },
+      ] as Run['steps'],
+    },
+  ],
+] as const) {
+  test(`a pinned slot is refused at once for ${hold}`, async () => {
+    const h = pinnedHarness([row, readyRow], holder);
+    await assert.rejects(
+      previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps),
+      /slot remains occupied/,
+    );
+    assert.equal(h.state.sleeps, 0);
+  });
+}
+
+test('a run replayed while waiting for a cleanup hold stops without previewing', async () => {
+  const h = pinnedHarness([censusHold, censusHold, readyRow]);
+  const sleep = h.deps.sleep;
+  h.deps.sleep = async (ms: number) => {
+    await sleep(ms);
+    h.table['new-run'] = { ...h.table['new-run'], engineState: { generation: 1 } } as Lookup;
+  };
+  await assert.rejects(
+    previewWhenSlotClaimable('new-run', 0, SLOT, h.preview, h.deps),
+    /Run new-run changed while waiting/,
+  );
+  assert.equal(h.state.previews, 0);
+});
+
+test('a claim refused by a cleanup hold is a conflict, so a pinned run waits again', async () => {
+  const held = pendingWriteStatus({ ...censusHold });
+  await assert.rejects(
+    commitSlotClaim(SLOT, 'new-run', 0, 'preparing', undefined, undefined, {
+      ...held.deps,
+      runLookup: () => ({ status: 'slot-finding' }),
+      cleanupHoldRun: async (id) => (id === leaver.id ? leaver : undefined),
+    }),
+    (error: Error & { claimConflict?: { slotId: string } }) => {
+      assert.match(error.message, /slot remains occupied/);
+      assert.equal(error.claimConflict?.slotId, SLOT);
+      return true;
+    },
+  );
+  const other = pendingWriteStatus({
+    ...censusHold,
+    held_reason: 'Another active run child-run uses this slot',
+  });
+  await assert.rejects(
+    commitSlotClaim(SLOT, 'new-run', 0, 'preparing', undefined, undefined, {
+      ...other.deps,
+      runLookup: () => ({ status: 'slot-finding' }),
+      cleanupHoldRun: async (id) => (id === leaver.id ? leaver : undefined),
+    }),
+    (error: Error & { claimConflict?: unknown }) => error.claimConflict === undefined,
+  );
 });

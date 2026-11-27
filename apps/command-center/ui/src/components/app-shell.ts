@@ -140,6 +140,7 @@ import { renderRunTitle } from './shared/run-title.js';
 import {
   activeSidebarRuns,
   clampSidebarWidth,
+  contentClassForRoute,
   DEFAULT_SIDEBAR_WIDTH,
   pinnedWorkerReadError,
   SIDEBAR_PANEL_FIELD,
@@ -2142,11 +2143,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
   private renderMainContent() {
     const item = NAV_ITEMS.find((navItem) => navItem.route === this.route);
     if (item?.maturity !== 'alpha') {
-      return html`<div
-        class=${this.route === 'native' ? 'fa-content fa-content--stacked' : 'fa-content'}
-      >
-        ${this.renderContent()}
-      </div>`;
+      return html`<div class=${contentClassForRoute(this.route)}>${this.renderContent()}</div>`;
     }
     return html`
       <div class="fa-content fa-content--stacked">
@@ -2657,10 +2654,10 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         </fleet-summary-bar>
         <global-filter-bar .slots=${this.fleetSlots}> </global-filter-bar>
         ${this.renderMainContent()}
+        <file-transfer-progress-banner></file-transfer-progress-banner>
       </div>
 
       ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()} ${this.renderWhatsNewModal()}
-      <file-transfer-progress-banner></file-transfer-progress-banner>
     `;
   }
 }

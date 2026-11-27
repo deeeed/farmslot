@@ -1,0 +1,1 @@
+- Native conversations on Android stay at the end when they open and while a turn streams, and follow again once a fling back to the end comes to rest: the follow distance reads the content height only from content-size changes, and the end of a fling's momentum updates it.

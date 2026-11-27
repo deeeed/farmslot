@@ -12,6 +12,7 @@ import {
 } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
+import { projectRecipeInvocationTiming } from '../src/core/flow-timing.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 import type { SummaryDocument } from '../src/core/types.js';
 
@@ -252,6 +253,40 @@ for (const scenario of [
     const resolution = JSON.parse(
       await readFile(path.join(dir, 'output/recipe-resolution.json'), 'utf8'),
     );
+    const trace = JSON.parse(await readFile(path.join(dir, 'output/trace.json'), 'utf8'));
+    const entries = Array.isArray(trace) ? trace : trace.entries;
+    const timing = projectRecipeInvocationTiming({
+      tree: resolution.flow,
+      trace: entries,
+      summary,
+    });
+    assert.deepEqual(
+      summary.flow.timing,
+      timing,
+      'summary and report share the recorded-interval calculation',
+    );
+    assert.equal(timing.nodes.$root?.inclusiveMs, summary.durationMs);
+    if (scenario === 'failure') {
+      const failed = updates.find(
+        (update) => update.activeId === 'first/nested/read' && update.progress.completed === 2,
+      );
+      assert.deepEqual(
+        failed?.timing?.nodes['first/nested/read'],
+        timing.nodes['first/nested/read'],
+        'failed completion HUD retains its closed measured interval',
+      );
+    }
+    if (scenario === 'resolution') assert.equal(timing.nodes.work?.inclusiveMs, null);
+    if (scenario === 'cancelled') assert.equal(timing.nodes.first?.inclusiveMs, null);
+    assert.ok(
+      updates.every((update) => update.timing),
+      'existing HUD event supplies SDK timing',
+    );
+    if (full) {
+      assert.equal(timing.nodes['first/nested/read']?.qualification.inclusive, 'measured');
+      assert.equal(timing.nodes['second/nested/read']?.qualification.self, 'measured');
+      assert.equal(timing.nodes[branch === 'yes' ? 'reject' : 'accept']?.inclusiveMs, null);
+    }
     if (!simple) {
       assert.ok(
         resolution.flow.nodes.some((node: { id: string }) => node.id === 'second/nested/read'),

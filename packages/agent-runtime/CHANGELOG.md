@@ -4,6 +4,57 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.51.2 - 2026-11-25
+
+- Uses adapter-sdk 0.31.4 (recipe-runner 0.52.5), so mm-harness keeps one copy of each package.
+- `withNativeHostRefreshPolicy` and `releasedSessionsPolicy` refresh a host under one launch's own policy, from a fresh census. Clients can limit idle stops to fenced hosts and a runner count. A launch to a host on another runtime is refused as skew before capability errors.
+
+## 0.51.1 - 2026-11-25
+
+- `requiredSkillPaths(config, selection)` lists every checkout-relative file a required-skill selection needs — each skill's declared files, then its review pack. Task init's freeze and the gateway's prepare-time `required_skills_present` check both resolve a skill's files through the same internal helper, so neither can require a file the other ignores.
+- A native Claude reviewer no longer asks for tool approval on a sandboxed-tier run. The gateway refuses every reviewer approval, so the reviewer could not run its checklist marker or write its result, and the review was recorded unavailable. A reviewer launch now skips Claude's permission prompts, as ACP reviewers already grant their tools; the sandboxed tier no longer constrains Claude reviewers.
+- `mark N` on a checklist's final row now completes the run when that row's instruction is `mark complete`. The marker runs the instructed `mark complete --mark-last` itself, with the same checks. Before, the tick left the signal running and the gateway waited for it forever. Marking the row again does the same, so a worker that already ticked it, or whose completion was refused, can finish.
+- A node restart now refreshes an idle native host whose runtime code changed at the same package version. The host records a content hash of the installed agent-runtime build, and the node compares it with the version. A source deploy keeps the version, so an idle host used to keep running the old code until a manual refresh; a busy host keeps its sessions and refuses new admissions until a later restart refreshes it, as for a version change.
+- A native host left on an older runtime no longer blocks launches while its live sessions are idle. A client with a refresh policy (`setRefreshPolicy`) stops such a host on a later launch or `refreshStaleHost()`, unless a session is busy or kept by the policy, which the version-skew error then names. The next host keeps the stopped sessions' journals for resume. New hosts fence admissions and input for that stop (`prepareUpgrade` with `idleRunners`). A client running older code than its checkout says to restart instead. `liveSessions()` lists a host's live sessions across owners.
+- Confirm exited Codex workers only after their process owner verifies that the recorded processes and detached groups are gone.
+- Closing a Codex native worker also ends the background processes it left in its own detached process groups, such as a dev server whose launcher exited, when the group is provably the same one the worker started. Before this, close either leaked them or, with stop confirmation, failed on a survivor nothing signaled.
+- The review scope rule on new abstractions with one caller now says a parameter added to an existing function is not one.
+- An operator note (`--task-note`) is rendered as `## Operator note` under the task document's title, and inserted into the execution checklist as a step in front of the template's completion row. It used to be concatenated onto the end of the document: in run 1b7b8662 that put a repin instruction on line 945 of a 947-line TASK.md, and the worker — following CHECKLIST.md, which never mentioned the note — did everything else and not the repin. The step goes before the completion row, not after it: every farm template ends with its `mark complete --mark-last` row, and a step after that one leaves two boxes open so `--mark-last` refuses, then ticks the note step itself once the worker clears the first — recording the note as done without it being done. The rows that shift are renumbered in their labels too, so what the worker reads matches what `mark N` targets, and the freeze runs on the final checklist text, after the rewrite. `insertUnderTitle` places a section under the title for both the note and the mode preamble, skipping a leading frontmatter fence that a regex anchored at `^#` silently missed on lightweight interactive templates. On a lightweight-interactive run the note stays a section only: an operator plan is rendered a second time into the task document, numbered independently from the same source list, so a step inserted into the plan would shift the checklist's numbers out from under the numbers the worker reads there.
+- `mark complete` and the artifact-contract check are refused only by the completing checklist's own open child units. A unit registered on another checklist in the same task directory, such as a parallel or stopped reviewer's `REVIEW.<context>.md`, no longer blocks the worker (run 961d55d3). The check keys on the signal being completed; a completion into a custom `--signal` keeps the unscoped check.
+- `mark sub <id> <rows>` marks several child rows in one call: one token, `n` or a comma list of `n` and `a-b` (`2,4-6`). `mark sub <id> complete --rows <rows>` ticks the named final rows and completes the unit in the same call. Every row is checked before anything is written; reversed ranges, duplicates, unknown rows and a second positional argument (`sub <id> 2 3`, which used to tick row 2 alone) are refused. Rows marked together share one timestamp.
+- Test-only: the TASK.md worker push test allows the guarded push 30 s instead of 4 s before it counts as hung, so it no longer times out on a loaded macOS host. Runtime behaviour is unchanged.
+
+## 0.50.6 - 2026-11-23
+
+- Pin the Recipe Runner 0.52.2 cohort.
+- `mark complete` refuses a task with engine proof attempts that nothing selects. An attempt is any directory under `artifacts/recipe-runs` holding an `evidence-manifest.json`, such as `<id>`, `attempts/<id>` or a deeper output path. If there's no `latest-valid-recipe-run.json`, the refusal lists the attempts, names any unreadable summaries, and, when a passing summary is found, prints the command that selects that attempt. If there's a selection but no regular-file `artifacts/recipe.json`, it names the recipe to copy. It never picks an attempt itself. Review and QA flows are exempt (QA keeps its own selection contract), and root `artifacts/evidence-manifest.json` declarations stay optional.
+- Native Pi sessions (`pi --mode rpc`) load a small extension that gives a bash call with no timeout 600 seconds, the same default as tmux Pi workers; an explicit timeout is kept.
+- Artifact-only comparison replays now rewrite a template's `git merge-base origin/<branch> HEAD` baseline to the recorded replay base. A standalone `git diff "$(…)"` becomes `git diff <base>`, or the working-tree `git diff` when no base is recorded, like the existing `main` rewrites. Pinned-start run 6562483b's fix-bug step diffed against the merge base with `main`, beside a guardrail forbidding `main` as the baseline.
+- New `lintWorkerTemplateProofSelection`: a worker template that runs recipe proof must name the selected proof attempt (`artifacts/latest-valid-recipe-run.json`). Review and QA flows are exempt. `yarn quality:worker-templates` applies it to flow templates and to pack-owned execution-template checklists (`execution_templates.sources[].root.projectPath`, with `subpath`). A template with its own designed proof layout opts out by name: `<!-- proof-selection: exempt (<reason>) -->`.
+
+## 0.50.5 - 2026-11-21
+
+- Pin the Protocol 0.92.0 producer cohort.
+- Native conversation streams reach viewers one update per frame: live delivery gathers events for 16 ms instead of 50 ms, so a stream emitting every 50 ms is no longer paired into 10 Hz updates. The 64 KB immediate flush, overflow and cursor behavior are unchanged.
+
+## 0.50.4 - 2026-11-21
+
+- New `scripts/litellm-endpoint.cjs` export: a digest identity for a LiteLLM base URL, never the URL itself.
+
+## 0.50.3 - 2026-11-19
+
+- Pin the structural inventory SDK cohort while retaining public protocol 0.91.0.
+
+## 0.50.2 - 2026-11-19
+
+- Claude ACP effort checks use the shared `CLAUDE_CLI_EFFORTS` list.
+- Pin the qualified invocation-timing SDK cohort with exact package dependencies.
+
+## 0.50.1 - 2026-11-19
+
+- Pin the shared composed-evidence SDK dependency cohort for consistent viewer data.
+- Claude Haiku 5.5 sessions are priced ($0.10 / $0.50 per million input / output tokens, with cache rates), so their receipts show cost.
+
 ## 0.50.0 - 2026-11-18
 
 - Usage prices include GPT-6.2 Astra at $8 / $0.40 cached / $40 and GPT-6.2 Sol at $2 / $0.10 cached / $10, the published standard short-context rates. The GPT-6.1 Sol and GPT-6 Astra rows stay.

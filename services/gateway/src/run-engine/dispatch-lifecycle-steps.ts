@@ -1,14 +1,28 @@
-import { Events, isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import path from 'node:path';
 
-import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import {
+  Events,
+  isTerminalRunStatus,
+  type Run,
+  type RunPrepareArtifact,
+  type TempScrubReceipt,
+} from '@farmslot/protocol';
+
+import { loadSlotVars, resolveProjectRuntimeDir, type SlotVars } from '../core/config.js';
 import { execArgvOnSlot, execOnSlot, isLocal } from '../core/exec.js';
 import { claimSlotStatusIf, nextSlotEpoch, readSlotRow } from '../core/state.js';
 import { shellQuote } from '../core/tmux.js';
 import { prepareBlindTrialGit } from '../evals/blind-trial.js';
 import { usesEvalTrialCapsule } from '../evals/trial-policy.js';
 import { dispatchExecute, nudgeDispatch, warmSessionHandoffDispatch } from '../methods/dispatch.js';
-import { slotClaimBlockedByRelease } from '../methods/dispatch/slot-scoring.js';
+import {
+  PARENT_HOLD_CLAIM_FIELDS,
+  parentHoldForWarmChild,
+  slotClaimBlockedByRelease,
+} from '../methods/dispatch/slot-scoring.js';
 import { slotPrepare } from '../methods/slot.js';
+import { parseJsonObject } from '../methods/slot/pinned-prepare.js';
+import { PINNED_SKIP_PREPARE_REFUSAL } from '../projects/pinned-prepare-policy.js';
 import { ensureFrozenQaSource } from '../qa/frozen-source.js';
 import {
   BEFORE_WORKER_LAUNCH,
@@ -42,6 +56,15 @@ import { taskExecutionAtDispatch } from '../runs/task-execution.js';
 import { prepareConfiguredRunCapabilities } from './declared-capabilities.js';
 import { RETAINED_SESSION_HANDOFF_HOLD } from './errors.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
+import { foreignTaskDirRefusal } from './foreign-task-dir.js';
+import {
+  isObservedBuildRun,
+  observedBuildFiles,
+  observedRunwayArtifact,
+  prepareObservesBuild,
+  runPrepareIsPinned,
+} from './pinned-prepare.js';
+import { loadProjectVarsOrNull } from './project-vars.js';
 import { probeRemotePath } from './remote-probes.js';
 import { runSupersededSince } from './run-generation.js';
 import { prepareWarmBudgetBaselineForHandoff } from './run-monitor.js';
@@ -50,7 +73,7 @@ import { createSubStepCollector, type SubStepCollector } from './sub-step-collec
 import { completeRunTaskInitialization } from './task-sync.js';
 import { WorkerLaunchInputsChangedError } from './worker-launch-preflight.js';
 
-interface StepIO {
+export interface StepIO {
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
 }
@@ -143,31 +166,32 @@ export function safeReferenceRepoProvenance(
   };
 }
 
+/**
+ * A JSON object file on a slot, read within 5 s, or undefined when absent, empty or
+ * not an object. Optional enrichment only: a malformed file is logged and skipped.
+ */
+async function readSlotJsonObject(
+  vars: SlotVars,
+  file: string,
+): Promise<Record<string, unknown> | undefined> {
+  const result = await execOnSlot(vars, `cat ${shellQuote(file)} 2>/dev/null`, {
+    timeout: 5_000,
+    maxBuffer: 256 * 1024,
+  });
+  if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
+  const record = parseJsonObject(result.stdout);
+  if (!record)
+    console.warn(
+      `[run-engine] ignoring optional prepare record ${path.basename(file)}: not a JSON object`,
+    );
+  return record;
+}
+
 async function readPrepareProvenance(slotId: string, project: string): Promise<PrepareProvenance> {
   const vars = await loadSlotVars(slotId);
   const runtimeDir = await resolveProjectRuntimeDir(project);
-  const readJson = async (basename: string): Promise<Record<string, unknown> | undefined> => {
-    const result = await execOnSlot(
-      vars,
-      `cat ${shellQuote(`${vars.remoteRepo}/${runtimeDir}/${basename}`)} 2>/dev/null`,
-      { timeout: 5_000, maxBuffer: 256 * 1024 },
-    );
-    if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(result.stdout);
-    } catch (error) {
-      // Each provenance file is optional enrichment. A malformed file must not
-      // prevent the other independent provenance source from being preserved.
-      console.warn(
-        `[run-engine] ignoring malformed optional prepare provenance ${basename}: ${(error as Error).message}`,
-      );
-      return undefined;
-    }
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  };
+  const readJson = (basename: string) =>
+    readSlotJsonObject(vars, `${vars.remoteRepo}/${runtimeDir}/${basename}`);
   const recipeToolingProvenance = await readJson('recipe-tooling-provenance.json');
   const referenceRepoProvenance = await readJson('reference-repos.json');
   return {
@@ -178,6 +202,37 @@ async function readPrepareProvenance(slotId: string, project: string): Promise<P
       ? safeReferenceRepoProvenance(referenceRepoProvenance)
       : undefined,
   };
+}
+
+/**
+ * For an eval trial pinning excludes, the Runway build the slot reports. Isolation
+ * moves ignored files into the capsule, so the capsule copy is read when the
+ * checkout has none; an explicit runway prepare after isolation rewrites the
+ * checkout copy, which therefore wins. Best effort: never fails a prepare.
+ */
+async function readObservedBuild(
+  run: Run,
+  slotId: string,
+): Promise<RunPrepareArtifact | undefined> {
+  const baseSha = run.startRef?.resolvedSha;
+  // Lane and flow first, so a run that is neither pinned nor excluded does no new work.
+  if (!baseSha || !isObservedBuildRun(run)) return undefined;
+  const projectVars = await loadProjectVarsOrNull(run.project, 'observed build', run.id);
+  if (!prepareObservesBuild(run, projectVars?.projectJson)) return undefined;
+  const vars = await loadSlotVars(slotId);
+  const runtimeDir = await resolveProjectRuntimeDir(run.project);
+  const capsule = run.engineState?.evalExperiment?.blind?.isolation?.capsulePath;
+  for (const file of observedBuildFiles(vars.remoteRepo, runtimeDir, capsule)) {
+    const record = await readSlotJsonObject(vars, file);
+    if (!record) continue;
+    return observedRunwayArtifact(record, {
+      slotId,
+      baseSha,
+      platform: vars.platform,
+      ...(vars.resourceVars.simulator ? { simulator: vars.resourceVars.simulator } : {}),
+    });
+  }
+  return undefined;
 }
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -254,6 +309,45 @@ export function createPrepareProgressEmitter(params: {
         }
       }
     }
+  };
+}
+
+/**
+ * Records each branch prepare keeps in the step's outputs as it happens, so a prepare that fails
+ * later still names it. `baseOutputs` is the progress emitter's: every later event keeps it.
+ */
+export function keptBranchRecorder(
+  runId: string,
+  inputs: Record<string, unknown>,
+  baseOutputs: Record<string, unknown>,
+  stepPartialIO: Map<string, StepIO>,
+): (kept: string) => void {
+  return (kept) => {
+    const recorded = Array.isArray(baseOutputs.keptBranches) ? baseOutputs.keptBranches : [];
+    baseOutputs.keptBranches = [...recorded, kept];
+    stepPartialIO.set(runId, {
+      inputs,
+      outputs: { ...stepPartialIO.get(runId)?.outputs, keptBranches: baseOutputs.keptBranches },
+    });
+  };
+}
+
+/**
+ * Records the new run's temp/ clear-out in the step's outputs as soon as it ends, so a prepare
+ * that refuses or fails later still shows what was removed and kept.
+ */
+export function tempScrubRecorder(
+  runId: string,
+  inputs: Record<string, unknown>,
+  baseOutputs: Record<string, unknown>,
+  stepPartialIO: Map<string, StepIO>,
+): (receipt: TempScrubReceipt) => void {
+  return (receipt) => {
+    baseOutputs.tempScrub = receipt;
+    stepPartialIO.set(runId, {
+      inputs,
+      outputs: { ...stepPartialIO.get(runId)?.outputs, tempScrub: receipt },
+    });
   };
 }
 
@@ -337,10 +431,25 @@ export async function executePrepareStep(
       'Eval replay cannot skip prepare; prepare installs and verifies the pinned recipe harness.',
     );
   }
+  const pinned = await runPrepareIsPinned(current);
+  if (skipPrepare && pinned) throw new Error(PINNED_SKIP_PREPARE_REFUSAL);
   if (skipPrepare) {
     console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (${skipReason})`);
     await completeRunTaskInitialization(runId);
     return { inputs, outputs: { skipped: true, reason: skipReason } };
+  }
+
+  // A record from an earlier prepare must not outlive this one: a prepare that
+  // fails, or runs on another slot, would otherwise leave the old build standing.
+  if (current.prepareArtifact) {
+    await persistRunNow(updateRun(runId, { prepareArtifact: null }), 'prepare artifact cleared');
+  }
+
+  // Before slot prepare: a task dir another attempt initialized, whose slot copy is gone.
+  const foreignTaskDir = await foreignTaskDirRefusal(current);
+  if (foreignTaskDir) {
+    stepPartialIO.set(runId, { inputs, outputs: {} });
+    throw new Error(foreignTaskDir);
   }
 
   // Machine-pressure snapshot at prepare start — the analytics emitter reads this from
@@ -364,10 +473,12 @@ export async function executePrepareStep(
 
   // Collect sub-step events and broadcast live progress
   const collector = createSubStepCollector();
+  // Shared with the progress emitter, which rebuilds the step's outputs from it on every event.
+  const prepareOutputs: Record<string, unknown> = { cliCommand, hostLoad };
   const emitWithBroadcast = createPrepareProgressEmitter({
     runId,
     inputs,
-    baseOutputs: { cliCommand, hostLoad },
+    baseOutputs: prepareOutputs,
     collector,
     stepPartialIO,
     broadcastFn,
@@ -435,6 +546,8 @@ export async function executePrepareStep(
   }
   activeMonitors.set(runId, prepareController);
   let selectedPrepareProfile: import('../methods/slot/shared.js').SlotPrepareResult['profile'];
+  let lockfilesRewritten: string[] | undefined;
+  let keptBranches: string[] | undefined;
   try {
     const prepareResult = await slotPrepare(
       {
@@ -452,6 +565,8 @@ export async function executePrepareStep(
       emitWithBroadcast,
       prepareController.signal,
       {
+        requireRunOwnership: true,
+        ...(pinned ? { pinned: true } : {}),
         ...(warmRecovery ? { stripClean: true } : {}),
         ...(isPrepareReplay ||
         usesEvalTrialCapsule(current.engineState?.evalExperiment?.blind) ||
@@ -485,6 +600,9 @@ export async function executePrepareStep(
               await prepareBlindTrialGit(runId, prepareController.signal);
             }
           : undefined,
+        // Recorded as it happens, so a prepare that fails later still names the kept branch.
+        onBranchKept: keptBranchRecorder(runId, inputs, prepareOutputs, stepPartialIO),
+        onTempScrubbed: tempScrubRecorder(runId, inputs, prepareOutputs, stepPartialIO),
         // A replay re-resolves against the commit the run already recorded: a
         // branch or tag name would otherwise move the recorded base under the
         // preserved branch's commits.
@@ -514,7 +632,12 @@ export async function executePrepareStep(
           : {}),
       },
     );
+    // Prepare skips a disabled slot: stop here rather than initialize a task on it.
+    if (!prepareResult.prepared)
+      throw new Error(`Slot ${current.slotId} is disabled; prepare did not prepare it`);
     selectedPrepareProfile = prepareResult.profile;
+    lockfilesRewritten = prepareResult.lockfilesRewritten;
+    keptBranches = prepareResult.keptBranches;
     if (current.startRef) {
       if (!prepareResult.startRef) {
         throw new Error('startRef prepare completed without structured resolved provenance');
@@ -526,6 +649,31 @@ export async function executePrepareStep(
           resolvedAt: prepareResult.startRef.resolvedAt,
         },
       });
+    }
+    if (prepareResult.prepareArtifact) {
+      await persistRunNow(
+        updateRun(runId, {
+          prepareArtifact: {
+            ...prepareResult.prepareArtifact,
+            slotId: current.slotId,
+            enforced: true,
+          },
+        }),
+        'pinned build recorded',
+      );
+    } else {
+      try {
+        const observed = await readObservedBuild(getRun(runId)!, current.slotId);
+        if (observed)
+          await persistRunNow(
+            updateRun(runId, { prepareArtifact: observed }),
+            'observed build recorded',
+          );
+      } catch (error) {
+        console.warn(
+          `[run-engine] observed build not recorded for ${runId.slice(0, 8)}: ${(error as Error).message.slice(0, 200)}`,
+        );
+      }
     }
     const afterPrepare = getRun(runId)!;
     if (afterPrepare.flowType === 'qa' && afterPrepare.qaSource) {
@@ -590,6 +738,11 @@ export async function executePrepareStep(
         : {}),
       cliCommand,
       ...(selectedPrepareProfile ? { profile: selectedPrepareProfile } : {}),
+      // Lockfiles prepare rewrote for a drifted PR branch: the worker must commit them.
+      ...(lockfilesRewritten?.length ? { lockfilesRewritten } : {}),
+      ...(keptBranches?.length ? { keptBranches } : {}),
+      // Recorded once, as the clear-out ended (tempScrubRecorder).
+      ...(prepareOutputs.tempScrub ? { tempScrub: prepareOutputs.tempScrub } : {}),
       ...(preparedRun?.startRef ? { startRef: preparedRun.startRef } : {}),
       ...(lastOutput ? { lastOutput } : {}),
     },
@@ -606,7 +759,7 @@ export interface DispatchStepContext {
 }
 
 /** Warm delivery consumes its reservation on success. A fresh launch needs its own claim first. */
-async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean> {
+export async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean> {
   const generation = run.engineState?.generation ?? 0;
   return withRunTransition(run.id, async () => {
     const current = getRun(run.id);
@@ -622,6 +775,34 @@ async function claimWarmFallbackSlot(run: Run, slotId: string): Promise<boolean>
         slotClaimBlockedByRelease(slot),
       );
     const row = await readSlotRow(slotId);
+    // The parent's cleanup held the slot for this run: the fresh launch claims it from here.
+    if (parentHoldForWarmChild(row, current)) {
+      const heldFields: Record<string, unknown> = {
+        lifecycle: 'busy',
+        phase: 'dispatching',
+        current_run_id: run.id,
+        handoff_run_id: null,
+        ...PARENT_HOLD_CLAIM_FIELDS,
+      };
+      const held = await claimSlotStatusIf(
+        slotId,
+        (slot) => {
+          const latest = getRun(run.id);
+          if (
+            !latest ||
+            latest.slotId !== slotId ||
+            runSupersededSince(latest, generation) ||
+            !parentHoldForWarmChild(slot, latest)
+          )
+            return false;
+          if (slot.idle_devserver_epoch === slot.slot_epoch && Array.isArray(slot.idle_devservers))
+            heldFields.idle_devserver_epoch = nextSlotEpoch(slot);
+          return true;
+        },
+        heldFields,
+      );
+      return held.claimed;
+    }
     if (row && blockedSlot(row)) return false;
     // A replay or a completed release may already have left the slot owned by
     // this run or free. The normal fresh launch path handles either state.

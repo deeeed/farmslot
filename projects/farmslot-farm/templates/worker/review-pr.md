@@ -57,34 +57,34 @@ proof only. Missing evidence is a finding or marked unverified.
 
 ### Evidence audit (10–12) [standard+full for UI PRs]
 
-**Silent skips = task failure.** Every AC ends PROVEN or UNTESTABLE with rationale.
+**Silent skips = task failure.** Every AC ends PROVEN or UNTESTABLE with rationale. A row marked `[OPTIONAL: …]` may be skipped only with `{{TASK_DIR}}/mark N --skip "<why>"`.
 
-- [ ] **10. Collect evidence artifacts** — from PR body URLs, `{{TASK_DIR}}/inputs/inherited/`, or PR author's task artifacts if materialized. List every PNG/MP4 path or URL.
-- [ ] **11. Read every screenshot** — Read tool on each PNG. Build per-AC matrix (see `review-quality.md`). Verify hosted URLs return HTTP 200 when used in PR body.
-- [ ] **12. fs-recipe-quality pass** — when `recipe.json` exists in PR body, inherited inputs, or author artifacts:
+- [ ] **10. Collect evidence artifacts** [OPTIONAL: light tier, or the PR changes no UI] — from PR body URLs, `{{TASK_DIR}}/inputs/inherited/`, or PR author's task artifacts if materialized. List every PNG/MP4 path or URL.
+- [ ] **11. Read every screenshot** [OPTIONAL: light tier, or the PR changes no UI] — Read tool on each PNG. Build per-AC matrix (see `review-quality.md`). Verify hosted URLs return HTTP 200 when used in PR body.
+- [ ] **12. fs-recipe-quality pass** [OPTIONAL: no `recipe.json` in the PR body, inherited inputs or author artifacts] — when `recipe.json` exists in PR body, inherited inputs, or author artifacts:
   - Critique recipe graph + evidence fit
   - Write `{{TASK_DIR}}/artifacts/recipe-coverage.md` (gateway computes recipe-quality)
-  - **light:** skip 12 if no recipe; note in report
+  - skip 12 if no recipe; note in report
 
 ### Live validation (13–16) [standard+full]
 
-- [ ] **13. Confirm branch** — `git branch --show-current` matches `{{PR_BRANCH}}`.
-- [ ] **14. Inspect recorded validation** - read existing CI results and `artifacts/deterministic-checks/` receipts and logs. Do not execute validation. Missing evidence is a finding or marked unverified.
-- [ ] **15. Inspect author recipe evidence** - read the retained recipe, trace, assertions, screenshots and recording. Assess AC coverage without executing or replaying the recipe.
-- [ ] **16. Companion PRs** — when diff touches `apps/companion`, note platform (ios/android) and whether device proof is present or UNTESTABLE.
+- [ ] **13. Confirm branch** [OPTIONAL: light tier] — `git branch --show-current` matches `{{PR_BRANCH}}`.
+- [ ] **14. Inspect recorded validation** [OPTIONAL: light tier] - read existing CI results and `artifacts/deterministic-checks/` receipts and logs. Do not execute validation. Missing evidence is a finding or marked unverified.
+- [ ] **15. Inspect author recipe evidence** [OPTIONAL: light tier] - read the retained recipe, trace, assertions, screenshots and recording. Assess AC coverage without executing or replaying the recipe.
+- [ ] **16. Companion PRs** [OPTIONAL: light tier, or the diff does not touch `apps/companion`] — when diff touches `apps/companion`, note platform (ios/android) and whether device proof is present or UNTESTABLE.
 
 ### Static + domain review (17–20)
 
 - [ ] **17. Farmslot antipatterns** — scan diff against `{{review_quality_path}}` table (swallowed exceptions, UI injection, protocol duplication, script hardcoding).
-- [ ] **18. Fix quality** [standard+full] — minimal correct fix? tests assert right behavior? brittle mocks/import-time constants?
-- [ ] **19. Validate concerns before flagging** [standard+full] — trace source paths and recorded evidence; mark runtime claims without proof unverified. No speculative noise.
+- [ ] **18. Fix quality** [standard+full] [OPTIONAL: light tier] — minimal correct fix? tests assert right behavior? brittle mocks/import-time constants?
+- [ ] **19. Validate concerns before flagging** [standard+full] [OPTIONAL: light tier] — trace source paths and recorded evidence; mark runtime claims without proof unverified. No speculative noise.
 - [ ] **20. Publication hygiene** — broken screenshot URLs, local paths in PR body, missing `evidence-manifest.json` when visual ACs claimed.
 
 ### Report (21–22)
 
 - [ ] **21. Write `{{TASK_DIR}}/artifacts/review.md`** — use report contract in `{{review_quality_path}}`. Include Recipe Coverage matrix, Evidence Audit, Recommended Action. Coverage &lt; 100% without UNTESTABLE rationale → `REQUEST_CHANGES` or explicit escalation.
 - [ ] **22. Write `{{TASK_DIR}}/artifacts/line-comments.json`** — inline findings with severities; empty array if none.
-- [ ] **23. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. One bullet per failure in this run that is likely to recur and should change a template, reviewer or engine step; `- None` when there is none.
+- [ ] **23. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Write it in Learnings v1: first line `# Learnings v1`, then `- None` when there is none, or one entry per failure in this run that is likely to recur: `- <kind>: <one-line lesson>` with two-space-indented fields. Kinds: `add`, `edit` or `retire` for a review rule (`evidence: <repo> <path>:<line>`; `family: <file>.md#<section>`, or `examined: <file>.md#<section>, ...` for an add; `confirmation: run <other run id> <path>:<line>`, `fix <owner/repo#n>` or `none`, where this run's own report or review is `none`), `recipe-broken` or `recipe-missing` for a recipe, `workflow` for a template, tool or setup step. `./mark` prints the full format and warns on a malformed file.
 
 ### Finish (24)
 

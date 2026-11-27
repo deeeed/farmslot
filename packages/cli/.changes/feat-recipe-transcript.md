@@ -1,0 +1,1 @@
+- `farmslot recipe artifacts --format transcript` prints a compact, redacted transcript of the selected recipe attempt; `--format markdown --transcript` puts it in the PR body Validation Logs.

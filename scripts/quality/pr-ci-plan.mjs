@@ -53,7 +53,13 @@ export function packPrTasks(jobs, tasks, budget = 120, maxJobs = PR_MATRIX_LIMIT
   return pooled;
 }
 
-/** Match the runner: mocks/serial first, then four sorted round-robin lanes. */
+/**
+ * Mocks and serial files first, then four sorted round-robin lanes. The runner puts
+ * module-mock files on the workers, but their durations were measured running alone
+ * and run slower four at a time; modelled on the workers they packed 16 gateway
+ * shards into 10-11 and lengthened the slowest. Keep them sequential until the
+ * durations are measured under the new schedule.
+ */
 export function estimateTestMs(files, workers, durations, lanes) {
   let sequential = 0;
   const parallel = Array(workers).fill(0);
@@ -341,9 +347,13 @@ export function createPrPlan({
         15,
       ),
     );
-  if (touches(['services/node/', 'scripts/deploy-node', '.github/']))
+  if (touches(['services/node/', 'scripts/deploy-node', 'scripts/lib/launchd-reload', '.github/']))
     tasks.push(
-      command('node-deploy-tests', ['node', '--test', 'scripts/deploy-node.test.mjs'], 20),
+      command(
+        'node-deploy-tests',
+        ['node', '--test', 'scripts/deploy-node.test.mjs', 'scripts/lib/launchd-reload.test.mjs'],
+        20,
+      ),
     );
   if (touches(['scripts/install-runner-observability', '.github/']))
     tasks.push(

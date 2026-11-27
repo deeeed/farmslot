@@ -3,12 +3,16 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, type Stats } from 'node:fs';
-import { type FileHandle, open, readFile, rename, rm } from 'node:fs/promises';
+import { type FileHandle, open, readFile, rename, rm, stat } from 'node:fs/promises';
+
+import { deepFreeze } from '@farmslot/protocol';
 
 import { assertStatusFileWritable, resolveStatusFilePath } from '../projects/repo-root.js';
 
 import { assertCleanupCurrent, withoutCleanupSignal } from './cleanup-scope.js';
 import { farmslotRoot, readJsonFile } from './config.js';
+
+export { sameSlotField } from './same-slot-field.js';
 
 const statusFile = resolveStatusFilePath(farmslotRoot());
 
@@ -39,13 +43,17 @@ export function statusFileStamp(stats: Stats): StatusFileStamp {
   return { ino: stats.ino, size: stats.size, mtimeMs: stats.mtimeMs, ctimeMs: stats.ctimeMs };
 }
 /** The last status text this gateway committed, and the stamp of the file it renamed into place. */
-let committedStatus: { text: string; stamp: StatusFileStamp } | undefined;
+let committedStatus: { text: string; stamp: StatusFileStamp; rows?: SlotRows } | undefined;
 /**
  * The committed status text while the status file is still that commit, else undefined. A file
  * replaced or edited after the commit has another stamp, so readers read it rather than serve an
  * older snapshot.
  */
 export function committedStatusText(current: StatusFileStamp): string | undefined {
+  return matchingCommittedStatus(current)?.text;
+}
+
+function matchingCommittedStatus(current: StatusFileStamp) {
   const committed = committedStatus;
   if (!committed) return undefined;
   const { stamp } = committed;
@@ -53,7 +61,7 @@ export function committedStatusText(current: StatusFileStamp): string | undefine
     stamp.size === current.size &&
     stamp.mtimeMs === current.mtimeMs &&
     stamp.ctimeMs === current.ctimeMs
-    ? committed.text
+    ? committed
     : undefined;
 }
 
@@ -383,6 +391,26 @@ export function currentReleaseGatewayInstance(): string {
 /** Automatic retries cannot confirm a command whose stop was not observed. */
 export const SLOT_CLEANUP_STOP_UNCONFIRMED = 'cleanup_stop_unconfirmed';
 
+/** Marks a terminal run's own cleanup fence (fenceRunSlotCleanup), apart from a release retry's. */
+export const RUN_CLEANUP_TOKEN_PREFIX = 'run-cleanup:';
+
+/** What a cancel's cleanup fence settles on: the replay hold, or a released slot. */
+export type RunCleanupIntent = 'replay' | 'release';
+
+/** A cancel's fence carries its intent in the token, so a restarted gateway can finish it. */
+export function runCleanupToken(intent: RunCleanupIntent | undefined, id: string): string {
+  return `${RUN_CLEANUP_TOKEN_PREFIX}${intent ? `${intent}:` : ''}${id}`;
+}
+
+/** The intent a run-cleanup token carries; undefined for done/failed fences and older tokens. */
+export function runCleanupTokenIntent(token: unknown): RunCleanupIntent | undefined {
+  if (typeof token !== 'string' || !token.startsWith(RUN_CLEANUP_TOKEN_PREFIX)) return undefined;
+  const rest = token.slice(RUN_CLEANUP_TOKEN_PREFIX.length);
+  if (rest.startsWith('replay:')) return 'replay';
+  if (rest.startsWith('release:')) return 'release';
+  return undefined;
+}
+
 /** The releasing fence, stamped so a stalled one can be told from a live one. */
 export function slotReleasingFenceFields(now = new Date()): Record<string, unknown> {
   return {
@@ -465,6 +493,11 @@ export function slotOwnershipReleaseFields(): Record<string, unknown> {
   return fields;
 }
 
+type SlotRows = Map<string, Readonly<Record<string, unknown>>>;
+
+/** Share the keyed rows for one immutable status snapshot across its readers. */
+const slotRowsBySnapshot = new WeakMap<readonly unknown[], SlotRows>();
+
 /**
  * Single-snapshot row read: both fields of a multi-field check come from ONE
  * file read, so a writer landing between two readSlotField calls cannot show
@@ -474,19 +507,33 @@ export async function readSlotRow(
   slotId: string,
 ): Promise<Readonly<Record<string, unknown>> | null> {
   if (!existsSync(statusFile)) return null;
-  // One parse of each file version, frozen and shared by every reader until the file changes.
-  const data = await readJsonFile(statusFile);
+  const committed = matchingCommittedStatus(statusFileStamp(await stat(statusFile)));
+  if (committed) {
+    // A gateway-owned commit already has verified bytes. The generic JSON cache reparses
+    // recent writes to cover external writers, even when those bytes have not changed.
+    committed.rows ??= keyedSlotRows(deepFreeze(JSON.parse(committed.text)));
+    return committed.rows.get(slotId) ?? null;
+  }
+  return keyedSlotRows(await readJsonFile(statusFile)).get(slotId) ?? null;
+}
+
+function keyedSlotRows(data: unknown): SlotRows {
   // A corrupt status file throws, as JSON.parse's untyped reads did: ownership checks must not
   // mistake it for an absent row.
   if (!isStatusRecord(data)) throw new TypeError(`${statusFile} is not a status object`);
   const slots = data.slots ?? [];
   if (!Array.isArray(slots)) throw new TypeError(`${statusFile} slots is not a list`);
-  for (const row of slots) {
-    if (!isStatusRecord(row))
-      throw new TypeError(`${statusFile} has a slot row that is not an object`);
-    if (row.slot === slotId) return row;
+  let keyed = slotRowsBySnapshot.get(slots);
+  if (!keyed) {
+    keyed = new Map();
+    for (const row of slots) {
+      if (!isStatusRecord(row))
+        throw new TypeError(`${statusFile} has a slot row that is not an object`);
+      if (typeof row.slot === 'string' && !keyed.has(row.slot)) keyed.set(row.slot, row);
+    }
+    slotRowsBySnapshot.set(slots, keyed);
   }
-  return null;
+  return keyed;
 }
 
 function isStatusRecord(value: unknown): value is Readonly<Record<string, unknown>> {

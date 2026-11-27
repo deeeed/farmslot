@@ -74,7 +74,6 @@ function reviewUsageLabel(usage: RunnerSessionUsage | undefined): string | null 
   const parts = [
     usage.turns != null ? `${usage.turns} turns` : null,
     usage.totalTokens != null ? `${usage.totalTokens.toLocaleString()} tokens` : null,
-    usage.costUsd != null ? `$${usage.costUsd.toFixed(4)}` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : 'Usage measured';
 }
@@ -120,6 +119,8 @@ export interface ReviewHistoryRound {
   usageLabel: string | null;
   /** The exact attempt receipt, retained for numeric accounting consumers. */
   usage?: RunnerSessionUsage;
+  /** A recorded attempt can identify its conversation without a usage receipt. */
+  sessionIdentity?: { runner: string; runnerSessionId: string };
   headSha: string | null;
   reviewBaseSha: string | null;
   resultRecorded: boolean;
@@ -271,6 +272,77 @@ function recoveredSnapshotKey(actor: AgentContext): string {
   return `history:${actor.id}:${actor.reviewLoopNumber ?? 0}:${actor.deliveryBaselineRef ?? actor.pipelineVisualReviewInput?.headSha ?? ''}:snapshot`;
 }
 
+function pipelineReviewUsage(
+  runId: string,
+  outputs: Record<string, unknown>,
+  attempt?: Record<string, unknown> | null,
+): RunnerSessionUsage | undefined {
+  const receipt = record(attempt ? attempt.usage : outputs.usage);
+  const session = record(attempt ? attempt.session : outputs.session);
+  const runner = text(receipt?.runner) ?? text(session?.runner) ?? text(outputs.runner);
+  const runnerSessionId =
+    text(receipt?.runnerSessionId) ??
+    text(session?.sessionId) ??
+    (!attempt ? text(outputs.reviewerSessionId) : null);
+  const measuredAt = text(receipt?.measuredAt);
+  const source = receipt?.source;
+  if (
+    !receipt ||
+    !runner ||
+    !runnerSessionId ||
+    !measuredAt ||
+    (source !== 'runner-transcript' && source !== 'provider-response' && source !== 'unavailable')
+  )
+    return undefined;
+  const strings = (value: unknown) =>
+    Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === 'string')
+      : undefined;
+  return {
+    // Pipeline steps already retain the gateway's full receipt, including the transcript
+    // path, token splits and tool accounting. Keep that metadata through replay.
+    ...receipt,
+    role: 'review',
+    runner,
+    runnerSessionId,
+    measuredAt,
+    source,
+    scope: receipt.scope === 'run-delta' ? 'run-delta' : 'session-total',
+    includesPriorRunLifetime:
+      receipt.includesPriorRunLifetime === true ||
+      (text(session?.priorRunId) && session?.priorRunId !== runId)
+        ? true
+        : undefined,
+    actualModel: text(receipt.actualModel),
+    costUsd: number(receipt.costUsd),
+    costStatus: receipt.costStatus === 'unpriced' ? 'unpriced' : undefined,
+    pricingScope: receipt.pricingScope === 'remote-tmux-pi' ? 'remote-tmux-pi' : undefined,
+    totalTokens: number(receipt.totalTokens),
+    turns: number(receipt.turns),
+    contextIds: strings(receipt.contextIds),
+    usageLeaseIds: strings(receipt.usageLeaseIds),
+    usageLeaseIdsVerified: receipt.usageLeaseIdsVerified === true ? true : undefined,
+    pendingUsageLeaseIds: strings(receipt.pendingUsageLeaseIds),
+    error: text(receipt.error) ?? undefined,
+  };
+}
+
+export function pipelineReviewReceipts(run: Pick<Run, 'id' | 'steps'>): RunnerSessionUsage[] {
+  const receipts: RunnerSessionUsage[] = [];
+  for (const step of run.steps) {
+    if (!step.name.includes('review') || !step.outputs) continue;
+    const outputs = step.outputs;
+    const final = pipelineReviewUsage(run.id, outputs);
+    if (final) receipts.push(final);
+    for (const value of Array.isArray(outputs.attempts) ? outputs.attempts : []) {
+      const attempt = record(value);
+      const usage = attempt ? pipelineReviewUsage(run.id, outputs, attempt) : undefined;
+      if (usage) receipts.push(usage);
+    }
+  }
+  return receipts;
+}
+
 function readyReviews(run: Run): ReviewStatus[] {
   const live = run.engineState?.publishGate?.reviews;
   if (live?.length) return live;
@@ -391,6 +463,29 @@ export function reviewHistoryView(
           (left.actor?.startedAt ?? '').localeCompare(right.actor?.startedAt ?? '') ||
           left.loop - right.loop,
       );
+    const summarySessionId =
+      review?.usage?.runnerSessionId ?? review?.session?.sessionId ?? review?.reviewerSessionId;
+    const summaryCandidates = attempts.filter((attempt) => {
+      if (!review?.usage || !['pass', 'issues'].includes(attempt.verdict)) return false;
+      const session = attempt.usage?.runnerSessionId ?? attempt.session?.sessionId;
+      return (
+        attempt.verdict === review.verdict &&
+        attempt.mode === review.mode &&
+        (!summarySessionId || !session || summarySessionId === session)
+      );
+    });
+    const exactSummaryCandidates = summaryCandidates.filter((attempt) => {
+      const session = attempt.usage?.runnerSessionId ?? attempt.session?.sessionId;
+      return Boolean(summarySessionId && session === summarySessionId);
+    });
+    const summaryOwners = exactSummaryCandidates.length
+      ? exactSummaryCandidates
+      : review?.completedAt
+        ? summaryCandidates.filter(({ completedAt }) => completedAt === review.completedAt)
+        : summaryCandidates.length === 1
+          ? summaryCandidates.filter(({ loopNumber }) => loopNumber === review?.loopNumber)
+          : [];
+    const summaryOwner = summaryOwners.length === 1 ? summaryOwners[0] : undefined;
     const projected = sources.map(({ loop, actor, fixOnly }): ReviewHistoryRound => {
       const sameLoop = actors.filter((context) => context.reviewLoopNumber === loop);
       const ownsAttempt = (
@@ -618,15 +713,55 @@ export function reviewHistoryView(
         number(raw?.unresolvedCount) ??
         number(saved?.unresolvedCount) ??
         (recorded ? issueRows.length : null);
-      const usage =
-        attempt?.usage ??
-        (review &&
-        ownsAttempt(
-          { ...review, headSha: review.reviewSnapshot?.headSha ?? undefined },
-          review.loopNumber,
-        )
-          ? review.usage
-          : undefined);
+      const pipelineUsage =
+        !fixOnly && !newerActive && step?.outputs
+          ? pipelineReviewUsage(run.id, step.outputs, raw)
+          : undefined;
+      const ownsPipelineUsage =
+        raw ||
+        (actor
+          ? actor.runner === pipelineUsage?.runner &&
+            actor.runnerSessionId === pipelineUsage?.runnerSessionId &&
+            (sameLoop.length === 1 || sameLoop.at(-1)?.id === actor.id)
+          : loop === (number(step?.outputs?.reviewLoopNumber) ?? stepAttempts.length));
+      const ownsReviewUsage =
+        review &&
+        (review.attempts?.length
+          ? attempt !== undefined && attempt === summaryOwner
+          : ownsAttempt(
+              { ...review, headSha: review.reviewSnapshot?.headSha ?? undefined },
+              review.loopNumber,
+            ));
+      const attemptUsage = attempt !== review ? attempt?.usage : undefined;
+      const recordedUsage = attemptUsage ?? (ownsReviewUsage ? review?.usage : undefined);
+      const usageTrace = attemptUsage ? attempt?.session : review?.session;
+      const runner = recordedUsage?.runner ?? usageTrace?.runner ?? review?.runner;
+      const runnerSessionId =
+        recordedUsage?.runnerSessionId ??
+        usageTrace?.sessionId ??
+        (attemptUsage ? undefined : review?.reviewerSessionId);
+      const usage = recordedUsage
+        ? {
+            ...recordedUsage,
+            ...(runner ? { runner } : {}),
+            ...(runnerSessionId ? { runnerSessionId } : {}),
+          }
+        : ownsPipelineUsage
+          ? pipelineUsage
+          : undefined;
+      const trace = attempt?.session ?? staticResult?.session;
+      const rawSession = record(raw?.session);
+      const sessionRunner =
+        usage?.runner ??
+        trace?.runner ??
+        text(rawSession?.runner) ??
+        actor?.runner ??
+        review?.runner;
+      const sessionId =
+        usage?.runnerSessionId ??
+        trace?.sessionId ??
+        text(rawSession?.sessionId) ??
+        actor?.runnerSessionId;
       return {
         key: actor?.id ?? `${id}:${loop}`,
         reviewId: id,
@@ -649,6 +784,9 @@ export function reviewHistoryView(
         completedAt,
         durationMs: duration(startedAt, completedAt),
         usage,
+        ...(sessionRunner && sessionId
+          ? { sessionIdentity: { runner: sessionRunner, runnerSessionId: sessionId } }
+          : {}),
         usageLabel: reviewUsageLabel(usage),
         headSha,
         reviewBaseSha,
@@ -879,6 +1017,8 @@ function historyAttemptIdentity(value: unknown) {
     attempt?.unresolvedCount,
     attempt?.startedAt,
     attempt?.completedAt,
+    record(attempt?.session)?.runner,
+    record(attempt?.session)?.sessionId,
     attempt?.reviewSnapshot,
     attempt?.fixDelta,
     attempt?.artifactPaths,

@@ -57,9 +57,12 @@ delta contains zero source files and the finding set is unchanged. It MUST
 retain the findings as open at the gate and MUST NOT automatically redeliver
 them after restart.
 
-A completed fix that changes only evidence/artifacts or at most 50 source lines
-MUST skip the automatic warm re-review and resolve the prior findings for gate
-eligibility. Source lines are additions plus deletions under the project's
+A completed fix that changes only evidence/artifacts or at most 50 source lines,
+for findings that are all minor or nit, MUST skip the automatic warm re-review.
+An open blocker or major, or a finding without a severity (as when recovery
+re-reads findings from the checklist), MUST get a real re-review. The gateway acceptance MUST NOT count as a passing review: the gate
+shows "fix accepted without re-review" and does not count it toward the
+required reviews. Source lines are additions plus deletions under the project's
 existing source filter. The original reviewer attempt MUST remain unchanged.
 The gateway MUST record acceptance of the worker fix, its current contribution
 snapshot and reviewed-input fingerprint without launching or charging a reviewer.
@@ -148,6 +151,18 @@ verdict. The operator may extend the budget, accept the captured result with a
 written reason without publishing it, or close it. Extensions keep their existing eligibility rules. A grant enables review to
 resume on the same run; it does not start work by itself. Named-slot re-binding
 remains only a fallback for historical failed runs that already lost ownership.
+
+An autonomous publishing run whose review ends with an open blocker or major
+finding (a finding without a severity counts as major) does not reach COMPLETE.
+With its result delivered it waits at the same result decision; a spent review
+budget keeps its budget stop, so Accept stays available. Without a delivered result
+it fails. The run records those findings in `engineState.openReviewFindings`, which
+a replay keeps and the next review verdict replaces, so a refused review launch
+after a replay stops the same way; its decision says the findings are from the last
+review. Minor and nit findings still go to the publication gate, and an interactive
+run keeps its human gate as before. The decision names the stop: spent fix rounds,
+a spent review budget, the no-verdict cap (which stops automatic reviews before the
+fix rounds are spent), fix rounds that are off, or fixing that stopped.
 
 ### Scoped extension
 
@@ -302,6 +317,16 @@ The optional fields ship in `@farmslot/protocol` 0.71.1. The gateway writes and 
   before inspection MUST NOT replace the last validated baseline. A binding
   transferred to a failed attempt MAY continue that provider session only with
   its gateway-owned no-verdict settlement and the earlier validated provenance.
+- A continuation that fails or is cancelled before its reviewer launches MUST
+  NOT keep the workspace it bound. If its live predecessor still names it, the
+  workspace goes back to the predecessor (the continuation's `transferredTo`
+  names the predecessor and the predecessor's claim is cleared). If its claim
+  never landed or another continuation won it, it records the run that holds
+  the workspace and stops or releases nothing. Only when the predecessor that
+  named it is archived does it keep and later release the checkout. A
+  workspace re-review child freezes the current configured static-review
+  template, as `run.create` does. A refused retained reviewer names each
+  mismatch and the requested and retained runner, model and effort.
 - Passing review eligibility requires its separate session, current reviewed
   head and verdict evidence. Choosing a different runner proves nothing.
 - A retained reviewer is a resumable session identity, not a running process.
@@ -414,6 +439,9 @@ The public read-only script prints the policy with `instructions`, or the policy
 Grant-time head records provenance. Later fix heads on the same owned branch use current-head review rules and the recorded scope. An extension survives retirement of its granting run within the same PR scope. The command requires `--request-id` and accepts `--expected-limit` for a compare-and-set grant.
 
 ## WARM delta packets
+
+[Skill-backed reviews](review-curation-and-results.md#skill-backed-review-rounds)
+use the earlier round and diff supplied by their skill. This section applies to the static template path.
 
 Under ADR-063 Amendment 14, the gateway freezes `inputs/warm-delta.json`
 with lineage and validated baseline identity, prior/current heads, compared

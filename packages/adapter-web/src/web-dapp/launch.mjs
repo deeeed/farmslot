@@ -47,6 +47,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { disableMacCodeSignClone } from '../chrome-args.cjs';
+import { isAppUrl } from '../origin.cjs';
 
 import { blindBrowserOptions } from './lib/blind-browser.mjs';
 import { hostResolverRules } from './lib/blocked-hosts.mjs';
@@ -284,13 +285,36 @@ function focusLog(runtime, message) {
 }
 
 // Browser-level CDP helpers for a background launch.
-async function withBrowserClient(cdpPort, callback) {
-  const client = await CdpClient.connect(await browserWebSocketUrl(cdpPort, 15000));
+async function withBrowserClient(cdpPort, callback, timeoutMs = 15000) {
+  const client = await CdpClient.connect(await browserWebSocketUrl(cdpPort, timeoutMs));
   try {
     return await callback(client);
   } finally {
     client.close?.();
   }
+}
+
+export async function hasHealthyAppPage(client, appOrigin) {
+  const { targetInfos } = await client.send('Target.getTargets');
+  const page = targetInfos.find(
+    (target) => target.type === 'page' && isAppUrl(target.url, appOrigin),
+  );
+  if (!page) return false;
+  const { sessionId } = await client.send('Target.attachToTarget', {
+    targetId: page.targetId,
+    flatten: true,
+  });
+  const { result } = await client.send(
+    'Runtime.evaluate',
+    {
+      // Next can keep the requested URL when it replaces the app with its error document.
+      expression:
+        "!document.documentURI.startsWith('chrome-error:') && document.documentElement?.id !== '__next_error__'",
+      returnByValue: true,
+    },
+    sessionId,
+  );
+  return result?.value === true;
 }
 
 export function backgroundWindowParams(url, placement) {
@@ -485,11 +509,28 @@ export async function launchWebDappBrowser(
   chmodSync(runtime, 0o700);
   const stateFile = path.join(runtime, 'browser.json');
   const appOrigin = `http://localhost:${appPort}`;
-  const headless = resolveHeadless({ headless: args.headless, headful: args.headful, env });
+  // The session is probed at most once: by the default display choice, or by
+  // the refusal below.
+  let probed = false;
+  let locked;
+  const probeLock = () => {
+    if (!probed) {
+      probed = true;
+      locked = sessionLocked();
+    }
+    return locked;
+  };
+  const headless = resolveHeadless({
+    headless: args.headless,
+    headful: args.headful,
+    env,
+    sessionLocked: () => probeLock() === true,
+  });
   const slowMoMs = resolveSlowMo({ flag: args['slow-mo'], env });
-  // A headful browser can't paint while the macOS session is locked: refuse
-  // before starting, reusing or stopping one.
-  if (!headless && sessionLocked() === true) {
+  if (headless && locked === true) log('the macOS session is locked: launching headless');
+  // A headful browser that was asked for can't paint while the macOS session
+  // is locked: refuse before starting, reusing or stopping one.
+  if (!headless && probeLock() === true) {
     throw new Error(
       `SESSION_LOCKED: ${SESSION_LOCKED_MESSAGE}\nNext: ${SESSION_LOCKED_USER_ACTION}`,
     );
@@ -520,14 +561,18 @@ export async function launchWebDappBrowser(
     previous.networkEnforcement?.fingerprint === enforcementFingerprint &&
     ownsProcess('browser', previous.browserPid, runtime) &&
     ownsProcess('wallet-host', previous.hostPid, runtime);
-  if (reusable) {
-    await browserWebSocketUrl(cdpPort, 5000);
+  if (
+    reusable &&
+    (await withBrowserClient(cdpPort, (client) => hasHealthyAppPage(client, appOrigin), 5000))
+  ) {
     log(`reusing browser pid ${previous.browserPid} (${signer}, ${account.name})`);
     const state = { ...previous, slowMoMs };
     if (previous.slowMoMs !== slowMoMs)
       writePrivateFile(stateFile, `${JSON.stringify(state, null, 2)}\n`);
     return { ...state, reused: true };
   }
+  if (reusable)
+    log('restarting the slot browser because its app tab is missing or on an error page');
   await stopWebDappBrowser(target, { cdpPort, log });
 
   const browser = await resolveBrowser(env);

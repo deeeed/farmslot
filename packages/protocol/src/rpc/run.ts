@@ -10,6 +10,7 @@ import type {
   RunStatus,
   SlotRunHistoryEntry,
 } from '../contracts/index.js';
+import type { RecipeFlowUpdate, RecipeInvocationTree } from '../recipe/common.js';
 import type { RunListRow } from '../runs/list-row.js';
 import type { WorkerSignalProbeResult } from '../transport/signal.js';
 
@@ -50,6 +51,9 @@ export const RunMethods = {
   sessionCommand: Methods.RUN_SESSION_COMMAND,
   grade: Methods.RUN_GRADE,
   getGrade: Methods.RUN_GET_GRADE,
+  recordExternalGrade: Methods.RUN_GRADE_EXTERNAL_RECORD,
+  recordInterview: Methods.RUN_INTERVIEW_RECORD,
+  recaptureEpisodes: Methods.RUN_EPISODE_RECAPTURE,
   proposeImprovement: Methods.RUN_PROPOSE_IMPROVEMENT,
   delete: Methods.RUN_DELETE,
   archive: Methods.RUN_ARCHIVE,
@@ -558,6 +562,16 @@ export interface RunExtendReviewBudgetResult {
   budget: import('../contracts/index.js').ReviewRoundBudget;
 }
 
+/**
+ * How long the gateway waits for an owned worker that is still making progress (a compaction,
+ * or the last turn after its completion signal) before it refreshes a publication package. The
+ * ready gate's own package build and `run.refreshPublishPackage` share it.
+ */
+export const OWNED_WORKER_IDLE_WAIT_MS = 15 * 60_000;
+
+/** A `run.refreshPublishPackage` caller outlasts the worker wait and the refresh after it. */
+export const RUN_REFRESH_PUBLISH_PACKAGE_TIMEOUT_MS = OWNED_WORKER_IDLE_WAIT_MS + 5 * 60_000;
+
 export interface RunRefreshPublishPackageParams {
   runId: string;
   /** Authenticated person action: reload ticket scope and re-register acceptance before capture. */
@@ -681,6 +695,11 @@ export interface RunRecordedEvidenceReview {
 }
 
 export interface RunRecipeRunsForRunResult {
+  /** Validated transient flow for the run's active, gateway-owned recipe attempt. */
+  pendingFlow?: {
+    tree: RecipeInvocationTree;
+    update: RecipeFlowUpdate;
+  };
   recordedEvidence?: RunRecordedEvidenceReview;
   recipeRuns: RecipeRunArtifactGroup[];
   selectedRecipeRunId: string | null;
@@ -993,6 +1012,59 @@ export interface RunBundleImportParams {
   bundlePath: string;
   mode?: import('../contracts/run-bundles.js').RunBundleImportMode;
   force?: boolean;
+}
+
+/** ADR-039 Amendment 10: one external grade line, appended to the run's grade sidecar. */
+export interface RunGradeExternalRecordParams {
+  runId: string;
+  /** The evaluation that produced the grade (a dataset or phase id). */
+  source: string;
+  /** Who or what judged: a person, a model id or a script. */
+  grader: string;
+  /** Allowed verdicts, best first; `verdict` must be one of them. */
+  scale: string[];
+  verdict: string;
+  rubric?: { point: string; verdict: string }[];
+  reason?: string;
+  /** When the judgement was made; defaults to when it is recorded. */
+  gradedAt?: string;
+}
+
+export interface RunExternalGrade extends Required<
+  Pick<RunGradeExternalRecordParams, 'source' | 'grader' | 'scale' | 'verdict' | 'gradedAt'>
+> {
+  rubric?: RunGradeExternalRecordParams['rubric'];
+  reason?: string;
+  /** The principal that recorded it, which may differ from the grader. */
+  recordedBy: string;
+  recordedAt: string;
+}
+
+export interface RunGradeExternalRecordResult {
+  grade: RunExternalGrade;
+}
+
+export type RunInterviewKind = 'why' | 'debrief' | 'note';
+
+export interface RunInterviewRecordParams {
+  runId: string;
+  kind: RunInterviewKind;
+  text: string;
+}
+
+export interface RunInterviewRecordResult {
+  /** File name in the run's interview folder, `<n>-<kind>.md`. */
+  file: string;
+}
+
+export interface RunEpisodeRecaptureParams {
+  since: string;
+  until?: string;
+}
+
+export interface RunEpisodeRecaptureResult {
+  /** Ended runs in the range whose episodes are being rewritten. */
+  queued: number;
 }
 
 export interface RunBundleRetainParams {

@@ -42,6 +42,9 @@ import { REVIEW_SKILL_INSTALL_SCRIPT } from './skill-install.js';
 import {
   collectReviewWorkspaceSupport,
   type FrozenReviewWorkspaceSupport,
+  reviewSkillFor,
+  reviewSkillInstallerDirectory,
+  reviewTaskRoot,
   reviewWorkspaceSupportEnvironment,
   verifyReviewWorkspaceSupport,
 } from './skills.js';
@@ -209,7 +212,8 @@ async function sourceFingerprint(
   const fingerprint = createHash('sha256').update(JSON.stringify(config));
   for (const [index, source] of resolution.sources.entries()) {
     fingerprint.update(JSON.stringify([source.root, source.sourceRevision, source.sourceDirty]));
-    const includeDependencies = definitions[index] === config.runtime;
+    const definition = definitions[index];
+    const includeDependencies = definition === config.runtime;
     function visit(directory: string) {
       for (const name of readdirSync(directory).sort()) {
         if (name === '.git' || (!includeDependencies && name === 'node_modules')) continue;
@@ -230,6 +234,8 @@ async function sourceFingerprint(
       }
     }
     visit(source.root);
+    if ('install' in definition && definition.install && definition.subpath)
+      visit(reviewSkillInstallerDirectory(source.root, definition.subpath));
   }
   return fingerprint.digest('hex');
 }
@@ -376,7 +382,18 @@ function summarize(manifest: Manifest, root: string): ReviewWorkspaceSupportBind
     })),
     skills: manifest.sources
       .filter((source) => source.kind === 'skill')
-      .map((source) => ({ name: source.name, path: path.posix.join(root, source.entry!) })),
+      .map((source) => ({
+        name: source.name,
+        path: path.posix.join(root, source.entry!),
+        ...(source.install
+          ? {
+              install: {
+                ...source.install,
+                source: path.posix.join(root, source.destination),
+              },
+            }
+          : {}),
+      })),
     ...(runtime
       ? { runtime: { name: runtime.name, path: path.posix.join(root, 'bin', runtime.name) } }
       : {}),
@@ -468,6 +485,8 @@ export async function ensureReviewWorkspaceSupport(
         workspace: {
           ...run.reviewWorkspace,
           support: undefined,
+          // Recorded at task materialization, after support admission (ADR-058 Amendment 4).
+          reviewTask: undefined,
           cleanedAt: undefined,
           retainedAt: undefined,
           retainedUntil: undefined,
@@ -517,7 +536,18 @@ export async function ensureReviewWorkspaceSupport(
       if (initial.reviewWorkspace.support)
         throw new Error('Admitted review support record is missing');
       const project = await deps.loadProjectVars(initial.project);
-      const config = project.projectJson.static_review?.support;
+      const selectedSupport = (vars: typeof project) => {
+        const config = vars.projectJson.static_review?.support;
+        return config?.skills
+          ? {
+              ...config,
+              skills: config.skills.filter(
+                (skill) => !skill.install || skill.subpath?.split('/')[1] === initial.domain,
+              ),
+            }
+          : config;
+      };
+      const config = selectedSupport(project);
       if (!config) {
         await check();
         await mkdir(path.dirname(admissionPath), { recursive: true });
@@ -534,10 +564,7 @@ export async function ensureReviewWorkspaceSupport(
       manifest = await gatewayBundle(project, config, fingerprint, deps);
       if (
         (await sourceFingerprint(project.projectConfig, config, deps.env())) !== fingerprint ||
-        !isDeepStrictEqual(
-          (await deps.loadProjectVars(initial.project)).projectJson.static_review?.support,
-          config,
-        )
+        !isDeepStrictEqual(selectedSupport(await deps.loadProjectVars(initial.project)), config)
       )
         throw new Error('Review support source changed before admission');
       const current = await check();
@@ -616,6 +643,12 @@ export async function ensureReviewWorkspaceSupport(
       JSON.stringify({
         checkout: current.reviewWorkspace!.checkoutPath,
         skills: binding.skills,
+        ...(reviewSkillFor({
+          domain: current.domain,
+          reviewWorkspace: { ...current.reviewWorkspace!, support: binding },
+        })
+          ? { reviewTasks: reviewTaskRoot(current.reviewWorkspace!) }
+          : {}),
         verifyOnly:
           current.agentContexts?.some(
             (context) =>

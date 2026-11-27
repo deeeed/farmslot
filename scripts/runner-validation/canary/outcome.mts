@@ -190,30 +190,6 @@ export function replayedGateDifferences(run: Run): string[] {
       ];
 }
 
-/**
- * Whether loop 2 returning issues excuses a failed reviewed run: the run then ends outside what
- * the comparison models. Only when the restarts did their part: the fix round's commit landed (a
- * re-review of a checkout missing it also returns issues), every hold was reached, nothing was
- * refused and no reviewer was re-launched.
- */
-export function reviewDriftExcuses(options: {
-  loop2?: string;
-  fixLanded: boolean;
-  /** Unreached holds and refused decisions. */
-  procedural: string[];
-  relaunched: boolean;
-  /** Loop 2's issues ended the review the way that path does: its retries exhausted. */
-  retriesExhausted: boolean;
-}): boolean {
-  return (
-    options.loop2 === 'issues' &&
-    options.fixLanded &&
-    options.retriesExhausted &&
-    !options.procedural.length &&
-    !options.relaunched
-  );
-}
-
 /** Every way `observed` differs from `expected`; empty when they match. */
 export function outcomeDifferences(
   expected: Omit<RunOutcome, 'superseded' | 'reviews'>,
@@ -258,8 +234,7 @@ export function stepTimings(run: Pick<Run, 'steps'>, endedAt?: number): Record<s
   for (const step of run.steps) {
     const completedAt = step.completedAt ? Date.parse(step.completedAt) : endedAt;
     if (!step.startedAt || completedAt === undefined) continue;
-    timings[step.name] =
-      Math.round((completedAt - Date.parse(step.startedAt)) / 100) / 10;
+    timings[step.name] = Math.round((completedAt - Date.parse(step.startedAt)) / 100) / 10;
   }
   return timings;
 }

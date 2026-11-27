@@ -254,6 +254,39 @@ function repairFindings(
   return findings;
 }
 
+/**
+ * Proof without an after capture (state-only, transcript) follows the capture rule: a recorded
+ * product checkout must be the clean frozen head, or the transcript proves another commit. As for
+ * captures, an unrecorded source is unavailable rather than a mismatch.
+ */
+function stateProofSourceMismatch(
+  input: RecordedEvidencePackageInput,
+  indexed: readonly Record<string, unknown>[],
+  headSha: string,
+): RecipeValidationFinding | undefined {
+  // Only a qualified after capture (clean, on this head) of the selected execution's own claim
+  // stands in for the check; an unknown or retained capture does not.
+  const compared = groupRecipeCaptureComparisons(input, input.claims?.criteria ?? [], {
+    headSha,
+  }).rows.some((row) => row.after.some((media) => media.root === '' && media.eligible));
+  const product = indexed.find((entry) => entry.path === 'product-provenance.json')?.metadata;
+  if (compared || !isRecord(product)) return undefined;
+  const message =
+    product.dirty === true
+      ? 'Proof source has tracked changes'
+      : typeof product.git_ref === 'string' && product.git_ref !== headSha
+        ? `Proof ran on ${product.git_ref}, not the frozen review revision ${headSha}`
+        : undefined;
+  return message
+    ? {
+        severity: 'error',
+        code: 'comparison-source-mismatch',
+        path: 'product-provenance.json',
+        message,
+      }
+    : undefined;
+}
+
 /** Validate actual package identities before consumers derive a moment or publish evidence. */
 export function validateRecordedEvidencePackage(
   input: RecordedEvidencePackageInput,
@@ -373,6 +406,11 @@ function validatePackage(
   }
   if (input.repair || (isRecord(input.invocation) && input.invocation.repair !== undefined))
     for (const [path, message] of repairFindings(input, dependencies)) issue(path, message);
+  // The selected attempt only: comparison dependencies keep their own capture revision rules.
+  if (snapshot?.headSha && ancestors.size === 0) {
+    const finding = stateProofSourceMismatch(input, indexed, snapshot.headSha);
+    if (finding) findings.push(finding);
+  }
   if (input.claims?.schemaVersion === 2) {
     const captures = groupRecipeCaptureComparisons(input, input.claims.criteria, snapshot);
     for (const media of captures.media) {

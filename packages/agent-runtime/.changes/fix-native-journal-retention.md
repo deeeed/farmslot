@@ -1,0 +1,1 @@
+- Native hosts archive settled sessions' journals out of startup replay on request (`archiveSessions`, declared `supportsSessionArchive`), and load a summary instead of replaying a settled session's unchanged journal at start, replaying it the first time something reads it (ADR-039 Amendment 11).

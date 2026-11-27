@@ -44,7 +44,7 @@ import { autoDispatchBacklogReady, listBacklogItems } from './backlog/store.js';
 import { ChatActionRejectError } from './chat/chat-actions.js';
 import { GatewayInternalError, GatewayMethodError } from './core/method-error.js';
 import { setSlotUpdateHook } from './core/state.js';
-import { unregisterByWs } from './fleet/machine-registry.js';
+import { noteNodeFrame, unregisterByWs } from './fleet/machine-registry.js';
 import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
 import { acceptNodeLinkStream } from './fleet/node-link.js';
 import { failRequestsBoundTo, handleNodeExecOutput, handleNodeResponse } from './fleet/node-rpc.js';
@@ -112,6 +112,7 @@ import {
 } from './resources/workspace-read.js';
 import { handleReviewFsChanged } from './review/orchestrator.js';
 import { invalidateReviewProgressForMachine } from './review/progress.js';
+import { nativeSessionManager } from './runners/native/manager.js';
 import { resolveNativeExecutionNode } from './runners/native/node.js';
 import { onPtyExit, unsubscribeAllPty } from './runtime/pty-stream.js';
 import {
@@ -274,6 +275,8 @@ export function createWebSocketServer(
     }
 
     ws.on('message', (raw: Buffer, isBinary: boolean) => {
+      // A node's frames are its signs of life when admission probes its socket.
+      if (state.clientKind === 'node') noteNodeFrame(ws);
       try {
         // Handle binary frames from nodes (screen capture relay)
         if (isBinary && raw.length > 7 && raw[0] === NODE_FRAME_MAGIC) {
@@ -466,7 +469,7 @@ export function createWebSocketServer(
           seq: ++eventSeq,
         });
         // Broadcast fleet update so UI reflects offline status immediately
-        loadFleetStatus(true)
+        loadFleetStatus(true, false, { newest: true })
           .then((fleet) => {
             broadcast({
               type: 'event',
@@ -563,6 +566,11 @@ export function initServerGlobals(): void {
     for (const [ws, state] of clients) {
       const identity = state.terminalIdentities.get(slotId);
       if (!identity) continue;
+      if ('worker' in identity) {
+        state.workerTerminalHandlers.delete(slotId);
+        state.terminalIdentities.delete(slotId);
+        forgetTerminalRedraws(state, slotId);
+      }
       sendEvent(ws, Events.TERMINAL_EXITED, { ...identity, exitCode });
       sent = true;
     }
@@ -594,13 +602,33 @@ export function initServerGlobals(): void {
   // reconnects.
   startScreenRelaunchWatcher();
 
-  // Init thumbnail cache (demand-driven — only polls when clients subscribe)
+  // A deploy can leave the gateway-local native host on the previous runtime: refresh it, and
+  // start the current one when that stopped it, before observing it. A busy host keeps running
+  // and refreshes at a later launch. Tests never touch the operator's host: every test runner
+  // context counts, as for the backlog store (node --test sets 'child-v8').
+  const nativeRefresh = process.env.NODE_TEST_CONTEXT
+    ? Promise.resolve()
+    : nativeSessionManager
+        .refreshStaleHost()
+        .then(async ({ refreshed, busy }) => {
+          if (refreshed) {
+            await nativeSessionManager.warm();
+            console.log('[native] refreshed the local host onto the current runtime');
+          } else if (busy.length)
+            console.warn(`[native] local host refresh waits for: ${busy.join('; ')}`);
+        })
+        // Startup goes on without it: launches retry the refresh, and observation reports
+        // an unavailable host rather than blocking the gateway.
+        .catch((error: unknown) => console.error('[native] local host refresh failed:', error));
   const nativeOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   if (nativeOwner)
-    void nativeObservations.startLocal(nativeOwner).catch((error) => {
-      if (!(error instanceof NativeSourceUnavailable)) throw error;
-      // Source failure is published and marked reads expose error/Retry; no host launches.
-    });
+    void nativeRefresh.then(() =>
+      nativeObservations.startLocal(nativeOwner).catch((error) => {
+        if (!(error instanceof NativeSourceUnavailable)) throw error;
+        // Source failure is published and marked reads expose error/Retry; no host launches.
+      }),
+    );
+  // Init thumbnail cache (demand-driven — only polls when clients subscribe)
   initThumbnailCache(broadcastEvent);
   resourceRevisions.setPublisher((payload) => {
     if (
@@ -636,7 +664,7 @@ export function initServerGlobals(): void {
   // Hook: broadcast fleet update whenever updateSlotStatus writes to disk.
   // This ensures the UI sees changes immediately instead of waiting for chokidar.
   setSlotUpdateHook(() => {
-    loadFleetStatus(true)
+    loadFleetStatus(true, false, { newest: true })
       .then(publishFleetChange)
       .catch((err) => {
         console.warn(`[server] slot update hook fleet refresh failed: ${(err as Error).message}`);

@@ -8,7 +8,6 @@ import {
   type EvidenceManifestEntry,
   isPrerequisiteGatePayload,
   isTerminalRunStatus,
-  PipelineSteps,
   type PRReviewOptions,
   prReviewWorkflow,
   type RepeatReviewContext,
@@ -25,7 +24,7 @@ import {
 } from '@farmslot/protocol';
 import { resolveReviewMode } from '@farmslot/review-dispatch';
 
-import { contextLaunched } from '../agents/contexts.js';
+import { runReachedDispatch } from '../agents/contexts.js';
 import { reviewChainWithMetrics } from '../review/chain-metadata.js';
 import { runReviewRoundBudget } from '../review/review-round-budget.js';
 import { assertEvidenceAttestationReceipt } from '../run-completion/evidence-attestation.js';
@@ -630,22 +629,9 @@ export function buildCollisionSuccessorParams(
   };
 }
 
-/**
- * A run that failed or was cancelled before any worker launched. Replay resets the dispatch
- * step's timing, so the records a dispatch leaves on the run also count as having reached it.
- */
+/** A run that failed or was cancelled before any worker launched. */
 function endedBeforeDispatch(run: Run): boolean {
-  if (run.status !== 'failed' && run.status !== 'cancelled') return false;
-  const dispatch = run.steps.find((step) => step.name === PipelineSteps.DISPATCH);
-  if (!dispatch || dispatch.startedAt) return false;
-  if (dispatch.status !== 'pending' && dispatch.status !== 'skipped') return false;
-  return !(
-    run.engineState?.taskExecution ||
-    run.engineState?.workspaceReviewDispatchGeneration !== undefined ||
-    run.worktreeHeadAtDispatch ||
-    run.metrics?.runnerSessionId ||
-    run.agentContexts?.some(contextLaunched)
-  );
+  return (run.status === 'failed' || run.status === 'cancelled') && !runReachedDispatch(run);
 }
 
 /**

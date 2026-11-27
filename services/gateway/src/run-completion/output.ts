@@ -15,12 +15,18 @@ import {
   runOutputReviewEnabled,
   type RunStatus,
 } from '@farmslot/protocol';
-import { parseRunBundleMissingData, waitForRunBundleQueueTurn } from '@farmslot/run-bundle';
+import {
+  isRunBundleMedia,
+  parseRunBundleMissingData,
+  waitForRunBundleQueueTurn,
+} from '@farmslot/run-bundle';
 
 import { GATEWAY_OWNED_DIFF_ARTIFACT_PATHS } from '../core/artifact-copy-policy.js';
+import { failedBeforeWorkerLaunch } from '../run-lifecycle/pre-worker-failure.js';
 import { getRun, persistRunNow, updateRun } from '../runs/store.js';
 
 import { type ArtifactMirrorOptions, refreshArtifactMirror } from './artifact-mirror.js';
+import { timeCompletePhase } from './phase-timing.js';
 import {
   publicationBaselineContext,
   resolvePublicationManifest,
@@ -225,13 +231,21 @@ export function captureRunOutput(
 
 /** Keep final raw artifacts without rewriting the report snapshot the person judged. */
 export function retainFinalRunArtifacts(runId: string): Promise<number> {
-  return queueOutputCapture(
-    runId,
-    Boolean(getRun(runId)?.slotId),
-    false,
-    { requireSourceArtifacts: true },
-    'final-result',
-  );
+  return queueOutputCapture(runId, Boolean(getRun(runId)?.slotId), false, {}, 'final-result');
+}
+
+/**
+ * Decided when the capture runs, after any queued capture committed: a missing source is a
+ * loss only once there was output to lose. A run that positively failed before its worker
+ * launched and retained nothing has no final result; an empty source then copies and
+ * prunes nothing, the gateway's mirrored task files are captured, and release can proceed.
+ */
+function finalResultMirrorOptions(run: Run): ArtifactMirrorOptions {
+  return failedBeforeWorkerLaunch(run) &&
+    !run.output?.artifactManifest.length &&
+    !run.output?.artifactBundle
+    ? { keepMirrorWithoutSource: true }
+    : { requireSourceArtifacts: true };
 }
 
 type CapturePurpose = 'snapshot' | 'final-result';
@@ -249,7 +263,9 @@ function queueOutputCapture(
   const capture = () =>
     captureRunOutputNow(runId, mirror, workerFinished, options, attempt, purpose);
   const previous = capturesInFlight.get(runId) ?? Promise.resolve();
-  const next = waitForRunBundleQueueTurn(previous, `output capture of run ${runId}`).then(capture);
+  const next = timeCompletePhase('capture.queue', () =>
+    waitForRunBundleQueueTurn(previous, `output capture of run ${runId}`),
+  ).then(capture);
   // An expired capture refuses promptly, but its tail still orders followers behind the predecessor.
   const settled = Promise.allSettled([previous, next]).then(() => undefined);
   capturesInFlight.set(runId, settled);
@@ -274,28 +290,67 @@ async function captureRunOutputNow(
   if (taskFile !== attempt.taskFile || generation !== attempt.generation)
     throw new Error('Run attempt changed while retrieving output; refresh the current attempt');
   const acquisition = options.acquisition ?? createRunArtifactAcquisition(run);
-  const copied =
-    mirror && !run.reviewWorkspace
-      ? await refreshArtifactMirror(run, { ...options, acquisition })
-      : 0;
+  let sourceEmpty = false;
+  const finalPolicy = purpose === 'final-result' ? finalResultMirrorOptions(run) : undefined;
+  const mirrorOptions: ArtifactMirrorOptions = finalPolicy?.keepMirrorWithoutSource
+    ? {
+        ...options,
+        ...finalPolicy,
+        onEmptySource: () => {
+          sourceEmpty = true;
+        },
+      }
+    : { ...options, ...finalPolicy };
+  let copied = 0;
+  if (mirror && !run.reviewWorkspace)
+    copied = await timeCompletePhase('capture.mirror', () =>
+      refreshArtifactMirror(run, { ...mirrorOptions, acquisition }),
+    );
+  else mirrorOptions.onEmptySource?.();
+  const scanned = await timeCompletePhase('capture.scan', () =>
+    scanArtifacts(path.dirname(taskFile)),
+  );
+  // A retried release must not replace what an earlier final retention kept (media can be
+  // acquired straight into that bundle and its staging copy removed) with a capture of a
+  // source the mirror found empty or could not inspect. A retained capture removes its
+  // media from the gateway task, so media still there was not retained: rather than a
+  // replacement that could drop what the earlier bundle kept, release stops and holds it.
+  if (sourceEmpty && run.artifactBundle) {
+    const media = scanned.filter((artifact) => isRunBundleMedia(artifact.path));
+    // Authored tasks outside the managed roots keep their media after a retained capture,
+    // so a file counts as retained when the earlier bundle holds the same bytes.
+    const kept = media.length
+      ? new Map(
+          (await retainedRunArtifactManifest(run, run.artifactBundle))
+            .filter((entry) => entry.availability === 'available')
+            .map((entry) => [entry.path, entry.sha256]),
+        )
+      : new Map<string, string | undefined>();
+    const unretained = media.filter(
+      (artifact) => !artifact.sha256 || kept.get(artifact.path) !== artifact.sha256,
+    );
+    if (unretained.length === 0) return 0;
+    throw new Error(
+      `Final result artifacts were not retained: ${unretained.map((artifact) => artifact.path).join(', ')} remain in the gateway task after an earlier final retention`,
+    );
+  }
   const artifactsByPath = new Map(
-    [...(await scanArtifacts(path.dirname(taskFile))), ...acquisition.media].map((artifact) => [
-      artifact.path,
-      artifact,
-    ]),
+    [...scanned, ...acquisition.media].map((artifact) => [artifact.path, artifact]),
   );
   if (workerFinished || options.forPublication) {
     let selection: Awaited<ReturnType<typeof resolvePublicationManifest>> = null;
     try {
-      selection = await resolvePublicationManifest(
-        path.dirname(taskFile),
-        undefined,
-        undefined,
-        run.recordedEvidenceContractVersion ?? 0,
-        publicationBaselineContext(
-          run,
-          [...artifactsByPath.values()],
-          options.publicationComparison,
+      selection = await timeCompletePhase('capture.selection', () =>
+        resolvePublicationManifest(
+          path.dirname(taskFile),
+          undefined,
+          undefined,
+          run.recordedEvidenceContractVersion ?? 0,
+          publicationBaselineContext(
+            run,
+            [...artifactsByPath.values()],
+            options.publicationComparison,
+          ),
         ),
       );
     } catch (error) {
@@ -359,39 +414,47 @@ async function captureRunOutputNow(
     manifestDigest: outputManifestDigest(artifacts),
     ...(report ? { reportPath: report.path } : {}),
   };
-  const retained = await retainCapturedRunArtifacts({
-    run: { ...current, output },
-    artifacts,
-    acquireMedia: acquisition.acquireMedia,
-    manifestDigest: output.manifestDigest,
-    releaseStagingMedia: true,
-    commit: async (ref, missingData) => {
-      const latest = getRun(runId);
-      if (!latest || latest.taskFile !== taskFile || latest.engineState?.generation !== generation)
-        throw new Error('Run attempt changed while retaining output; refresh the current attempt');
-      if (purpose === 'final-result') {
-        await persistRunNow(
-          updateRun(runId, { artifactBundle: ref }),
-          'retained final result artifacts',
-        );
-        return;
-      }
-      const retainedOutput: RunOutput = {
-        ...output,
-        artifactBundle: ref,
-        retentionMissingData: missingData,
-      };
-      const updated = updateRun(runId, {
-        artifactBundle: ref,
-        output: retainedOutput,
-        decisions:
-          latest.status === 'cancelled'
-            ? latest.decisions
-            : outputReviewDecisions(latest, retainedOutput),
-      });
-      await persistRunNow(updated, 'retained run output');
-    },
-  });
+  const retained = await timeCompletePhase('capture.retain', () =>
+    retainCapturedRunArtifacts({
+      run: { ...current, output },
+      artifacts,
+      acquireMedia: acquisition.acquireMedia,
+      manifestDigest: output.manifestDigest,
+      releaseStagingMedia: true,
+      commit: async (ref, missingData) => {
+        const latest = getRun(runId);
+        if (
+          !latest ||
+          latest.taskFile !== taskFile ||
+          latest.engineState?.generation !== generation
+        )
+          throw new Error(
+            'Run attempt changed while retaining output; refresh the current attempt',
+          );
+        if (purpose === 'final-result') {
+          await persistRunNow(
+            updateRun(runId, { artifactBundle: ref }),
+            'retained final result artifacts',
+          );
+          return;
+        }
+        const retainedOutput: RunOutput = {
+          ...output,
+          artifactBundle: ref,
+          retentionMissingData: missingData,
+        };
+        const updated = updateRun(runId, {
+          artifactBundle: ref,
+          output: retainedOutput,
+          decisions:
+            latest.status === 'cancelled'
+              ? latest.decisions
+              : outputReviewDecisions(latest, retainedOutput),
+        });
+        await persistRunNow(updated, 'retained run output');
+      },
+    }),
+  );
   if (purpose === 'final-result') {
     const missing = retained.missingData.filter(
       (entry) => parseRunBundleMissingData(entry).reason !== 'excluded',

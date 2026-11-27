@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import type { FarmPaths, LegacyFarmStorageFacts } from './farm-paths.js';
@@ -11,6 +11,65 @@ function readOptional(file: string): unknown {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
     throw error;
   }
+}
+
+/** True when the path does not exist; any other failure to stat it is thrown, as readOptional does. */
+function missing(file: string): boolean {
+  try {
+    statSync(file);
+    return false;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+    )
+      return true;
+    throw error;
+  }
+}
+
+/**
+ * The real path a root would have once its volume is mounted: realpath where the
+ * path exists, else the real path of its deepest existing ancestor with the rest
+ * appended, following symlinks along the way even when their target is missing
+ * (a ~/farmslot-data link into an unmounted volume). The binding stores a real path.
+ */
+function resolvedRoot(root: string): string {
+  let current = path.resolve(root);
+  const rest: string[] = [];
+  for (let links = 0; links < 40; ) {
+    try {
+      return path.join(realpathSync(current), ...rest);
+    } catch (error) {
+      if (
+        !(error instanceof Error && 'code' in error) ||
+        (error.code !== 'ENOENT' && error.code !== 'ENOTDIR')
+      )
+        throw error;
+    }
+    let target: string | undefined;
+    try {
+      target = readlinkSync(current);
+    } catch (error) {
+      // Not a link (EINVAL), or not there at all: anything else is a real failure.
+      if (
+        !(error instanceof Error && 'code' in error) ||
+        !['EINVAL', 'ENOENT', 'ENOTDIR'].includes(String(error.code))
+      )
+        throw error;
+    }
+    if (target !== undefined) {
+      current = path.resolve(path.dirname(current), target);
+      links += 1;
+      continue;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    rest.unshift(path.basename(current));
+    current = parent;
+  }
+  return path.join(current, ...rest);
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -49,6 +108,26 @@ export function readLegacyStorageFacts(paths: FarmPaths): LegacyFarmStorageFacts
     !path.isAbsolute(binding.root)
   )
     throw new Error('Run bundle store pairing does not match the canonical Run store.');
+  // The bound store may sit on a volume that is not mounted. Its ownership cannot
+  // be checked then, but reporting must not fail: a node that threw here never
+  // connected (macwork, c910ssd unmounted). The bound root is reported as is, and
+  // whatever uses it meets the outage there. A configured root that differs from
+  // the bound one, or is missing while the bound one is present, is a
+  // misconfiguration, not an outage.
+  if (missing(binding.root)) {
+    if (configured && resolvedRoot(configured) !== resolvedRoot(binding.root))
+      throw new Error(
+        'Run bundle store pairing does not match the configured root; use the migration command.',
+      );
+    return {
+      runBundles: binding.root,
+      unavailable: `Run bundle store ${binding.root} is unavailable (is its volume mounted?)`,
+    };
+  }
+  if (configured && missing(configured))
+    throw new Error(
+      'Run bundle store pairing does not match the configured root; use the migration command.',
+    );
   if (configured && realpathSync(configured) !== realpathSync(binding.root))
     throw new Error(
       'Run bundle store pairing does not match the configured root; use the migration command.',

@@ -67,7 +67,9 @@ function scopeFixture(t: TestContext) {
   const scope = captureCIFixScope({ ...request, headSha });
   return { repo, git, headSha, operation, request, scope };
 }
-export const pushHookBudgets = ['2500', '500'];
+// Each budget also covers shell, node and git startup before the hook, so the timeout case
+// leaves that headroom and its hook blocks until the budget kills its process group.
+export const pushHookBudgets = ['10000', '3000'];
 export function registerPushHookBudget(variant: (typeof pushHookBudgets)[number]) {
   const budget = variant;
   test(`TASK.md worker push shares SSH protection and ${budget}ms hook budget`, (t) => {
@@ -84,7 +86,7 @@ export function registerPushHookBudget(variant: (typeof pushHookBudgets)[number]
     f.git('config', 'core.hooksPath', '.git/hooks');
     writeFileSync(
       path.join(f.repo, '.git/hooks/pre-push'),
-      `#!/bin/sh\necho started > .git/hook-started\nsleep ${budget === '500' ? '0.8' : '0.05'}\necho finished > .git/hook-finished\n`,
+      `#!/bin/sh\necho started > .git/hook-started\nsleep ${budget === '3000' ? '30' : '0.05'}\necho finished > .git/hook-finished\n`,
       { mode: 0o755 },
     );
     writeFileSync(path.join(f.repo, 'product.ts'), 'worker fix\n');
@@ -105,13 +107,13 @@ export function registerPushHookBudget(variant: (typeof pushHookBudgets)[number]
       cwd: f.repo,
       env: { ...process.env, GIT_SSH_COMMAND: `'${ssh}'`, GIT_SSH_VARIANT: 'ssh' },
       encoding: 'utf8',
-      timeout: 4000,
+      timeout: 30_000,
     });
     if (result.error) throw result.error;
     assert.ok(existsSync(path.join(f.repo, '.git/hook-started')));
-    if (budget === '500') {
+    if (budget === '3000') {
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /git push timed out after 500 ms.*pre-push hook budget/);
+      assert.match(result.stderr, /git push timed out after 3000 ms.*pre-push hook budget/);
       assert.equal(existsSync(path.join(f.repo, '.git/hook-finished')), false);
     } else {
       assert.equal(result.status, 0, result.stderr);
@@ -125,7 +127,7 @@ export function registerPushHookBudget(variant: (typeof pushHookBudgets)[number]
       ['--git-dir', remote, 'rev-parse', `refs/heads/${f.request.branch}`],
       { encoding: 'utf8' },
     ).trim();
-    assert.equal(remoteHead, budget === '500' ? f.headSha : f.git('rev-parse', 'HEAD'));
+    assert.equal(remoteHead, budget === '3000' ? f.headSha : f.git('rev-parse', 'HEAD'));
   });
 }
 

@@ -15,6 +15,8 @@ import {
   isSettledSubtaskStatus,
   isTerminalWorkerSignalStatus,
   isWorkerSignalStatus,
+  ROLE_SIGNAL_SUFFIX,
+  signalFileForChecklist,
   SUBTASK_ID_PATTERN,
   SUBTASK_INDEX_FILE,
   type SubtaskIndex,
@@ -24,12 +26,13 @@ import {
   type TaskProgressStructured,
   type TaskStepProgress,
   type TaskStepSubtaskProgress,
+  WORKER_SIGNAL_FILE,
   type WorkerSignalChecklistTiming,
   type WorkerSignalParentLink,
   type WorkerSignalStatus,
 } from '@farmslot/protocol';
 
-import { type SlotLocality, slotReadFileIfExists } from '../core/slot-io.js';
+import { type SlotLocality, slotPrefetchFiles, slotReadFileIfExists } from '../core/slot-io.js';
 import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
 
 import { parseChecklistTiming } from './checklist-timing.js';
@@ -302,6 +305,8 @@ export function buildSubtaskEntry(
   progress: TaskProgressStructured,
   signal: SubtaskSignalRead | null,
   nowMs: number,
+  /** The context owning the parent checklist has ended, or the run is terminal. */
+  ownerEnded = false,
 ): TaskStepSubtaskProgress {
   const lastEventAt = signal?.lastEventAt ?? null;
   const status = projectSubtaskStatus(signal?.status ?? null, lastEventAt, nowMs);
@@ -322,6 +327,8 @@ export function buildSubtaskEntry(
     source: unit.source,
     progress,
     lastEventAt,
+    // A settled unit needs no qualifier; an unsettled one under an ended owner is not live.
+    ...(ownerEnded && !isSettledSubtaskStatus(signal?.status) ? { ownerEnded: true as const } : {}),
   };
 }
 
@@ -364,6 +371,13 @@ export async function readSubtaskUnits(
   units: readonly SubtaskIndexUnit[],
   suffix = '',
 ): Promise<SubtaskUnitRead[]> {
+  ctx = await slotPrefetchFiles(
+    ctx,
+    units.flatMap((unit) => [
+      path.join(taskDir, `${unit.checklist}${suffix}`),
+      path.join(taskDir, `${unit.signal}${suffix}`),
+    ]),
+  );
   const reads: SubtaskUnitRead[] = [];
   for (const unit of units) {
     const checklistPath = path.join(taskDir, `${unit.checklist}${suffix}`);
@@ -387,18 +401,46 @@ export interface OpenSubtaskUnit {
 }
 
 /**
+ * The parent signal whose own children gate a completion of `checklist` into `signal`, or
+ * undefined to gate on every open child. Mirrors the mark engine's rule: a unit's parent signal
+ * is the one derived from its parent checklist, so a completion into a custom signal, or one
+ * with no checklist into a name `mark` never derives, cannot be matched and keeps the unscoped
+ * check, which fails closed.
+ */
+export function completingParentSignal(
+  checklist: string | null | undefined,
+  signal: string,
+): string | undefined {
+  if (checklist) return signalFileForChecklist(checklist) === signal ? signal : undefined;
+  // No checklist to derive from: only a name `mark` itself derives can be matched.
+  return signal === WORKER_SIGNAL_FILE || signal.endsWith(ROLE_SIGNAL_SUFFIX) ? signal : undefined;
+}
+
+/**
  * Registered units that have not finished. Settled is `complete` or `done` via
  * the protocol helper; a `blocked` child is still open and still owns its
  * parent step, so a parent completion must not pass while one exists.
+ *
+ * With `parentSignal`, only the units whose parent completes into that signal
+ * (ADR-060: a parent's contract governs its own children). The worker's TASK.md
+ * and CHECKLIST.md share SIGNAL.json; a reviewer's REVIEW.<context>.md units are
+ * that reviewer's alone, so a parallel or stopped reviewer's open child does not
+ * block the worker. `mark` derives a unit's parent signal the same way.
  */
 export async function listOpenSubtaskUnits(
   ctx: SlotLocality,
   taskDir: string,
+  parentSignal?: string,
 ): Promise<OpenSubtaskUnit[]> {
   const index = await readSubtaskIndex(ctx, taskDir);
   if (!index) return [];
   const open: OpenSubtaskUnit[] = [];
   for (const unit of index.units) {
+    if (
+      parentSignal !== undefined &&
+      signalFileForChecklist(unit.parent.checklist) !== parentSignal
+    )
+      continue;
     const status = (await readChildSignal(ctx, taskDir, unit))?.status ?? null;
     if (!isSettledSubtaskStatus(status)) open.push({ unit, status });
   }
@@ -437,10 +479,12 @@ export async function subtaskTerminalRefusal(
   ctx: SlotLocality,
   taskDir: string,
   terminalCommand: string,
+  /** From {@link completingParentSignal}: only that signal's children refuse it; undefined, all. */
+  parentSignal: string | undefined,
 ): Promise<string | null> {
   let open: OpenSubtaskUnit[];
   try {
-    open = await listOpenSubtaskUnits(ctx, taskDir);
+    open = await listOpenSubtaskUnits(ctx, taskDir, parentSignal);
   } catch (err) {
     if (!(err instanceof SubtaskRegistryError)) throw err;
     return subtaskRegistryContractMessage(err, terminalCommand);

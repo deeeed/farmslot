@@ -58,6 +58,8 @@ const DETERMINISTIC_REJECTION_CODES = new Set([
   'AUTH_INVALID_CLIENT',
   'INVALID_PARAMS',
   'PROTOCOL_INCOMPATIBLE',
+  // Another process holds this machine id; retrying fast cannot change that.
+  'NODE_ALREADY_CONNECTED',
   'NODE_LINK_IDENTITY_REQUIRED',
 ]);
 

@@ -441,6 +441,8 @@ export class SlotLoadRunModal extends LitElement {
         slotId,
         runId: run.id,
         branch: run.branch!,
+        flowType: run.flowType,
+        domain: run.domain,
         slotBranch: this.slotBranch,
         prepareProfile: options.prepareProfile,
         strictProfile: options.strictProfile,

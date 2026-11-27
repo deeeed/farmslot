@@ -152,6 +152,78 @@ async function setup(options: SetupOptions = {}): Promise<SetupResult> {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+interface HudCallParams {
+  objectId?: string;
+  arguments?: Array<{ value: unknown }>;
+}
+
+interface HudDelivery {
+  objectId: string | undefined;
+  step: unknown;
+  completed: boolean;
+  applied: boolean;
+}
+
+function hudTransport(delayFirstAck = false, delayFirstEvaluation = false) {
+  let context = 1;
+  let bridgeUnavailableOnce = false;
+  const pending: { resolve?: () => void; unavailable?: () => void; evaluation?: () => void } = {};
+  const unavailable = new Promise<void>((resolve) => {
+    pending.unavailable = resolve;
+  });
+  const firstEvaluation = new Promise<void>((resolve) => {
+    pending.evaluation = resolve;
+  });
+  let evaluations = 0;
+  const firstAck = new Promise<void>((resolve) => {
+    pending.resolve = resolve;
+  });
+  const deliveries: HudDelivery[] = [];
+  const sendCommand = mock.fn(async (_session: unknown, method: string, params: HudCallParams) => {
+    if (method === 'Runtime.evaluate') {
+      const objectId = `global-${context}`;
+      if (delayFirstEvaluation && evaluations++ === 0) await firstEvaluation;
+      return { result: { objectId } };
+    }
+    assert.equal(method, 'Runtime.callFunctionOn');
+    const delivery: HudDelivery = {
+      objectId: params.objectId,
+      step: params.arguments?.[0]?.value,
+      completed: false,
+      applied: false,
+    };
+    deliveries.push(delivery);
+    // A delayed reply still describes the realm in which the command ran.
+    const available = !bridgeUnavailableOnce;
+    bridgeUnavailableOnce = false;
+    if (delayFirstAck && deliveries.length === 1) await firstAck;
+    delivery.completed = true;
+    delivery.applied = available;
+    if (!available) {
+      assert.ok(pending.unavailable);
+      pending.unavailable();
+    }
+    return { result: { value: available } };
+  });
+  return {
+    deliveries,
+    sendCommand,
+    unavailable,
+    releaseEvaluation() {
+      assert.ok(pending.evaluation);
+      pending.evaluation();
+    },
+    advanceContext(unavailableOnce = false) {
+      context += 1;
+      bridgeUnavailableOnce = unavailableOnce;
+    },
+    release() {
+      assert.ok(pending.resolve);
+      pending.resolve();
+    },
+  };
+}
+
 describe('CDP broker network capture', () => {
   it('uses a short stable per-runtime socket path', () => {
     const first = brokerSocketPath(`/private/${'deep/'.repeat(40)}runtime-a`);
@@ -368,6 +440,225 @@ describe('CDP broker network capture', () => {
     assert.ok(hudCall !== undefined, 'expected a Runtime.callFunctionOn call');
     const args = hudCall.arguments[2] as { arguments?: Array<{ value: unknown }> };
     assert.deepEqual(args.arguments, [{ value: { intent: 'second', id: 'run 2/2' } }]);
+  });
+
+  it(
+    'replays HUD after same-socket context replacement and preserves explicit clear',
+    { timeout: 2000 },
+    async (t) => {
+      const transport = hudTransport();
+      const { broker, client, sessions } = await setup({ sendCommand: transport.sendCommand });
+      const step = { intent: 'current intent', id: 'run 1/1' };
+      await client.control('hud-update', { step });
+      await waitFor(() => assert.ok(transport.deliveries.some((row) => row.applied)));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      transport.advanceContext(true);
+      broker.onCdpEvent('device-1', 'Runtime.executionContextsCleared', {});
+      broker.onCdpEvent('device-1', 'Runtime.executionContextCreated', { context: { id: 2 } });
+      await transport.unavailable;
+      await new Promise((resolve) => setImmediate(resolve));
+      t.mock.timers.tick(100);
+      await new Promise((resolve) => setImmediate(resolve));
+      t.mock.timers.reset();
+      await waitFor(() =>
+        assert.ok(transport.deliveries.some((row) => row.objectId === 'global-2' && row.applied)),
+      );
+      const restored = transport.deliveries.filter((row) => row.objectId === 'global-2');
+      assert.equal(
+        restored.length,
+        2,
+        'the existing bridge readiness retry completes before apply',
+      );
+      assert.deepEqual(restored.at(-1)?.step, step);
+      await client.control('hud-update', { step: null });
+      await waitFor(() => assert.equal(transport.deliveries.at(-1)?.step, null));
+      transport.advanceContext();
+      broker.onCdpEvent('device-1', 'Runtime.executionContextsCleared', {});
+      broker.onCdpEvent('device-1', 'Runtime.executionContextCreated', { context: { id: 3 } });
+      await waitFor(() =>
+        assert.ok(transport.deliveries.some((row) => row.objectId === 'global-3' && row.completed)),
+      );
+      assert.ok(
+        transport.deliveries
+          .filter((row) => row.objectId === 'global-3')
+          .every((row) => row.step === null),
+      );
+      sessions.delete('device-1');
+      broker.onSessionClose('device-1');
+      transport.advanceContext();
+      sessions.set('device-1', {
+        deviceId: 'device-1',
+        name: 'mmdev-1',
+        opened: true,
+        brokerReady: true,
+      });
+      broker.onSessionOpen('device-1');
+      await waitFor(() =>
+        assert.ok(transport.deliveries.some((row) => row.objectId === 'global-4' && row.completed)),
+      );
+      assert.ok(
+        transport.deliveries
+          .filter((row) => row.objectId === 'global-4')
+          .every((row) => row.step === null),
+      );
+    },
+  );
+
+  it(
+    'supersedes a HUD replay with clear while bridge readiness waits',
+    { timeout: 2000 },
+    async (t) => {
+      const transport = hudTransport();
+      const { broker, client } = await setup({ sendCommand: transport.sendCommand });
+      const step = { intent: 'old intent', id: 'run 1/1' };
+      await client.control('hud-update', { step });
+      await waitFor(() => assert.ok(transport.deliveries.some((row) => row.applied)));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      transport.advanceContext(true);
+      broker.onCdpEvent('device-1', 'Runtime.executionContextsCleared', {});
+      broker.onCdpEvent('device-1', 'Runtime.executionContextCreated', { context: { id: 2 } });
+      await transport.unavailable;
+      await new Promise((resolve) => setImmediate(resolve));
+      await client.control('hud-update', { step: null });
+      t.mock.timers.tick(100);
+      await new Promise((resolve) => setImmediate(resolve));
+      t.mock.timers.reset();
+      await waitFor(() =>
+        assert.ok(transport.deliveries.some((row) => row.applied && row.step === null)),
+      );
+      const writes = transport.deliveries.filter(
+        (row) => row.objectId === 'global-2' && row.applied,
+      );
+      assert.ok(writes.length > 0);
+      assert.ok(
+        writes.every((row) => row.step === null),
+        'no stale display after clear while readiness waits',
+      );
+    },
+  );
+
+  it('supersedes a HUD write when clear arrives during global lookup', async () => {
+    const transport = hudTransport(false, true);
+    const { client } = await setup({ sendCommand: transport.sendCommand });
+    cleanups.push(async () => {
+      transport.releaseEvaluation();
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+    await client.control('hud-update', { step: { intent: 'old intent', id: 'run 1/1' } });
+    await waitFor(() => assert.equal(transport.sendCommand.mock.calls.length, 1));
+    await client.control('hud-update', { step: null });
+    transport.releaseEvaluation();
+    await waitFor(() =>
+      assert.ok(transport.deliveries.some((row) => row.applied && row.step === null)),
+    );
+    assert.ok(
+      transport.deliveries.every((row) => row.step === null),
+      'lookup must not deliver superseded display',
+    );
+  });
+
+  for (const replacement of ['same-socket context', 'socket gap']) {
+    it(`does not let a stale HUD ACK settle the next ${replacement}`, async () => {
+      const transport = hudTransport(true);
+      const { broker, client, sessions } = await setup({ sendCommand: transport.sendCommand });
+      cleanups.push(async () => {
+        transport.release();
+        await new Promise((resolve) => setImmediate(resolve));
+      });
+      const step = { intent: 'keep current', id: 'run 1/1' };
+      await client.control('hud-update', { step });
+      await waitFor(() => assert.equal(transport.deliveries.length, 1));
+      if (replacement === 'same-socket context') {
+        transport.advanceContext();
+        broker.onCdpEvent('device-1', 'Runtime.executionContextsCleared', {});
+        broker.onCdpEvent('device-1', 'Runtime.executionContextCreated', { context: { id: 2 } });
+        transport.release();
+      } else {
+        sessions.delete('device-1');
+        broker.onSessionClose('device-1');
+        transport.release();
+        await new Promise((resolve) => setImmediate(resolve));
+        transport.advanceContext();
+        sessions.set('device-1', {
+          deviceId: 'device-1',
+          name: 'mmdev-1',
+          opened: true,
+          brokerReady: true,
+        });
+        broker.onSessionOpen('device-1');
+      }
+      await waitFor(() =>
+        assert.ok(transport.deliveries.some((row) => row.objectId === 'global-2' && row.applied)),
+      );
+      assert.deepEqual(transport.deliveries.at(-1)?.step, step);
+    });
+  }
+
+  it('does not let a replaced HUD session waiter settle the current socket', async () => {
+    const current: SessionInfo = {
+      deviceId: 'device-1',
+      name: 'mmdev-1',
+      opened: true,
+      brokerReady: true,
+    };
+    const appliedSessions: unknown[] = [];
+    const sendCommand = mock.fn(async (session: unknown, method: string) => {
+      if (method === 'Runtime.evaluate') return { result: { objectId: 'global' } };
+      appliedSessions.push(session);
+      return { result: { value: true } };
+    });
+    const { broker, client, sessions } = await setup({ sendCommand });
+    sessions.delete('device-1');
+    broker.onSessionClose('device-1');
+    await client.control('hud-update', { step: { intent: 'current socket', id: 'run 1/1' } });
+    sessions.set('device-1', { ...current });
+    broker.onSessionOpen('device-1');
+    // The first waiter has resolved, but its continuation has not run yet.
+    sessions.set('device-1', current);
+    broker.onSessionOpen('device-1');
+    await waitFor(() => assert.ok(appliedSessions.includes(current)));
+  });
+
+  it('keeps an explicit HUD clear when an older display ACK arrives after context clear', async () => {
+    const transport = hudTransport(true);
+    const { broker, client, sessions } = await setup({ sendCommand: transport.sendCommand });
+    cleanups.push(async () => {
+      transport.release();
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+    await client.control('hud-update', { step: { intent: 'old intent', id: 'old 1/1' } });
+    await waitFor(() => assert.equal(transport.deliveries.length, 1));
+    transport.advanceContext();
+    broker.onCdpEvent('device-1', 'Runtime.executionContextsCleared', {});
+    broker.onCdpEvent('device-1', 'Runtime.executionContextCreated', { context: { id: 2 } });
+    await client.control('hud-update', { step: null });
+    transport.release();
+    await waitFor(() =>
+      assert.ok(transport.deliveries.some((row) => row.objectId === 'global-2' && row.completed)),
+    );
+    assert.ok(
+      transport.deliveries
+        .filter((row) => row.objectId === 'global-2')
+        .every((row) => row.step === null),
+    );
+    sessions.delete('device-1');
+    broker.onSessionClose('device-1');
+    transport.advanceContext();
+    sessions.set('device-1', {
+      deviceId: 'device-1',
+      name: 'mmdev-1',
+      opened: true,
+      brokerReady: true,
+    });
+    broker.onSessionOpen('device-1');
+    await waitFor(() =>
+      assert.ok(transport.deliveries.some((row) => row.objectId === 'global-3' && row.completed)),
+    );
+    assert.ok(
+      transport.deliveries
+        .filter((row) => row.objectId === 'global-3')
+        .every((row) => row.step === null),
+    );
   });
 
   it('waits for the HUD bridge before marking an update applied', async () => {
