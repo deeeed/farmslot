@@ -5,11 +5,9 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,15 +27,17 @@ import {
 
 import { CdpWebPage } from '../../../packages/recipe-runner/src/runtime/cdp.js';
 
+import {
+  assertCleanTrackedSource,
+  buildProofManifest,
+  createAttemptOutputDir,
+} from './antigravity-proof-utils.mts';
+
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
-const sourceSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], {
-  encoding: 'utf8',
-}).trim();
+const { sourceSha, sourceTreeSha, trackedWorkingTreeClean } = assertCleanTrackedSource(repo);
 const baseOutput = path.resolve(process.argv[2] ?? '/tmp/antigravity-copilot-cdp-proof');
-const attemptId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${sourceSha.slice(0, 8)}-${crypto.randomUUID().slice(0, 8)}`;
-const output = path.join(baseOutput, `attempt-${attemptId}`);
+const { attemptId, outputDir: output } = await createAttemptOutputDir(baseOutput, sourceSha);
 const root = await mkdtemp(path.join(tmpdir(), 'antigravity-copilot-proof-'));
-await mkdir(output, { recursive: true });
 
 for (const directory of [
   'scripts',
@@ -189,34 +189,8 @@ const until = async <T,>(
   }
 };
 
-const assertPortFree = async (port: number, label: string): Promise<void> => {
-  await new Promise<void>((resolve, reject) => {
-    const probe = net.createServer();
-    probe.once('error', (err: NodeJS.ErrnoException) => {
-      reject(
-        new Error(
-          `${label} port ${port} is already occupied (${err.code ?? err.message}); refusing to attach to a foreign process`,
-        ),
-      );
-    });
-    probe.once('listening', () => {
-      probe.close((closeErr) => (closeErr ? reject(closeErr) : resolve()));
-    });
-    probe.listen(port, '127.0.0.1');
-  });
-};
-
-const requestedVitePort = process.env.FARMSLOT_PROOF_VITE_PORT
-  ? Number(process.env.FARMSLOT_PROOF_VITE_PORT)
-  : 0;
-const requestedCdpPort = process.env.FARMSLOT_PROOF_CDP_PORT
-  ? Number(process.env.FARMSLOT_PROOF_CDP_PORT)
-  : 0;
-if (requestedVitePort > 0) await assertPortFree(requestedVitePort, 'Vite');
-if (requestedCdpPort > 0) await assertPortFree(requestedCdpPort, 'CDP');
-
-let vitePort = requestedVitePort;
-let cdpPort = requestedCdpPort;
+let vitePort = 0;
+let cdpPort = 0;
 let cdpBase = '';
 const chromeProfileDir = path.join(root, 'chrome-profile');
 await mkdir(chromeProfileDir, { recursive: true });
@@ -224,6 +198,8 @@ await mkdir(chromeProfileDir, { recursive: true });
 const result: Record<string, unknown> = {
   pass: false,
   sourceSha,
+  sourceTreeSha,
+  trackedWorkingTreeClean,
   attemptId,
   outputDir: output,
   root,
@@ -316,7 +292,7 @@ try {
     effortControlAbsent: true,
   };
 
-  // Start isolated Vite serving Command Center UI on a guaranteed-free port
+  // Start isolated Vite serving Command Center UI on an ephemeral free port
   vite = await createVite({
     configFile: path.join(repo, 'apps/command-center/ui/vite.config.ts'),
     envDir: path.join(root, 'no-env'),
@@ -324,8 +300,8 @@ try {
     logLevel: 'error',
     server: {
       host: '127.0.0.1',
-      port: requestedVitePort,
-      strictPort: requestedVitePort > 0,
+      port: 0,
+      strictPort: false,
       fs: { allow: [repo, fs.realpathSync(path.join(repo, 'node_modules'))] },
       proxy: {
         '/ws': { target: `http://127.0.0.1:${gatewayPort}`, ws: true },
@@ -338,15 +314,16 @@ try {
   assert(viteAddr && typeof viteAddr !== 'string', 'Vite server did not bind a TCP port');
   vitePort = viteAddr.port;
 
-  // Launch isolated owned headless Chrome bound to our private profile; verify DevToolsActivePort
-  // written by this exact process so an occupied port can never redirect us to a foreign browser.
+  // Launch isolated owned headless Chrome on an ephemeral CDP port bound to our private profile;
+  // verify DevToolsActivePort + browser WebSocket identity written by this exact process so we
+  // can never attach to or disturb any existing browser or page.
   const chromeBinary =
     process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   chromeProc = spawn(
     chromeBinary,
     [
       '--headless=new',
-      `--remote-debugging-port=${requestedCdpPort}`,
+      '--remote-debugging-port=0',
       `--user-data-dir=${chromeProfileDir}`,
       '--no-first-run',
       '--no-default-browser-check',
@@ -369,28 +346,42 @@ try {
       if (!fs.existsSync(activePortFile)) return '';
       return (await readFile(activePortFile, 'utf8')).trim();
     },
-    (text) => text.split(/\r?\n/).length >= 2 && Number(text.split(/\r?\n/)[0]) > 0,
+    (text) => {
+      const parts = text.split(/\r?\n/);
+      return (
+        parts.length >= 2 && Number(parts[0]) > 0 && parts[1]!.startsWith('/devtools/browser/')
+      );
+    },
     'owned Chrome DevToolsActivePort ready',
     20_000,
   );
-  cdpPort = Number(activePortText.split(/\r?\n/)[0]);
-  if (requestedCdpPort > 0) {
-    assert.equal(cdpPort, requestedCdpPort, 'Owned Chrome did not bind the requested CDP port');
-  }
+  const [activePortLine, browserWsPath] = activePortText.split(/\r?\n/);
+  cdpPort = Number(activePortLine);
+  assert(
+    Number.isInteger(cdpPort) && cdpPort > 0 && browserWsPath?.startsWith('/devtools/browser/'),
+    `Invalid DevToolsActivePort payload: ${activePortText}`,
+  );
   cdpBase = `http://127.0.0.1:${cdpPort}`;
-  await until(
+  const expectedBrowserWsUrl = `ws://127.0.0.1:${cdpPort}${browserWsPath}`;
+  const versionInfo = await until(
     async () => {
       assert(chromeProc?.exitCode === null, 'Owned Chrome exited before CDP became ready');
       try {
         const res = await fetch(`${cdpBase}/json/version`);
-        return res.ok;
+        if (!res.ok) return null;
+        return (await res.json()) as { webSocketDebuggerUrl?: string };
       } catch {
-        return false;
+        return null;
       }
     },
-    Boolean,
+    (info) => Boolean(info?.webSocketDebuggerUrl),
     'owned Chrome CDP ready',
     20_000,
+  );
+  assert.equal(
+    versionInfo?.webSocketDebuggerUrl,
+    expectedBrowserWsUrl,
+    `CDP endpoint browser identity mismatch: expected ${expectedBrowserWsUrl}, got ${versionInfo?.webSocketDebuggerUrl}`,
   );
 
   // Create a dedicated target owned by this proof run instead of hijacking an existing tab.
@@ -410,6 +401,7 @@ try {
   result.ownedBrowser = {
     pid: chromeProc.pid,
     cdpPort,
+    browserWsPath,
     vitePort,
     targetId: ownedTabId,
   };
@@ -1047,21 +1039,7 @@ try {
     );
   }
   result.hostStopped = !fs.existsSync(lock);
-  const manifestEntries = await Promise.all(
-    (await readdir(output))
-      .filter((name) => name !== 'result.json')
-      .sort()
-      .map(async (file) => {
-        const full = path.join(output, file);
-        const bytes = await readFile(full);
-        const info = await stat(full);
-        return {
-          file,
-          bytes: info.size,
-          sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
-        };
-      }),
-  );
+  const manifestEntries = await buildProofManifest(output);
   result.manifest = manifestEntries;
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
   await rm(root, { recursive: true, force: true });
@@ -1070,6 +1048,8 @@ try {
       {
         pass: result.pass,
         sourceSha: result.sourceSha,
+        sourceTreeSha: result.sourceTreeSha,
+        trackedWorkingTreeClean: result.trackedWorkingTreeClean,
         attemptId: result.attemptId,
         outputDir: result.outputDir,
         hostStopped: result.hostStopped,

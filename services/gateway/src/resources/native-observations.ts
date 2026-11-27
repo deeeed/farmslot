@@ -12,11 +12,12 @@ import type { ResourceKey } from '@farmslot/protocol/client-cache';
 
 import { GatewayMethodError } from '../core/method-error.js';
 import { getNode } from '../fleet/machine-registry.js';
-import { isNodeTransportUnavailableError } from '../fleet/node-rpc.js';
+import { isNodeTransportUnavailableError, sendNodeRequest } from '../fleet/node-rpc.js';
 import { nativeSessionManager } from '../runners/native/manager.js';
 import {
   resolveNativeExecutionNode,
   resolveTrustedNativeExecutable,
+  resolveTrustedNativeExecutablesForNode,
 } from '../runners/native/node.js';
 import { authorizeNativeWorkerHistory } from '../runners/native/worker-history.js';
 import {
@@ -291,6 +292,16 @@ interface RemoteSource {
   connection: object;
   current: () => boolean;
   receipt: NativeSourceReceipt;
+  configuredDigest?: string;
+  configuring?: { digest: string; promise: Promise<void> };
+}
+function canonicalExecutablesDigest(executables: Record<string, string> | undefined): string {
+  if (!executables) return '{}';
+  return JSON.stringify(
+    Object.keys(executables)
+      .sort()
+      .map((key) => [key, executables[key]]),
+  );
 }
 export interface NativeReadResult<T> {
   payload: T;
@@ -302,7 +313,11 @@ export class GatewayNativeObservations {
   private readonly remote = new Map<string, RemoteSource>();
   private local?: NativeHostObservation;
   private localReceipt?: NativeSourceReceipt;
+  private localConfiguredDigest?: string;
+  private localConfiguring?: { digest: string; promise: Promise<void> };
   private poolCatalogRevision = 0;
+  private executableCacheRevision = -1;
+  private readonly executableCache = new Map<string, Record<string, string> | undefined>();
 
   private readonly stopCatalogNotices: () => void;
   private readonly stopVisibleNotices: () => void;
@@ -360,7 +375,10 @@ export class GatewayNativeObservations {
     }
   }
   catalogChanged(change: NativeCatalogChange): void {
-    if (change.scope === 'all') this.poolCatalogRevision++;
+    if (change.scope === 'all') {
+      this.poolCatalogRevision++;
+      this.executableCache.clear();
+    }
     const interests = [];
     for (const client of this.clients.values()) {
       const interest = client.catalogInterest;
@@ -445,7 +463,14 @@ export class GatewayNativeObservations {
       receipt.revision < previous.receipt.revision
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Native source revision went backwards');
-    this.remote.set(receipt.nodeId, { connection, current, receipt: { ...receipt } });
+    this.remote.set(receipt.nodeId, {
+      connection,
+      current,
+      receipt: { ...receipt },
+      ...(previous?.connection === connection
+        ? { configuredDigest: previous.configuredDigest, configuring: previous.configuring }
+        : {}),
+    });
     if (previous && previous.connection !== connection)
       this.invalidateSource(previous.receipt.nodeId, previous.receipt.ownerId);
     this.invalidateSource(receipt.nodeId, receipt.ownerId, receipt.changed);
@@ -574,6 +599,10 @@ export class GatewayNativeObservations {
         }
         // A Retry can re-arm this authorized source owner; it cannot fabricate its receipt.
         try {
+          if (interest.method === 'native.profile.status') {
+            if (node === 'local') await this.syncLocalExecutables();
+            else await this.syncRemoteExecutables(node, sourceOwner(authority, node));
+          }
           if (node === 'local' && this.local && !this.local.current().ready)
             await this.local.retry();
           sources.set(node, await this.fence(node, sourceOwner(authority, node)));
@@ -776,6 +805,99 @@ export class GatewayNativeObservations {
     this.local?.stop();
     this.clients.clear();
     this.remote.clear();
+  }
+
+  private async resolveCachedNodeExecutables(
+    nodeId: string,
+  ): Promise<Record<string, string> | undefined> {
+    if (this.executableCacheRevision !== this.poolCatalogRevision) {
+      this.executableCache.clear();
+      this.executableCacheRevision = this.poolCatalogRevision;
+    }
+    if (this.executableCache.has(nodeId)) return this.executableCache.get(nodeId);
+    const resolved = await resolveTrustedNativeExecutablesForNode(nodeId);
+    if (this.executableCacheRevision === this.poolCatalogRevision) {
+      this.executableCache.set(nodeId, resolved);
+    }
+    return resolved;
+  }
+
+  private async syncLocalExecutables(): Promise<void> {
+    if (!this.local) return;
+    const executables = await this.resolveCachedNodeExecutables('local');
+    const digest = canonicalExecutablesDigest(executables);
+    if ((this.localConfiguredDigest ?? '{}') === digest && !this.localConfiguring) return;
+    if (this.localConfiguring?.digest === digest) return this.localConfiguring.promise;
+    const local = this.local;
+    const run = (async () => {
+      if (!local.current().ready) {
+        await local.setExecutableConfig(digest);
+        await local.retry();
+      } else {
+        await local.setExecutableConfig(digest);
+      }
+      if (this.local === local) this.localConfiguredDigest = digest;
+    })().finally(() => {
+      if (this.localConfiguring?.promise === run) this.localConfiguring = undefined;
+    });
+    this.localConfiguring = { digest, promise: run };
+    await run;
+  }
+
+  private async syncRemoteExecutables(nodeId: string, ownerId: string): Promise<void> {
+    const source = this.remote.get(nodeId);
+    if (!source || !source.current()) return;
+    const executables = await this.resolveCachedNodeExecutables(nodeId);
+    const digest = canonicalExecutablesDigest(executables);
+    if ((source.configuredDigest ?? '{}') === digest && !source.configuring) return;
+    if (source.configuring?.digest === digest) return source.configuring.promise;
+    const node = resolveNativeExecutionNode(ownerId, nodeId);
+    if (node.ws !== source.connection) return;
+    const run = (async () => {
+      let receipt: unknown;
+      try {
+        receipt = await sendNodeRequest(
+          node,
+          'native.observation.configure',
+          {
+            owner: ownerId,
+            ...(executables ? { executables } : {}),
+          },
+          { timeout: 20_000, requireSameConnection: true },
+        );
+      } catch (error) {
+        // Older nodes that do not implement native.observation.configure can still serve
+        // default PATH-based profile status when no custom runner executable is configured.
+        if (
+          !executables &&
+          error instanceof Error &&
+          /Unknown method:\s*native\.observation\.configure/.test(error.message)
+        ) {
+          if (this.remote.get(nodeId) === source) source.configuredDigest = digest;
+          return;
+        }
+        throw error;
+      }
+      const currentSource = this.remote.get(nodeId);
+      if (!currentSource || currentSource.connection !== node.ws || !currentSource.current())
+        return;
+      const parsed = receipt as NativeSourceReceipt;
+      validateReceipt(parsed);
+      if (
+        parsed.incarnation !== currentSource.receipt.incarnation ||
+        parsed.revision >= currentSource.receipt.revision
+      ) {
+        this.acceptRemote(node.ws, parsed, currentSource.current);
+      }
+      const updated = this.remote.get(nodeId);
+      if (updated && updated.connection === node.ws) updated.configuredDigest = digest;
+    })().finally(() => {
+      const latest = this.remote.get(nodeId);
+      if (latest?.configuring?.promise === run) latest.configuring = undefined;
+      if (source.configuring?.promise === run) source.configuring = undefined;
+    });
+    source.configuring = { digest, promise: run };
+    await run;
   }
 
   private async fence(nodeId: string, ownerId: string): Promise<NativeSourceReceipt> {

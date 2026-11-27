@@ -1,20 +1,38 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
-import { WebSocket } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 
-import { DEFAULT_CLAUDE_MODEL, Methods, normalizeRunner } from '@farmslot/protocol';
+import { NativeSessionClient } from '@farmslot/agent-runtime/native';
+import { observeAntigravityAccount } from '@farmslot/agent-runtime/native/antigravity';
+import {
+  NativeHostObservation,
+  type NativeSourceReceipt,
+} from '@farmslot/agent-runtime/native/observation';
+import { routeNativeProfile } from '@farmslot/agent-runtime/native/profile-service';
+import {
+  DEFAULT_CLAUDE_MODEL,
+  Methods,
+  type NativeProfileStatusResult,
+  normalizeRunner,
+  type Principal,
+  type RequestFrame,
+} from '@farmslot/protocol';
 
-import { withSlotCommandExecutor } from '../core/exec-scope.js';
 import { computeCandidateStrategyFingerprint } from '../evals/package-store.js';
-import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
-import { handleNodeResponse } from '../fleet/node-rpc.js';
+import { getNode, registerNode, unregisterByWs } from '../fleet/machine-registry.js';
+import { handleNodeResponse, sendNodeRequest } from '../fleet/node-rpc.js';
 import { resolvePreviewExecution, resolvePreviewModel } from '../methods/dispatch/preview.js';
 import { axesForTrialTransport } from '../methods/eval/candidate-setup.js';
+import {
+  GatewayNativeObservations,
+  nativeReadInterests,
+} from '../resources/native-observations.js';
 import { resolveRunDispatchRunnerModel } from '../run-engine/dispatch-policy.js';
+import { createGatewayAuthRuntime } from '../security/auth.js';
 
 import {
   resolveTrustedNativeExecutable,
@@ -237,82 +255,432 @@ test('resolveTrustedNativeExecutable and resolveTrustedNativeExecutablesForNode 
   }
 });
 
-test('remote Antigravity status uses structured ACP probe and preserves last observed login on generic failures', async () => {
-  // Use a real non-local host so isLocal(host, machine) is false and the remote execOnSlot branch runs.
-  const remoteVars = makeVars({
-    machine: 'remote-agy-host',
-    host: 'remote-agy.example',
-    sshUser: 'operator',
-    sshTarget: 'operator@remote-agy.example',
-    antigravityPath: '/opt/agy/bin/agy',
+interface TypedNodeTransport {
+  ws: WebSocket;
+  close(): Promise<void>;
+}
+
+/** Real loopback WebSocket transport so gateway node-RPC tests inspect actual wire frames without casts. */
+async function createTypedNodeTransport(
+  onRequest: (frame: RequestFrame) => Promise<unknown>,
+): Promise<TypedNodeTransport> {
+  const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await new Promise<void>((resolve) => wss.once('listening', resolve));
+  const address = wss.address();
+  assert(address && typeof address !== 'string');
+  const serverSocketReady = new Promise<WebSocket>((resolve) => {
+    wss.once('connection', (socket) => resolve(socket));
+  });
+  const clientSocket = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await new Promise<void>((resolve, reject) => {
+    clientSocket.once('open', () => resolve());
+    clientSocket.once('error', reject);
+  });
+  const serverSocket = await serverSocketReady;
+  clientSocket.on('message', (raw) => {
+    const frame = JSON.parse(String(raw)) as RequestFrame;
+    void onRequest(frame).then(
+      (payload) => handleNodeResponse(frame.id, true, payload, undefined, undefined, serverSocket),
+      (err: unknown) => {
+        const error = err as Error & { code?: string };
+        handleNodeResponse(
+          frame.id,
+          false,
+          undefined,
+          error instanceof Error ? error.message : String(err),
+          error?.code,
+          serverSocket,
+        );
+      },
+    );
+  });
+  return {
+    ws: serverSocket,
+    async close() {
+      clientSocket.close();
+      serverSocket.close();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+    },
+  };
+}
+
+test('remote Antigravity status runs shared observeAntigravityAccount across node boundary with cleanup and failure isolation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-remote-node-status-'));
+  const pidFile = join(root, 'child.pid');
+  const fakeAgy = join(root, 'agy');
+  const launcherExit127 = join(root, 'agy-exit-127');
+  writeFileSync(
+    fakeAgy,
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+if (process.argv.includes('--version')) {
+  console.log('1.5.12');
+  process.exit(0);
+}
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+const signedOut = process.env.AGY_TEST_SIGNED_OUT === '1';
+const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') {
+    return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: '1.5.12' } } });
+  }
+  if (m.method === 'session/list') {
+    if (signedOut) {
+      return send({ id: m.id, error: { code: -32000, message: 'Authentication required' } });
+    }
+    return send({ id: m.id, result: { sessions: [] } });
+  }
+});
+`,
+  );
+  chmodSync(fakeAgy, 0o700);
+  writeFileSync(
+    launcherExit127,
+    `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  console.log('1.5.12');
+  process.exit(0);
+}
+process.stderr.write('launcher dependency temporarily missing\\n');
+process.exit(127);
+`,
+  );
+  chmodSync(launcherExit127, 0o700);
+
+  const machine = 'remote-agy-host';
+  let transportMode: 'observe' | 'rpc-error' = 'observe';
+  const transport = await createTypedNodeTransport(async (frame) => {
+    assert.equal(frame.method, 'native.account.observe');
+    const p = (frame.params ?? {}) as Record<string, unknown>;
+    assert.equal(p.runner, 'antigravity');
+    if (transportMode === 'rpc-error') throw new Error('node connection reset');
+    const extraEnv =
+      p.env && typeof p.env === 'object' && !Array.isArray(p.env)
+        ? (p.env as Record<string, string>)
+        : {};
+    return observeAntigravityAccount({
+      cwd: typeof p.cwd === 'string' ? p.cwd : root,
+      executable: typeof p.executable === 'string' ? p.executable : undefined,
+      env: { ...process.env, ...extraEnv },
+    });
+  });
+  registerNode(machine, 1, transport.ws);
+  try {
+    const baseVars = makeVars({
+      machine,
+      host: 'remote-agy.example',
+      sshUser: 'operator',
+      sshTarget: 'operator@remote-agy.example',
+      remoteRepo: root,
+      antigravityPath: fakeAgy,
+    });
+
+    const authenticated = await getHostRunnerSubscriptions(baseVars, {
+      runners: ['antigravity', 'unknown-peer'],
+    });
+    const agyAuth = authenticated.find((s) => s.runner === 'antigravity');
+    assert.equal(agyAuth?.source, 'antigravity-auth');
+    assert.equal(agyAuth?.loginMethod, 'agy 1.5.12');
+    assert.deepEqual(agyAuth?.outcome, { identity: 'observed', quota: 'absent' });
+    assert.equal(authenticated.find((s) => s.runner === 'unknown-peer')?.source, 'unsupported');
+    // Confirm the spawned ACP child exited before the remote status call returned.
+    const childPid = Number(readFileSync(pidFile, 'utf8').trim());
+    assert.throws(() => process.kill(childPid, 0), { code: 'ESRCH' });
+
+    const signedOut = await getHostRunnerSubscriptions(
+      { ...baseVars, machineEnv: { AGY_TEST_SIGNED_OUT: '1' } },
+      { runners: ['antigravity'] },
+    );
+    assert.equal(signedOut[0]?.source, 'error');
+    assert.equal(signedOut[0]?.error, 'not-logged-in');
+    assert.deepEqual(signedOut[0]?.outcome, { identity: 'absent', quota: 'absent' });
+
+    // Existing launcher exiting 127 must remain identity: 'failed' (never absent / not-installed / not-logged-in).
+    const exit127 = await getHostRunnerSubscriptions(
+      { ...baseVars, antigravityPath: launcherExit127 },
+      { runners: ['antigravity'] },
+    );
+    assert.equal(exit127[0]?.source, 'error');
+    assert.notEqual(exit127[0]?.error, 'not-logged-in');
+    assert.notEqual(exit127[0]?.error, 'agy not found');
+    assert.deepEqual(exit127[0]?.outcome, { identity: 'failed', quota: 'absent' });
+
+    const missing = await getHostRunnerSubscriptions(
+      { ...baseVars, antigravityPath: join(root, 'missing-agy') },
+      { runners: ['antigravity'] },
+    );
+    assert.equal(missing[0]?.source, 'error');
+    assert.equal(missing[0]?.error, 'agy not found');
+    assert.deepEqual(missing[0]?.outcome, { identity: 'absent', quota: 'absent' });
+
+    transportMode = 'rpc-error';
+    const transportFailed = await getHostRunnerSubscriptions(baseVars, {
+      runners: ['antigravity', 'unknown-peer'],
+    });
+    const agyFailed = transportFailed.find((s) => s.runner === 'antigravity');
+    assert.equal(agyFailed?.source, 'error');
+    assert.match(agyFailed?.error ?? '', /node connection reset/);
+    assert.deepEqual(agyFailed?.outcome, { identity: 'failed', quota: 'absent' });
+    assert.equal(transportFailed.find((s) => s.runner === 'unknown-peer')?.source, 'unsupported');
+  } finally {
+    unregisterByWs(transport.ws);
+    await transport.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gateway observation owner syncs remote executables before fence so first and concurrent profile reads succeed with one current sample', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-gw-fence-'));
+  const farmHome = join(root, 'farm-home');
+  const tempPoolRoot = join(root, 'pool');
+  const nodeStateRoot = join(root, 'node-state');
+  const profileDir = join(root, 'work-profile');
+  const probeLog = join(root, 'probes.log');
+  const fakeAgyV1 = join(root, 'bin-v1', 'agy');
+  const fakeAgyV2 = join(root, 'bin-v2', 'agy');
+  mkdirSync(farmHome, { recursive: true });
+  mkdirSync(tempPoolRoot, { recursive: true });
+  mkdirSync(nodeStateRoot, { recursive: true, mode: 0o700 });
+  chmodSync(nodeStateRoot, 0o700);
+  mkdirSync(profileDir, { recursive: true });
+  mkdirSync(dirname(fakeAgyV1), { recursive: true });
+  mkdirSync(dirname(fakeAgyV2), { recursive: true });
+
+  const writeFakeAgy = (target: string, version: string) => {
+    writeFileSync(
+      target,
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+if (process.argv.includes('--version')) {
+  fs.appendFileSync(${JSON.stringify(probeLog)}, ${JSON.stringify(`${version}\n`)});
+  console.log(${JSON.stringify(version)});
+  process.exit(0);
+}
+const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') {
+    return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} } } });
+  }
+  if (m.method === 'session/list') {
+    return send({ id: m.id, result: { sessions: [] } });
+  }
+});
+`,
+    );
+    chmodSync(target, 0o700);
+  };
+  writeFakeAgy(fakeAgyV1, '1.5.12');
+  writeFakeAgy(fakeAgyV2, '1.5.13');
+
+  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
+  const prevFarmHome = process.env.FARMSLOT_HOME;
+  const prevPath = process.env.PATH;
+  const prevAgyEnv = process.env.FARMSLOT_AGY_EXECUTABLE;
+  const machine = 'remote-fenced-agy';
+  const writePool = (agyPath: string) => {
+    writeFileSync(
+      join(tempPoolRoot, `${machine}.json`),
+      JSON.stringify({
+        machine,
+        project: 'demo',
+        host: 'remote-fenced-agy.example',
+        ssh_user: 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: agyPath,
+        slots: [{ id: `${machine}-1`, enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
+      }),
+    );
+  };
+  writePool(fakeAgyV1);
+
+  process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
+  process.env.FARMSLOT_HOME = farmHome;
+  delete process.env.FARMSLOT_AGY_EXECUTABLE;
+  process.env.PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
+
+  const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
+  const roles = [{ role: 'admin' as const, scope: { kind: 'global' as const } }];
+  const ownerRecord = auth.writer.createPrincipal(
+    { type: 'person', displayName: 'Fenced Owner' },
+    roles,
+    'fenced-owner',
+  );
+  auth.writer.createPrincipal(
+    {
+      type: 'node',
+      machine,
+      displayName: 'Remote Fenced Node',
+      nativeOwnerPrincipalId: ownerRecord.id,
+    },
+    [],
+    'node-fenced',
+  );
+  const principal: Principal = {
+    id: ownerRecord.id,
+    subject: { type: 'person', displayName: 'Fenced Owner' },
+    roles,
+  };
+
+  const nodeClient = new NativeSessionClient(nodeStateRoot, machine);
+  await routeNativeProfile(nodeClient, ownerRecord.id, Methods.NATIVE_PROFILE_ADD, {
+    profileId: 'work',
+    runner: 'antigravity',
+    directory: profileDir,
   });
 
-  const authenticated = await withSlotCommandExecutor(
-    async (_vars, command) => {
-      assert.ok(command.includes('/opt/agy/bin/agy'));
-      return {
-        stdout: '{"status":"authenticated","version":"1.5.12"}\n',
-        stderr: '',
-        exitCode: 0,
-      };
+  const observations = new GatewayNativeObservations(() => {});
+  let nodeExecutables: Record<string, string> = {};
+  let configureCalls = 0;
+  let lastReceipt: NativeSourceReceipt | undefined;
+  const nodeObs = new NativeHostObservation(
+    nodeClient,
+    ownerRecord.id,
+    (receipt) => {
+      lastReceipt = receipt;
+      if (registeredWs) observations.acceptRemote(registeredWs, receipt, () => true);
     },
-    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity', 'unknown-peer'] }),
+    undefined,
+    undefined,
+    (runner) => nodeExecutables[runner],
   );
-  const agyAuth = authenticated.find((s) => s.runner === 'antigravity');
-  assert.equal(agyAuth?.source, 'antigravity-auth');
-  assert.equal(agyAuth?.loginMethod, 'agy 1.5.12');
-  assert.deepEqual(agyAuth?.outcome, { identity: 'observed', quota: 'absent' });
-  assert.equal(authenticated.find((s) => s.runner === 'unknown-peer')?.source, 'unsupported');
 
-  const signedOut = await withSlotCommandExecutor(
-    async () => ({
-      stdout: '{"status":"signed-out","version":"1.5.12"}\n',
-      stderr: '',
-      exitCode: 0,
-    }),
-    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity'] }),
-  );
-  assert.equal(signedOut[0]?.source, 'error');
-  assert.equal(signedOut[0]?.error, 'not-logged-in');
-  assert.deepEqual(signedOut[0]?.outcome, { identity: 'absent', quota: 'absent' });
+  let registeredWs: WebSocket | undefined;
+  const transport = await createTypedNodeTransport(async (frame) => {
+    const p = (frame.params ?? {}) as Record<string, unknown>;
+    if (frame.method === 'native.observation.configure') {
+      configureCalls++;
+      const incoming =
+        p.executables && typeof p.executables === 'object' && !Array.isArray(p.executables)
+          ? (p.executables as Record<string, string>)
+          : {};
+      nodeExecutables = { ...incoming };
+      const digest = JSON.stringify(
+        Object.keys(nodeExecutables)
+          .sort()
+          .map((k) => [k, nodeExecutables[k]]),
+      );
+      return nodeObs.setExecutableConfig(digest);
+    }
+    if (frame.method === 'native.session') {
+      assert.equal(p.observe, true);
+      assert.equal(p.method, Methods.NATIVE_PROFILE_STATUS);
+      const profileId = (p.params as { profileId: string }).profileId;
+      return nodeObs.read(() => nodeObs.profileStatus(profileId));
+    }
+    throw new Error(`Unexpected node method: ${frame.method}`);
+  });
+  registeredWs = transport.ws;
 
-  // Generic exit-1 or transient probe failure must never be misclassified as not-logged-in.
-  const exitOne = await withSlotCommandExecutor(
-    async () => ({
-      stdout: '',
-      stderr: 'temporary network error',
-      exitCode: 1,
-    }),
-    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity'] }),
-  );
-  assert.equal(exitOne[0]?.source, 'error');
-  assert.notEqual(exitOne[0]?.error, 'not-logged-in');
-  assert.deepEqual(exitOne[0]?.outcome, { identity: 'failed', quota: 'absent' });
-
-  // Thrown SSH/transport error is isolated and yields identity: 'failed' while peer runners remain available.
-  const transportFailed = await withSlotCommandExecutor(
-    async () => {
-      throw new Error('ssh connect timed out');
+  const clientConn = {};
+  registerNode(
+    machine,
+    1,
+    transport.ws,
+    undefined,
+    undefined,
+    {
+      ownerPrincipalId: ownerRecord.id,
+      supportsStandaloneDelegation: true,
+      supportsProfiles: true,
+      supportsObservations: true,
     },
-    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity', 'unknown-peer'] }),
+    { principalId: 'node-fenced', valid: () => true },
   );
-  const agyFailed = transportFailed.find((s) => s.runner === 'antigravity');
-  assert.equal(agyFailed?.source, 'error');
-  assert.match(agyFailed?.error ?? '', /ssh connect timed out/);
-  assert.deepEqual(agyFailed?.outcome, { identity: 'failed', quota: 'absent' });
-  assert.equal(transportFailed.find((s) => s.runner === 'unknown-peer')?.source, 'unsupported');
+  observations.attachClient(clientConn, () => principal);
+  try {
+    await nodeObs.start();
+    assert.ok(lastReceipt?.ready);
 
-  const notInstalled = await withSlotCommandExecutor(
-    async () => ({
-      stdout: '{"status":"not-installed"}\n',
-      stderr: '',
-      exitCode: 0,
-    }),
-    () => getHostRunnerSubscriptions(remoteVars, { runners: ['antigravity'] }),
-  );
-  assert.equal(notInstalled[0]?.source, 'error');
-  assert.equal(notInstalled[0]?.error, 'agy not found');
-  assert.deepEqual(notInstalled[0]?.outcome, { identity: 'absent', quota: 'absent' });
+    const readThroughGateway = async (): Promise<NativeProfileStatusResult> => {
+      const params = { executionNodeId: machine, profileId: 'work' };
+      const interests = nativeReadInterests(Methods.NATIVE_PROFILE_STATUS, params, ownerRecord.id);
+      assert.ok(interests);
+      const { payload } = await observations.read(
+        clientConn,
+        interests,
+        async () => {
+          const registeredNode = getNode(machine);
+          assert.ok(registeredNode);
+          const envelope = await sendNodeRequest(
+            registeredNode,
+            'native.session',
+            {
+              owner: ownerRecord.id,
+              method: Methods.NATIVE_PROFILE_STATUS,
+              params,
+              observe: true,
+            },
+            { requireSameConnection: true },
+          );
+          return observations.unwrapRemote<NativeProfileStatusResult>(
+            transport.ws,
+            machine,
+            envelope,
+          );
+        },
+        () => null,
+      );
+      return payload;
+    };
+
+    // First marked read succeeds through the gateway before/after fence with the configured binary.
+    const first = await readThroughGateway();
+    assert.equal(first.account.installed, true);
+    assert.equal(first.account.login, 'authenticated');
+    assert.equal(first.account.version, '1.5.12');
+    assert.ok(first.loginCommand.includes(fakeAgyV1));
+    assert.equal(configureCalls, 1);
+    const probesAfterFirst = readFileSync(probeLog, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean).length;
+    assert.equal(probesAfterFirst, 1);
+
+    // Second read with unchanged pool config does zero extra configures and zero extra probes.
+    const second = await readThroughGateway();
+    assert.equal(second.account.version, '1.5.12');
+    assert.equal(configureCalls, 1);
+    assert.equal(
+      readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
+      probesAfterFirst,
+    );
+
+    // Update pool config to v2 and fire concurrent reads through the gateway fence:
+    // both coalesce on one refresh, both pass the fence, and both see the new v2 sample.
+    writePool(fakeAgyV2);
+    observations.catalogChanged({ scope: 'all', reason: 'catalog' });
+    const [concurrentA, concurrentB] = await Promise.all([
+      readThroughGateway(),
+      readThroughGateway(),
+    ]);
+    assert.equal(concurrentA.account.version, '1.5.13');
+    assert.equal(concurrentB.account.version, '1.5.13');
+    assert.ok(concurrentA.loginCommand.includes(fakeAgyV2));
+    assert.ok(concurrentB.loginCommand.includes(fakeAgyV2));
+    assert.equal(configureCalls, 2);
+    assert.equal(
+      readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
+      probesAfterFirst + 1,
+    );
+  } finally {
+    nodeObs.stop();
+    observations.detachClient(clientConn);
+    observations.dispose();
+    unregisterByWs(transport.ws);
+    await transport.close();
+    if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    if (prevAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    else process.env.FARMSLOT_AGY_EXECUTABLE = prevAgyEnv;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('named-profile ambient catalog skip is limited to strictAccountCatalog runners so other runners keep placement admission', async () => {
@@ -330,18 +698,24 @@ test('named-profile ambient catalog skip is limited to strictAccountCatalog runn
     accountContextId: profileAccountContextId,
   };
   let forwardedRequests = 0;
-  const ws = {
-    readyState: WebSocket.OPEN,
-    send(raw: string) {
-      forwardedRequests++;
-      const frame = JSON.parse(raw) as { id: string };
-      handleNodeResponse(frame.id, true, { session: expectedSession }, undefined, undefined, ws);
-    },
-  } as unknown as WebSocket;
+  const transport = await createTypedNodeTransport(async (frame) => {
+    forwardedRequests++;
+    assert.equal(frame.method, 'native.session');
+    const envelope = (frame.params ?? {}) as {
+      method?: string;
+      params?: Record<string, unknown>;
+    };
+    assert.equal(envelope.method, Methods.NATIVE_SESSION_CREATE);
+    assert.equal(envelope.params?.runner, 'antigravity');
+    assert.equal(envelope.params?.model, 'gemini-work-profile-only');
+    assert.equal(envelope.params?.profileId, 'work');
+    assert.equal(envelope.params?.accountContextId, profileAccountContextId);
+    return { session: expectedSession };
+  });
   registerNode(
     machineA,
     1,
-    ws,
+    transport.ws,
     undefined,
     undefined,
     { ownerPrincipalId: owner, supportsProfiles: true },
@@ -389,7 +763,7 @@ test('named-profile ambient catalog skip is limited to strictAccountCatalog runn
         model: 'anthropic/claude-only-on-b',
         cwd: '/tmp',
         profileId: 'work',
-        accountContextId: '11111111-2222-4333-8444-555555555555',
+        accountContextId: profileAccountContextId,
       }),
       /not listed on agy-profile-gate-a/,
     );
@@ -408,12 +782,13 @@ test('named-profile ambient catalog skip is limited to strictAccountCatalog runn
       model: 'gemini-work-profile-only',
       cwd: '/tmp',
       profileId: 'work',
-      accountContextId: '11111111-2222-4333-8444-555555555555',
+      accountContextId: profileAccountContextId,
     });
     assert.deepEqual(result, { session: expectedSession });
     assert.equal(forwardedRequests, 1);
   } finally {
-    unregisterByWs(ws);
+    unregisterByWs(transport.ws);
+    await transport.close();
     nodeModelCatalogs.unavailable('pi', machineA);
     nodeModelCatalogs.unavailable('pi', machineB);
     nodeModelCatalogs.unavailable('antigravity', machineA);

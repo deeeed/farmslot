@@ -191,6 +191,32 @@ export class NativeNodeSessions {
     return this.observation?.current();
   }
 
+  /** Apply trusted runner executables at the observation owner before admitting profile reads. */
+  async configureObservation(value: Record<string, unknown>): Promise<NativeSourceReceipt> {
+    if (!this.declaration || value.owner !== this.declaration.ownerPrincipalId)
+      throw Object.assign(new Error('Native profile is not owned by this principal'), {
+        code: 'AUTH_FORBIDDEN',
+      });
+    if (!this.observation)
+      throw Object.assign(new Error('Native source unsupported'), {
+        code: 'NATIVE_SOURCE_UNAVAILABLE',
+      });
+    const next = this.normalizeTrustedExecutables(value.executables);
+    const nextDigest = JSON.stringify(
+      Object.keys(next)
+        .sort()
+        .map((key) => [key, next[key]]),
+    );
+    this.trustedExecutables = next;
+    this.trustedExecutablesDigest = nextDigest;
+    if (!this.observation.current().ready) {
+      await this.observation.setExecutableConfig(nextDigest);
+      await this.observation.retry();
+      return this.observation.current();
+    }
+    return this.observation.setExecutableConfig(nextDigest);
+  }
+
   /** Internal envelope only for marked reads; commands retain the original one-attempt route. */
   async routeObserved(value: Record<string, unknown>): Promise<unknown> {
     if (!this.declaration || value.owner !== this.declaration.ownerPrincipalId)
@@ -210,19 +236,6 @@ export class NativeNodeSessions {
       throw Object.assign(new Error('Native source unsupported'), {
         code: 'NATIVE_SOURCE_UNAVAILABLE',
       });
-    if (value.method === 'native.profile.status') {
-      const next = this.normalizeTrustedExecutables(value.executables);
-      const nextDigest = JSON.stringify(
-        Object.keys(next)
-          .sort()
-          .map((key) => [key, next[key]]),
-      );
-      if (nextDigest !== this.trustedExecutablesDigest) {
-        this.trustedExecutables = next;
-        this.trustedExecutablesDigest = nextDigest;
-        if (this.observation.current().ready) await this.observation.refreshAccountsNow();
-      }
-    }
     if (!this.observation.current().ready) await this.observation.retry();
     return this.observation.read(() => {
       if (value.method === 'native.profile.status') {
@@ -236,7 +249,7 @@ export class NativeNodeSessions {
         )
           throw Object.assign(new Error('Native profile ID required'), { code: 'INVALID_PARAMS' });
         validateNativeProfileParams(params);
-        return Promise.resolve(this.observation!.profileStatus(params.profileId));
+        return this.observation!.profileStatus(params.profileId);
       }
       return this.route(value);
     });

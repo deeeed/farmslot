@@ -9,18 +9,15 @@
  */
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {
   copyFile,
   cp,
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
   realpath,
   rm,
-  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
@@ -37,16 +34,18 @@ import type {
   RunnerModelCatalogResult,
 } from '@farmslot/protocol';
 
+import {
+  assertCleanTrackedSource,
+  buildProofManifest,
+  createAttemptOutputDir,
+} from './antigravity-proof-utils.mts';
+
 const execFileAsync = promisify(execFile);
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
-const sourceSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], {
-  encoding: 'utf8',
-}).trim();
+const { sourceSha, sourceTreeSha, trackedWorkingTreeClean } = assertCleanTrackedSource(repo);
 const baseOutput = path.resolve(process.argv[2] ?? '/tmp/antigravity-worker-proof');
-const attemptId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${sourceSha.slice(0, 8)}-${crypto.randomUUID().slice(0, 8)}`;
-const output = path.join(baseOutput, `attempt-${attemptId}`);
+const { attemptId, outputDir: output } = await createAttemptOutputDir(baseOutput, sourceSha);
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'antigravity-worker-proof-')));
-await mkdir(output, { recursive: true });
 
 for (const directory of [
   'services/gateway',
@@ -1088,27 +1087,15 @@ try {
   }
   result.hostStopped = !fs.existsSync(lock);
   result.sourceSha = sourceSha;
+  result.sourceTreeSha = sourceTreeSha;
+  result.trackedWorkingTreeClean = trackedWorkingTreeClean;
   result.attemptId = attemptId;
   result.outputDir = output;
   const hostLogPath = path.join(root, 'native/host.log');
   if (fs.existsSync(hostLogPath)) {
     await copyFile(hostLogPath, path.join(output, 'host.log'));
   }
-  const manifestEntries = await Promise.all(
-    (await readdir(output))
-      .filter((name) => name !== 'result.json')
-      .sort()
-      .map(async (file) => {
-        const full = path.join(output, file);
-        const bytes = await readFile(full);
-        const info = await stat(full);
-        return {
-          file,
-          bytes: info.size,
-          sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
-        };
-      }),
-  );
+  const manifestEntries = await buildProofManifest(output);
   result.manifest = manifestEntries;
   await writeFile(path.join(output, 'result.json'), JSON.stringify(result, null, 2) + '\n');
   await rm(root, { recursive: true, force: true });
@@ -1117,6 +1104,8 @@ try {
       {
         pass: result.pass,
         sourceSha: result.sourceSha,
+        sourceTreeSha: result.sourceTreeSha,
+        trackedWorkingTreeClean: result.trackedWorkingTreeClean,
         attemptId: result.attemptId,
         outputDir: result.outputDir,
         hostStopped: result.hostStopped,

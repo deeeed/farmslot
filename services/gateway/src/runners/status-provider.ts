@@ -10,14 +10,19 @@
  */
 
 import { observeAntigravityAccount } from '@farmslot/agent-runtime/native/antigravity';
-import type { RunnerAccountInspection, RunnerAccountInventory } from '@farmslot/protocol';
+import type {
+  NativeAccountObservation,
+  RunnerAccountInspection,
+  RunnerAccountInventory,
+} from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
-import { execOnSlot, isLocal } from '../core/exec.js';
-import { withMachineEnv } from '../core/project-env.js';
+import { isLocal } from '../core/exec.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { SSH_INTERACTIVE_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
+import { getNode } from '../fleet/machine-registry.js';
+import { sendNodeRequest } from '../fleet/node-rpc.js';
 
 import { probeOpenCodeAccounts, probePiAccounts } from './account-inventory.js';
 import { formatClaudeAuthLoginMethod, probeClaudeAuthStatus } from './claude-auth-status.js';
@@ -541,74 +546,101 @@ function inventoryStatusProvider(
   };
 }
 
-const REMOTE_ANTIGRAVITY_ACP_PROBE_SCRIPT = [
-  "const { spawn } = require('node:child_process');",
-  "const bin = process.argv[1] || 'agy';",
-  'let child;',
-  'try {',
-  "  child = spawn(bin, ['acp'], { cwd: '/', stdio: ['pipe', 'pipe', 'ignore'] });",
-  '} catch (err) {',
-  "  const status = err && err.code === 'ENOENT' ? 'not-installed' : 'unavailable';",
-  "  process.stdout.write(JSON.stringify({ status, reason: String(err && err.message ? err.message : err) }) + '\\n');",
-  '  process.exit(0);',
-  '}',
-  "let done = false; let buf = ''; let version = null;",
-  'const finish = (payload) => {',
-  '  if (done) return; done = true; clearTimeout(timer);',
-  "  if (child.exitCode === null) child.kill('SIGTERM');",
-  "  process.stdout.write(JSON.stringify(payload) + '\\n');",
-  '  process.exit(0);',
-  '};',
-  "const timer = setTimeout(() => finish({ status: 'unavailable', reason: 'timeout' }), 12000);",
-  "child.on('error', (err) => finish({ status: err && err.code === 'ENOENT' ? 'not-installed' : 'unavailable', reason: String(err && err.message ? err.message : err) }));",
-  "child.on('exit', (code) => finish({ status: code === 127 ? 'not-installed' : 'unavailable', reason: 'exit-' + code }));",
-  "child.stdout.on('data', (chunk) => {",
-  '  buf += chunk.toString();',
-  "  for (let idx = buf.indexOf('\\n'); idx >= 0; idx = buf.indexOf('\\n')) {",
-  '    const line = buf.slice(0, idx).trim(); buf = buf.slice(idx + 1);',
-  '    if (!line) continue;',
-  '    let msg;',
-  "    try { msg = JSON.parse(line); } catch { return finish({ status: 'unavailable', reason: 'malformed-status' }); }",
-  '    if (msg.id !== undefined && msg.method) {',
-  "      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'unsupported' } }) + '\\n');",
-  '      continue;',
-  '    }',
-  '    if (msg.id === 1) {',
-  "      if (msg.error || !msg.result || msg.result.protocolVersion !== 1) return finish({ status: 'unavailable', reason: 'malformed-status' });",
-  "      version = msg.result.agentInfo && typeof msg.result.agentInfo.version === 'string' ? msg.result.agentInfo.version : null;",
-  "      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'session/list', params: { cwd: '/' } }) + '\\n');",
-  '    } else if (msg.id === 2) {',
-  "      if (msg.error && msg.error.code === -32000) return finish({ status: 'signed-out', version });",
-  "      if (msg.error || !msg.result || !Array.isArray(msg.result.sessions)) return finish({ status: 'unavailable', reason: msg.error && msg.error.message ? String(msg.error.message) : 'status-unavailable' });",
-  "      return finish({ status: 'authenticated', version });",
-  '    }',
-  '  }',
-  '});',
-  "child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'farmslot-account-status', version: '1' } } }) + '\\n');",
-].join(' ');
-
-interface RemoteAntigravityProbePayload {
-  status?: unknown;
-  version?: unknown;
-  reason?: unknown;
+function mapAntigravityObservationToSubscription(
+  obs: NativeAccountObservation,
+): RunnerActiveSubscription {
+  if (obs.login === 'authenticated') {
+    return {
+      runner: 'antigravity',
+      accountLabel: AMBIENT_ACCOUNT_LABEL,
+      accountEmail: obs.identity?.email ?? null,
+      remainingPercent: null,
+      usedPercent: null,
+      resetsAt: null,
+      loginMethod: obs.version ? `agy ${obs.version}` : 'agy',
+      source: 'antigravity-auth',
+      supportsAccountBinding: false,
+      codexBarProviderId: null,
+      outcome: { identity: 'observed', quota: 'absent' },
+    };
+  }
+  if (!obs.installed || obs.reason === 'not-installed') {
+    return {
+      runner: 'antigravity',
+      accountLabel: null,
+      accountEmail: null,
+      remainingPercent: null,
+      usedPercent: null,
+      resetsAt: null,
+      loginMethod: null,
+      source: 'error',
+      supportsAccountBinding: false,
+      codexBarProviderId: null,
+      error: 'agy not found',
+      outcome: { identity: 'absent', quota: 'absent' },
+    };
+  }
+  if (obs.login === 'signed-out') {
+    return {
+      runner: 'antigravity',
+      accountLabel: null,
+      accountEmail: null,
+      remainingPercent: null,
+      usedPercent: null,
+      resetsAt: null,
+      loginMethod: null,
+      source: 'error',
+      supportsAccountBinding: false,
+      codexBarProviderId: null,
+      error: 'not-logged-in',
+      outcome: { identity: 'absent', quota: 'absent' },
+    };
+  }
+  // Launcher/runtime failures, timeouts, malformed responses, and unconfirmed cleanup
+  // never infer signed-out or missing binary: classify as failed so last observed login is retained.
+  return {
+    runner: 'antigravity',
+    accountLabel: null,
+    accountEmail: null,
+    remainingPercent: null,
+    usedPercent: null,
+    resetsAt: null,
+    loginMethod: null,
+    source: 'error',
+    supportsAccountBinding: false,
+    codexBarProviderId: null,
+    error: obs.reason ?? 'status-unavailable',
+    outcome: { identity: 'failed', quota: 'absent' },
+  };
 }
 
-function parseRemoteAntigravityProbe(stdout: string): RemoteAntigravityProbePayload | null {
-  const lines = stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    try {
-      const parsed: unknown = JSON.parse(lines[i]!);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as RemoteAntigravityProbePayload;
-      }
-    } catch {
-      // Ignore non-JSON lines preceding the structured probe payload.
-    }
-  }
-  return null;
+function isNativeAccountObservation(value: unknown): value is NativeAccountObservation {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Partial<NativeAccountObservation>;
+  return (
+    candidate.runner === 'antigravity' &&
+    typeof candidate.installed === 'boolean' &&
+    (candidate.login === 'authenticated' ||
+      candidate.login === 'signed-out' ||
+      candidate.login === 'unavailable')
+  );
+}
+
+function antigravityFailedSubscription(error: string): RunnerActiveSubscription {
+  return {
+    runner: 'antigravity',
+    accountLabel: null,
+    accountEmail: null,
+    remainingPercent: null,
+    usedPercent: null,
+    resetsAt: null,
+    loginMethod: null,
+    source: 'error',
+    supportsAccountBinding: false,
+    codexBarProviderId: null,
+    error,
+    outcome: { identity: 'failed', quota: 'absent' },
+  };
 }
 
 const antigravityStatusProvider: RunnerStatusProvider = {
@@ -632,141 +664,35 @@ const antigravityStatusProvider: RunnerStatusProvider = {
         ...(vars.antigravityPath ? { executable: vars.antigravityPath } : {}),
         env: { ...process.env, ...vars.machineEnv },
       });
-      if (obs.login === 'authenticated') {
-        return {
-          runner: 'antigravity',
-          accountLabel: AMBIENT_ACCOUNT_LABEL,
-          accountEmail: obs.identity?.email ?? null,
-          remainingPercent: null,
-          usedPercent: null,
-          resetsAt: null,
-          loginMethod: obs.version ? `agy ${obs.version}` : 'agy',
-          source: 'antigravity-auth',
-          supportsAccountBinding: false,
-          codexBarProviderId: null,
-          outcome: { identity: 'observed', quota: 'absent' },
-        };
-      }
-      const error =
-        !obs.installed || obs.reason === 'not-installed'
-          ? 'agy not found'
-          : obs.login === 'signed-out'
-            ? 'not-logged-in'
-            : (obs.reason ?? 'status-unavailable');
-      return {
-        runner: 'antigravity',
-        accountLabel: null,
-        accountEmail: null,
-        remainingPercent: null,
-        usedPercent: null,
-        resetsAt: null,
-        loginMethod: null,
-        source: 'error',
-        supportsAccountBinding: false,
-        codexBarProviderId: null,
-        error,
-        outcome: { identity: probeOutcome(error), quota: 'absent' },
-      };
+      return mapAntigravityObservationToSubscription(obs);
     }
-    const binary = vars.antigravityPath?.trim() || 'agy';
-    let result: Awaited<ReturnType<typeof execOnSlot>>;
+    const node = getNode(vars.machine);
+    if (!node) {
+      return antigravityFailedSubscription('node-not-connected');
+    }
+    let observed: unknown;
     try {
-      const command = `node -e ${shellQuote(REMOTE_ANTIGRAVITY_ACP_PROBE_SCRIPT)} -- ${shellExpressionForRemotePath(binary)} </dev/null`;
-      result = await execOnSlot(vars, withMachineEnv(command, vars), {
-        cwd: '/',
-        timeout: 15_000,
-        maxBuffer: 1024 * 1024,
-      });
+      observed = await sendNodeRequest(
+        node,
+        'native.account.observe',
+        {
+          runner: 'antigravity',
+          cwd: vars.remoteRepo || '/',
+          ...(vars.antigravityPath ? { executable: vars.antigravityPath } : {}),
+          ...(vars.machineEnv ? { env: vars.machineEnv } : {}),
+        },
+        { timeout: 15_000 },
+      );
     } catch (err) {
-      // Isolate expected remote SSH/transport/timeout failures so peer runner status stays available
+      // Isolate expected remote node transport/timeout failures so peer runner status stays available
       // and fleet retention preserves the last observed login (identity: 'failed').
       const error = err instanceof Error && err.message ? err.message : 'status-unavailable';
-      return {
-        runner: 'antigravity',
-        accountLabel: null,
-        accountEmail: null,
-        remainingPercent: null,
-        usedPercent: null,
-        resetsAt: null,
-        loginMethod: null,
-        source: 'error',
-        supportsAccountBinding: false,
-        codexBarProviderId: null,
-        error,
-        outcome: { identity: 'failed', quota: 'absent' },
-      };
+      return antigravityFailedSubscription(error);
     }
-    const parsed = parseRemoteAntigravityProbe(result.stdout);
-    if (result.exitCode === 0 && parsed?.status === 'authenticated') {
-      const version =
-        typeof parsed.version === 'string' && parsed.version.trim() ? parsed.version.trim() : null;
-      return {
-        runner: 'antigravity',
-        accountLabel: AMBIENT_ACCOUNT_LABEL,
-        accountEmail: null,
-        remainingPercent: null,
-        usedPercent: null,
-        resetsAt: null,
-        loginMethod: version ? `agy ${version}` : 'agy',
-        source: 'antigravity-auth',
-        supportsAccountBinding: false,
-        codexBarProviderId: null,
-        outcome: { identity: 'observed', quota: 'absent' },
-      };
+    if (!isNativeAccountObservation(observed)) {
+      return antigravityFailedSubscription('malformed-status');
     }
-    if (result.exitCode === 0 && parsed?.status === 'signed-out') {
-      return {
-        runner: 'antigravity',
-        accountLabel: null,
-        accountEmail: null,
-        remainingPercent: null,
-        usedPercent: null,
-        resetsAt: null,
-        loginMethod: null,
-        source: 'error',
-        supportsAccountBinding: false,
-        codexBarProviderId: null,
-        error: 'not-logged-in',
-        outcome: { identity: 'absent', quota: 'absent' },
-      };
-    }
-    if (result.exitCode === 0 && parsed?.status === 'not-installed') {
-      return {
-        runner: 'antigravity',
-        accountLabel: null,
-        accountEmail: null,
-        remainingPercent: null,
-        usedPercent: null,
-        resetsAt: null,
-        loginMethod: null,
-        source: 'error',
-        supportsAccountBinding: false,
-        codexBarProviderId: null,
-        error: 'agy not found',
-        outcome: { identity: 'absent', quota: 'absent' },
-      };
-    }
-    // Generic nonzero exits (including exit 1), transport/runtime failures, and malformed responses
-    // never infer signed-out: classify as failed/unavailable so last observed login is preserved.
-    const diagnostic =
-      typeof parsed?.reason === 'string' && parsed.reason.trim()
-        ? parsed.reason.trim()
-        : result.stderr.trim() || `exit-${result.exitCode}`;
-    const error = ABSENT_PROBE_ERRORS.has(diagnostic) ? 'status-unavailable' : diagnostic;
-    return {
-      runner: 'antigravity',
-      accountLabel: null,
-      accountEmail: null,
-      remainingPercent: null,
-      usedPercent: null,
-      resetsAt: null,
-      loginMethod: null,
-      source: 'error',
-      supportsAccountBinding: false,
-      codexBarProviderId: null,
-      error,
-      outcome: { identity: 'failed', quota: 'absent' },
-    };
+    return mapAntigravityObservationToSubscription(observed);
   },
 };
 

@@ -14,6 +14,7 @@ import test from 'node:test';
 
 import type { NativeProfileStatusResult } from '@farmslot/protocol';
 
+import { observeNodeNativeAccount } from './native-account.js';
 import { NativeNodeSessions } from './native-session.js';
 
 test('node native execution rejects other owners and conflicting execution identities before startup', async () => {
@@ -151,29 +152,23 @@ test('a node start still fails on a native error that is not a host-readiness on
   await assert.rejects(service.prepareRuntime(), /another execution node/);
 });
 
-test('observed remote native.profile.status refreshes with trusted executables outside PATH and serves repeated reads from cache', async (t) => {
-  const { routeNativeProfile } = await import('@farmslot/agent-runtime/native/profile-service');
-  const root = mkdtempSync(path.join(os.tmpdir(), 'native-observed-agy-'));
-  const farmHome = path.join(root, 'farm-home');
-  const stateRoot = path.join(root, 'state');
-  const nodeDir = path.join(stateRoot, 'nodes', 'remote-agy-node');
-  const profileDir = path.join(root, 'work-profile');
-  const probeLog = path.join(root, 'probes.log');
-  const fakeAgy = path.join(root, 'custom-bin', 'agy');
-  mkdirSync(farmHome, { recursive: true });
-  mkdirSync(nodeDir, { recursive: true, mode: 0o700 });
-  chmodSync(nodeDir, 0o700);
-  mkdirSync(profileDir, { recursive: true });
-  mkdirSync(path.dirname(fakeAgy), { recursive: true });
+test('observeNodeNativeAccount reuses observeAntigravityAccount across auth, signed-out, exit-127 failure, missing binary, and child cleanup', async (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'native-account-observe-'));
+  const pidFile = path.join(root, 'child.pid');
+  const fakeAgy = path.join(root, 'agy');
+  const launcherExit127 = path.join(root, 'agy-exit-127');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
   writeFileSync(
     fakeAgy,
     `#!/usr/bin/env node
 const fs = require('node:fs');
 if (process.argv.includes('--version')) {
-  fs.appendFileSync(${JSON.stringify(probeLog)}, 'version\\n');
   console.log('1.5.12');
   process.exit(0);
 }
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+const signedOut = process.env.AGY_TEST_SIGNED_OUT === '1';
 const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
 require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
@@ -181,12 +176,111 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: '1.5.12' } } });
   }
   if (m.method === 'session/list') {
+    if (signedOut) {
+      return send({ id: m.id, error: { code: -32000, message: 'Authentication required' } });
+    }
     return send({ id: m.id, result: { sessions: [] } });
   }
 });
 `,
   );
   chmodSync(fakeAgy, 0o700);
+
+  writeFileSync(
+    launcherExit127,
+    `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  console.log('1.5.12');
+  process.exit(0);
+}
+process.stderr.write('shared library temporarily unavailable\\n');
+process.exit(127);
+`,
+  );
+  chmodSync(launcherExit127, 0o700);
+
+  const auth = await observeNodeNativeAccount({
+    runner: 'antigravity',
+    cwd: root,
+    executable: fakeAgy,
+  });
+  assert.equal(auth.installed, true);
+  assert.equal(auth.login, 'authenticated');
+  assert.equal(auth.version, '1.5.12');
+  // Confirm the ACP child exited before observeNodeNativeAccount resolved.
+  const childPid = Number(readFileSync(pidFile, 'utf8').trim());
+  assert.ok(Number.isInteger(childPid) && childPid > 0);
+  assert.throws(() => process.kill(childPid, 0), { code: 'ESRCH' });
+
+  const signedOut = await observeNodeNativeAccount({
+    runner: 'antigravity',
+    cwd: root,
+    executable: fakeAgy,
+    env: { AGY_TEST_SIGNED_OUT: '1' },
+  });
+  assert.equal(signedOut.installed, true);
+  assert.equal(signedOut.login, 'signed-out');
+
+  // An existing executable exiting 127 is a launcher failure, never not-installed or signed-out.
+  const exit127 = await observeNodeNativeAccount({
+    runner: 'antigravity',
+    cwd: root,
+    executable: launcherExit127,
+  });
+  assert.equal(exit127.installed, true);
+  assert.equal(exit127.login, 'unavailable');
+  assert.notEqual(exit127.reason, 'not-installed');
+
+  const missing = await observeNodeNativeAccount({
+    runner: 'antigravity',
+    cwd: root,
+    executable: path.join(root, 'no-such-agy'),
+  });
+  assert.equal(missing.installed, false);
+  assert.equal(missing.reason, 'not-installed');
+});
+
+test('node observation configures trusted executables before reads and serves repeated reads from cache', async (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'native-observed-agy-'));
+  const farmHome = path.join(root, 'farm-home');
+  const stateRoot = path.join(root, 'state');
+  const nodeDir = path.join(stateRoot, 'nodes', 'remote-agy-node');
+  const profileDir = path.join(root, 'work-profile');
+  const probeLog = path.join(root, 'probes.log');
+  const fakeAgyV1 = path.join(root, 'custom-bin-v1', 'agy');
+  const fakeAgyV2 = path.join(root, 'custom-bin-v2', 'agy');
+  mkdirSync(farmHome, { recursive: true });
+  mkdirSync(nodeDir, { recursive: true, mode: 0o700 });
+  chmodSync(nodeDir, 0o700);
+  mkdirSync(profileDir, { recursive: true });
+  mkdirSync(path.dirname(fakeAgyV1), { recursive: true });
+  mkdirSync(path.dirname(fakeAgyV2), { recursive: true });
+  const writeFakeAgy = (target: string, version: string) => {
+    writeFileSync(
+      target,
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+if (process.argv.includes('--version')) {
+  fs.appendFileSync(${JSON.stringify(probeLog)}, ${JSON.stringify(`${version}\n`)});
+  console.log(${JSON.stringify(version)});
+  process.exit(0);
+}
+const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const m = JSON.parse(line);
+  if (m.method === 'initialize') {
+    return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} } } });
+  }
+  if (m.method === 'session/list') {
+    return send({ id: m.id, result: { sessions: [] } });
+  }
+});
+`,
+    );
+    chmodSync(target, 0o700);
+  };
+  writeFakeAgy(fakeAgyV1, '1.5.12');
+  writeFakeAgy(fakeAgyV2, '1.5.13');
 
   const prevFarmHome = process.env.FARMSLOT_HOME;
   const prevPath = process.env.PATH;
@@ -207,10 +301,15 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   delete process.env.FARMSLOT_AGY_EXECUTABLE;
   process.env.PATH = `${path.dirname(process.execPath)}:/usr/bin:/bin`;
 
-  await routeNativeProfile({} as never, 'owner', 'native.profile.add', {
-    profileId: 'work',
-    runner: 'antigravity',
-    directory: profileDir,
+  // Use the node's own supported profile-add route instead of a mocked client cast.
+  await service.route({
+    owner: 'owner',
+    method: 'native.profile.add',
+    params: {
+      profileId: 'work',
+      runner: 'antigravity',
+      directory: profileDir,
+    },
   });
 
   await service.startObservation(() => {});
@@ -224,31 +323,51 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   })) as { value: NativeProfileStatusResult };
   assert.equal(withoutExec.value.account.installed, false);
 
-  // When gateway supplies trusted executables on observed profile status, the node updates its
-  // retained observation producer and returns authenticated status using the configured binary.
+  // Configure trusted executables at the observation owner before admitting reads.
+  const configuredReceipt = await service.configureObservation({
+    owner: 'owner',
+    executables: { antigravity: fakeAgyV1 },
+  });
+  assert.equal(configuredReceipt.ready, true);
+
   const withExec = (await service.routeObserved({
     owner: 'owner',
     method: 'native.profile.status',
     params: { profileId: 'work' },
-    executables: { antigravity: fakeAgy },
   })) as { value: NativeProfileStatusResult };
   assert.equal(withExec.value.account.installed, true);
   assert.equal(withExec.value.account.login, 'authenticated');
-  assert.ok(withExec.value.loginCommand.includes(fakeAgy));
+  assert.equal(withExec.value.account.version, '1.5.12');
+  assert.ok(withExec.value.loginCommand.includes(fakeAgyV1));
   const probesAfterFirst = readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length;
   assert.equal(probesAfterFirst, 1);
 
-  // A repeated observed read with unchanged executables is served from the retained cache without re-probing.
+  // Repeated observed reads with unchanged config are pure cache hits with zero extra probes.
   const cached = (await service.routeObserved({
     owner: 'owner',
     method: 'native.profile.status',
     params: { profileId: 'work' },
-    executables: { antigravity: fakeAgy },
   })) as { value: NativeProfileStatusResult };
-  assert.equal(cached.value.account.login, 'authenticated');
-  const probesAfterSecond = readFileSync(probeLog, 'utf8')
-    .trim()
-    .split('\n')
-    .filter(Boolean).length;
-  assert.equal(probesAfterSecond, probesAfterFirst);
+  assert.equal(cached.value.account.version, '1.5.12');
+  assert.equal(
+    readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
+    probesAfterFirst,
+  );
+
+  // Concurrent reconfigurations coalesce onto one refresh and serve the updated binary.
+  await Promise.all([
+    service.configureObservation({ owner: 'owner', executables: { antigravity: fakeAgyV2 } }),
+    service.configureObservation({ owner: 'owner', executables: { antigravity: fakeAgyV2 } }),
+  ]);
+  const updated = (await service.routeObserved({
+    owner: 'owner',
+    method: 'native.profile.status',
+    params: { profileId: 'work' },
+  })) as { value: NativeProfileStatusResult };
+  assert.equal(updated.value.account.version, '1.5.13');
+  assert.ok(updated.value.loginCommand.includes(fakeAgyV2));
+  assert.equal(
+    readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
+    probesAfterFirst + 1,
+  );
 });

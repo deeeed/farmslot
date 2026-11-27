@@ -389,11 +389,11 @@ export async function routeNativeExecution(
     typeof params.runner === 'string'
       ? await resolveTrustedNativeExecutable(params.runner, executionNodeId)
       : undefined;
+  const observe = isNativeObservedRead();
   const remoteExecutables =
-    method === Methods.NATIVE_PROFILE_STATUS
+    !observe && method === Methods.NATIVE_PROFILE_STATUS
       ? await resolveTrustedNativeExecutablesForNode(executionNodeId)
       : undefined;
-  const observe = isNativeObservedRead();
   const send = (hostRelease?: string[]) => {
     const envelope: NativeNodeSessionEnvelope = {
       owner,

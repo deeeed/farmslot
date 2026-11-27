@@ -89,6 +89,10 @@ export class NativeHostObservation {
   private receipt: NativeSourceReceipt;
   private snapshot?: SourceSnapshot;
   private accountDigest = '';
+  /** Digest of the desired trusted executable configuration. */
+  private executableConfigDigest = '{}';
+  /** Digest of the trusted executable configuration that produced the cached profileStatuses. */
+  private sampledExecutableConfigDigest?: string;
   /** False while the last profile sample failed: sessions stay observable, profile reads don't. */
   private accountsAvailable = false;
   private readonly profileStatuses = new Map<string, NativeProfileStatusResult>();
@@ -171,19 +175,20 @@ export class NativeHostObservation {
       const before = await scan();
       if (generation !== this.generation || this.stopped) return;
       const change = this.changes;
+      const configDigest = this.executableConfigDigest;
       // A failed profile sample affects only profile reads (ADR-057 Amendment 11).
       const accounts = await this.observeAccounts().catch((error: unknown) =>
         this.sampleFailed(error),
       );
       // Watcher delivery fences the account sample; the async scan fences the durable bytes.
-      const sampleChanged = change !== this.changes;
+      const sampleChanged = change !== this.changes || configDigest !== this.executableConfigDigest;
       if (generation !== this.generation || this.stopped) return;
       const after = await scan();
       if (generation !== this.generation || this.stopped) return;
       if (this.failed) throw new NativeSourceUnavailable('arming-source-changed');
       if (sampleChanged || before.digest !== after.digest)
         throw new NativeSourceUnavailable('arming-source-changed');
-      this.setAccounts(accounts);
+      this.setAccounts(accounts, configDigest);
       this.snapshot = after;
       this.receipt = {
         ...this.receipt,
@@ -286,7 +291,10 @@ export class NativeHostObservation {
    * Imperative profile/status retains its existing on-demand probe outside this source. */
   async profileStatus(profileId: string): Promise<NativeProfileStatusResult> {
     await this.fence();
-    if (!this.accountsAvailable)
+    if (
+      !this.accountsAvailable ||
+      this.sampledExecutableConfigDigest !== this.executableConfigDigest
+    )
       throw Object.assign(
         new Error(
           'Native account profiles are unavailable on this node. Retry after its next sample.',
@@ -300,11 +308,15 @@ export class NativeHostObservation {
       });
     return structuredClone(status);
   }
-  private setAccounts(accounts: NativeProfileStatusResult[] | undefined): void {
+  private setAccounts(
+    accounts: NativeProfileStatusResult[] | undefined,
+    configDigest: string = this.executableConfigDigest,
+  ): void {
     this.profileStatuses.clear();
     for (const status of accounts ?? [])
       this.profileStatuses.set(status.profile.id, structuredClone(status));
     this.accountsAvailable = accounts !== undefined;
+    this.sampledExecutableConfigDigest = accounts !== undefined ? configDigest : undefined;
     this.accountDigest = accountsDigest(accounts);
   }
 
@@ -442,16 +454,27 @@ export class NativeHostObservation {
         this.recovering = undefined;
       });
   }
-  /** Force a single fenced account sample when trusted node executables change. */
-  async refreshAccountsNow(): Promise<void> {
-    if (this.stopped) return;
-    if (this.refreshing) {
-      this.queued = true;
-      await this.refreshPromise;
+  /**
+   * Bind the observation owner to a trusted executable configuration digest and wait for one
+   * coalesced account sample matching that digest before returning the updated source receipt.
+   */
+  async setExecutableConfig(digest: string): Promise<NativeSourceReceipt> {
+    this.executableConfigDigest = digest;
+    if (this.stopped || !this.receipt.ready) return this.current();
+    while (
+      !this.stopped &&
+      this.receipt.ready &&
+      this.sampledExecutableConfigDigest !== this.executableConfigDigest
+    ) {
+      if (this.refreshing) {
+        await this.refreshPromise;
+      } else {
+        this.refreshAccounts();
+        await this.refreshPromise;
+      }
+      if (!this.accountsAvailable) break;
     }
-    if (this.stopped) return;
-    this.refreshAccounts();
-    await this.refreshPromise;
+    return this.current();
   }
 
   private refreshAccounts(): void {
@@ -463,24 +486,26 @@ export class NativeHostObservation {
     const generation = this.generation;
     const wasReady = !this.failed && Boolean(this.snapshot);
     let change: number;
+    let configDigest: string;
 
     let before: SourceSnapshot;
     const current = Promise.resolve()
       .then(async () => {
         before = await this.scan();
         change = this.changes;
+        configDigest = this.executableConfigDigest;
         return this.observeAccounts().catch((error: unknown) => this.sampleFailed(error));
       })
       .then(async (accounts) => {
         if (generation !== this.generation || this.stopped) return;
-        if (change !== this.changes) {
-          this.queued = true;
-          return;
-        }
         const digest = accountsDigest(accounts);
         const after = await this.scan();
         if (generation !== this.generation || this.stopped) return;
-        if (after.accounts !== before.accounts) {
+        if (
+          configDigest !== this.executableConfigDigest ||
+          after.accounts !== before.accounts ||
+          (change !== this.changes && after.digest !== before.digest)
+        ) {
           this.queued = true;
           return;
         }
@@ -488,8 +513,11 @@ export class NativeHostObservation {
           this.fail('account-sample-host-changed');
           return;
         }
-        const changed = digest !== this.accountDigest || after.digest !== this.snapshot?.digest;
-        this.setAccounts(accounts);
+        const changed =
+          digest !== this.accountDigest ||
+          this.sampledExecutableConfigDigest !== configDigest ||
+          after.digest !== this.snapshot?.digest;
+        this.setAccounts(accounts, configDigest);
         this.snapshot = after;
         // Only a previously armed source can recover here. Watcher errors require start().
         if (wasReady && !this.failed) this.receipt = { ...this.receipt, ready: true };
