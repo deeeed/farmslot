@@ -22,8 +22,18 @@ import { registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse } from '../fleet/node-rpc.js';
 import { runBundleStore } from '../run-completion/retained-artifacts.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
+import { createGatewayAuthRuntime, initializeGatewayIdentity } from '../security/auth.js';
+import { createRunArtifactMediaGrants } from '../security/run-artifact-media.js';
 
-import { fsDelete, fsList, fsRead, fsWrite, serveFile, serveRunArtifact } from './filesystem.js';
+import {
+  fsDelete,
+  fsList,
+  fsRead,
+  fsWrite,
+  serveFile,
+  serveRunArtifact,
+  serveRunArtifactRequest,
+} from './filesystem.js';
 
 class FakeNodeWebSocket {
   readyState = WebSocket.OPEN;
@@ -355,6 +365,112 @@ test('serveRunArtifact supports byte ranges for retained recipe-run videos', asy
     assert.equal(res.body, 'cached');
     assert.equal(fakeWs.statCalls, 0);
     assert.equal(fakeWs.readCalls, 0);
+  });
+});
+
+test('retained video grants require header authorization and constrain reads to one recording', async (t) => {
+  await withRemoteRun(t, async ({ runId, liveGroupId, liveRunDir, taskDir }) => {
+    const relativePath = 'artifacts/video.mp4';
+    await writeFile(path.join(liveRunDir, 'video.mp4'), 'cached-video');
+    await writeFile(path.join(liveRunDir, 'other.mov'), 'other-video');
+    await retainFixtureTask(taskDir, getRun(runId)!, await runBundleStore(true));
+
+    const runtime = createGatewayAuthRuntime({
+      FARMSLOT_HOME: path.join(taskDir, 'auth'),
+      GATEWAY_HOST: '127.0.0.1',
+    });
+    initializeGatewayIdentity(runtime, { host: '127.0.0.1' });
+    const admin = runtime.writer.createPrincipal(
+      { type: 'service', displayName: 'Video proof admin' },
+      [{ role: 'admin', scope: { kind: 'global' } }],
+    );
+    const token = runtime.writer.issueCredential(admin.id, 'video proof').secret;
+    const unprivileged = runtime.writer.createPrincipal(
+      {
+        type: 'service',
+        displayName: 'Video proof unprivileged service',
+      },
+      [],
+    );
+    const unprivilegedToken = runtime.writer.issueCredential(unprivileged.id, 'video proof').secret;
+    let now = Date.now();
+    const grants = createRunArtifactMediaGrants(() => now);
+    const server = createServer(
+      (req, res) => void serveRunArtifactRequest(req, res, runtime, grants),
+    );
+    t.after(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        }),
+    );
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const selectors = new URLSearchParams({ runId, recipeRunId: liveGroupId, path: relativePath });
+    const source = new URL(`http://127.0.0.1:${address.port}/api/run-artifact?${selectors}`);
+    const rejectRequest = async (url: URL, status: number, options?: RequestInit) => {
+      const response = await fetch(url, options);
+      await response.text();
+      assert.equal(response.status, status);
+    };
+
+    await rejectRequest(source, 401);
+    await rejectRequest(source, 401, { method: 'POST' });
+    const withQueryToken = new URL(source);
+    withQueryToken.searchParams.set('token', token);
+    await rejectRequest(withQueryToken, 401, { method: 'POST' });
+    await rejectRequest(source, 403, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${unprivilegedToken}` },
+    });
+    const authorizedHeaders = { Authorization: `Bearer ${token}` };
+    const original = await fetch(source, { headers: authorizedHeaders });
+    assert.equal(original.status, 200);
+    assert.equal(await original.text(), 'cached-video');
+
+    const issued = await fetch(withQueryToken, { method: 'POST', headers: authorizedHeaders });
+    assert.equal(issued.status, 201);
+    assert.equal(issued.headers.get('cache-control'), 'private, no-store');
+    const { url } = (await issued.json()) as { url: string };
+    assert.ok(!url.includes(token));
+    const playback = new URL(url, source);
+    assert.equal(playback.searchParams.get('path'), 'artifacts/recipe-runs/live-run/video.mp4');
+    assert.equal(playback.searchParams.get('recipeRunId'), 'current-artifacts');
+    assert.equal(
+      playback.searchParams.get('bundleDigest'),
+      getRun(runId)?.artifactBundle?.bundleDigest,
+    );
+
+    const range = await fetch(playback, { headers: { Range: 'bytes=7-' } });
+    assert.equal(range.status, 206);
+    assert.equal(range.headers.get('content-range'), 'bytes 7-11/12');
+    assert.equal(range.headers.get('cache-control'), 'private, no-store');
+    assert.equal(await range.text(), 'video');
+    const changedPath = new URL(playback);
+    changedPath.searchParams.set('path', 'artifacts/other.mov');
+    await rejectRequest(changedPath, 401);
+    const otherSource = new URL(source);
+    otherSource.searchParams.set('path', 'artifacts/other.mov');
+    const otherGrant = await fetch(otherSource, { method: 'POST', headers: authorizedHeaders });
+    assert.equal(otherGrant.status, 201);
+    const otherVideo = (await otherGrant.json()) as { url: string };
+    const otherRange = await fetch(new URL(otherVideo.url, source), {
+      headers: { Range: 'bytes=0-4' },
+    });
+    assert.equal(otherRange.status, 206);
+    assert.equal(otherRange.headers.get('content-type'), 'video/quicktime');
+    assert.equal(await otherRange.text(), 'other');
+    const changedGroup = new URL(playback);
+    changedGroup.searchParams.set('recipeRunId', liveGroupId);
+    await rejectRequest(changedGroup, 401, { headers: authorizedHeaders });
+    const changedByteIdentity = new URL(playback);
+    const [expires, , mac] = changedByteIdentity.searchParams.get('mediaGrant')!.split('.');
+    changedByteIdentity.searchParams.set('mediaGrant', `${expires}.${'0'.repeat(64)}.${mac}`);
+    await rejectRequest(changedByteIdentity, 401);
+    await rejectRequest(playback, 401, { method: 'POST' });
+    now = Number(expires);
+    await rejectRequest(playback, 401);
   });
 });
 

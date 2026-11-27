@@ -16,7 +16,7 @@ import { colors } from '../../styles/theme-tokens.js';
 import { MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
 import { navigateHash } from '../../utils/url-state.js';
 import { viewDetails } from '../../utils/view-state.js';
-import { gatewayMediaSrc } from '../shared/gateway-media-src.js';
+import { gatewayMediaSrc, gatewayVideoSrc } from '../shared/gateway-media-src.js';
 import { renderRunTitle } from '../shared/run-title.js';
 
 import {
@@ -212,7 +212,7 @@ function renderFamilyEvidenceArtifact(
               ? html`<div class="artifact-video-preview">
                   <video
                     class="artifact-preview"
-                    src=${gatewayMediaSrc(url)}
+                    src=${gatewayVideoSrc(url)}
                     muted
                     preload="metadata"
                     @error=${() => context.markArtifactBroken(artifact)}

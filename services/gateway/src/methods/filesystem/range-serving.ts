@@ -27,6 +27,8 @@ const MIME_TYPES: Record<string, string> = {
   '.bmp': 'image/bmp',
   '.pdf': 'application/pdf',
   '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
   '.webm': 'video/webm',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
@@ -99,12 +101,16 @@ export function byteServingHeaders(mime: string, length: number): Record<string,
   };
 }
 
-export function sendUnsatisfiableRange(res: ServerResponse, size: number): void {
+export function sendUnsatisfiableRange(
+  res: ServerResponse,
+  size: number,
+  cacheControl = 'no-cache',
+): void {
   res.writeHead(416, {
     'Content-Type': 'text/plain',
     'Content-Range': `bytes */${size}`,
     'Accept-Ranges': 'bytes',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': cacheControl,
   });
   res.end('Requested Range Not Satisfiable');
 }
@@ -145,6 +151,7 @@ export function serveLocalFileWithRange(
   file: FileHandle,
   mime: string,
   size: number,
+  cacheControl = 'no-cache',
 ): void {
   const pipeOpenedFile = (options?: { start?: number; end?: number }) => {
     const stream = file.createReadStream({ ...options, autoClose: false });
@@ -166,19 +173,20 @@ export function serveLocalFileWithRange(
   const range = parseRequestByteRange(req, size);
   if (range === 'unsatisfiable') {
     void file.close();
-    sendUnsatisfiableRange(res, size);
+    sendUnsatisfiableRange(res, size, cacheControl);
     return;
   }
   if (range) {
     const length = range.end - range.start + 1;
     res.writeHead(206, {
       ...byteServingHeaders(mime, length),
+      'Cache-Control': cacheControl,
       'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
     });
     pipeOpenedFile({ start: range.start, end: range.end });
     return;
   }
 
-  res.writeHead(200, byteServingHeaders(mime, size));
+  res.writeHead(200, { ...byteServingHeaders(mime, size), 'Cache-Control': cacheControl });
   pipeOpenedFile();
 }

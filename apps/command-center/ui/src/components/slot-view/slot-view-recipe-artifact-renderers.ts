@@ -7,7 +7,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { rewriteMarkdownArtifactUrls } from '../../utils/artifact-markdown.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
-import { gatewayMediaHtml, gatewayMediaSrc } from '../shared/gateway-media-src.js';
+import { gatewayMediaHtml, gatewayMediaSrc, gatewayVideoSrc } from '../shared/gateway-media-src.js';
 import {
   dedupeWorkspaceEvidenceArtifacts,
   renderWorkspaceEvidencePreview,
@@ -138,7 +138,7 @@ export function renderRecipeArtifactPreview(
           />`
         : isVideoRecipeArtifact(artifact)
           ? html`<video
-              src=${gatewayMediaSrc(url)}
+              src=${gatewayVideoSrc(url)}
               controls
               style="display:block; width:100%; max-height:280px; background:${colors.bgBase};"
             ></video>`

@@ -104,6 +104,36 @@ class MediaHarness extends GatewayMedia {
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+test('run video gives the player a signed URL after a single header-authenticated request', async (t) => {
+  const token = 'service-fixture';
+  setGatewayMemoryAuth({ token }, 'ws://localhost:7777/ws');
+  t.after(clearGatewayMemoryAuth);
+  const source = '/api/run-artifact?runId=fixture&path=clip.mp4';
+  const signed = `${source}&mediaGrant=fixture-grant`;
+  const fetchMock = t.mock.method(
+    globalThis,
+    'fetch',
+    async (url: RequestInfo | URL, init?: RequestInit) => {
+      assert.equal(String(url), `http://localhost:7777${source}`);
+      assert.equal(init?.method, 'POST');
+      assert.equal(new Headers(init?.headers).get('Authorization'), `Bearer ${token}`);
+      return Response.json({ url: signed }, { status: 201 });
+    },
+  );
+  t.mock.method(URL, 'createObjectURL', () => assert.fail('Video should stream without a blob'));
+  const view = new MediaHarness({
+    type: PartType.ATTRIBUTE,
+    name: 'src',
+    strings: ['', ''],
+    tagName: 'VIDEO',
+  });
+  t.after(() => view.disconnect());
+  assert.equal(view.render(`${source}&token=old`, 'video'), nothing);
+  await flush();
+  assert.deepEqual(view.values, [`http://localhost:7777${signed}`]);
+  assert.equal(fetchMock.mock.callCount(), 1);
+});
+
 test('cached gateway media waits for restored authentication before making its first request', async (t) => {
   const fake = installFakeGateway(t);
   Object.defineProperty(window, 'location', {

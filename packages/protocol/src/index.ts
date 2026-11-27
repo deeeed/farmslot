@@ -2,6 +2,7 @@ export * from './agents/reviewer-context.js';
 export * from './agents/roles.js';
 export * from './checklist-target.js';
 export * from './contracts/index.js';
+export * from './contracts/run-artifact-media.js';
 export * from './contracts/runner-reasoning.js';
 export { deepFreeze } from './deep-freeze.js';
 export * from './evals/bench-patch.js';

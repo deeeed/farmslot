@@ -37,7 +37,7 @@ import {
 } from '../progress-tracker/acceptance-panel.js';
 
 import { DiffTestFilterController } from './diff-test-filter-controller.js';
-import { GatewayMediaDocument, gatewayMediaSrc } from './gateway-media-src.js';
+import { GatewayMediaDocument, gatewayMediaSrc, gatewayVideoSrc } from './gateway-media-src.js';
 import { loadLightboxEvidence } from './media-lightbox-evidence-source.js';
 import {
   isVideoLightboxItem,
@@ -1305,7 +1305,7 @@ export class MediaLightbox extends MediaLightboxState {
                                 if (element instanceof HTMLVideoElement)
                                   this._videoItemUrls.set(element, item.url);
                               })}
-                              src=${gatewayMediaSrc(item.url, 'url', () =>
+                              src=${gatewayVideoSrc(item.url, () =>
                                 this._reportVideoFailure(item.url, true),
                               )}
                               ?autoplay=${this.autoplay}
@@ -1397,7 +1397,7 @@ export class MediaLightbox extends MediaLightboxState {
                             ? html`<div class="ml-film-thumb-wrap">
                                 <video
                                   class="ml-film-thumb"
-                                  src=${gatewayMediaSrc(candidate.url)}
+                                  src=${gatewayVideoSrc(candidate.url)}
                                   muted
                                   preload="metadata"
                                 ></video
@@ -1560,13 +1560,13 @@ export class MediaLightbox extends MediaLightboxState {
                                 />`
                             : html`<video
                                   class="ml-film-thumb ml-film-half"
-                                  src=${gatewayMediaSrc(p.before.url)}
+                                  src=${gatewayVideoSrc(p.before.url)}
                                   muted
                                   preload="metadata"
                                 ></video>
                                 <video
                                   class="ml-film-thumb ml-film-half"
-                                  src=${gatewayMediaSrc(p.after.url)}
+                                  src=${gatewayVideoSrc(p.after.url)}
                                   muted
                                   preload="metadata"
                                 ></video>`}
@@ -2030,7 +2030,7 @@ ${this._logText || (this._logError ? '' : this._logLoading ? 'Loading…' : 'Log
           <div class="ml-cmp-label ml-cmp-label-static">BEFORE</div>
           <video
             class="ml-cmp-video a"
-            src=${gatewayMediaSrc(pair.before.url)}
+            src=${gatewayVideoSrc(pair.before.url)}
             preload="metadata"
             @loadedmetadata=${() => this._syncPrimaryVideoState()}
             @timeupdate=${() => this._syncPrimaryVideoState()}
@@ -2046,7 +2046,7 @@ ${this._logText || (this._logError ? '' : this._logLoading ? 'Loading…' : 'Log
           <div class="ml-cmp-label ml-cmp-label-static">AFTER</div>
           <video
             class="ml-cmp-video b"
-            src=${gatewayMediaSrc(pair.after.url)}
+            src=${gatewayVideoSrc(pair.after.url)}
             preload="metadata"
             @loadedmetadata=${() => this._syncPrimaryVideoState()}
             @timeupdate=${() => this._syncPrimaryVideoState()}
