@@ -1,1 +1,0 @@
-- Expose the bound review skill round on review workspaces and its number, mode and changed files on saved review results.

@@ -472,3 +472,45 @@ test('repin migration documents recover after the receipt swap without replacing
     'original evidence',
   );
 });
+
+test('a pin retention released refuses by name, never with a bare missing-file error', (t) => {
+  const { taskDir, input } = fixture(t);
+  const receipt = retainTaskExecution(taskDir, input);
+  // Run retention released the pin with its run (ADR-039 Amendment 12); the task dir remains.
+  fs.rmSync(receipt.pin, { recursive: true, force: true });
+  for (const [runId, prefix] of [
+    ['run-released-1', 'Run run-released-1: this'],
+    [undefined, 'This'],
+  ] as const) {
+    assert.throws(
+      () => verifyTaskExecutionProvenance(taskDir, null, runId ? { runId } : {}),
+      (error: unknown) =>
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'TASK_PIN_RELEASED' &&
+        'exitCode' in error &&
+        error.exitCode === 5 &&
+        error.message.startsWith(
+          `${prefix} task's installation pin ${receipt.pin} is missing: run retention released it`,
+        ),
+    );
+  }
+  // Re-retaining the same task (a replay's task init) refuses the same way, naming its run,
+  // instead of pinning the current tooling.
+  assert.throws(() => retainTaskExecution(taskDir, input, [], { runId: 'run-released-1' }), {
+    code: 'TASK_PIN_RELEASED',
+    message: /^Run run-released-1: this task's installation pin /,
+  });
+  assert.equal(fs.existsSync(receipt.pin), false, 'no silent re-pin');
+});
+
+test('a receipt naming a pin outside the store is invalid before it is called released', (t) => {
+  const { root, taskDir, input } = fixture(t);
+  retainTaskExecution(taskDir, input);
+  const file = path.join(taskDir, 'artifacts/harness-provenance.json');
+  const receipt = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, JSON.stringify({ ...receipt, pin: path.join(root, 'elsewhere', 'gone') }));
+  assert.throws(() => verifyTaskExecutionProvenance(taskDir, null), {
+    code: 'TASK_PROVENANCE_INVALID',
+  });
+});

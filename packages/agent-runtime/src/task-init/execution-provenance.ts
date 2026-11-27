@@ -136,6 +136,19 @@ export class TaskProvenanceError extends Error {
   }
 }
 
+/**
+ * Run retention released this task's pin with its run (ADR-039 Amendment 12). Its recorded
+ * tooling is gone, so the task never falls back to the current CLI: a fresh task pins anew.
+ */
+export function taskPinReleasedError(pin: string, runId?: string): TaskProvenanceError {
+  return new TaskProvenanceError('TASK_PIN_RELEASED', taskPinReleasedMessage(pin, runId));
+}
+
+/** Shared with the worker launch preflight, which ships its own copy (a test keeps them equal). */
+export function taskPinReleasedMessage(pin: string, runId?: string): string {
+  return `${runId ? `Run ${runId}: this` : 'This'} task's installation pin ${pin} is missing: run retention released it after its run settled, or it was removed. Its recorded tooling no longer exists, so the task cannot run again. Author a fresh task; a new run pins the current tooling.`;
+}
+
 const receiptFile = 'artifacts/harness-provenance.json';
 const within = (root: string, file: string): boolean =>
   file === root || file.startsWith(`${root}${path.sep}`);
@@ -244,6 +257,7 @@ function isReceipt(value: unknown): value is TaskExecutionProvenance {
 export function verifyTaskExecutionProvenance(
   taskDir: string,
   expectedBindingIdentity: TaskRecipeBindingIdentity | null,
+  context: { runId?: string } = {},
 ): TaskExecutionProvenance {
   const value: unknown = JSON.parse(fs.readFileSync(path.join(taskDir, receiptFile), 'utf8'));
   if (isRecord(value) && !('bindingIdentity' in value)) {
@@ -264,6 +278,14 @@ export function verifyTaskExecutionProvenance(
       'TASK_PROVENANCE_INVALID',
       'The installation pin store must be outside the task.',
     );
+  // Containment first: only a pin inside the store can have been released by its retention.
+  const pinParent = path.dirname(path.resolve(value.pin));
+  if (pinParent !== path.resolve(taskPinRoot()) && pinParent !== storeRoot)
+    throw new TaskProvenanceError(
+      'TASK_PROVENANCE_INVALID',
+      'The task pin is outside the configured installation store.',
+    );
+  if (!fs.existsSync(value.pin)) throw taskPinReleasedError(value.pin, context.runId);
   const pin = fs.realpathSync(value.pin);
   if (path.dirname(pin) !== fs.realpathSync(taskPinRoot()))
     throw new TaskProvenanceError(
@@ -369,6 +391,7 @@ export function retainTaskExecution(
   taskDir: string,
   input: TaskExecutionInput,
   additionalInputs: readonly string[] = [],
+  context: { runId?: string } = {},
 ): TaskExecutionProvenance {
   const receiptPath = path.join(taskDir, receiptFile);
   if (fs.existsSync(receiptPath)) {
@@ -380,6 +403,7 @@ export function retainTaskExecution(
       isRecord(recorded) && isBindingIdentity(recorded.bindingIdentity)
         ? recorded.bindingIdentity
         : null,
+      context,
     );
     const expected = pinnedSelection(input, receipt.retainedInputs, (pinned) => pinned);
     if (!isDeepStrictEqual(receipt.bindingIdentity, expected.bindingIdentity))

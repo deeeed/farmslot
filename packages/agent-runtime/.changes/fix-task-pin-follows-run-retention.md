@@ -1,0 +1,2 @@
+- Verifying a task's execution receipt refuses with `TASK_PIN_RELEASED` (exit 5) when run retention released its pin, naming the pin and the run when known, instead of a bare missing-file error; the task never falls back to other tooling (ADR-039 Amendment 12).
+- Task init passes its attempt id to the receipt re-verify, so a replayed task whose pin was released names its run.
