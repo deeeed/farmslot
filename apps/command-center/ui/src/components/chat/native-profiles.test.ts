@@ -189,7 +189,9 @@ test('profile status renders the refresh, blocked reason, and successful read', 
     },
   };
   statusChanged!({ status: 'ready', data });
-  assert.match(JSON.stringify(view.render()), /authenticated · subscription/);
+  const currentMarkup = JSON.stringify(view.render());
+  assert.match(currentMarkup, /authenticated · subscription/);
+  assert.match(currentMarkup, /Use this command on the selected node to sign in/);
   assert.equal(selections.at(-1)?.ready, true);
   for (const status of ['stale', 'ready'] as const) {
     listChanged!({ status, data: { profiles: [work] } });
@@ -212,6 +214,8 @@ test('profile status renders the refresh, blocked reason, and successful read', 
   assert.match(staleMarkup, /last observed/);
   assert.match(staleMarkup, /native-profile-login-command/);
   assert.match(staleMarkup, /claude auth login/);
+  assert.match(staleMarkup, /Wait for a current profile status before signing in/);
+  assert.doesNotMatch(staleMarkup, /Use this command on the selected node to sign in/);
   assert.equal(selections.at(-1)?.ready, false);
   statusChanged!({ status: 'ready', data });
   assert.doesNotMatch(JSON.stringify(view.render()), /last observed|native-profile-read-issue/);

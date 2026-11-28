@@ -109,6 +109,23 @@ export class NativeProfiles extends LitElement {
       align-items: center;
       flex-wrap: wrap;
     }
+    .read-feedback {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 4px;
+      align-items: start;
+      block-size: 6rem;
+      margin-block: 8px;
+    }
+    .read-feedback button {
+      justify-self: start;
+    }
+    .read-feedback p {
+      align-self: stretch;
+      margin: 0;
+      overflow: auto;
+      overflow-wrap: anywhere;
+    }
     .error {
       color: #ff9292;
     }
@@ -391,15 +408,6 @@ export class NativeProfiles extends LitElement {
         </choice-picker></label
       >
       <div class="row">
-        ${this.error
-          ? html`<button
-              data-testid="native-profile-refresh"
-              ?disabled=${disabled}
-              @click=${() => void this.retryProfiles()}
-            >
-              ${issue?.retryLabel ?? 'Retry reading profiles'}
-            </button>`
-          : nothing}
         ${profile
           ? html`<button
               data-testid="native-profile-remove"
@@ -410,18 +418,30 @@ export class NativeProfiles extends LitElement {
             </button>`
           : nothing}
       </div>
-      ${issue
-        ? html`<p
-            data-testid="native-profile-read-issue"
-            class=${issue.kind === 'blocked' ? 'error' : ''}
-            role=${issue.kind === 'blocked' ? 'alert' : 'status'}
-          >
-            <strong>${issue.title}</strong><br />
-            ${issue.detail}
-          </p>`
-        : error
-          ? html`<p class="error" role="alert">${error}</p>`
+      <div class="read-feedback">
+        ${this.error
+          ? html`<button
+              data-testid="native-profile-refresh"
+              ?disabled=${disabled}
+              @click=${() => void this.retryProfiles()}
+            >
+              ${issue?.retryLabel ?? 'Retry reading profiles'}
+            </button>`
           : nothing}
+        ${issue
+          ? html`<p
+              data-testid="native-profile-read-issue"
+              class=${issue.kind === 'blocked' ? 'error' : ''}
+              role=${issue.kind === 'blocked' ? 'alert' : 'status'}
+              tabindex="0"
+            >
+              <strong>${issue.title}</strong><br />
+              ${issue.detail}
+            </p>`
+          : error
+            ? html`<p class="error" role="alert" tabindex="0">${error}</p>`
+            : nothing}
+      </div>
       ${profile && this.selectedContextId && profile.accountContextId !== this.selectedContextId
         ? html`<p>${profile.directory}</p>
             <button
@@ -446,9 +466,11 @@ export class NativeProfiles extends LitElement {
                 ${this.executionNodeId}
               </summary>
               <p>
-                Use this command on the selected node to sign in. Switching accounts in the same
-                directory keeps this profile and its saved conversations. Refresh to check the
-                current login.
+                ${this.statusCurrent
+                  ? 'Use this command on the selected node to sign in.'
+                  : 'Wait for a current profile status before signing in.'}
+                Switching accounts in the same directory keeps this profile and its saved
+                conversations. Refresh to check the current login.
               </p>
               <pre data-testid="native-profile-login-command">${this.status.loginCommand}</pre>
             </details>`
