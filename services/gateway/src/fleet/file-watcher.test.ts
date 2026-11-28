@@ -205,3 +205,40 @@ test('overlapping pool and PR-rule watchers each deliver the same edit in either
     watchers.clear();
   }
 });
+
+test('overlapping pool and OpenClaw watchers publish each resource once in either order', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  process.env.FARMSLOT_POOL_DIR = registration;
+  t.after(() => {
+    process.env.FARMSLOT_POOL_DIR = pool;
+  });
+  const watcher = startFileWatcher();
+  try {
+    for (const owner of [...watchers.values()].flat()) owner.emit('ready');
+    await watcher.ready;
+    assert.equal(watchers.get(registration)?.length, 2);
+
+    const revisions: ResourceKey[] = [];
+    t.mock.method(resourceRevisions, 'advance', (key: ResourceKey) => revisions.push(key));
+    const deliveries = [];
+    // The pool watcher is installed before the OpenClaw registration watcher.
+    for (const [first, second] of [
+      [0, 1],
+      [1, 0],
+    ]) {
+      writeFileSync(registrationFile, ' '.repeat(first) + JSON.stringify({ first }));
+      raw(registration, registrationFile, 'change', first);
+      raw(registration, registrationFile, 'change', second);
+      all(registration, registrationFile, 'change', first);
+      all(registration, registrationFile, 'change', second);
+      deliveries.push(revisions.splice(0));
+    }
+    assert.deepEqual(deliveries, [
+      [configuration, capabilities, workers],
+      [configuration, capabilities, workers],
+    ]);
+  } finally {
+    await watcher.close();
+    watchers.clear();
+  }
+});

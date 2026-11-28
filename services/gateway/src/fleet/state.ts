@@ -917,38 +917,43 @@ interface RecentFileEdit {
   timer: ReturnType<typeof setTimeout>;
 }
 
-type FileEditAction = 'pr-rules' | 'pool-resources' | 'openclaw-registration';
+type FileEditAction = 'pr-rules' | 'configuration' | 'pool-capabilities-and-workers';
+type FileEditActions = Record<FileEditAction, () => void>;
 
 /** Deliver the first observation immediately, even when Chokidar only emits raw. */
-function createFileEditCoalescer() {
+function createFileEditCoalescer(actions: FileEditActions) {
   const recent = new Map<string, RecentFileEdit>();
   return {
-    deliver(action: FileEditAction, file: string, onEdit: () => void): void {
-      const key = `${action}:${file}`;
-      const previous = recent.get(key);
+    deliver(file: string, ...edits: FileEditAction[]): void {
       let stats: BigIntStats | undefined;
+      let readable = true;
       try {
         stats = statSync(file, { bigint: true, throwIfNoEntry: false });
       } catch (error) {
         if (!(error instanceof Error) || !('syscall' in error) || error.syscall !== 'stat')
           throw error;
         // When metadata is unreadable, let the owning reader handle the source failure.
-        clearTimeout(previous?.timer);
-        recent.delete(key);
-        onEdit();
-        return;
+        readable = false;
       }
       // Compare inode for replacements and timestamps for in-place edits.
       // An absent file is also an observable state, which pairs raw rename with all unlink.
       const stamp = stats
         ? `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
         : undefined;
-      if (previous && previous.stamp === stamp) return;
-      clearTimeout(previous?.timer);
-      const timer = setTimeout(() => recent.delete(key), NATIVE_POOL_CHANGE_COALESCE_MS);
-      timer.unref();
-      recent.set(key, { stamp, timer });
-      onEdit();
+      for (const action of edits) {
+        const key = `${action}:${file}`;
+        const previous = recent.get(key);
+        if (readable && previous && previous.stamp === stamp) continue;
+        clearTimeout(previous?.timer);
+        if (readable) {
+          const timer = setTimeout(() => recent.delete(key), NATIVE_POOL_CHANGE_COALESCE_MS);
+          timer.unref();
+          recent.set(key, { stamp, timer });
+        } else {
+          recent.delete(key);
+        }
+        actions[action]();
+      }
     },
     dispose(): void {
       for (const { timer } of recent.values()) clearTimeout(timer);
@@ -1021,7 +1026,6 @@ export function startFileWatcher() {
   // Keep watching its directory across atomic replacements and recreation.
   const directory = path.dirname(statusFile);
   const prRulesFile = path.resolve(farmslotRoot(), '.pr-rules.json');
-  const fileEdits = createFileEditCoalescer();
   const reloadPRRules = async () => {
     try {
       const { reloadPRRulesFromFile } = await loadPRRules();
@@ -1031,7 +1035,15 @@ export function startFileWatcher() {
       console.error('[state] PR rule source reload failed:', error);
     }
   };
-  const prRulesChanged = () => fileEdits.deliver('pr-rules', prRulesFile, reloadPRRules);
+  const fileEdits = createFileEditCoalescer({
+    'pr-rules': reloadPRRules,
+    configuration: publishConfigurationResources,
+    'pool-capabilities-and-workers': () => {
+      capabilityResourceChanges.catalogChanged();
+      publishWorkerResources();
+    },
+  });
+  const prRulesChanged = () => fileEdits.deliver(prRulesFile, 'pr-rules');
   const watcher = watch(directory, {
     persistent: true,
     ignoreInitial: true,
@@ -1061,15 +1073,10 @@ export function startFileWatcher() {
       file !== poolDirectory() &&
       (!file.endsWith('.json') || isIgnoredPoolFile(path.basename(file))),
   });
-  const publishPoolResources = () => {
-    publishConfigurationResources();
-    capabilityResourceChanges.catalogChanged();
-    publishWorkerResources();
-  };
   const poolHandlers = createPoolWatcherHandlers({
     directory: poolDirectory(),
     onPoolFileChanged: (file) => {
-      fileEdits.deliver('pool-resources', file, publishPoolResources);
+      fileEdits.deliver(file, 'configuration', 'pool-capabilities-and-workers');
       clearTimeout(poolDebounce);
       poolDebounce = setTimeout(async () => {
         try {
@@ -1111,8 +1118,7 @@ export function startFileWatcher() {
   const openClawStoreFile = getOpenClawStorePath();
   const registrationFiles = [llmConfigFile, getFarmslotStorePath()];
   const registrationParent = path.dirname(openClawStoreFile);
-  const openClawStoreChanged = () =>
-    fileEdits.deliver('openclaw-registration', openClawStoreFile, publishConfigurationResources);
+  const openClawStoreChanged = () => fileEdits.deliver(openClawStoreFile, 'configuration');
   // A missing optional root can finish Chokidar's multi-root readiness before
   // its other trees are armed. Give it an existing ancestor and its own owner.
   let registrationRoot = registrationParent;
