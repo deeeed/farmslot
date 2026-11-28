@@ -499,23 +499,16 @@ export class NativeHostObservation {
    *
    * Any in-flight account sample started under an earlier epoch is discarded on completion
    * without caching stale profiles or publishing a stale invalidation. Cached profile statuses
-   * are cleared and the receipt advances for `['profiles']` only, leaving `native-session` intact.
+   * are cleared without advancing the shared source receipt so held `native-session` reads
+   * survive profile-only configuration changes; callers publish `['profiles']` invalidation and
+   * fence profile reads via their configuration epoch.
    */
   invalidateExecutableConfig(digest: string): void {
-    const hadProfiles =
-      this.accountsAvailable ||
-      this.profileStatuses.size > 0 ||
-      this.sampledExecutableConfigDigest !== undefined;
-    const changed =
-      !this.executableConfigInvalid || this.executableConfigDigest !== digest || hadProfiles;
     this.executableConfigDigest = digest;
     this.executableConfigEpoch++;
     this.executableConfigInvalid = true;
     this.queued = false;
     this.setAccounts(undefined, digest, this.executableConfigEpoch);
-    if (changed && !this.stopped && this.receipt.ready) {
-      this.advance(['profiles']);
-    }
   }
 
   /**

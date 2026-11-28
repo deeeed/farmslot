@@ -293,13 +293,48 @@ interface NativeConnection {
   visiblePreferences?: NativeCatalogPreferenceLease;
   visibleReader?: { id: string; generation: number };
 }
+type SourceDesiredConfig =
+  | {
+      readonly kind: 'valid';
+      readonly digest: string;
+      readonly executables: Record<string, string> | undefined;
+    }
+  | { readonly kind: 'error'; readonly error: string };
+
+interface SourceConfigState {
+  /** Monotonic per-source epoch bumped on every effective change to desired state (including B -> ambiguous -> B). */
+  epoch: number;
+  desired?: SourceDesiredConfig;
+  committedEpoch: number;
+  committedDigest?: string;
+  configuring?: {
+    readonly epoch: number;
+    readonly digest: string;
+    readonly promise: Promise<void>;
+  };
+  error?: string;
+  /** True when `error` came from a persistent pool-resolution failure rather than a transient sync failure. */
+  errorIsPoolResolution?: boolean;
+  /** Epoch for which a source-pushed `profiles` notice was held while `configuring` was active. */
+  heldProfileNoticeEpoch?: number;
+}
+
+interface AdmittedProfileEpoch {
+  readonly epoch: number;
+  readonly digest: string;
+}
+
+function createSourceConfigState(): SourceConfigState {
+  return { epoch: 0, committedEpoch: -1 };
+}
+
 interface RemoteSource {
   connection: object;
   current: () => boolean;
   receipt: NativeSourceReceipt;
-  configuredDigest?: string;
-  configuring?: { revision: number; digest: string; promise: Promise<void> };
-  lastConfigureError?: string;
+  sessionRevision: number;
+  readonly supportsObservationConfiguration: boolean;
+  readonly config: SourceConfigState;
 }
 type CachedNodeExecutables =
   | { readonly ok: true; readonly executables: Record<string, string> | undefined }
@@ -317,10 +352,9 @@ export class GatewayNativeObservations {
   private readonly remote = new Map<string, RemoteSource>();
   private local?: NativeHostObservation;
   private localReceipt?: NativeSourceReceipt;
+  private localSessionRevision = 0;
   private localExecutables?: Record<string, string>;
-  private localConfiguredDigest?: string;
-  private localConfiguring?: { revision: number; digest: string; promise: Promise<void> };
-  private localConfigureError?: string;
+  private localConfig: SourceConfigState = createSourceConfigState();
   private poolCatalogRevision = 0;
   private poolExecutableRevision = 0;
   private executableCacheRevision = -1;
@@ -436,55 +470,62 @@ export class GatewayNativeObservations {
     if (!ownsLocalNativeProfile(ownerId))
       throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native local source is unavailable');
     this.local?.stop();
-    this.localConfiguring = undefined;
-    this.localConfiguredDigest = undefined;
-    const revision = this.poolExecutableRevision;
+    this.localConfig = createSourceConfigState();
+    this.localSessionRevision = 0;
     const resolved = this.resolveCachedNodeExecutablesResult('local');
-    if (resolved.ok) {
-      this.localExecutables = resolved.executables ? { ...resolved.executables } : undefined;
-      this.localConfigureError = undefined;
+    const desired = this.desiredFromCached(resolved);
+    this.applyDesiredSourceConfig(this.localConfig, desired);
+    const epoch = this.localConfig.epoch;
+    if (desired.kind === 'valid') {
+      this.localExecutables = desired.executables ? { ...desired.executables } : undefined;
     } else {
       this.localExecutables = undefined;
-      this.localConfigureError = resolved.error;
       console.warn(
-        `[native-observation] local pool executable resolution failed: ${resolved.error}`,
+        `[native-observation] local pool executable resolution failed: ${desired.error}`,
       );
     }
-    const initialDigest = resolved.ok
-      ? canonicalTrustedExecutablesDigest(this.localExecutables)
-      : FAILED_EXECUTABLE_CONFIG_DIGEST;
+    const initialDigest =
+      desired.kind === 'valid' ? desired.digest : `${FAILED_EXECUTABLE_CONFIG_DIGEST}:${epoch}`;
     const local = new NativeHostObservation(
       this.localClient,
       ownerId,
       (receipt) => {
+        const prev = this.localReceipt
+          ? { receipt: this.localReceipt, sessionRevision: this.localSessionRevision }
+          : undefined;
         this.localReceipt = receipt;
-        // Defer profile-only invalidations while an executable sync is still committing
-        // `localConfiguredDigest` and clearing `localConfiguring`, so the first published
-        // recovery notice observes a fully ready state.
-        if (
-          receipt.changed?.length === 1 &&
-          receipt.changed[0] === 'profiles' &&
-          this.localConfiguring
-        ) {
-          return;
-        }
-        this.invalidateSource(receipt.nodeId, receipt.ownerId, receipt.changed);
+        this.localSessionRevision = this.nextSessionRevision(prev, receipt);
+        this.publishReceiptFacets(
+          receipt.nodeId,
+          receipt.ownerId,
+          receipt.changed,
+          this.localConfig,
+        );
       },
       undefined,
       undefined,
       (runner) => {
-        if (this.localConfigureError) {
-          throw new Error(this.localConfigureError);
+        if (this.localConfig.desired?.kind === 'error') {
+          throw new Error(this.localConfig.desired.error);
+        }
+        if (this.localConfig.error) {
+          throw new Error(this.localConfig.error);
         }
         return this.localExecutables?.[normalizeRunner(runner)];
       },
       initialDigest,
-      !resolved.ok,
+      desired.kind === 'error',
     );
     this.local = local;
     await local.start();
-    if (this.local === local && this.poolExecutableRevision === revision) {
-      this.localConfiguredDigest = resolved.ok ? initialDigest : undefined;
+    if (this.local === local && this.localConfig.epoch === epoch && desired.kind === 'valid') {
+      this.localConfig.committedEpoch = epoch;
+      this.localConfig.committedDigest = desired.digest;
+      this.localConfig.error = undefined;
+      this.localConfig.errorIsPoolResolution = false;
+      if (this.localReceipt) {
+        this.invalidateSource('local', this.localReceipt.ownerId, ['profiles']);
+      }
     }
   }
 
@@ -513,36 +554,41 @@ export class GatewayNativeObservations {
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Native source revision went backwards');
     const isNewConnection = previous?.connection !== connection;
-    this.remote.set(receipt.nodeId, {
+    const supportsConfig = Boolean(registered.nativeSessions.supportsObservationConfiguration);
+    const config = isNewConnection ? createSourceConfigState() : previous.config;
+    const sessionRevision = this.nextSessionRevision(
+      isNewConnection ? undefined : previous,
+      receipt,
+    );
+    const updated: RemoteSource = {
       connection,
       current,
       receipt: { ...receipt },
-      ...(!isNewConnection
-        ? {
-            configuredDigest: previous.configuredDigest,
-            configuring: previous.configuring,
-            lastConfigureError: previous.lastConfigureError,
-          }
-        : {}),
-    });
+      sessionRevision,
+      supportsObservationConfiguration: supportsConfig,
+      config,
+    };
+    this.remote.set(receipt.nodeId, updated);
     if (previous && previous.connection !== connection)
       this.invalidateSource(previous.receipt.nodeId, previous.receipt.ownerId);
-    const currentRemote = this.remote.get(receipt.nodeId);
-    if (
-      !(
-        receipt.changed?.length === 1 &&
-        receipt.changed[0] === 'profiles' &&
-        currentRemote?.configuring
-      )
-    ) {
-      this.invalidateSource(receipt.nodeId, receipt.ownerId, receipt.changed);
-    }
+    this.publishReceiptFacets(
+      receipt.nodeId,
+      receipt.ownerId,
+      receipt.changed,
+      updated.config,
+      supportsConfig,
+    );
+    const recoveredReady =
+      isNewConnection ||
+      !previous?.receipt.ready ||
+      previous.receipt.incarnation !== receipt.incarnation;
     if (
       receipt.ready &&
-      registered.nativeSessions.supportsObservationConfiguration &&
-      currentRemote?.configuredDigest === undefined &&
-      !currentRemote?.configuring &&
-      !currentRemote?.lastConfigureError
+      supportsConfig &&
+      updated.config.committedEpoch !== updated.config.epoch &&
+      !updated.config.configuring &&
+      !updated.config.errorIsPoolResolution &&
+      (!updated.config.error || recoveredReady)
     ) {
       this.triggerRemoteExecutableSync(receipt.nodeId, receipt.ownerId);
     }
@@ -606,7 +652,8 @@ export class GatewayNativeObservations {
     client.standaloneAdmin = isStandaloneAdmin(reader);
     let collectionOwners: Readonly<Record<string, string>> | undefined;
     const sources = new Map<string, NativeSourceReceipt>();
-    const admittedProfileDigests = new Map<string, string>();
+    const sessionRevisions = new Map<string, number>();
+    const admittedProfileEpochs = new Map<string, AdmittedProfileEpoch>();
     let catalogBefore: NativeCatalogSourceReceipt | undefined;
     const poolCatalogBefore = this.poolCatalogRevision;
     const metadata = new Map<NativeInterest, NativeCollectionMetadata>();
@@ -673,7 +720,7 @@ export class GatewayNativeObservations {
         // A Retry can re-arm this authorized source owner; it cannot fabricate its receipt.
         try {
           if (interest.method === 'native.profile.status') {
-            admittedProfileDigests.set(
+            admittedProfileEpochs.set(
               node,
               this.assertProfileExecutablesReady(node, sourceOwner(authority, node)),
             );
@@ -681,6 +728,7 @@ export class GatewayNativeObservations {
           if (node === 'local' && this.local && !this.local.current().ready)
             await this.local.retry();
           sources.set(node, await this.fence(node, sourceOwner(authority, node)));
+          sessionRevisions.set(node, this.currentSessionRevision(node));
           if (partialList) admitted!.add(node);
         } catch (error) {
           // Only source/transport unavailability is a partial-inventory outcome.
@@ -740,21 +788,23 @@ export class GatewayNativeObservations {
             if (recovered) throw new NativeSourceUnavailable();
           } else {
             if (interest.method === 'native.profile.status') {
-              const expectedDigest = admittedProfileDigests.get(node);
-              if (expectedDigest !== undefined) {
+              const admittedEpoch = admittedProfileEpochs.get(node);
+              if (admittedEpoch !== undefined) {
                 this.assertProfileExecutablesCurrent(
                   node,
                   sourceOwner(authority, node),
-                  expectedDigest,
+                  admittedEpoch,
                 );
               }
             }
             const before = sources.get(node);
             if (!before) throw new NativeSourceUnavailable('gateway-read-receipt-missing');
-            assertNativeSourceCurrent(
+            this.assertReceiptFacetCurrent(
+              interest,
+              node,
               before,
+              sessionRevisions.get(node) ?? before.revision,
               this.cachedFence(node, sourceOwner(authority, node)),
-              'gateway-read',
             );
           }
         }
@@ -826,21 +876,19 @@ export class GatewayNativeObservations {
         }
         checkedSources.add(node);
         if (interest.method === 'native.profile.status') {
-          const expectedDigest = admittedProfileDigests.get(node);
-          if (expectedDigest !== undefined) {
-            this.assertProfileExecutablesCurrent(
-              node,
-              sourceOwner(authority, node),
-              expectedDigest,
-            );
+          const admittedEpoch = admittedProfileEpochs.get(node);
+          if (admittedEpoch !== undefined) {
+            this.assertProfileExecutablesCurrent(node, sourceOwner(authority, node), admittedEpoch);
           }
         }
         const before = sources.get(node);
         if (!before) throw new NativeSourceUnavailable('gateway-read-receipt-missing');
-        assertNativeSourceCurrent(
+        this.assertReceiptFacetCurrent(
+          interest,
+          node,
           before,
+          sessionRevisions.get(node) ?? before.revision,
           await this.fence(node, sourceOwner(authority, node)),
-          'gateway-read',
         );
       }
     }
@@ -922,36 +970,165 @@ export class GatewayNativeObservations {
     return entry;
   }
 
+  private desiredFromCached(resolved: CachedNodeExecutables): SourceDesiredConfig {
+    return resolved.ok
+      ? {
+          kind: 'valid',
+          digest: canonicalTrustedExecutablesDigest(resolved.executables),
+          executables: resolved.executables,
+        }
+      : { kind: 'error', error: resolved.error };
+  }
+
+  /**
+   * Apply a newly resolved desired configuration to one source's state machine.
+   * Bumps `state.epoch` on EVERY effective transition (including `valid B -> error -> valid B`)
+   * while leaving unaffected sources at their existing epoch.
+   */
+  private applyDesiredSourceConfig(state: SourceConfigState, next: SourceDesiredConfig): boolean {
+    const sameDesired =
+      (next.kind === 'valid' &&
+        state.desired?.kind === 'valid' &&
+        state.desired.digest === next.digest) ||
+      (next.kind === 'error' &&
+        state.desired?.kind === 'error' &&
+        state.desired.error === next.error);
+    if (sameDesired) return false;
+    state.epoch++;
+    state.desired = next;
+    state.configuring = undefined;
+    state.heldProfileNoticeEpoch = undefined;
+    if (next.kind === 'error') {
+      state.committedEpoch = -1;
+      state.committedDigest = undefined;
+      state.error = next.error;
+      state.errorIsPoolResolution = true;
+    } else {
+      state.error = undefined;
+      state.errorIsPoolResolution = false;
+    }
+    return true;
+  }
+
+  private syncDesiredForSource(nodeId: string, state: SourceConfigState): SourceDesiredConfig {
+    const next = this.desiredFromCached(this.resolveCachedNodeExecutablesResult(nodeId));
+    this.applyDesiredSourceConfig(state, next);
+    return next;
+  }
+
+  private canPublishProfiles(state: SourceConfigState, requiresConfig = true): boolean {
+    if (state.desired?.kind === 'error' || state.error || state.configuring) return false;
+    if (!requiresConfig) return true;
+    return state.desired?.kind === 'valid' && state.committedEpoch === state.epoch;
+  }
+
+  /**
+   * Publish receipt invalidations per facet:
+   * - `native-session` always publishes immediately so session streams stay live during profile config.
+   * - `profiles` publishes only when the source's current configuration epoch is committed and
+   *   unblocked; notices suppressed while `configuring` is active for `state.epoch` record
+   *   `heldProfileNoticeEpoch` so a same-epoch failure still notifies subscribers once.
+   */
+  private publishReceiptFacets(
+    nodeId: string,
+    ownerId: string,
+    changed: readonly string[] | undefined,
+    state: SourceConfigState,
+    requiresConfig = true,
+  ): void {
+    const sessionChanged = !changed || changed.includes('native-session');
+    const profileChanged = !changed || changed.includes('profiles');
+    const allowProfiles = profileChanged && this.canPublishProfiles(state, requiresConfig);
+    if (sessionChanged && allowProfiles) {
+      this.invalidateSource(nodeId, ownerId, ['native-session', 'profiles']);
+      return;
+    }
+    if (sessionChanged) {
+      this.invalidateSource(nodeId, ownerId, ['native-session']);
+    }
+    if (allowProfiles) {
+      this.invalidateSource(nodeId, ownerId, ['profiles']);
+    } else if (profileChanged && state.configuring && state.configuring.epoch === state.epoch) {
+      state.heldProfileNoticeEpoch = state.epoch;
+    }
+  }
+
+  private nextSessionRevision(
+    previous: { receipt: NativeSourceReceipt; sessionRevision: number } | undefined,
+    next: NativeSourceReceipt,
+  ): number {
+    if (
+      !previous ||
+      previous.receipt.incarnation !== next.incarnation ||
+      !next.ready ||
+      !next.changed ||
+      next.changed.includes('native-session')
+    ) {
+      return next.revision;
+    }
+    return previous.sessionRevision;
+  }
+
+  private currentSessionRevision(nodeId: string): number {
+    if (nodeId === 'local') return this.localSessionRevision;
+    const source = this.remote.get(nodeId);
+    return source ? source.sessionRevision : 0;
+  }
+
+  /**
+   * Fence a marked read against receipt changes for its own facet:
+   * - `native-session` reads survive profile-only advances (`changed: ['profiles']`) on the same
+   *   ready incarnation while still rejecting on any real session change, unavailability, or
+   *   incarnation replacement.
+   * - `profiles` reads check the full source receipt.
+   */
+  private assertReceiptFacetCurrent(
+    interest: NativeInterest,
+    nodeId: string,
+    before: NativeSourceReceipt,
+    beforeSessionRevision: number,
+    after: NativeSourceReceipt,
+  ): void {
+    if (interest.key.family === 'native-session') {
+      if (!before.ready || !after.ready || before.incarnation !== after.incarnation) {
+        assertNativeSourceCurrent(before, after, 'gateway-read');
+        return;
+      }
+      if (this.currentSessionRevision(nodeId) !== beforeSessionRevision) {
+        assertNativeSourceCurrent(
+          before,
+          { ...after, revision: Math.max(after.revision, before.revision + 1) },
+          'gateway-read',
+        );
+      }
+      return;
+    }
+    assertNativeSourceCurrent(before, after, 'gateway-read');
+  }
+
   /**
    * Non-blocking picker gate: never await a slow account sample on the read path.
    * Cached pool-resolution failures fail closed with `NATIVE_PROFILES_UNAVAILABLE` without
    * rescanning the pool directory until the next real pool edit.
    */
-  private assertProfileExecutablesReady(nodeId: string, ownerId: string): string {
-    const resolved = this.resolveCachedNodeExecutablesResult(nodeId);
-    if (!resolved.ok) {
-      if (nodeId === 'local') {
-        this.localConfigureError = resolved.error;
-      } else {
-        const source = this.remote.get(nodeId);
-        if (source) source.lastConfigureError = resolved.error;
-      }
-      throw new GatewayMethodError(
-        'NATIVE_PROFILES_UNAVAILABLE',
-        `Native account profiles failed to resolve runner configuration: ${resolved.error}`,
-      );
-    }
-    const executables = resolved.executables;
-    const digest = canonicalTrustedExecutablesDigest(executables);
+  private assertProfileExecutablesReady(nodeId: string, ownerId: string): AdmittedProfileEpoch {
     if (nodeId === 'local') {
-      if (!this.local) return digest;
+      const desired = this.syncDesiredForSource('local', this.localConfig);
+      if (desired.kind === 'error') {
+        throw new GatewayMethodError(
+          'NATIVE_PROFILES_UNAVAILABLE',
+          `Native account profiles failed to resolve runner configuration: ${desired.error}`,
+        );
+      }
+      if (!this.local) return { epoch: this.localConfig.epoch, digest: desired.digest };
       if (
-        this.localConfigureError ||
-        (this.localConfiguredDigest ?? EMPTY_TRUSTED_EXECUTABLES_DIGEST) !== digest ||
-        this.localConfiguring
+        this.localConfig.error ||
+        this.localConfig.committedEpoch !== this.localConfig.epoch ||
+        this.localConfig.committedDigest !== desired.digest ||
+        this.localConfig.configuring
       ) {
-        const priorError = this.localConfigureError;
-        this.triggerLocalExecutableSync(executables, true);
+        const priorError = this.localConfig.error;
+        this.triggerLocalExecutableSync(desired.executables, true);
         throw new GatewayMethodError(
           'NATIVE_PROFILES_UNAVAILABLE',
           priorError
@@ -959,25 +1136,48 @@ export class GatewayNativeObservations {
             : 'Native account profiles are refreshing for updated runner configuration. Retry shortly.',
         );
       }
-      return digest;
+      return { epoch: this.localConfig.epoch, digest: desired.digest };
     }
     const source = this.remote.get(nodeId);
-    if (!source || !source.current()) return digest;
+    if (!source || !source.current()) {
+      const resolved = this.resolveCachedNodeExecutablesResult(nodeId);
+      if (!resolved.ok) {
+        throw new GatewayMethodError(
+          'NATIVE_PROFILES_UNAVAILABLE',
+          `Native account profiles failed to resolve runner configuration: ${resolved.error}`,
+        );
+      }
+      return { epoch: 0, digest: canonicalTrustedExecutablesDigest(resolved.executables) };
+    }
+    const desired = this.syncDesiredForSource(nodeId, source.config);
+    if (desired.kind === 'error') {
+      throw new GatewayMethodError(
+        'NATIVE_PROFILES_UNAVAILABLE',
+        `Native account profiles failed to resolve runner configuration: ${desired.error}`,
+      );
+    }
     const node = resolveNativeExecutionNode(ownerId, nodeId);
-    if (node.ws !== source.connection) return digest;
+    if (node.ws !== source.connection)
+      return { epoch: source.config.epoch, digest: desired.digest };
     if (!node.nativeSessions.supportsObservationConfiguration) {
-      if (digest !== EMPTY_TRUSTED_EXECUTABLES_DIGEST) {
+      if (desired.digest !== EMPTY_TRUSTED_EXECUTABLES_DIGEST) {
         throw new GatewayMethodError(
           'NATIVE_SOURCE_UNAVAILABLE',
           'Execution node upgrade required for configured runner executables',
         );
       }
-      source.configuredDigest = digest;
-      return digest;
+      source.config.committedEpoch = source.config.epoch;
+      source.config.committedDigest = desired.digest;
+      return { epoch: source.config.epoch, digest: desired.digest };
     }
-    if (source.lastConfigureError || source.configuredDigest !== digest || source.configuring) {
-      const priorError = source.lastConfigureError;
-      this.triggerRemoteExecutableSync(nodeId, ownerId, executables, true);
+    if (
+      source.config.error ||
+      source.config.committedEpoch !== source.config.epoch ||
+      source.config.committedDigest !== desired.digest ||
+      source.config.configuring
+    ) {
+      const priorError = source.config.error;
+      this.triggerRemoteExecutableSync(nodeId, ownerId, desired.executables, true);
       throw new GatewayMethodError(
         'NATIVE_PROFILES_UNAVAILABLE',
         priorError
@@ -985,77 +1185,90 @@ export class GatewayNativeObservations {
           : 'Native account profiles are refreshing for updated runner configuration. Retry shortly.',
       );
     }
-    return digest;
+    return { epoch: source.config.epoch, digest: desired.digest };
   }
 
   /**
    * Synchronous publication fence for admitted `native.profile.status` reads.
-   * Rejects reads straddling an executable configuration change or ambiguity edit on either
-   * local or remote nodes, without disturbing unaffected nodes or non-profile reads.
+   * Rejects any read straddling an effective executable configuration transition (including
+   * `valid B -> ambiguous -> valid B` with an unchanged receipt revision) on either local or
+   * remote nodes, without disturbing unaffected nodes or session reads.
    */
   private assertProfileExecutablesCurrent(
     nodeId: string,
     ownerId: string,
-    expectedDigest: string,
+    admitted: AdmittedProfileEpoch,
   ): void {
-    const resolved = this.resolveCachedNodeExecutablesResult(nodeId);
-    if (!resolved.ok) {
-      if (nodeId === 'local') {
-        this.localConfigureError = resolved.error;
-      } else {
-        const source = this.remote.get(nodeId);
-        if (source) source.lastConfigureError = resolved.error;
-      }
-      throw new GatewayMethodError(
-        'NATIVE_PROFILES_UNAVAILABLE',
-        `Native account profiles failed to resolve runner configuration: ${resolved.error}`,
-      );
-    }
-    const currentDigest = canonicalTrustedExecutablesDigest(resolved.executables);
     if (nodeId === 'local') {
+      const desired = this.syncDesiredForSource('local', this.localConfig);
+      if (desired.kind === 'error') {
+        throw new GatewayMethodError(
+          'NATIVE_PROFILES_UNAVAILABLE',
+          `Native account profiles failed to resolve runner configuration: ${desired.error}`,
+        );
+      }
       if (
         !this.local ||
-        this.localConfigureError ||
-        currentDigest !== expectedDigest ||
-        (this.localConfiguredDigest ?? EMPTY_TRUSTED_EXECUTABLES_DIGEST) !== expectedDigest ||
-        this.localConfiguring
+        this.localConfig.error ||
+        this.localConfig.configuring ||
+        this.localConfig.committedEpoch !== this.localConfig.epoch ||
+        this.localConfig.committedDigest !== desired.digest
       ) {
-        const priorError = this.localConfigureError;
+        const priorError = this.localConfig.error;
         throw new GatewayMethodError(
           'NATIVE_PROFILES_UNAVAILABLE',
           priorError
             ? `Native account profiles failed to sync runner configuration: ${priorError}`
             : 'Native account profiles are refreshing for updated runner configuration. Retry shortly.',
         );
+      }
+      if (this.localConfig.epoch !== admitted.epoch || desired.digest !== admitted.digest) {
+        throw new NativeSourceUnavailable('executable-config-changed');
       }
       return;
     }
     const source = this.remote.get(nodeId);
     if (!source || !source.current()) return;
+    const desired = this.syncDesiredForSource(nodeId, source.config);
+    if (desired.kind === 'error') {
+      throw new GatewayMethodError(
+        'NATIVE_PROFILES_UNAVAILABLE',
+        `Native account profiles failed to resolve runner configuration: ${desired.error}`,
+      );
+    }
     const node = resolveNativeExecutionNode(ownerId, nodeId);
     if (node.ws !== source.connection) return;
     if (!node.nativeSessions.supportsObservationConfiguration) {
-      if (currentDigest !== expectedDigest || currentDigest !== EMPTY_TRUSTED_EXECUTABLES_DIGEST) {
+      if (
+        desired.digest !== admitted.digest ||
+        desired.digest !== EMPTY_TRUSTED_EXECUTABLES_DIGEST
+      ) {
         throw new GatewayMethodError(
           'NATIVE_SOURCE_UNAVAILABLE',
           'Execution node upgrade required for configured runner executables',
         );
       }
+      if (source.config.epoch !== admitted.epoch) {
+        throw new NativeSourceUnavailable('executable-config-changed');
+      }
       return;
     }
     if (
-      source.lastConfigureError ||
-      currentDigest !== expectedDigest ||
-      source.configuredDigest !== expectedDigest ||
-      source.configuring
+      source.config.error ||
+      source.config.configuring ||
+      source.config.committedEpoch !== source.config.epoch ||
+      source.config.committedDigest !== desired.digest
     ) {
-      const priorError = source.lastConfigureError;
+      const priorError = source.config.error;
       throw new GatewayMethodError(
         'NATIVE_PROFILES_UNAVAILABLE',
         priorError
           ? `Native account profiles failed to sync runner configuration: ${priorError}`
           : 'Native account profiles are refreshing for updated runner configuration. Retry shortly.',
       );
+    }
+    if (source.config.epoch !== admitted.epoch || desired.digest !== admitted.digest) {
+      throw new NativeSourceUnavailable('executable-config-changed');
     }
   }
 
@@ -1063,12 +1276,19 @@ export class GatewayNativeObservations {
     preResolved?: Record<string, string> | undefined,
     hasPreResolved = false,
   ): void {
-    const revision = this.poolExecutableRevision;
     const local = this.local;
+    const epoch = this.localConfig.epoch;
     void this.syncLocalExecutables(preResolved, hasPreResolved).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      if (this.local === local && this.poolExecutableRevision === revision) {
-        this.localConfigureError = message;
+      if (this.local === local && this.localConfig.epoch === epoch) {
+        this.localConfig.error = message;
+        this.localConfig.errorIsPoolResolution = false;
+        if (this.localConfig.heldProfileNoticeEpoch === epoch) {
+          this.localConfig.heldProfileNoticeEpoch = undefined;
+          if (this.localReceipt) {
+            this.invalidateSource('local', this.localReceipt.ownerId, ['profiles']);
+          }
+        }
       }
       console.warn(`[native-observation] background local executable sync failed: ${message}`);
     });
@@ -1079,61 +1299,70 @@ export class GatewayNativeObservations {
     hasPreResolved = false,
   ): Promise<void> {
     if (!this.local) return;
-    const revision = this.poolExecutableRevision;
     const local = this.local;
     let executables = preResolved;
     if (!hasPreResolved) {
-      const resolved = this.resolveCachedNodeExecutablesResult('local');
-      if (!resolved.ok) {
+      const desired = this.syncDesiredForSource('local', this.localConfig);
+      if (desired.kind === 'error') {
         this.localExecutables = undefined;
-        this.localConfiguredDigest = undefined;
-        this.localConfigureError = resolved.error;
-        this.localConfiguring = undefined;
-        local.invalidateExecutableConfig(`${FAILED_EXECUTABLE_CONFIG_DIGEST}:${revision}`);
-        throw new Error(resolved.error);
+        local.invalidateExecutableConfig(
+          `${FAILED_EXECUTABLE_CONFIG_DIGEST}:${this.localConfig.epoch}`,
+        );
+        throw new Error(desired.error);
       }
-      executables = resolved.executables;
+      executables = desired.executables;
     }
+    const epoch = this.localConfig.epoch;
     const digest = canonicalTrustedExecutablesDigest(executables);
     if (
-      !this.localConfigureError &&
-      this.localConfiguredDigest === digest &&
-      !this.localConfiguring
+      !this.localConfig.error &&
+      this.localConfig.committedEpoch === epoch &&
+      this.localConfig.committedDigest === digest &&
+      !this.localConfig.configuring
     )
       return;
-    if (this.localConfiguring?.revision === revision && this.localConfiguring.digest === digest)
-      return this.localConfiguring.promise;
+    if (
+      this.localConfig.configuring?.epoch === epoch &&
+      this.localConfig.configuring.digest === digest
+    )
+      return this.localConfig.configuring.promise;
     this.localExecutables = executables ? { ...executables } : undefined;
-    this.localConfigureError = undefined;
+    this.localConfig.error = undefined;
+    this.localConfig.errorIsPoolResolution = false;
+    this.localConfig.heldProfileNoticeEpoch = undefined;
     let run!: Promise<void>;
     run = (async () => {
       if (!local.current().ready) {
         await local.setExecutableConfig(digest);
-        if (this.local !== local || this.poolExecutableRevision !== revision) return;
+        if (this.local !== local || this.localConfig.epoch !== epoch) return;
         await local.retry();
       } else {
         await local.setExecutableConfig(digest);
       }
-      if (this.local === local && this.poolExecutableRevision === revision) {
-        this.localConfiguredDigest = digest;
-        this.localConfigureError = undefined;
-        if (this.localConfiguring?.promise === run) this.localConfiguring = undefined;
+      if (this.local === local && this.localConfig.epoch === epoch) {
+        this.localConfig.committedEpoch = epoch;
+        this.localConfig.committedDigest = digest;
+        this.localConfig.error = undefined;
+        this.localConfig.errorIsPoolResolution = false;
+        this.localConfig.heldProfileNoticeEpoch = undefined;
+        if (this.localConfig.configuring?.promise === run) this.localConfig.configuring = undefined;
         if (this.localReceipt) {
           this.invalidateSource('local', this.localReceipt.ownerId, ['profiles']);
         }
       }
     })().finally(() => {
-      if (this.localConfiguring?.promise === run) this.localConfiguring = undefined;
+      if (this.localConfig.configuring?.promise === run) this.localConfig.configuring = undefined;
     });
-    this.localConfiguring = { revision, digest, promise: run };
+    this.localConfig.configuring = { epoch, digest, promise: run };
     await run;
   }
 
   /**
    * Read the pool directory once on an actual pool edit, index it once by machine, resolve
    * trusted executable maps for all connected observation targets via `resolveMachinePoolEntry`,
-   * cache both successes and ambiguity errors until the next pool edit, and synchronize only
-   * the nodes whose desired digest changed (or has not been acknowledged yet).
+   * cache both successes and ambiguity errors until the next pool edit, advance per-source
+   * configuration epochs only for sources whose desired state effectively changed, and
+   * synchronize only those sources.
    */
   private syncExecutablesOnPoolChange(): void {
     const hasLocal = Boolean(this.local);
@@ -1148,55 +1377,71 @@ export class GatewayNativeObservations {
     const index = indexTrustedNativePoolSnapshot(this.readPoolSnapshot());
 
     if (hasLocal) {
+      let nextDesired: SourceDesiredConfig;
       try {
         const localMap = resolveTrustedNativeExecutablesFromIndex(index, 'local');
         this.executableCache.set('local', { ok: true, executables: localMap });
-        const localDigest = canonicalTrustedExecutablesDigest(localMap);
-        if (
-          this.localConfigureError ||
-          this.localConfiguredDigest !== localDigest ||
-          this.localConfiguring
-        ) {
-          this.triggerLocalExecutableSync(localMap, true);
-        }
+        nextDesired = {
+          kind: 'valid',
+          digest: canonicalTrustedExecutablesDigest(localMap),
+          executables: localMap,
+        };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.executableCache.set('local', { ok: false, error: message });
+        nextDesired = { kind: 'error', error: message };
+        console.warn(`[native-observation] local pool executable resolution failed: ${message}`);
+      }
+      const changed = this.applyDesiredSourceConfig(this.localConfig, nextDesired);
+      if (nextDesired.kind === 'error') {
         this.localExecutables = undefined;
-        this.localConfiguredDigest = undefined;
-        this.localConfigureError = message;
-        this.localConfiguring = undefined;
-        const localWasReady = Boolean(this.local?.current().ready);
         this.local?.invalidateExecutableConfig(
-          `${FAILED_EXECUTABLE_CONFIG_DIGEST}:${this.poolExecutableRevision}`,
+          `${FAILED_EXECUTABLE_CONFIG_DIGEST}:${this.localConfig.epoch}`,
         );
-        if (!localWasReady && this.localReceipt) {
+        if (changed && this.localReceipt) {
           this.invalidateSource('local', this.localReceipt.ownerId, ['profiles']);
         }
-        console.warn(`[native-observation] local pool executable resolution failed: ${message}`);
+      } else if (
+        changed ||
+        this.localConfig.committedEpoch !== this.localConfig.epoch ||
+        this.localConfig.error
+      ) {
+        this.triggerLocalExecutableSync(nextDesired.executables, true);
       }
     }
     for (const [nodeId, source] of connectedRemotes) {
+      let nextDesired: SourceDesiredConfig;
       try {
         const nodeMap = resolveTrustedNativeExecutablesFromIndex(index, nodeId);
         this.executableCache.set(nodeId, { ok: true, executables: nodeMap });
-        const nodeDigest = canonicalTrustedExecutablesDigest(nodeMap);
-        if (
-          !source.lastConfigureError &&
-          source.configuredDigest === nodeDigest &&
-          !source.configuring
-        )
-          continue;
-        this.triggerRemoteExecutableSync(nodeId, source.receipt.ownerId, nodeMap, true);
+        nextDesired = {
+          kind: 'valid',
+          digest: canonicalTrustedExecutablesDigest(nodeMap),
+          executables: nodeMap,
+        };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.executableCache.set(nodeId, { ok: false, error: message });
-        source.configuredDigest = undefined;
-        source.lastConfigureError = message;
-        source.configuring = undefined;
-        this.invalidateSource(nodeId, source.receipt.ownerId, ['profiles']);
+        nextDesired = { kind: 'error', error: message };
         console.warn(
           `[native-observation] remote pool executable resolution failed for ${nodeId}: ${message}`,
+        );
+      }
+      const changed = this.applyDesiredSourceConfig(source.config, nextDesired);
+      if (nextDesired.kind === 'error') {
+        if (changed) {
+          this.invalidateSource(nodeId, source.receipt.ownerId, ['profiles']);
+        }
+      } else if (
+        changed ||
+        source.config.committedEpoch !== source.config.epoch ||
+        source.config.error
+      ) {
+        this.triggerRemoteExecutableSync(
+          nodeId,
+          source.receipt.ownerId,
+          nextDesired.executables,
+          true,
         );
       }
     }
@@ -1208,18 +1453,33 @@ export class GatewayNativeObservations {
     preResolved?: Record<string, string> | undefined,
     hasPreResolved = false,
   ): void {
-    const revision = this.poolExecutableRevision;
-    const connection = this.remote.get(nodeId)?.connection;
+    const initialSource = this.remote.get(nodeId);
+    if (!initialSource) return;
+    if (!hasPreResolved) {
+      const desired = this.syncDesiredForSource(nodeId, initialSource.config);
+      if (desired.kind === 'error') {
+        this.invalidateSource(nodeId, ownerId, ['profiles']);
+        console.warn(
+          `[native-observation] remote pool executable resolution failed for ${nodeId}: ${desired.error}`,
+        );
+        return;
+      }
+      preResolved = desired.executables;
+      hasPreResolved = true;
+    }
+    const epoch = initialSource.config.epoch;
+    const connection = initialSource.connection;
     void this.syncRemoteExecutables(nodeId, ownerId, preResolved, hasPreResolved).catch(
       (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         const source = this.remote.get(nodeId);
-        if (
-          source &&
-          source.connection === connection &&
-          this.poolExecutableRevision === revision
-        ) {
-          source.lastConfigureError = message;
+        if (source && source.connection === connection && source.config.epoch === epoch) {
+          source.config.error = message;
+          source.config.errorIsPoolResolution = false;
+          if (source.config.heldProfileNoticeEpoch === epoch) {
+            source.config.heldProfileNoticeEpoch = undefined;
+            this.invalidateSource(nodeId, ownerId, ['profiles']);
+          }
         }
         console.warn(
           `[native-observation] background remote executable sync failed for ${nodeId}: ${message}`,
@@ -1236,17 +1496,15 @@ export class GatewayNativeObservations {
   ): Promise<void> {
     const source = this.remote.get(nodeId);
     if (!source || !source.current()) return;
-    const revision = this.poolExecutableRevision;
     let executables = preResolved;
     if (!hasPreResolved) {
-      const resolved = this.resolveCachedNodeExecutablesResult(nodeId);
-      if (!resolved.ok) {
-        source.configuredDigest = undefined;
-        source.lastConfigureError = resolved.error;
-        throw new Error(resolved.error);
+      const desired = this.syncDesiredForSource(nodeId, source.config);
+      if (desired.kind === 'error') {
+        throw new Error(desired.error);
       }
-      executables = resolved.executables;
+      executables = desired.executables;
     }
+    const epoch = source.config.epoch;
     const digest = canonicalTrustedExecutablesDigest(executables);
     const node = resolveNativeExecutionNode(ownerId, nodeId);
     if (node.ws !== source.connection) return;
@@ -1257,15 +1515,24 @@ export class GatewayNativeObservations {
           'Execution node upgrade required for configured runner executables',
         );
       }
-      source.configuredDigest = digest;
-      source.lastConfigureError = undefined;
+      source.config.committedEpoch = epoch;
+      source.config.committedDigest = digest;
+      source.config.error = undefined;
+      source.config.errorIsPoolResolution = false;
       return;
     }
-    if (!source.lastConfigureError && source.configuredDigest === digest && !source.configuring)
+    if (
+      !source.config.error &&
+      source.config.committedEpoch === epoch &&
+      source.config.committedDigest === digest &&
+      !source.config.configuring
+    )
       return;
-    if (source.configuring?.revision === revision && source.configuring.digest === digest)
-      return source.configuring.promise;
-    source.lastConfigureError = undefined;
+    if (source.config.configuring?.epoch === epoch && source.config.configuring.digest === digest)
+      return source.config.configuring.promise;
+    source.config.error = undefined;
+    source.config.errorIsPoolResolution = false;
+    source.config.heldProfileNoticeEpoch = undefined;
     let run!: Promise<void>;
     run = (async () => {
       const receipt = await sendNodeRequest(
@@ -1282,15 +1549,16 @@ export class GatewayNativeObservations {
         return;
       const parsed = receipt as NativeSourceReceipt;
       validateReceipt(parsed);
-      if (this.poolExecutableRevision !== revision) {
-        // Keep the receipt revision current for unaffected session reads without publishing a
-        // stale `profiles` invalidation or clearing a newer configuration error.
+      if (currentSource.config.epoch !== epoch) {
+        // Keep the receipt and session revision current for unaffected session reads without
+        // publishing a stale `profiles` invalidation or clearing a newer configuration state.
         if (
           parsed.incarnation !== currentSource.receipt.incarnation ||
           parsed.revision >= currentSource.receipt.revision
         ) {
+          currentSource.sessionRevision = this.nextSessionRevision(currentSource, parsed);
           currentSource.receipt = { ...parsed };
-          if (parsed.changed?.includes('native-session')) {
+          if (!parsed.changed || parsed.changed.includes('native-session')) {
             this.invalidateSource(nodeId, ownerId, ['native-session']);
           }
         }
@@ -1303,19 +1571,22 @@ export class GatewayNativeObservations {
         this.acceptRemote(node.ws, parsed, currentSource.current);
       }
       const updated = this.remote.get(nodeId);
-      if (updated && updated.connection === node.ws && this.poolExecutableRevision === revision) {
-        updated.configuredDigest = digest;
-        updated.lastConfigureError = undefined;
-        if (updated.configuring?.promise === run) updated.configuring = undefined;
-        if (source.configuring?.promise === run) source.configuring = undefined;
+      if (updated && updated.connection === node.ws && updated.config.epoch === epoch) {
+        updated.config.committedEpoch = epoch;
+        updated.config.committedDigest = digest;
+        updated.config.error = undefined;
+        updated.config.errorIsPoolResolution = false;
+        updated.config.heldProfileNoticeEpoch = undefined;
+        if (updated.config.configuring?.promise === run) updated.config.configuring = undefined;
+        if (source.config.configuring?.promise === run) source.config.configuring = undefined;
         this.invalidateSource(nodeId, ownerId, ['profiles']);
       }
     })().finally(() => {
       const latest = this.remote.get(nodeId);
-      if (latest?.configuring?.promise === run) latest.configuring = undefined;
-      if (source.configuring?.promise === run) source.configuring = undefined;
+      if (latest?.config.configuring?.promise === run) latest.config.configuring = undefined;
+      if (source.config.configuring?.promise === run) source.config.configuring = undefined;
     });
-    source.configuring = { revision, digest, promise: run };
+    source.config.configuring = { epoch, digest, promise: run };
     await run;
   }
 

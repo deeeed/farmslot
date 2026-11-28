@@ -1741,11 +1741,22 @@ done
     });
 
     const localInvalidations: Array<{ family: string; nodeId?: string }> = [];
+    let onNextLocalProfileInvalidation: (() => void) | undefined;
     observations = new GatewayNativeObservations((key) => {
-      localInvalidations.push({
+      const entry = {
         family: key.family,
         ...('nodeId' in key ? { nodeId: key.nodeId } : {}),
-      });
+      };
+      localInvalidations.push(entry);
+      if (
+        entry.family === 'profiles' &&
+        entry.nodeId === 'local' &&
+        onNextLocalProfileInvalidation
+      ) {
+        const cb = onNextLocalProfileInvalidation;
+        onNextLocalProfileInvalidation = undefined;
+        cb();
+      }
     }, localClient);
 
     const clientConn = {};
@@ -1811,11 +1822,16 @@ done
     };
 
     // 1) A marked `native.profile.status` read admitted before the ambiguity edit and held after
-    //    capturing the cached profile MUST reject once the pool becomes ambiguous, while an
-    //    unaffected `native.session.list` read stays healthy with zero `native-session` invalidations.
+    //    capturing the cached profile MUST reject once the pool becomes ambiguous, while a
+    //    simultaneously held `native.session.list` read SURVIVES profile-only ambiguity with zero
+    //    `native-session` invalidations.
     let readCaptured!: () => void;
     const readCapturedPromise = new Promise<void>((resolve) => {
       readCaptured = resolve;
+    });
+    let sessionListEntered!: () => void;
+    const sessionListEnteredPromise = new Promise<void>((resolve) => {
+      sessionListEntered = resolve;
     });
     let releaseStraddlingRead!: () => void;
     const straddlingGate = new Promise<void>((resolve) => {
@@ -1831,6 +1847,12 @@ done
       ownerRecord.id,
     );
     assert.ok(straddlingInterests);
+    const sessionListInterests = nativeReadInterests(
+      Methods.NATIVE_SESSION_LIST,
+      { executionNodeId: 'local' },
+      ownerRecord.id,
+    );
+    assert.ok(sessionListInterests);
     const straddlingReadPromise = observations.read(
       clientConn,
       straddlingInterests,
@@ -1845,7 +1867,17 @@ done
       },
       () => null,
     );
-    await readCapturedPromise;
+    const heldSessionListPromise = observations.read(
+      clientConn,
+      sessionListInterests,
+      async () => {
+        sessionListEntered();
+        await straddlingGate;
+        return { sessions: [], unavailableExecutionNodes: [] };
+      },
+      () => null,
+    );
+    await Promise.all([readCapturedPromise, sessionListEnteredPromise]);
     unlinkSync(canonicalFile);
     observations.catalogChanged({ scope: 'all', reason: 'pool' });
     releaseStraddlingRead();
@@ -1855,6 +1887,8 @@ done
       assert.match(err.message ?? '', /ambiguous pool settings/);
       return true;
     });
+    const heldSessionList = await heldSessionListPromise;
+    assert.deepEqual(heldSessionList.payload, { sessions: [], unavailableExecutionNodes: [] });
     assert.equal(
       localInvalidations.filter((k) => k.family === 'native-session' && k.nodeId === 'local')
         .length,
@@ -1941,19 +1975,26 @@ done
       return true;
     });
 
-    // 6) First legitimate recovery publication: when the canonical pool is restored, the very
-    //    first `profiles` invalidation must observe a ready state (no "refreshing" error).
-    const invBeforeRecover = localInvalidations.length;
+    // 6) First legitimate recovery publication: when the canonical pool is restored, reading
+    //    directly from the VERY FIRST `profiles` invalidation callback must observe a ready state
+    //    (no "refreshing" error).
+    let firstRecoveryReadPromise: Promise<NativeProfileStatusResult> | undefined;
+    const firstRecoveryCallbackFired = new Promise<void>((resolve) => {
+      onNextLocalProfileInvalidation = () => {
+        firstRecoveryReadPromise = readLocalProfile();
+        resolve();
+      };
+    });
     writeCanonical(fastAgy);
     observations.catalogChanged({ scope: 'all', reason: 'pool' });
-    await pollFor(
-      () =>
-        localInvalidations
-          .slice(invBeforeRecover)
-          .some((k) => k.family === 'profiles' && k.nodeId === 'local'),
-      'first legitimate recovery publication',
-    );
-    const recovered = await readLocalProfile();
+    await Promise.race([
+      firstRecoveryCallbackFired,
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(() => reject(new Error('Timed out waiting for first recovery callback')), 3_000),
+      ),
+    ]);
+    assert.ok(firstRecoveryReadPromise);
+    const recovered = await firstRecoveryReadPromise;
     assert.equal(recovered.account.version, '1.5.19');
     assert.ok(recovered.loginCommand.includes(fastAgy));
     assert.equal(existsSync(pathProbeLog), false);
@@ -1973,28 +2014,18 @@ done
   }
 });
 
-test('configuration epoch fences controlled resolved/rejected refreshes and remote straddling reads while preserving unaffected nodes', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'agy-epoch-remote-'));
+test('NativeHostObservation configuration epoch fences resolved/rejected refreshes and final startup scan', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-epoch-inner-'));
   const farmHome = join(root, 'farm-home');
-  const tempPoolRoot = join(root, 'pool');
   const localStateRoot = join(root, 'local-state');
   mkdirSync(farmHome, { recursive: true });
-  mkdirSync(tempPoolRoot, { recursive: true });
   mkdirSync(localStateRoot, { recursive: true, mode: 0o700 });
   chmodSync(localStateRoot, 0o700);
 
-  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
   const prevFarmHome = process.env.FARMSLOT_HOME;
   const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
-  const machineA = 'remote-epoch-agy';
-  const machineB = 'remote-unaffected-agy';
-
   let obs: NativeHostObservation | undefined;
-  let gatewayObs: GatewayNativeObservations | undefined;
-  let transportA: Awaited<ReturnType<typeof createTypedNodeTransport>> | undefined;
-  let transportB: Awaited<ReturnType<typeof createTypedNodeTransport>> | undefined;
   try {
-    process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
     process.env.FARMSLOT_HOME = farmHome;
     const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
     const ownerRecord = auth.writer.createPrincipal(
@@ -2004,26 +2035,6 @@ test('configuration epoch fences controlled resolved/rejected refreshes and remo
     );
     const ownerId = ownerRecord.id;
     process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerId;
-    auth.writer.createPrincipal(
-      {
-        type: 'node',
-        machine: machineA,
-        displayName: 'Remote Epoch Node A',
-        nativeOwnerPrincipalId: ownerId,
-      },
-      [],
-      'node-epoch-a',
-    );
-    auth.writer.createPrincipal(
-      {
-        type: 'node',
-        machine: machineB,
-        displayName: 'Remote Unaffected Node B',
-        nativeOwnerPrincipalId: ownerId,
-      },
-      [],
-      'node-epoch-b',
-    );
 
     // Part 1: Controlled deferred settlement on `NativeHostObservation` for resolved AND rejected
     // held refreshes plus first legitimate recovery publication (zero timers).
@@ -2089,25 +2100,29 @@ test('configuration epoch fences controlled resolved/rejected refreshes and remo
     );
     await sampleBStartedPromise;
     const receiptsBeforeInvalidate = publishedReceipts.length;
+    const revBeforeInvalidate = obs.current().revision;
     obs.invalidateExecutableConfig('invalid:pool-resolution-failed:1');
     assert.equal(
-      publishedReceipts.length,
-      receiptsBeforeInvalidate + 1,
-      'invalidating executable config must advance receipt once for profiles',
+      obs.current().revision,
+      revBeforeInvalidate,
+      'profile-only invalidation must not advance the shared source receipt revision',
     );
-    assert.deepEqual(publishedReceipts.at(-1)?.changed, ['profiles']);
-    const revAfterInvalidate = obs.current().revision;
+    assert.equal(
+      publishedReceipts.length,
+      receiptsBeforeInvalidate,
+      'profile-only invalidation must not publish a receipt that would interrupt session reads',
+    );
 
     resolveSampleB([makeStatus('1.5.20')]);
     await setBP;
     assert.equal(
       obs.current().revision,
-      revAfterInvalidate,
+      revBeforeInvalidate,
       'stale resolved sample B must not advance the receipt',
     );
     assert.equal(
       publishedReceipts.length,
-      receiptsBeforeInvalidate + 1,
+      receiptsBeforeInvalidate,
       'stale resolved sample B must not publish a stale profile invalidation',
     );
     await assert.rejects(obs.profileStatus('work'), (error: unknown) => {
@@ -2154,49 +2169,342 @@ test('configuration epoch fences controlled resolved/rejected refreshes and remo
     assert.deepEqual(publishedReceipts.at(-1)?.changed, ['profiles']);
     assert.equal((await obs.profileStatus('work')).account.version, '1.5.22');
 
-    // 1d) Controlled arming interleaving: invalidating executable config while `start()` is
-    //     awaiting its final `scan()` must reject arming and never publish stale profiles.
+    // 1d) Controlled arming interleaving: gate the final `after = await scan()` ITSELF (scan #2,
+    //     after `observeAccounts()` has already resolved) and invalidate executable config while
+    //     suspended inside that final scan. Moving `sampleChanged` before `await scan()` makes this
+    //     control fail.
     const armingReceipts: NativeSourceReceipt[] = [];
     let armingObs: NativeHostObservation | undefined;
     try {
-      armingObs = new NativeHostObservation(
-        client,
-        ownerId,
-        (receipt) => {
-          armingReceipts.push(receipt);
-        },
-        farmHome,
-        async () => {
-          // Schedule invalidation after `observeAccounts()` resolves so it lands while `start()`
-          // is suspended on its final `await scan()`.
-          queueMicrotask(() => {
-            queueMicrotask(() => {
-              armingObs!.invalidateExecutableConfig('invalid:arming-final-scan');
-            });
-          });
-          return [makeStatus('1.5.19')];
-        },
-        undefined,
-        canonicalTrustedExecutablesDigest({ antigravity: '/opt/agy-1.5.19' }),
-      );
-      await assert.rejects(armingObs.start(), (error: unknown) => {
-        const err = error as { code?: string; reason?: string };
-        assert.equal(err.code, 'NATIVE_SOURCE_UNAVAILABLE');
-        assert.equal(err.reason, 'arming-source-changed');
-        return true;
+      const obsProto = NativeHostObservation.prototype as unknown as {
+        scan: () => Promise<unknown>;
+      };
+      const originalScan = obsProto.scan;
+      let armingScanCalls = 0;
+      let finalScanEntered!: () => void;
+      const finalScanEnteredP = new Promise<void>((resolve) => {
+        finalScanEntered = resolve;
       });
-      assert.equal(
-        armingReceipts.some((r) => r.ready),
-        false,
-        'arming invalidated during final scan must never publish a ready receipt',
+      let releaseFinalScan!: () => void;
+      const finalScanGate = new Promise<void>((resolve) => {
+        releaseFinalScan = resolve;
+      });
+      const scanMock = t.mock.method(
+        obsProto,
+        'scan',
+        async function (this: NativeHostObservation) {
+          if (this === armingObs && ++armingScanCalls === 2) {
+            finalScanEntered();
+            await finalScanGate;
+          }
+          return originalScan.call(this);
+        },
       );
-      assert.equal(armingObs.current().ready, false);
+      try {
+        armingObs = new NativeHostObservation(
+          client,
+          ownerId,
+          (receipt) => {
+            armingReceipts.push(receipt);
+          },
+          farmHome,
+          async () => [makeStatus('1.5.19')],
+          undefined,
+          canonicalTrustedExecutablesDigest({ antigravity: '/opt/agy-1.5.19' }),
+        );
+        const startPromise = armingObs.start();
+        await finalScanEnteredP;
+        armingObs.invalidateExecutableConfig('invalid:arming-final-scan');
+        releaseFinalScan();
+        await assert.rejects(startPromise, (error: unknown) => {
+          const err = error as { code?: string; reason?: string };
+          assert.equal(err.code, 'NATIVE_SOURCE_UNAVAILABLE');
+          assert.equal(err.reason, 'arming-source-changed');
+          return true;
+        });
+        assert.equal(armingScanCalls, 2);
+        assert.equal(
+          armingReceipts.some((r) => r.ready),
+          false,
+          'arming invalidated during final scan must never publish a ready receipt',
+        );
+        assert.equal(armingObs.current().ready, false);
+      } finally {
+        scanMock.mock.restore();
+      }
     } finally {
       armingObs?.stop();
     }
+  } finally {
+    obs?.stop();
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
-    // Part 2: Remote sibling — straddling reads, stale resolved/rejected configure RPCs, and
-    // unaffected remote node preservation.
+test('combined local rearming recovery defers profiles until commit and supports read from first callback', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-epoch-rearm-'));
+  const farmHome = join(root, 'farm-home');
+  const rearmPoolDir = join(root, 'rearm-pool');
+  const rearmStateRoot = join(root, 'rearm-local-state');
+  mkdirSync(farmHome, { recursive: true });
+  mkdirSync(rearmPoolDir, { recursive: true });
+  mkdirSync(rearmStateRoot, { recursive: true, mode: 0o700 });
+  chmodSync(rearmStateRoot, 0o700);
+
+  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
+  const prevFarmHome = process.env.FARMSLOT_HOME;
+  const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  let rearmObs: GatewayNativeObservations | undefined;
+  try {
+    process.env.FARMSLOT_HOME = farmHome;
+    process.env.FARMSLOT_POOL_DIR = rearmPoolDir;
+    const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
+    const ownerRecord = auth.writer.createPrincipal(
+      { type: 'person', displayName: 'Rearm Owner' },
+      [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+      'rearm-owner',
+    );
+    const ownerId = ownerRecord.id;
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerId;
+    const rearmClient = new NativeSessionClient(rearmStateRoot, 'local');
+    const rearmAgy = join(root, 'rearm-bin', 'agy');
+    mkdirSync(dirname(rearmAgy), { recursive: true });
+    writeFileSync(
+      rearmAgy,
+      `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "--version" ]; then
+    printf '1.5.25\\n'
+    exit 0
+  fi
+done
+while IFS= read -r line; do
+  id=$(printf '%s\\n' "$line" | sed -n 's/.*"id":"\\([^"]*\\)".*/\\1/p')
+  case "$line" in
+    *'"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":1,"agentInfo":{"name":"Antigravity ACP Server","version":"1.5.25"}}}\\n' "$id"
+      ;;
+    *'"session/list"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"sessions":[]}}\\n' "$id"
+      exit 0
+      ;;
+  esac
+done
+`,
+    );
+    chmodSync(rearmAgy, 0o700);
+    const rearmProfileDir = join(root, 'rearm-profile');
+    mkdirSync(rearmProfileDir, { recursive: true });
+    await routeNativeProfile(rearmClient, ownerId, Methods.NATIVE_PROFILE_ADD, {
+      profileId: 'rearm-work',
+      runner: 'antigravity',
+      directory: rearmProfileDir,
+    });
+    const writeRearmCanonical = () =>
+      writeFileSync(
+        join(rearmPoolDir, 'rearm-local.json'),
+        JSON.stringify({
+          machine: 'rearm-local',
+          project: 'rearm',
+          host: 'localhost',
+          ssh_user: process.env.USER || 'operator',
+          os: process.platform,
+          platform: 'cli',
+          antigravity_path: rearmAgy,
+          slots: [{ id: 'slot-rearm', enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
+        }),
+      );
+    for (const aux of ['rearm-aux-a.json', 'rearm-aux-b.json']) {
+      writeFileSync(
+        join(rearmPoolDir, aux),
+        JSON.stringify({
+          machine: 'rearm-local',
+          project: aux,
+          host: 'localhost',
+          ssh_user: process.env.USER || 'operator',
+          os: process.platform,
+          platform: 'cli',
+          antigravity_path: rearmAgy,
+          slots: [
+            { id: `slot-${aux}`, enabled: true, mode: 'dispatch', repo: root, session: 's1' },
+          ],
+        }),
+      );
+    }
+
+    const rearmEvents: string[] = [];
+    let firstRearmProfileRead: Promise<NativeProfileStatusResult> | undefined;
+    let firstRearmProfileFired!: () => void;
+    const firstRearmProfileFiredP = new Promise<void>((resolve) => {
+      firstRearmProfileFired = resolve;
+    });
+    const rearmConn = {};
+    const rearmPrincipal: Principal = {
+      id: ownerId,
+      subject: { type: 'person', displayName: 'Rearm Owner' },
+      roles: [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+    };
+    const readRearmProfile = async (): Promise<NativeProfileStatusResult> => {
+      const interests = nativeReadInterests(
+        Methods.NATIVE_PROFILE_STATUS,
+        { executionNodeId: 'local', profileId: 'rearm-work' },
+        ownerId,
+      );
+      assert.ok(interests);
+      const { payload } = await rearmObs!.read(
+        rearmConn,
+        interests,
+        async () =>
+          (await rearmObs!.localProfileStatus(ownerId, 'rearm-work')) as NativeProfileStatusResult,
+        () => null,
+      );
+      return payload;
+    };
+    let captureRearmRecovery = false;
+    rearmObs = new GatewayNativeObservations((key) => {
+      if ('nodeId' in key && key.nodeId === 'local') {
+        rearmEvents.push(key.family);
+        if (captureRearmRecovery && key.family === 'profiles' && !firstRearmProfileRead) {
+          firstRearmProfileRead = readRearmProfile();
+          firstRearmProfileFired();
+        }
+      }
+    }, rearmClient);
+    rearmObs.attachClient(rearmConn, () => rearmPrincipal);
+    await rearmObs.startLocal(ownerId);
+    const sessInterests = nativeReadInterests(
+      Methods.NATIVE_SESSION_LIST,
+      { executionNodeId: 'local' },
+      ownerId,
+    );
+    assert.ok(sessInterests);
+    await rearmObs.read(
+      rearmConn,
+      sessInterests,
+      async () => ({ sessions: [], unavailableExecutionNodes: [] }),
+      () => null,
+    );
+    await assert.rejects(readRearmProfile(), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
+
+    // Force the inner local observer to `!ready` (simulating interrupted arming during ambiguity)
+    // so restoring the canonical pool runs `local.retry()` and publishes `['native-session', 'profiles']`.
+    const innerLocal = (rearmObs as unknown as { local?: NativeHostObservation }).local;
+    assert.ok(innerLocal);
+    innerLocal.stop();
+    assert.equal(innerLocal.current().ready, false);
+
+    rearmEvents.length = 0;
+    captureRearmRecovery = true;
+    writeRearmCanonical();
+    rearmObs.catalogChanged({ scope: 'all', reason: 'pool' });
+    await Promise.race([
+      firstRearmProfileFiredP,
+      new Promise<never>((_r, reject) =>
+        setTimeout(() => reject(new Error('Timed out waiting for combined rearm recovery')), 3_000),
+      ),
+    ]);
+    assert.ok(firstRearmProfileRead);
+    const rearmRecovered = await firstRearmProfileRead;
+    assert.equal(rearmRecovered.account.version, '1.5.25');
+    assert.ok(
+      rearmEvents.includes('native-session'),
+      'combined rearming notice must still publish native-session immediately',
+    );
+    assert.ok(
+      rearmEvents.indexOf('native-session') < rearmEvents.indexOf('profiles'),
+      'native-session portion must publish before deferred profiles recovery notice',
+    );
+  } finally {
+    rearmObs?.dispose();
+    if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('remote observation configuration epoch fences stale pushes, B -> ambiguous -> B reads, and same-epoch failures while preserving unaffected nodes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-epoch-remote-'));
+  const farmHome = join(root, 'farm-home');
+  const tempPoolRoot = join(root, 'pool');
+  const localStateRoot = join(root, 'local-state');
+  mkdirSync(farmHome, { recursive: true });
+  mkdirSync(tempPoolRoot, { recursive: true });
+  mkdirSync(localStateRoot, { recursive: true, mode: 0o700 });
+  chmodSync(localStateRoot, 0o700);
+
+  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
+  const prevFarmHome = process.env.FARMSLOT_HOME;
+  const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  const machineA = 'remote-epoch-agy';
+  const machineB = 'remote-unaffected-agy';
+
+  let gatewayObs: GatewayNativeObservations | undefined;
+  let transportA: Awaited<ReturnType<typeof createTypedNodeTransport>> | undefined;
+  let transportB: Awaited<ReturnType<typeof createTypedNodeTransport>> | undefined;
+  try {
+    process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
+    process.env.FARMSLOT_HOME = farmHome;
+    const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
+    const ownerRecord = auth.writer.createPrincipal(
+      { type: 'person', displayName: 'Remote Epoch Owner' },
+      [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+      'remote-epoch-owner',
+    );
+    const ownerId = ownerRecord.id;
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerId;
+    auth.writer.createPrincipal(
+      {
+        type: 'node',
+        machine: machineA,
+        displayName: 'Remote Epoch Node A',
+        nativeOwnerPrincipalId: ownerId,
+      },
+      [],
+      'node-epoch-a',
+    );
+    auth.writer.createPrincipal(
+      {
+        type: 'node',
+        machine: machineB,
+        displayName: 'Remote Unaffected Node B',
+        nativeOwnerPrincipalId: ownerId,
+      },
+      [],
+      'node-epoch-b',
+    );
+    const client = new NativeSessionClient(localStateRoot, 'local');
+    const makeStatus = (version: string): NativeProfileStatusResult => ({
+      profile: {
+        id: 'work',
+        runner: 'antigravity',
+        directory: join(root, 'profile-work'),
+        accountContextId: '22222222-2222-4222-8222-222222222222',
+        state: 'active',
+      },
+      account: {
+        runner: 'antigravity',
+        installed: true,
+        executable: `/opt/agy-${version}`,
+        version,
+        login: 'authenticated',
+        mode: 'subscription',
+        identityQuality: 'unavailable',
+        observedAt: '2026-11-28T00:00:00.000Z',
+      },
+      loginCommand: `/opt/agy-${version}`,
+    });
+
+    // Part 2: Remote sibling — straddling reads, stale resolved/rejected configure RPCs,
+    // B -> ambiguous -> B with unchanged receipt revision, same-epoch failures after held push,
+    // and unaffected remote node preservation.
     const writePool = (fileName: string, machine: string, agyPath: string) => {
       writeFileSync(
         join(tempPoolRoot, fileName),
@@ -2413,12 +2721,34 @@ test('configuration epoch fences controlled resolved/rejected refreshes and remo
     unlinkSync(join(tempPoolRoot, `${machineA}.json`));
     gatewayObs.catalogChanged({ scope: 'all', reason: 'pool' });
     const invAfterRemoteAmbig = remoteInvalidations.length;
+    // Simulate the node pushing its `profiles` receipt BEFORE the configure RPC reply arrives.
+    const stalePushRev = ++revA;
+    gatewayObs.acceptRemote(
+      transportA.ws,
+      {
+        version: 1,
+        nodeId: machineA,
+        ownerId,
+        incarnation: incA,
+        revision: stalePushRev,
+        ready: true,
+        changed: ['profiles'],
+      },
+      () => true,
+    );
+    assert.equal(
+      remoteInvalidations
+        .slice(invAfterRemoteAmbig)
+        .filter((k) => k.family === 'profiles' && k.nodeId === machineA).length,
+      0,
+      'stale remote profile push arriving before reply after ambiguity must be suppressed',
+    );
     resolveStaleConfig({
       version: 1,
       nodeId: machineA,
       ownerId,
       incarnation: incA,
-      revision: ++revA,
+      revision: stalePushRev,
       ready: true,
       changed: ['profiles'],
     });
@@ -2428,7 +2758,7 @@ test('configuration epoch fences controlled resolved/rejected refreshes and remo
         .slice(invAfterRemoteAmbig)
         .filter((k) => k.family === 'profiles' && k.nodeId === machineA).length,
       0,
-      'stale resolved remote configure after ambiguity must not emit a profiles invalidation',
+      'stale resolved remote configure reply after ambiguity must not emit a profiles invalidation',
     );
     await assert.rejects(readRemoteProfile(machineA), (error: unknown) => {
       const err = error as { code?: string; message?: string };
@@ -2485,9 +2815,190 @@ test('configuration epoch fences controlled resolved/rejected refreshes and remo
       '1.5.19',
       'stale rejected remote configure must not clobber newer valid remote state',
     );
+
+    // 2d) Remote read crossing `B -> ambiguous -> B` with UNCHANGED receipt revision must still
+    //     reject (per-source configuration epoch advanced), while unaffected `machineB` succeeds.
+    let sameRevEnteredA!: () => void;
+    let sameRevEnteredB!: () => void;
+    const sameRevEnteredAP = new Promise<void>((r) => {
+      sameRevEnteredA = r;
+    });
+    const sameRevEnteredBP = new Promise<void>((r) => {
+      sameRevEnteredB = r;
+    });
+    let releaseSameRevReads!: () => void;
+    const sameRevReadsGate = new Promise<void>((r) => {
+      releaseSameRevReads = r;
+    });
+    const sameRevReadAP = readRemoteProfile(machineA, async () => {
+      sameRevEnteredA();
+      await sameRevReadsGate;
+    });
+    const sameRevReadBP = readRemoteProfile(machineB, async () => {
+      sameRevEnteredB();
+      await sameRevReadsGate;
+    });
+    await Promise.all([sameRevEnteredAP, sameRevEnteredBP]);
+
+    // Step through ambiguity and back to the exact same executable `/opt/agy-v4-good` while
+    // returning the UNCHANGED receipt revision `revA`.
+    unlinkSync(join(tempPoolRoot, `${machineA}.json`));
+    gatewayObs.catalogChanged({ scope: 'all', reason: 'pool' });
+    const unchangedRev = revA;
+    configureHandlerA = async () => ({
+      version: 1,
+      nodeId: machineA,
+      ownerId,
+      incarnation: incA,
+      revision: unchangedRev,
+      ready: true,
+      changed: ['profiles'],
+    });
+    const invBeforeSameDigestRecover = remoteInvalidations.length;
+    writePool(`${machineA}.json`, machineA, '/opt/agy-v4-good');
+    gatewayObs.catalogChanged({ scope: 'all', reason: 'pool' });
+    await pollUntil(
+      () =>
+        remoteInvalidations
+          .slice(invBeforeSameDigestRecover)
+          .some((k) => k.family === 'profiles' && k.nodeId === machineA),
+      'same-digest recovery with unchanged receipt revision',
+    );
+    releaseSameRevReads();
+    await assert.rejects(sameRevReadAP, (error: unknown) => {
+      const err = error as { code?: string; reason?: string };
+      assert.equal(err.code, 'NATIVE_SOURCE_UNAVAILABLE');
+      assert.equal(err.reason, 'executable-config-changed');
+      return true;
+    });
+    assert.equal(
+      (await sameRevReadBP).account.version,
+      '1.5.19',
+      'unaffected remote node read must succeed across machineA B -> ambiguous -> B',
+    );
+
+    // 2e) Same-epoch remote configure failure AFTER a held node `profiles` push must publish ONE
+    //     profiles failure invalidation, avoid a retry loop on ordinary same-incarnation session
+    //     pushes, and still retry automatically on a legitimate `ready: false -> ready: true` re-arm.
+    let rejectSameEpoch!: (err: Error) => void;
+    let sameEpochStarted!: () => void;
+    const sameEpochStartedP = new Promise<void>((r) => {
+      sameEpochStarted = r;
+    });
+    let sameEpochAttempts = 0;
+    configureHandlerA = async () => {
+      sameEpochAttempts++;
+      if (sameEpochAttempts === 1) {
+        return new Promise<NativeSourceReceipt>((_resolve, reject) => {
+          rejectSameEpoch = reject;
+          sameEpochStarted();
+        });
+      }
+      return {
+        version: 1,
+        nodeId: machineA,
+        ownerId,
+        incarnation: incA,
+        revision: ++revA,
+        ready: true,
+        changed: ['profiles'],
+      };
+    };
+    writePool(`${machineA}.json`, machineA, '/opt/agy-v5-fail');
+    gatewayObs.catalogChanged({ scope: 'all', reason: 'pool' });
+    await sameEpochStartedP;
+
+    const invBeforeHeldPush = remoteInvalidations.length;
+    gatewayObs.acceptRemote(
+      transportA.ws,
+      {
+        version: 1,
+        nodeId: machineA,
+        ownerId,
+        incarnation: incA,
+        revision: ++revA,
+        ready: true,
+        changed: ['profiles'],
+      },
+      () => true,
+    );
+    assert.equal(
+      remoteInvalidations
+        .slice(invBeforeHeldPush)
+        .filter((k) => k.family === 'profiles' && k.nodeId === machineA).length,
+      0,
+      'node profile push during active configure must be held until configure settles',
+    );
+
+    rejectSameEpoch(new Error('same-epoch configure timeout'));
+    await waitMicrotasks();
+    assert.equal(
+      remoteInvalidations
+        .slice(invBeforeHeldPush)
+        .filter((k) => k.family === 'profiles' && k.nodeId === machineA).length,
+      1,
+      'same-epoch configure failure after held push must publish profiles invalidation once',
+    );
+    // An ordinary same-incarnation session push must NOT loop configure retries on a persistent error.
+    gatewayObs.acceptRemote(
+      transportA.ws,
+      {
+        version: 1,
+        nodeId: machineA,
+        ownerId,
+        incarnation: incA,
+        revision: ++revA,
+        ready: true,
+        changed: ['native-session'],
+      },
+      () => true,
+    );
+    await waitMicrotasks();
+    assert.equal(
+      sameEpochAttempts,
+      1,
+      'ordinary same-incarnation session push must not trigger a retry loop after failure',
+    );
+    // A legitimate re-arm (`ready: false -> ready: true`) retries and recovers automatically.
+    const invBeforeRearmRetry = remoteInvalidations.length;
+    gatewayObs.acceptRemote(
+      transportA.ws,
+      {
+        version: 1,
+        nodeId: machineA,
+        ownerId,
+        incarnation: incA,
+        revision: ++revA,
+        ready: false,
+        error: 'SOURCE_UNAVAILABLE',
+        changed: ['native-session', 'profiles'],
+      },
+      () => true,
+    );
+    gatewayObs.acceptRemote(
+      transportA.ws,
+      {
+        version: 1,
+        nodeId: machineA,
+        ownerId,
+        incarnation: incA,
+        revision: ++revA,
+        ready: true,
+        changed: ['native-session', 'profiles'],
+      },
+      () => true,
+    );
+    await pollUntil(
+      () =>
+        sameEpochAttempts === 2 &&
+        remoteInvalidations
+          .slice(invBeforeRearmRetry)
+          .some((k) => k.family === 'profiles' && k.nodeId === machineA),
+      'automatic retry on ready recovery',
+    );
+    assert.equal((await readRemoteProfile(machineA)).account.version, '1.5.19');
   } finally {
     gatewayObs?.dispose();
-    obs?.stop();
     if (transportA) {
       unregisterByWs(transportA.ws);
       await transportA.close();
