@@ -148,6 +148,7 @@ function sameApprovalPolicy(left: ApprovalPolicy, right: ApprovalPolicy): boolea
 interface ApprovalReplayCheck {
   subscriptionId: string;
   session: NativeSessionInfo;
+  error?: string;
 }
 
 interface ApprovalAcknowledgement {
@@ -721,8 +722,10 @@ export class NativeSessionView extends LitElement {
       if (
         checked?.subscriptionId === subscriptionId &&
         sameApprovalPolicy(checked.session, session)
-      )
+      ) {
+        if (!this.pollError && checked.error) this.pollError = checked.error;
         return;
+      }
       const check = { subscriptionId, session };
       approval.checkedReplay = check;
       void this.reconcileApprovalHistory(approval, check, conversations, target);
@@ -769,8 +772,10 @@ export class NativeSessionView extends LitElement {
     } catch (error) {
       // The stream can still settle the acknowledgement. The history Retry button
       // can also attach a new viewer and check the returned policy again.
-      if (replayIsCurrent())
-        this.pollError = error instanceof Error ? error.message : String(error);
+      if (replayIsCurrent()) {
+        check.error = error instanceof Error ? error.message : String(error);
+        this.pollError = check.error;
+      }
     }
   }
 

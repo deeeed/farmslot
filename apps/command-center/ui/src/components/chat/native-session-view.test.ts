@@ -24,6 +24,10 @@ import { ResourceCacheConformanceTransport } from '../../../../../../packages/pr
 import { GatewayRequestTimeoutError } from '../../gateway-request-timeout.js';
 import { litBinding, litBindings, litText } from '../../testing/lit-text.js';
 
+import {
+  type NativeReadStatusRowContext,
+  renderNativeReadStatus,
+} from './native-read-status-view.js';
 import type { NativeSessionFixture } from './native-session-view.js';
 import type { NativeSessionApi } from './native-workspace.js';
 
@@ -1020,6 +1024,7 @@ function approvalComposer(initialMode: NativeApprovalMode) {
   return {
     view,
     snapshot,
+    conversations,
     publish,
     retry,
     readSessionFromHost,
@@ -1355,6 +1360,67 @@ test('a coalesced pending approval exposes Retry after host verification', async
     assert.equal(sendDisabled(), false);
   } finally {
     proof.disconnect();
+  }
+});
+
+test('saved history keeps the failed policy check retryable until a new viewer verifies it', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  const pending = { ...ask, approvalModePending: 'bypass' } as const;
+  const cache = createGatewayResourceCache({
+    transport: new ResourceCacheConformanceTransport({
+      gatewayUrl: 'ws://native-approval-retry.invalid',
+      principalId: 'offline-native-owner',
+      principalGeneration: 0,
+    }),
+    store: createMemoryResourceStore(),
+  });
+  offlineCache = Object.defineProperty(cache, 'conversations', { value: proof.conversations });
+  const status = () => litBinding(proof.view.render(), '.context=') as NativeReadStatusRowContext;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  const retry = () =>
+    litBinding(renderNativeReadStatus(status()), /data-testid="native-refresh"\s*@click=$/);
+  const message = 'Host policy verification timed out';
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await changing;
+
+    proof.readSessionFromHost.mock.mockImplementationOnce(async () => {
+      throw new Error(message);
+    });
+    proof.publish(pending, 'replacement-viewer');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(status().readError, message);
+    assert.equal(typeof retry(), 'function');
+
+    proof.observe({ history: { after: 0, loading: false, page: proof.snapshot } });
+    assert.equal(status().readError, message, 'saved paging preserves the active replay error');
+    assert.equal(proof.readSessionFromHost.mock.callCount(), 1);
+    assert.equal(sendDisabled(), true);
+
+    proof.retry.mock.mockImplementationOnce(() => proof.publish({ ...pending }, 'retried-viewer'));
+    const click = retry();
+    assert(typeof click === 'function');
+    click();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(proof.retry.mock.callCount(), 1);
+    assert.equal(proof.readSessionFromHost.mock.callCount(), 2);
+    assert.equal(status().readError, '');
+    assert.equal(retry(), undefined);
+    assert.equal(
+      litBinding(proof.view.render(), /data-testid="native-approval-retry"\s*\?disabled=$/),
+      false,
+    );
+    assert.equal(sendDisabled(), true);
+  } finally {
+    proof.disconnect();
+    offlineCache = undefined;
+    await cache.dispose();
   }
 });
 
