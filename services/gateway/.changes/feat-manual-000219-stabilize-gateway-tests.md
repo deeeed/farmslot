@@ -1,0 +1,1 @@
+- Stabilize gateway test suites by removing tight 500ms wall-clock polling deadlines in `authority.test.ts`, isolating and draining async persistence before temp cleanup in `pipeline-visual-review.test.ts`, and configuring local git identity inside the shared `stackFixture` temp repositories.

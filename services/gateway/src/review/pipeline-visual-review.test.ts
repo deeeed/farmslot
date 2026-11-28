@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { readFileSync, rmSync } from 'node:fs';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -14,22 +14,61 @@ import {
   recordedEvidenceClosureIdentity,
   type RecordedEvidencePackageInput,
   reviewedVisualFiles,
+  type Run,
 } from '@farmslot/protocol';
+import { openRunBundleStore } from '@farmslot/run-bundle';
 
 import '../runtime/mock-pty.test-support.js';
 const directory = await mkdtemp(path.join(os.tmpdir(), 'pipeline-visual-review-'));
-process.env.NODE_TEST_CONTEXT = '1';
-process.env.FARMSLOT_RUNS_DIR = path.join(directory, 'runs');
-process.env.FARMSLOT_POOL_DIR = path.join(directory, 'pool');
-const { createRun } = await import('../runs/store.js');
-const {
-  collectPipelineVisualResult,
-  pipelineReviewerBinding,
-  stampPipelineVisualReviews,
-  capturePipelineVisualInput,
-  pipelineVisualReviewPrompt,
-} = await import('./pipeline-visual-review.js');
-after(() => rm(directory, { force: true, recursive: true }));
+const removeDirectory = () =>
+  rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+const persistedRuns = new Set<Run>();
+let createRun!: (typeof import('../runs/store.js'))['createRun'];
+let persistRunNow!: (typeof import('../runs/store.js'))['persistRunNow'];
+let collectPipelineVisualResult!: (typeof import('./pipeline-visual-review.js'))['collectPipelineVisualResult'];
+let pipelineReviewerBinding!: (typeof import('./pipeline-visual-review.js'))['pipelineReviewerBinding'];
+let stampPipelineVisualReviews!: (typeof import('./pipeline-visual-review.js'))['stampPipelineVisualReviews'];
+let capturePipelineVisualInput!: (typeof import('./pipeline-visual-review.js'))['capturePipelineVisualInput'];
+let pipelineVisualReviewPrompt!: (typeof import('./pipeline-visual-review.js'))['pipelineVisualReviewPrompt'];
+try {
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_HOME = path.join(directory, 'home');
+  process.env.FARMSLOT_RUNS_DIR = path.join(directory, 'runs');
+  process.env.FARMSLOT_POOL_DIR = path.join(directory, 'pool');
+  await openRunBundleStore({
+    runsDir: process.env.FARMSLOT_RUNS_DIR,
+    home: process.env.FARMSLOT_HOME,
+    create: true,
+  });
+  ({ createRun, persistRunNow } = await import('../runs/store.js'));
+  ({
+    collectPipelineVisualResult,
+    pipelineReviewerBinding,
+    stampPipelineVisualReviews,
+    capturePipelineVisualInput,
+    pipelineVisualReviewPrompt,
+  } = await import('./pipeline-visual-review.js'));
+} catch (error) {
+  removeDirectory();
+  throw error;
+}
+after(async () => {
+  const failures: unknown[] = [];
+  try {
+    // Wait for every per-run write queue to settle before deleting the directory.
+    const settled = await Promise.allSettled(
+      [...persistedRuns].map((run) => persistRunNow(run, 'test teardown')),
+    );
+    for (const result of settled) {
+      if (result.status === 'rejected') failures.push(result.reason);
+    }
+  } finally {
+    removeDirectory();
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, 'Failed to drain run-store writes before teardown');
+});
 
 const input: RecordedEvidencePackageInput = JSON.parse(
   readFileSync(
@@ -164,6 +203,7 @@ test('native review results qualify on a tmux run without changing worker owners
 
 test('a code-only task without a recorded attempt remains reviewable without visual authority', async () => {
   const { run } = fixture();
+  persistedRuns.add(run);
   const task = path.join(directory, 'code-only');
   await mkdir(path.join(task, 'artifacts'), { recursive: true });
   await writeFile(path.join(task, 'TASK.md'), '# Code-only task\n');
@@ -377,6 +417,7 @@ test('worker, fix and retained producing sessions cannot gain visual reviewer au
 
 test('a retained result activates only for its matching head and closure and stamps once across refreshes', async () => {
   const { run, reviewer, snapshot } = fixture();
+  persistedRuns.add(run);
   reviewer.pipelineVisualReviewResult = collectPipelineVisualResult(run, reviewer, snapshot);
   reviewer.reviewResultValidatedAt = new Date().toISOString();
   reviewer.status = 'complete';
@@ -408,6 +449,7 @@ test('a retained result activates only for its matching head and closure and sta
 
 test('a released replay result does not prevent the current admitted reviewer from stamping', async () => {
   const { run, reviewer, snapshot } = fixture();
+  persistedRuns.add(run);
   reviewer.pipelineVisualReviewResult = collectPipelineVisualResult(run, reviewer, snapshot);
   reviewer.reviewResultValidatedAt = '2026-10-16T00:02:00Z';
   reviewer.status = 'complete';
@@ -435,6 +477,7 @@ test('a released replay result does not prevent the current admitted reviewer fr
 
 test('only released results leave visual claims pending instead of failing package preparation', async () => {
   const { run, reviewer, snapshot } = fixture();
+  persistedRuns.add(run);
   reviewer.pipelineVisualReviewResult = collectPipelineVisualResult(run, reviewer, snapshot);
   reviewer.reviewResultValidatedAt = '2026-10-16T00:02:00Z';
   reviewer.status = 'complete';
