@@ -164,7 +164,8 @@ capture_git_identity() {
 }
 
 SCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/companion-ios-smoke-XXXXXX")"
-trap 'rm -rf "${SCRATCH_DIR}"' EXIT
+GATEWAY_TMPDIR="$(mktemp -d "/tmp/fs-gw-XXXXXX")"
+trap 'rm -rf "${SCRATCH_DIR}" "${GATEWAY_TMPDIR}"' EXIT
 BEFORE_GIT_FILE="${SCRATCH_DIR}/git-before.json"
 AFTER_GIT_FILE="${SCRATCH_DIR}/git-after.json"
 if ! capture_git_identity "${BEFORE_GIT_FILE}"; then
@@ -556,48 +557,77 @@ cleanup() {
         const errors = [];
 
         const inspectDaemon = (pid, expectedStartTime) => {
-          try {
-            process.kill(pid, 0);
-          } catch (err) {
-            if (err && err.code === "ESRCH") return { alive: false, matches: false };
-            throw err;
-          }
+          const isAlive = () => {
+            try {
+              process.kill(pid, 0);
+              return { alive: true, eperm: false };
+            } catch (err) {
+              if (err && err.code === "ESRCH") return { alive: false, eperm: false };
+              if (err && err.code === "EPERM") return { alive: true, eperm: true };
+              throw err;
+            }
+          };
+          const probe1 = isAlive();
+          if (!probe1.alive) return { status: "exited" };
           let cmd = "";
           try {
             cmd = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim();
-          } catch {
-            return { alive: false, matches: false };
+          } catch (err) {
+            if (!isAlive().alive) return { status: "exited" };
+            return {
+              status: "unknown",
+              reason: `ps command lookup failed for live PID ${pid}: ${err instanceof Error ? err.message : String(err)}`,
+            };
           }
-          if (!cmd) return { alive: false, matches: false };
+          if (!cmd) {
+            if (!isAlive().alive) return { status: "exited" };
+            return { status: "unknown", reason: `ps returned empty command for live PID ${pid}` };
+          }
           const norm = cmd.toLowerCase().replaceAll("\\", "/");
           const isDaemonCmd =
             norm.includes("agent-device") &&
             /(^|[\/\s"\x27=])(dist\/src\/(internal\/)?daemon\.js|src\/daemon\.ts)($|[\s"\x27])/.test(norm);
-          if (!isDaemonCmd) return { alive: true, matches: false, cmd };
+          if (!isDaemonCmd) return { status: "mismatch", cmd };
           if (expectedStartTime) {
             let lstart = "";
             try {
               lstart = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" }).trim();
-            } catch {
-              return { alive: false, matches: false };
+            } catch (err) {
+              if (!isAlive().alive) return { status: "exited" };
+              return {
+                status: "unknown",
+                reason: `ps lstart lookup failed for live PID ${pid}: ${err instanceof Error ? err.message : String(err)}`,
+              };
             }
-            if (!lstart || lstart !== expectedStartTime) {
-              return { alive: true, matches: false, cmd, lstart };
+            if (!lstart) {
+              if (!isAlive().alive) return { status: "exited" };
+              return { status: "unknown", reason: `ps returned empty lstart for live PID ${pid}` };
+            }
+            if (lstart !== expectedStartTime) {
+              return { status: "mismatch", cmd, lstart };
             }
           }
-          return { alive: true, matches: true, cmd };
+          return { status: "matches", cmd };
         };
 
         const waitUntilGone = async (pid, expectedStartTime, timeoutMs) => {
           const deadline = Date.now() + timeoutMs;
+          let last = inspectDaemon(pid, expectedStartTime);
           while (Date.now() < deadline) {
-            const st = inspectDaemon(pid, expectedStartTime);
-            if (!st.alive || !st.matches) return true;
+            if (last.status === "exited" || last.status === "mismatch") return last;
+            await new Promise((r) => setTimeout(r, 150));
+            last = inspectDaemon(pid, expectedStartTime);
+          }
+          return last;
+        };
+
+        const lockFile = path.join(stateDir, "daemon.lock");
+        if (!fs.existsSync(daemonFile) && fs.existsSync(lockFile)) {
+          const lockDeadline = Date.now() + 5000;
+          while (Date.now() < lockDeadline && !fs.existsSync(daemonFile) && fs.existsSync(lockFile)) {
             await new Promise((r) => setTimeout(r, 150));
           }
-          const st = inspectDaemon(pid, expectedStartTime);
-          return !st.alive || !st.matches;
-        };
+        }
 
         let daemonInfo = null;
         if (fs.existsSync(daemonFile)) {
@@ -606,6 +636,8 @@ cleanup() {
           } catch (err) {
             errors.push(`failed to parse daemon.json: ${err instanceof Error ? err.message : String(err)}`);
           }
+        } else if (fs.existsSync(lockFile)) {
+          errors.push(`agent-device daemon.lock remained present without daemon.json at ${lockFile}`);
         }
 
         const pid = daemonInfo && Number.isInteger(daemonInfo.pid) && daemonInfo.pid > 0 ? daemonInfo.pid : null;
@@ -616,11 +648,13 @@ cleanup() {
           errors.push(`daemon.json contains invalid pid: ${JSON.stringify(daemonInfo.pid)}`);
         } else if (pid !== null) {
           const initial = inspectDaemon(pid, expectedStartTime);
-          if (initial.alive && !initial.matches) {
+          if (initial.status === "unknown") {
+            errors.push(`unable to verify agent-device daemon PID ${pid}: ${initial.reason}`);
+          } else if (initial.status === "mismatch") {
             errors.push(
               `daemon.json PID ${pid} does not match an agent-device daemon (${initial.cmd ?? "unknown"})`,
             );
-          } else if (initial.alive && initial.matches) {
+          } else if (initial.status === "matches") {
             let closeErr = null;
             const client = createAgentDeviceClient({ stateDir });
             try {
@@ -632,40 +666,50 @@ cleanup() {
               console.error(`[companion-ios-smoke] ${closeErr}`);
             }
 
-            let exited = await waitUntilGone(pid, expectedStartTime, 15000);
-            if (!exited) {
+            let state = await waitUntilGone(pid, expectedStartTime, 15000);
+            if (state.status === "matches") {
               if (closeErr) errors.push(closeErr);
-              const beforeTerm = inspectDaemon(pid, expectedStartTime);
-              if (beforeTerm.alive && beforeTerm.matches) {
-                console.log(`[companion-ios-smoke] sending SIGTERM to verified agent-device daemon PID ${pid}`);
-                try {
-                  process.kill(pid, "SIGTERM");
-                } catch (err) {
-                  if (err?.code !== "ESRCH") throw err;
-                }
-                exited = await waitUntilGone(pid, expectedStartTime, 5000);
-              } else {
-                exited = !beforeTerm.alive;
+              console.log(`[companion-ios-smoke] sending SIGTERM to verified agent-device daemon PID ${pid}`);
+              try {
+                process.kill(pid, "SIGTERM");
+              } catch (err) {
+                if (err?.code !== "ESRCH") throw err;
               }
+              state = await waitUntilGone(pid, expectedStartTime, 5000);
             }
-            if (!exited) {
-              const beforeKill = inspectDaemon(pid, expectedStartTime);
-              if (beforeKill.alive && beforeKill.matches) {
-                console.log(`[companion-ios-smoke] sending SIGKILL to verified agent-device daemon PID ${pid}`);
-                try {
-                  process.kill(pid, "SIGKILL");
-                } catch (err) {
-                  if (err?.code !== "ESRCH") throw err;
-                }
-                exited = await waitUntilGone(pid, expectedStartTime, 2000);
-              } else {
-                exited = !beforeKill.alive;
+            if (state.status === "matches") {
+              console.log(`[companion-ios-smoke] sending SIGKILL to verified agent-device daemon PID ${pid}`);
+              try {
+                process.kill(pid, "SIGKILL");
+              } catch (err) {
+                if (err?.code !== "ESRCH") throw err;
               }
+              state = await waitUntilGone(pid, expectedStartTime, 2000);
             }
-            if (!exited) {
+            if (state.status === "unknown") {
+              errors.push(`unable to confirm agent-device daemon PID ${pid} exit: ${state.reason}`);
+            } else if (state.status === "matches") {
               errors.push(`verified agent-device daemon PID ${pid} remained alive after SIGTERM and SIGKILL`);
             }
           }
+        }
+
+        // Fail closed if any live process still references our private agent-device stateDir.
+        try {
+          const psOut = execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
+          for (const line of psOut.split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            const m = /^(\d+)\s+(.*)$/.exec(trimmed);
+            if (!m) continue;
+            const p = Number(m[1]);
+            const cmd = m[2];
+            if (p !== process.pid && cmd.includes(stateDir)) {
+              errors.push(`live process PID ${p} still references agent-device stateDir (${cmd})`);
+            }
+          }
+        } catch (err) {
+          errors.push(`failed to inspect process table for agent-device stateDir: ${err instanceof Error ? err.message : String(err)}`);
         }
 
         if (errors.length > 0) {
@@ -693,14 +737,15 @@ cleanup() {
     ) || true
   fi
 
-  # 3. Stop ONLY our owned private gateway child via SIGTERM (45s grace for native-stream-stack's 30s stopHost),
-  #    record its exact exit status, and verify its private root & detached native supervisor exited.
+  # 3. Stop ONLY our owned private gateway child via SIGTERM (90s grace covers native-stream-stack's
+  #    50s startup host warm-up + 30s stopHost cleanup), record its exact exit status, and verify
+  #    our invocation-owned GATEWAY_TMPDIR has no remaining private roots or detached native supervisors.
   if [[ -n "${GATEWAY_PID}" ]]; then
     if pid_alive "${GATEWAY_PID}"; then
       kill -TERM "${GATEWAY_PID}" 2>/dev/null || true
-      if ! wait_pid_exit "${GATEWAY_PID}" 450; then
+      if ! wait_pid_exit "${GATEWAY_PID}" 900; then
         GATEWAY_FORCE_KILLED=1
-        teardown_errors+=("owned gateway PID ${GATEWAY_PID} did not exit within 45s after SIGTERM; sent SIGKILL")
+        teardown_errors+=("owned gateway PID ${GATEWAY_PID} did not exit within 90s after SIGTERM; sent SIGKILL")
         kill -KILL "${GATEWAY_PID}" 2>/dev/null || true
         wait_pid_exit "${GATEWAY_PID}" 20 || true
       fi
@@ -714,19 +759,40 @@ cleanup() {
 
   local gateway_root_removed=1
   local gateway_host_exited=1
-  if [[ -n "${GATEWAY_ROOT}" ]]; then
-    if [[ -e "${GATEWAY_ROOT}" ]]; then
-      gateway_root_removed=0
-      teardown_errors+=("private gateway root still exists after shutdown: ${GATEWAY_ROOT}")
-    fi
-    if ps -axo pid=,command= 2>/dev/null | grep -F "${GATEWAY_ROOT}/native" | grep -qv grep; then
-      gateway_host_exited=0
-      teardown_errors+=("detached private native host process still running for ${GATEWAY_ROOT}")
-    fi
-  elif [[ -n "${GATEWAY_PID}" && "${GATEWAY_READY}" -eq 1 ]]; then
+  if [[ -n "${GATEWAY_ROOT}" && -e "${GATEWAY_ROOT}" ]]; then
     gateway_root_removed=0
-    gateway_host_exited=0
-    teardown_errors+=("gateway root path was not recorded despite gateway readiness")
+    teardown_errors+=("private gateway root still exists after shutdown: ${GATEWAY_ROOT}")
+  fi
+  if [[ -d "${GATEWAY_TMPDIR}" ]]; then
+    local leftover_roots
+    leftover_roots="$(find "${GATEWAY_TMPDIR}" -mindepth 1 -maxdepth 1 -name 'companion-native-stream-*' 2>/dev/null || true)"
+    if [[ -n "${leftover_roots}" ]]; then
+      gateway_root_removed=0
+      teardown_errors+=("private gateway root(s) remained under ${GATEWAY_TMPDIR}: ${leftover_roots}")
+    fi
+  fi
+  if [[ -n "${GATEWAY_PID}" ]]; then
+    local gw_ps_rc=0
+    local gw_ps_out=""
+    gw_ps_out="$(ps -axo pid=,command= 2>/dev/null)" || gw_ps_rc=$?
+    if [[ "${gw_ps_rc}" -ne 0 ]]; then
+      gateway_host_exited=0
+      teardown_errors+=("failed to inspect process table for detached private native host")
+    else
+      if [[ -n "${GATEWAY_TMPDIR}" ]] && printf '%s\n' "${gw_ps_out}" | grep -F "${GATEWAY_TMPDIR}" | grep -qv grep; then
+        gateway_host_exited=0
+        teardown_errors+=("detached private native host process still running under ${GATEWAY_TMPDIR}")
+      fi
+      if [[ -n "${GATEWAY_ROOT}" ]] && printf '%s\n' "${gw_ps_out}" | grep -F "${GATEWAY_ROOT}/native" | grep -qv grep; then
+        gateway_host_exited=0
+        teardown_errors+=("detached private native host process still running for ${GATEWAY_ROOT}")
+      fi
+    fi
+    if [[ "${GATEWAY_READY}" -eq 1 && -z "${GATEWAY_ROOT}" ]]; then
+      gateway_root_removed=0
+      gateway_host_exited=0
+      teardown_errors+=("gateway root path was not recorded despite gateway readiness")
+    fi
   fi
 
   # 4. Stop ONLY our owned private Metro process group (never touch a foreign listener on port collision).
@@ -786,12 +852,15 @@ cleanup() {
   fi
 
   local retained_recovery_dir=""
-  if [[ "${agent_device_stopped}" -eq 0 || "${gateway_host_exited}" -eq 0 ]]; then
+  if [[ "${agent_device_stopped}" -eq 0 || "${gateway_host_exited}" -eq 0 || "${gateway_root_removed}" -eq 0 ]]; then
     if [[ "${gateway_alive}" -eq 0 ]]; then
       rm -f "${TOKEN_FILE}"
     fi
     retained_recovery_dir="${SCRATCH_DIR}"
-    teardown_errors+=("retained recovery state directory due to incomplete teardown: ${SCRATCH_DIR}")
+    if [[ "${gateway_host_exited}" -eq 0 || "${gateway_root_removed}" -eq 0 ]]; then
+      retained_recovery_dir="${SCRATCH_DIR};${GATEWAY_TMPDIR}"
+    fi
+    teardown_errors+=("retained recovery state directory due to incomplete teardown: ${retained_recovery_dir}")
   fi
 
   local err_joined=""
@@ -991,7 +1060,9 @@ cleanup() {
     "${err_joined}" && teardown_ok=1
 
   if [[ -z "${retained_recovery_dir}" ]]; then
-    rm -rf "${SCRATCH_DIR}"
+    rm -rf "${SCRATCH_DIR}" "${GATEWAY_TMPDIR}"
+  elif [[ "${gateway_host_exited}" -eq 1 && "${gateway_root_removed}" -eq 1 ]]; then
+    rm -rf "${GATEWAY_TMPDIR}"
   fi
 
   if [[ "${exit_code}" -ne 0 ]]; then
@@ -1020,6 +1091,7 @@ echo "[companion-ios-smoke] starting isolated gateway :${SMOKE_GATEWAY_PORT} (co
 (
   cd "${REPO_ROOT}"
   exec env \
+    TMPDIR="${GATEWAY_TMPDIR}" \
     TSX_TSCONFIG_PATH="${REPO_ROOT}/services/gateway/tsconfig.json" \
     GATEWAY_PORT="${SMOKE_GATEWAY_PORT}" \
     CONTROL_PORT="${SMOKE_CONTROL_PORT}" \
