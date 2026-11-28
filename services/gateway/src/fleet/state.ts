@@ -917,12 +917,15 @@ interface RecentFileEdit {
   timer: ReturnType<typeof setTimeout>;
 }
 
+type FileEditAction = 'pr-rules' | 'pool-resources' | 'openclaw-registration';
+
 /** Deliver the first observation immediately, even when Chokidar only emits raw. */
 function createFileEditCoalescer() {
   const recent = new Map<string, RecentFileEdit>();
   return {
-    deliver(file: string, onEdit: () => void): void {
-      const previous = recent.get(file);
+    deliver(action: FileEditAction, file: string, onEdit: () => void): void {
+      const key = `${action}:${file}`;
+      const previous = recent.get(key);
       let stats: BigIntStats | undefined;
       try {
         stats = statSync(file, { bigint: true, throwIfNoEntry: false });
@@ -931,7 +934,7 @@ function createFileEditCoalescer() {
           throw error;
         // When metadata is unreadable, let the owning reader handle the source failure.
         clearTimeout(previous?.timer);
-        recent.delete(file);
+        recent.delete(key);
         onEdit();
         return;
       }
@@ -942,9 +945,9 @@ function createFileEditCoalescer() {
         : undefined;
       if (previous && previous.stamp === stamp) return;
       clearTimeout(previous?.timer);
-      const timer = setTimeout(() => recent.delete(file), NATIVE_POOL_CHANGE_COALESCE_MS);
+      const timer = setTimeout(() => recent.delete(key), NATIVE_POOL_CHANGE_COALESCE_MS);
       timer.unref();
-      recent.set(file, { stamp, timer });
+      recent.set(key, { stamp, timer });
       onEdit();
     },
     dispose(): void {
@@ -1028,7 +1031,7 @@ export function startFileWatcher() {
       console.error('[state] PR rule source reload failed:', error);
     }
   };
-  const prRulesChanged = () => fileEdits.deliver(prRulesFile, reloadPRRules);
+  const prRulesChanged = () => fileEdits.deliver('pr-rules', prRulesFile, reloadPRRules);
   const watcher = watch(directory, {
     persistent: true,
     ignoreInitial: true,
@@ -1066,7 +1069,7 @@ export function startFileWatcher() {
   const poolHandlers = createPoolWatcherHandlers({
     directory: poolDirectory(),
     onPoolFileChanged: (file) => {
-      fileEdits.deliver(file, publishPoolResources);
+      fileEdits.deliver('pool-resources', file, publishPoolResources);
       clearTimeout(poolDebounce);
       poolDebounce = setTimeout(async () => {
         try {
@@ -1109,7 +1112,7 @@ export function startFileWatcher() {
   const registrationFiles = [llmConfigFile, getFarmslotStorePath()];
   const registrationParent = path.dirname(openClawStoreFile);
   const openClawStoreChanged = () =>
-    fileEdits.deliver(openClawStoreFile, publishConfigurationResources);
+    fileEdits.deliver('openclaw-registration', openClawStoreFile, publishConfigurationResources);
   // A missing optional root can finish Chokidar's multi-root readiness before
   // its other trees are armed. Give it an existing ancestor and its own owner.
   let registrationRoot = registrationParent;

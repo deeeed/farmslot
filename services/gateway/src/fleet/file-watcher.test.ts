@@ -50,12 +50,15 @@ class TestWatcher extends EventEmitter {
   }
 }
 
-const watchers = new Map<string, TestWatcher>();
+const watchers = new Map<string, TestWatcher[]>();
 mock.module('chokidar', {
   namedExports: {
     watch(file: string | string[]) {
       const watcher = new TestWatcher();
-      watchers.set(Array.isArray(file) ? file[0] : file, watcher);
+      const directory = Array.isArray(file) ? file[0] : file;
+      const owners = watchers.get(directory) ?? [];
+      owners.push(watcher);
+      watchers.set(directory, owners);
       return watcher;
     },
   },
@@ -73,14 +76,14 @@ const configuration = { family: 'configuration', scope: 'farm' } as const;
 const capabilities = { family: 'capabilities' } as const;
 const workers = { family: 'workers', scope: 'farm' } as const;
 
-function raw(directory: string, file: string, event = 'change'): void {
-  watchers.get(directory)!.emit('raw', event, path.basename(file), {
+function raw(directory: string, file: string, event = 'change', owner = 0): void {
+  watchers.get(directory)![owner].emit('raw', event, path.basename(file), {
     watchedPath: path.dirname(file),
   });
 }
 
-function all(directory: string, file: string, event = 'change'): void {
-  watchers.get(directory)!.emit('all', event, file);
+function all(directory: string, file: string, event = 'change', owner = 0): void {
+  watchers.get(directory)![owner].emit('all', event, file);
 }
 
 test('fleet watcher coalesces raw and all callbacks and delivers rapid distinct edits', async (t) => {
@@ -89,7 +92,7 @@ test('fleet watcher coalesces raw and all callbacks and delivers rapid distinct 
   const clearTimer = t.mock.method(globalThis, 'clearTimeout');
   const watcher = startFileWatcher();
   try {
-    for (const owner of watchers.values()) owner.emit('ready');
+    for (const owner of [...watchers.values()].flat()) owner.emit('ready');
     await watcher.ready;
     const revisions: ResourceKey[] = [];
     t.mock.method(resourceRevisions, 'advance', (key: ResourceKey) => revisions.push(key));
@@ -152,6 +155,7 @@ test('fleet watcher coalesces raw and all callbacks and delivers rapid distinct 
     ]);
   } finally {
     await watcher.close();
+    watchers.clear();
   }
   const cleared = new Set(clearTimer.mock.calls.map(({ arguments: [timer] }) => timer));
   const coalescing = setTimer.mock.calls.filter(
@@ -159,4 +163,45 @@ test('fleet watcher coalesces raw and all callbacks and delivers rapid distinct 
   );
   assert(coalescing.length > 0);
   for (const { result } of coalescing) assert(cleared.has(result));
+});
+
+test('overlapping pool and PR-rule watchers each deliver the same edit in either order', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  process.env.FARMSLOT_POOL_DIR = root;
+  t.after(() => {
+    process.env.FARMSLOT_POOL_DIR = pool;
+  });
+  const watcher = startFileWatcher();
+  try {
+    for (const owner of [...watchers.values()].flat()) owner.emit('ready');
+    await watcher.ready;
+    assert.equal(watchers.get(root)?.length, 2);
+
+    const revisions: ResourceKey[] = [];
+    t.mock.method(resourceRevisions, 'advance', (key: ResourceKey) => revisions.push(key));
+    const deliveries = [];
+    for (const [first, second] of [
+      [0, 1],
+      [1, 0],
+    ]) {
+      writeFileSync(rulesFile, ' '.repeat(first) + JSON.stringify({ first }));
+      const previousReloads = reloadPRRulesFromFile.mock.callCount();
+      raw(root, rulesFile, 'change', first);
+      raw(root, rulesFile, 'change', second);
+      all(root, rulesFile, 'change', first);
+      all(root, rulesFile, 'change', second);
+      await setImmediate();
+      deliveries.push({
+        reloads: reloadPRRulesFromFile.mock.callCount() - previousReloads,
+        revisions: revisions.splice(0),
+      });
+    }
+    assert.deepEqual(deliveries, [
+      { reloads: 1, revisions: [configuration, capabilities, workers] },
+      { reloads: 1, revisions: [configuration, capabilities, workers] },
+    ]);
+  } finally {
+    await watcher.close();
+    watchers.clear();
+  }
 });
