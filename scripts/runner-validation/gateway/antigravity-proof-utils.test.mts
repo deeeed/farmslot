@@ -14,14 +14,15 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import * as proofUtils from './antigravity-proof-utils.mts';
+import * as proofUtils from '../lib/frozen-proof-checkout.mts';
 import {
   assertCleanTrackedSource,
+  buildProofManifest,
   createFrozenProofCheckout,
   verifyFrozenModuleResolution,
   verifyFrozenProofCheckout,
   withFrozenProofCheckout,
-} from './antigravity-proof-utils.mts';
+} from '../lib/frozen-proof-checkout.mts';
 
 test('frozen proof checkout isolates tracked bytes, verifies CJS/ESM resolution, scopes cleanup to owned checkout, and reports cleanup failure', async () => {
   const origin = mkdtempSync(path.join(tmpdir(), 'agy-frozen-origin-'));
@@ -75,7 +76,7 @@ test('frozen proof checkout isolates tracked bytes, verifies CJS/ESM resolution,
     // 1. No arbitrary-path cleanup helper or standalone cleanup CLI exists.
     assert.equal('removeFrozenProofCheckout' in proofUtils, false);
     const utilsScriptPath = fileURLToPath(
-      new URL('./antigravity-proof-utils.mts', import.meta.url),
+      new URL('../lib/frozen-proof-checkout.mts', import.meta.url),
     );
     spawnSync(
       process.execPath,
@@ -169,7 +170,23 @@ test('frozen proof checkout isolates tracked bytes, verifies CJS/ESM resolution,
     assert.equal(existsSync(snapshot.snapshotRoot), false);
     writeFileSync(path.join(origin, 'tracked.txt'), 'committed-v1\n');
 
-    // 7. If git worktree remove fails on an owned checkout, cleanup reports the error loudly.
+    // 7. buildProofManifest hashes sorted output files while excluding result.json by default.
+    const manifestDir = path.join(origin, 'manifest-fixture');
+    mkdirSync(manifestDir, { recursive: true });
+    writeFileSync(path.join(manifestDir, 'b.txt'), 'beta\n');
+    writeFileSync(path.join(manifestDir, 'a.txt'), 'alpha\n');
+    writeFileSync(path.join(manifestDir, 'result.json'), '{"pass":true}\n');
+    const manifest = await buildProofManifest(manifestDir);
+    assert.deepEqual(
+      manifest.map((entry) => entry.file),
+      ['a.txt', 'b.txt'],
+    );
+    assert.equal(manifest[0].bytes, 6);
+    assert.equal(manifest[0].sha256.length, 64);
+    assert.equal(manifest[1].bytes, 5);
+    assert.equal(manifest[1].sha256.length, 64);
+
+    // 8. If git worktree remove fails on an owned checkout, cleanup reports the error loudly.
     const doomed = createFrozenProofCheckout(origin, sourceSha, sourceTreeSha, {
       installAndBuild: false,
     });

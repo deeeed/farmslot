@@ -31,7 +31,7 @@ import {
   buildProofManifest,
   createAttemptOutputDir,
   ensureFrozenProofExecution,
-} from './antigravity-proof-utils.mts';
+} from '../lib/frozen-proof-checkout.mts';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const frozenSource = ensureFrozenProofExecution(

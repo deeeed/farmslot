@@ -28,9 +28,11 @@ import {
   type NativeSourceSnapshot,
 } from '@farmslot/agent-runtime/native/observation';
 import { routeNativeProfile } from '@farmslot/agent-runtime/native/profile-service';
+import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 import {
   DEFAULT_CLAUDE_MODEL,
   Methods,
+  type NativeAccountObservation,
   type NativeProfileStatusResult,
   normalizeRunner,
   type Principal,
@@ -1316,7 +1318,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   }
 });
 
-test('local observation retains executable map and reads one shared pool snapshot per pool edit across multiple active profiles', async () => {
+test('local observation retains executable map and reads one shared pool snapshot per pool edit across multiple active profiles', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'agy-local-multi-profile-'));
   const farmHome = join(root, 'farm-home');
   const tempPoolRoot = join(root, 'pool');
@@ -1327,33 +1329,31 @@ test('local observation retains executable map and reads one shared pool snapsho
   mkdirSync(tempPoolRoot, { recursive: true });
   mkdirSync(localStateRoot, { recursive: true, mode: 0o700 });
   chmodSync(localStateRoot, 0o700);
-  mkdirSync(dirname(fakeAgyV1), { recursive: true });
-  mkdirSync(dirname(fakeAgyV2), { recursive: true });
 
-  const writeFakeAgy = (target: string, version: string) => {
-    writeFileSync(
-      target,
-      `#!/usr/bin/env node
-if (process.argv.includes('--version')) {
-  console.log(${JSON.stringify(version)});
-  process.exit(0);
-}
-const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
-require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
-  const m = JSON.parse(line);
-  if (m.method === 'initialize') {
-    return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} } } });
-  }
-  if (m.method === 'session/list') {
-    return send({ id: m.id, result: { sessions: [] } });
-  }
-});
-`,
-    );
-    chmodSync(target, 0o700);
-  };
-  writeFakeAgy(fakeAgyV1, '1.5.12');
-  writeFakeAgy(fakeAgyV2, '1.5.13');
+  const versionByExecutable = new Map<string, string>([
+    [fakeAgyV1, '1.5.12'],
+    [fakeAgyV2, '1.5.13'],
+  ]);
+  const observedProbes: Array<{ cwd: string; executable?: string }> = [];
+  t.mock.method(
+    nativeRunnerDefinitions.antigravity.account,
+    'observe',
+    async (options: { cwd: string; executable?: string }): Promise<NativeAccountObservation> => {
+      const version = options.executable ? versionByExecutable.get(options.executable) : undefined;
+      assert.ok(version, `Unexpected executable observed: ${String(options.executable)}`);
+      observedProbes.push({ cwd: options.cwd, executable: options.executable });
+      return {
+        runner: 'antigravity',
+        installed: true,
+        executable: options.executable,
+        version,
+        login: 'authenticated',
+        mode: 'subscription',
+        identityQuality: 'unavailable',
+        observedAt: new Date().toISOString(),
+      };
+    },
+  );
 
   const writeLocalPool = (agyPath: string) => {
     writeFileSync(
@@ -1465,9 +1465,14 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       assert.ok(status.loginCommand.includes(fakeAgyV1));
     }
     assert.equal(poolSnapshotReads, 1);
+    assert.equal(
+      observedProbes.filter((probe) => probe.executable === fakeAgyV1).length >= profileIds.length,
+      true,
+    );
 
     // Real pool edit refreshes all 3 active local profiles with EXACTLY ONE shared pool snapshot read.
     const invalidationsBefore = localInvalidations.length;
+    const probesBeforeEdit = observedProbes.length;
     writeLocalPool(fakeAgyV2);
     observations.catalogChanged({ scope: 'all', reason: 'pool' });
     assert.equal(
@@ -1493,6 +1498,11 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       poolSnapshotReads,
       2,
       'sampling 3 active local profiles must reuse retained local map with zero extra pool scans',
+    );
+    assert.equal(
+      observedProbes.slice(probesBeforeEdit).filter((probe) => probe.executable === fakeAgyV2)
+        .length,
+      profileIds.length,
     );
   } finally {
     observations?.dispose();

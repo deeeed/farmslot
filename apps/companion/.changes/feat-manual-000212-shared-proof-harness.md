@@ -1,0 +1,1 @@
+- Add repo-owned Companion iOS live smoke entrypoint (`apps/companion/scripts/agentic/companion-ios-smoke.sh`) with isolated gateway/Metro ports, before/after state receipts, and guaranteed `trap` teardown.

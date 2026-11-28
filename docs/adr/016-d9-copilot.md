@@ -156,6 +156,8 @@ inspected reference handler publishes completed assistant blocks.
 Live proof covers the six installed runners: Claude, Codex, Cursor, Grok, OpenCode
 and Pi, including its DeepSeek provider. Arthur removed Kiro, FX, Antigravity and Muse/MSP from planned parity on 2026-11-07. ACP remains the next approved extension: use the shared client and prove one existing agent through its ACP adapter, beginning with Claude Code. Only that adapter is authorised for installation in this scope. Contract tests do not establish live parity.
 
+> **2026-11-28 superseding note:** The 2026-11-07 exclusion of Antigravity above is superseded — native ACP support for Antigravity (`agy`) has shipped through the shared ACP client across gateway, node, Command Center, and Companion.
+
 ### Rationale
 
 The native host already owns launch, command receipts, journals and runner-specific
