@@ -955,6 +955,7 @@ function approvalComposer(initialMode: NativeApprovalMode) {
     },
   };
   let changed: ((value: NativeConversationState) => void) | undefined;
+  const retry = mock.fn<NativeConversationCache['retry']>();
   const conversations: NativeConversationCache = {
     observe(_target, listener) {
       changed = listener;
@@ -966,7 +967,7 @@ function approvalComposer(initialMode: NativeApprovalMode) {
     read: () => state,
     readPage: async () => undefined,
     dismissHistory: () => undefined,
-    retry: () => undefined,
+    retry,
   };
   const publish = (
     session: NativeSessionReadResult['session'],
@@ -1015,6 +1016,7 @@ function approvalComposer(initialMode: NativeApprovalMode) {
     view,
     snapshot,
     publish,
+    retry,
     observe: (overrides: Partial<NativeConversationState>) => changed?.({ ...state, ...overrides }),
     observedSession: () => state.data?.session,
     change: (mode: NativeApprovalMode): Promise<void> =>
@@ -1191,6 +1193,63 @@ test('fresh history restores the composer when it skips an acknowledged approval
     assert.equal(proof.requestedMode(), 'ask', 'fresh history unlocks approval changes');
     proof.acknowledge(ask);
     await next;
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('a skipped approval confirmation refreshes the conflicting subscription once', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await changing;
+    assert.equal(sendDisabled(), false, 'the RPC acknowledgement enables Send');
+    assert.equal(proof.retry.mock.callCount(), 0);
+
+    // The same subscription can coalesce away the Ask confirmation and deliver Bypass.
+    proof.publish({ ...bypass });
+    proof.publish({ ...bypass });
+    assert.equal(sendDisabled(), true, 'a conflicting frame alone cannot authorize Send');
+    await Promise.resolve();
+    assert.equal(proof.retry.mock.callCount(), 1, 'request fresh authority without a disconnect');
+    assert.deepEqual(proof.retry.mock.calls[0].arguments, [
+      { sessionId: bypass.id, executionNodeId: bypass.executionNodeId },
+    ]);
+
+    proof.publish({ ...bypass });
+    await Promise.resolve();
+    assert.equal(proof.retry.mock.callCount(), 1, 'subsequent frames do not restart the request');
+    assert.equal(sendDisabled(), true);
+
+    proof.publish({ ...bypass }, 'replacement-subscription');
+    assert.equal(proof.composerDisabled(), false);
+    assert.equal(sendDisabled(), false, 'the fresh snapshot authorizes Send');
+    assert.equal(Reflect.get(proof.view, 'session').approvalMode, 'bypass');
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('an approval reply requests fresh history if the conflicting frame arrived first', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass });
+    proof.acknowledge(ask);
+    await changing;
+    assert.equal(proof.composerDisabled(), true);
+    assert.equal(proof.retry.mock.callCount(), 1);
+    proof.publish({ ...bypass }, 'replacement-subscription');
+    assert.equal(proof.composerDisabled(), false);
   } finally {
     proof.disconnect();
   }

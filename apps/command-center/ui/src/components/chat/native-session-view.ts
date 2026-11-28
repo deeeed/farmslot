@@ -344,6 +344,7 @@ export class NativeSessionView extends LitElement {
     subscriptionId?: string;
     observed?: NativeSessionInfo;
     confirmed: NativeSessionInfo;
+    refreshRequested?: boolean;
   };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
@@ -634,8 +635,8 @@ export class NativeSessionView extends LitElement {
         this.session = approval.confirmed;
         this.historyObservation = { ...state, data: { ...page, session: approval.confirmed } };
       } else {
-        // Keep the acknowledgement across stale or conflicting observations. A different
-        // object from the same generation does not establish which policy the host is using.
+        // Keep Send fenced across stale or conflicting observations. A same-subscription
+        // frame can be delayed or can skip the confirmed policy during metadata batching.
         if (
           !approval ||
           (page &&
@@ -675,10 +676,34 @@ export class NativeSessionView extends LitElement {
           this.releaseLocalCommand(receipt);
       }
       this.followTimeline(before);
+      this.refreshConflictingApprovalHistory();
     };
     this.historyStop = conversations
       ? observeNativeConversation({ conversations }, target, changed)
       : observeNativeConversationResource(target, changed);
+  }
+
+  private refreshConflictingApprovalHistory() {
+    const approval = this.currentApprovalAcknowledgement;
+    if (
+      !approval ||
+      approval.refreshRequested ||
+      !this.historyCurrent ||
+      this.session === approval.confirmed
+    )
+      return;
+
+    approval.refreshRequested = true;
+    // Retry notifies observers while detaching. Leave the current cache notification first,
+    // then ask for a snapshot that is ordered after the acknowledgement.
+    queueMicrotask(() => {
+      if (!this.isConnected || this.currentApprovalAcknowledgement !== approval) return;
+      const target = this.historyTarget;
+      const conversations = this.fixture?.conversations ?? getResourceCache()?.conversations;
+      if (target && conversations && this.historyCurrent && this.session !== approval.confirmed)
+        conversations.retry(target);
+      else approval.refreshRequested = false;
+    });
   }
 
   /** Releases the sent message; one the host failed without submitting goes back to the composer. */
@@ -1624,6 +1649,7 @@ ${JSON.stringify(
           subscriptionId: currentSubscriptionId ?? subscriptionId,
           confirmed,
         };
+        this.refreshConflictingApprovalHistory();
         return;
       }
 
