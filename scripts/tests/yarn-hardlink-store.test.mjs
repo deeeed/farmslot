@@ -19,6 +19,11 @@ const run = promisify(execFile);
 const plugin = fileURLToPath(new URL('../yarn-hardlink-store.cjs', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 
+const INSTALL_TIMEOUT_MS = 20_000;
+const PAUSE_DEADLINE_MS = 10_000;
+// Paused stock spans reaching the pause hook, waiting through the guarded install, and finishing.
+const PAUSED_STOCK_TIMEOUT_MS = PAUSE_DEADLINE_MS + INSTALL_TIMEOUT_MS * 2;
+
 function fixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'yarn-hardlink-store-'));
   const controller = new AbortController();
@@ -28,12 +33,12 @@ function fixture(t) {
     await Promise.allSettled(pending);
     rmSync(root, { recursive: true, force: true });
   });
-  const command = (cwd, args, environment = {}) => {
+  const command = (cwd, args, environment = {}, timeout = INSTALL_TIMEOUT_MS) => {
     const request = run('yarn', args, {
       cwd,
       env: { ...process.env, YARN_ENABLE_TELEMETRY: 'false', ...environment },
       signal: controller.signal,
-      timeout: 20_000,
+      timeout,
     });
     pending.push(request);
     return request;
@@ -41,16 +46,21 @@ function fixture(t) {
   return {
     root,
     command,
-    install(project, globalFolder, cacheFolder, environment = {}) {
-      return command(project.cwd, ['install'], {
-        YARN_GLOBAL_FOLDER: globalFolder,
-        YARN_CACHE_FOLDER: cacheFolder,
-        YARN_NM_MODE: 'hardlinks-global',
-        YARN_ENABLE_IMMUTABLE_INSTALLS: 'false',
-        YARN_ENABLE_SCRIPTS: 'false',
-        YARN_ENABLE_TELEMETRY: 'false',
-        ...environment,
-      });
+    install(project, globalFolder, cacheFolder, environment = {}, timeout = INSTALL_TIMEOUT_MS) {
+      return command(
+        project.cwd,
+        ['install'],
+        {
+          YARN_GLOBAL_FOLDER: globalFolder,
+          YARN_CACHE_FOLDER: cacheFolder,
+          YARN_NM_MODE: 'hardlinks-global',
+          YARN_ENABLE_IMMUTABLE_INSTALLS: 'false',
+          YARN_ENABLE_SCRIPTS: 'false',
+          YARN_ENABLE_TELEMETRY: 'false',
+          ...environment,
+        },
+        timeout,
+      );
     },
   };
 }
@@ -164,21 +174,34 @@ if (process.env.STOCK_PAUSE_AT === 'absent-store') {
 }
 `,
     );
+    let stockSettled = false;
     const stockOutcome = context
-      .install(stock, berry, path.join(berry, 'cache'), {
-        NODE_OPTIONS:
-          `${process.env.NODE_OPTIONS ?? ''} --require ${JSON.stringify(preload)}`.trim(),
-        STOCK_STORE: store,
-        STOCK_PAUSED: paused,
-        STOCK_RESUME: resume,
-        STOCK_PAUSE_AT: pauseAt,
-      })
+      .install(
+        stock,
+        berry,
+        path.join(berry, 'cache'),
+        {
+          NODE_OPTIONS:
+            `${process.env.NODE_OPTIONS ?? ''} --require ${JSON.stringify(preload)}`.trim(),
+          STOCK_STORE: store,
+          STOCK_PAUSED: paused,
+          STOCK_RESUME: resume,
+          STOCK_PAUSE_AT: pauseAt,
+        },
+        PAUSED_STOCK_TIMEOUT_MS,
+      )
       .then(
-        (value) => ({ status: 'fulfilled', value }),
-        (reason) => ({ status: 'rejected', reason }),
+        (value) => {
+          stockSettled = true;
+          return { status: 'fulfilled', value };
+        },
+        (reason) => {
+          stockSettled = true;
+          return { status: 'rejected', reason };
+        },
       );
-    const deadline = Date.now() + 10_000;
-    while (!existsSync(paused) && Date.now() < deadline)
+    const deadline = Date.now() + PAUSE_DEADLINE_MS;
+    while (!existsSync(paused) && !stockSettled && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(existsSync(paused), `the real stock client must reach ${pauseAt}`);
     await context.install(guarded, path.join(berry, 'farmslot'), path.join(berry, 'cache'));
