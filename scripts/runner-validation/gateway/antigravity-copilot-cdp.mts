@@ -8,6 +8,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -297,27 +298,75 @@ try {
     effortControlAbsent: true,
   };
 
-  // Start isolated Vite serving Command Center UI on an ephemeral free port
-  vite = await createVite({
-    configFile: path.join(repo, 'apps/command-center/ui/vite.config.ts'),
-    envDir: path.join(root, 'no-env'),
-    cacheDir: path.join(root, 'vite-cache'),
-    logLevel: 'error',
-    server: {
-      host: '127.0.0.1',
-      port: 0,
-      strictPort: false,
-      fs: { allow: [repo, fs.realpathSync(path.join(repo, 'node_modules'))] },
-      proxy: {
-        '/ws': { target: `http://127.0.0.1:${gatewayPort}`, ws: true },
-        '/api': { target: `http://127.0.0.1:${gatewayPort}` },
+  // Start isolated Vite serving Command Center UI on an OS-assigned ephemeral free port.
+  // Vite treats `server.port: 0` as falsy and falls back to its default dev port, so reserve an
+  // ephemeral loopback port explicitly and clear inherited slot Vite/gateway env vars so
+  // vite.config.ts binds strictly to this proof's isolated gateway and ephemeral UI port.
+  const reserveEphemeralPort = (): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const probe = net.createServer();
+      probe.once('error', reject);
+      probe.listen(0, '127.0.0.1', () => {
+        const addr = probe.address();
+        const port = addr && typeof addr !== 'string' ? addr.port : 0;
+        probe.close((closeErr) => {
+          if (closeErr) reject(closeErr);
+          else if (port > 0) resolve(port);
+          else reject(new Error('Failed to reserve an ephemeral loopback port for Vite'));
+        });
+      });
+    });
+
+  process.env.GATEWAY_PORT = String(gatewayPort);
+  delete process.env.GATEWAY_HOST;
+  delete process.env.GATEWAY_PROXY_HOST;
+  delete process.env.VITE_PORT;
+  delete process.env.FARMSLOT_UI_HOST;
+  delete process.env.FARMSLOT_UI_ALLOWED_HOSTS;
+  delete process.env.FARMSLOT_CC_BASE;
+  delete process.env.VITE_BASE;
+
+  let reservedVitePort = 0;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidatePort = await reserveEphemeralPort();
+    const candidateVite = await createVite({
+      configFile: path.join(repo, 'apps/command-center/ui/vite.config.ts'),
+      envDir: path.join(root, 'no-env'),
+      cacheDir: path.join(root, 'vite-cache'),
+      logLevel: 'error',
+      server: {
+        host: '127.0.0.1',
+        port: candidatePort,
+        strictPort: true,
+        fs: { allow: [repo, fs.realpathSync(path.join(repo, 'node_modules'))] },
+        proxy: {
+          '/ws': { target: `http://127.0.0.1:${gatewayPort}`, ws: true },
+          '/api': { target: `http://127.0.0.1:${gatewayPort}` },
+        },
       },
-    },
-  });
-  await vite.listen();
+    });
+    try {
+      await candidateVite.listen();
+      vite = candidateVite;
+      reservedVitePort = candidatePort;
+      break;
+    } catch (err) {
+      await candidateVite.close();
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (attempt === 4 || (code !== 'EADDRINUSE' && !String(err).includes('is already in use'))) {
+        throw err;
+      }
+    }
+  }
+  assert(vite, 'Failed to start isolated Vite dev server');
   const viteAddr = vite.httpServer?.address();
   assert(viteAddr && typeof viteAddr !== 'string', 'Vite server did not bind a TCP port');
   vitePort = viteAddr.port;
+  assert.equal(
+    vitePort,
+    reservedVitePort,
+    `Vite server must bind the reserved ephemeral port ${reservedVitePort}, got ${vitePort}`,
+  );
 
   // Launch isolated owned headless Chrome on an ephemeral CDP port bound to our private profile;
   // verify DevToolsActivePort + browser WebSocket identity written by this exact process so we
