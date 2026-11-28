@@ -580,7 +580,7 @@ export class NativeSessionView extends LitElement {
   }
 
   private get historyCurrent() {
-    if (this.fixture) return this.caughtUp;
+    if (this.fixture && !this.fixture.conversations) return this.caughtUp;
     const state = this.historyObservation;
     return (
       nativeHistoryCanAct(state, this.historyObservation.data, this.connected) &&
@@ -1539,8 +1539,37 @@ ${JSON.stringify(
         { sessionId: session.id, executionNodeId: session.executionNodeId, approvalMode },
       );
       if (revision !== this.revision) return;
-      this.session = result.session;
-      this.schedule(0);
+      if (this.fixture && !this.fixture.conversations) {
+        this.session = result.session;
+        this.schedule(0);
+        return;
+      }
+      const current = this.session;
+      const history = this.historyObservation.data;
+      const confirmed = result.session;
+      if (
+        !this.historyCurrent ||
+        !history ||
+        current?.state !== 'idle' ||
+        confirmed.state !== 'idle' ||
+        current.id !== confirmed.id ||
+        current.executionNodeId !== confirmed.executionNodeId ||
+        current.generation !== confirmed.generation ||
+        (current !== session && current.approvalModePending !== approvalMode)
+      )
+        return;
+
+      // Keep the rendered history coherent until the active stream delivers the confirmation.
+      const updated = {
+        ...current,
+        approvalMode: confirmed.approvalMode,
+        approvalModePending: confirmed.approvalModePending,
+      };
+      this.historyObservation = {
+        ...this.historyObservation,
+        data: { ...history, session: updated },
+      };
+      this.session = updated;
     } catch (error) {
       if (revision === this.revision) this.error = (error as Error).message;
     } finally {

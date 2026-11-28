@@ -12,6 +12,8 @@ import {
   createGatewayResourceCache,
   createMemoryResourceStore,
   type GatewayResourceCache,
+  type NativeConversationCache,
+  type NativeConversationState,
   nativeObservationQuery,
   type NativeTimelineRow,
 } from '@farmslot/protocol/client-cache';
@@ -924,6 +926,101 @@ test('an unconfirmed approval mode has an explicit retry for that same selection
       },
     },
   ]);
+});
+
+test('the native message composer is ready when approvals are acknowledged before history refreshes', async () => {
+  const snapshot = page(receipt(false));
+  snapshot.session.state = 'idle';
+  snapshot.session.approvalMode = 'ask';
+  snapshot.session.capabilities.approvalModes = ['ask', 'bypass'];
+  const pending = { ...snapshot.session, approvalModePending: 'bypass' } as const;
+  const confirmed = { ...snapshot.session, approvalMode: 'bypass' } as const;
+  const streamCursor = {
+    sessionId: snapshot.session.id,
+    executionNodeId: snapshot.session.executionNodeId,
+    generation: snapshot.session.generation,
+    hostGeneration: 'host',
+    sequence: 0,
+  };
+  let state: NativeConversationState = {
+    status: 'ready',
+    conversation: streamCursor,
+    data: {
+      ...snapshot,
+      historyBefore: 0,
+      truncated: false,
+      streamCursor,
+      historyRead: { pageReadCount: 0, pageAfters: [] },
+      retainedBytes: 0,
+    },
+  };
+  let changed: ((value: NativeConversationState) => void) | undefined;
+  const conversations: NativeConversationCache = {
+    observe(_target, listener) {
+      changed = listener;
+      listener(state);
+      return () => {
+        changed = undefined;
+      };
+    },
+    read: () => state,
+    readPage: async () => undefined,
+    dismissHistory: () => undefined,
+    retry: () => undefined,
+  };
+  const publish = (session: NativeSessionReadResult['session']) => {
+    assert(state.data);
+    state = { ...state, data: { ...state.data, session } };
+    changed?.(state);
+  };
+  let acknowledge!: (result: { session: typeof confirmed }) => void;
+  const response = new Promise<{ session: typeof confirmed }>((resolve) => {
+    acknowledge = resolve;
+  });
+  const view = new NativeSessionView();
+  Object.defineProperty(view, 'isConnected', { value: true });
+  Object.assign(view, {
+    connected: true,
+    followTimeline: () => undefined,
+    selectedId: snapshot.session.id,
+    selectedNodeId: snapshot.session.executionNodeId,
+    fixture: {
+      catalog: async () => ({ runners: [], contexts: [] }),
+      list: async () => ({ sessions: [] }),
+      read: async () => snapshot,
+      conversations,
+    } satisfies NativeSessionFixture,
+    api: {
+      async request<T>(method: Parameters<NativeSessionApi['request']>[0]): Promise<T> {
+        assert.equal(method, Methods.NATIVE_SESSION_SET_APPROVAL_MODE);
+        return (await response) as T;
+      },
+    } satisfies NativeSessionApi,
+  });
+  const composerDisabled = () =>
+    litBinding(view.render(), 'data-testid="native-message"\n                        ?disabled=');
+
+  Reflect.get(view, 'observeHistory').call(view);
+  try {
+    assert.equal(composerDisabled(), false);
+    const changing = Reflect.get(view, 'setApprovalMode').call(view, 'bypass');
+    publish(pending);
+    assert.equal(composerDisabled(), true, 'disabled while the policy is pending');
+    acknowledge({ session: confirmed });
+    await changing;
+    assert.equal(state.data?.session, pending, 'the stream has not confirmed the change yet');
+    assert.equal(composerDisabled(), false, 'enabled immediately after the mutation');
+    publish({ ...confirmed });
+    assert.equal(composerDisabled(), false, 'enabled after the history refresh');
+    changed?.({ ...state, status: 'stale' });
+    assert.equal(composerDisabled(), true, 'disabled for stale history');
+    changed?.(state);
+    Reflect.set(view, 'connected', false);
+    assert.equal(composerDisabled(), true, 'disabled after disconnect');
+  } finally {
+    acknowledge({ session: confirmed });
+    Reflect.get(view, 'historyStop')?.();
+  }
 });
 
 test('a streamed delta computes rows once per render and re-renders only its own message', () => {
