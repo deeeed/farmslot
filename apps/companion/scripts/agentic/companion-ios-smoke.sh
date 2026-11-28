@@ -612,7 +612,9 @@ cleanup() {
         const expectedStartTime =
           typeof daemonInfo?.processStartTime === "string" ? daemonInfo.processStartTime.trim() : "";
 
-        if (pid !== null) {
+        if (daemonInfo !== null && pid === null) {
+          errors.push(`daemon.json contains invalid pid: ${JSON.stringify(daemonInfo.pid)}`);
+        } else if (pid !== null) {
           const initial = inspectDaemon(pid, expectedStartTime);
           if (initial.alive && !initial.matches) {
             errors.push(
@@ -1115,6 +1117,7 @@ fi
 
 echo "[companion-ios-smoke] launching dev client on ephemeral ${SMOKE_SIM_NAME} (${SMOKE_SIM_UDID}) against Metro :${SMOKE_METRO_PORT}"
 run_interruptible_group step env \
+  -u IOS_DEVICE_UDID \
   METRO_PORT="${SMOKE_METRO_PORT}" \
   GATEWAY_PORT="${SMOKE_GATEWAY_PORT}" \
   SCHEME="${SCHEME}" \
@@ -1123,6 +1126,7 @@ run_interruptible_group step env \
   node "${SCRIPT_DIR}/prepare-dev-client.mjs" ios "${SMOKE_SIM_UDID}" "${BUNDLE_ID}"
 
 run_interruptible_group step env \
+  -u IOS_DEVICE_UDID \
   METRO_PORT="${SMOKE_METRO_PORT}" \
   IOS_SIMULATOR="${SMOKE_SIM_UDID}" \
   COMPANION_PACKAGER_HOSTNAME=localhost \
@@ -1131,6 +1135,7 @@ run_interruptible_group step env \
 
 echo "[companion-ios-smoke] pairing Companion with isolated gateway :${SMOKE_GATEWAY_PORT}"
 run_interruptible_group step env \
+  -u IOS_DEVICE_UDID \
   NATIVE_STREAM_CONTROL="http://127.0.0.1:${SMOKE_CONTROL_PORT}" \
   NATIVE_STREAM_STATE="${STREAM_STATE_FILE}" \
   METRO_PORT="${SMOKE_METRO_PORT}" \
@@ -1143,6 +1148,7 @@ run_interruptible_group step env \
 if grep -q "native-conversation-proof.mts" "${RECIPE_ABS}"; then
   echo "[companion-ios-smoke] running native-conversation-proof.mts setup"
   run_interruptible_group step env \
+    -u IOS_DEVICE_UDID \
     NATIVE_COMPANION_GATEWAY="ws://127.0.0.1:${SMOKE_GATEWAY_PORT}/ws" \
     NATIVE_COMPANION_TOKEN_FILE="${TOKEN_FILE}" \
     NATIVE_COMPANION_PROOF_STATE="${PROOF_STATE_FILE}" \
@@ -1158,6 +1164,8 @@ RECIPE_RAN=1
 if run_interruptible_group recipe env \
   -u FARMSLOT_SLOT_ID \
   -u RECIPE_TASK_DIR \
+  -u FARMSLOT_TASK_DIR \
+  -u IOS_DEVICE_UDID \
   PLATFORM=ios \
   IOS_SIMULATOR="${SMOKE_SIM_UDID}" \
   SIMULATOR="${SMOKE_SIM_UDID}" \
