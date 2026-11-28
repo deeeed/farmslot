@@ -4,6 +4,9 @@ import { readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/pro
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { Methods, NATIVE_CONVERSATION_LIMITS } from '@farmslot/protocol';
+import { NATIVE_CONVERSATION_STORAGE_PREFIX } from '@farmslot/protocol/client-cache';
+
 import {
   messages,
   renderedNativeResumeTarget,
@@ -401,17 +404,15 @@ async function prove() {
       return (
         c?.session?.id === selected.id &&
         c.session.ownerPrincipalId === selected.owner &&
-        c.session.executionNodeId === 'local' &&
+        c.session.executionNodeId === selected.nodeId &&
+        c.session.state === 'closed' &&
         c.selection?.sessionId === selected.id &&
-        c.cursor === 660 &&
-        c.history?.canonical &&
-        c.history.status === status &&
-        c.history.messageCount === 200 &&
-        c.history.firstMessage === selected.first &&
-        c.history.lastMessage === selected.last &&
-        c.history.stored?.id === selected.storedId &&
-        c.history.observedAt > 0 &&
-        c.history.stored.observedAt === c.history.observedAt
+        c.cursor === selected.cursor &&
+        c.history?.status === status &&
+        c.history.messageCount === selected.tail.length &&
+        c.history.firstMessage === selected.tail[0].text &&
+        c.history.lastMessage === selected.tail.at(-1).text &&
+        (status !== 'ready' || c.history.observedAt > 0)
       );
     };
     const snapshot = async (name) => {
@@ -477,11 +478,11 @@ async function prove() {
       const scope = JSON.parse(state.workspaceKey).scope;
       assert(typeof scope === 'string' && scope.length > 0);
       const code =
-        'import sqlite3,json,sys,pathlib; db=sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+"?mode=ro",uri=True); db.execute("PRAGMA query_only=ON"); integrity=db.execute("PRAGMA integrity_check").fetchone()[0]; rows=db.execute("SELECT q.id,q.observed_at,q.data FROM resource_queries q JOIN resource_stores s ON q.store_id=s.id WHERE s.scope_id=?",(sys.argv[2],)).fetchall(); print(json.dumps({"integrity":integrity,"rows":[dict(id=r[0],observedAt=r[1],data=json.loads(r[2])) for r in rows if r[0].startswith("native.session.read:")],"fleet":[dict(id=r[0],observedAt=r[1],data=json.loads(r[2])) for r in rows if r[0]==sys.argv[3]]})); db.close()';
+        'import sqlite3,json,sys,pathlib; db=sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+"?mode=ro",uri=True); db.execute("PRAGMA query_only=ON"); integrity=db.execute("PRAGMA integrity_check").fetchone()[0]; rows=db.execute("SELECT q.id,q.observed_at,q.data FROM resource_queries q JOIN resource_stores s ON q.store_id=s.id WHERE s.scope_id=?",(sys.argv[2],)).fetchall(); print(json.dumps({"integrity":integrity,"rows":[dict(id=r[0],observedAt=r[1],data=json.loads(r[2])) for r in rows if r[0].startswith(sys.argv[4])],"fleet":[dict(id=r[0],observedAt=r[1],data=json.loads(r[2])) for r in rows if r[0]==sys.argv[3]]})); db.close()';
       assert(state.fleet?.stored?.id, 'The actual fleet query must be persisted');
       const { stdout } = await execute(
         'python3',
-        ['-c', code, database, scope, state.fleet.stored.id],
+        ['-c', code, database, scope, state.fleet.stored.id, NATIVE_CONVERSATION_STORAGE_PREFIX],
         {
           timeout: 15000,
           maxBuffer: 16 * 1024 * 1024,
@@ -506,11 +507,16 @@ async function prove() {
         const fixture = plan.sessions.find((s) => s.storedId === row.id);
         assert.equal(row.data.session.id, fixture.id);
         assert.equal(row.data.session.ownerPrincipalId, fixture.owner);
-        assert.equal(row.data.cursor, 660);
-        const logical = messages(row.data.events);
-        assert.equal(logical.length, 200);
-        assert.equal(logical[0].text, fixture.first);
-        assert.equal(logical.at(-1).text, fixture.last);
+        assert.equal(row.data.session.executionNodeId, fixture.nodeId);
+        assert.equal(row.data.session.state, 'closed');
+        assert.equal(row.data.cursor, fixture.cursor);
+        assert.equal(row.data.streamCursor?.sessionId, fixture.id);
+        assert.equal(row.data.streamCursor?.executionNodeId, fixture.nodeId);
+        assert.equal(row.data.streamCursor?.sequence, fixture.cursor);
+        assert.equal(row.data.historyBefore, fixture.historyBefore);
+        assert.equal(row.data.truncated, true);
+        assert.equal(row.data.events.length, NATIVE_CONVERSATION_LIMITS.projectionRows);
+        assert.deepEqual(messages(row.data.events), fixture.tail);
         assert(row.observedAt > 0);
       }
       return result;
@@ -554,24 +560,20 @@ async function prove() {
         await until(
           (state) =>
             complete(state, 'ready') && state.conversation.ready && state.conversation.caughtUp,
-          `History ${session.id} did not become canonical/current/complete`,
+          `History ${session.id} did not become current with the expected bounded tail`,
         ),
       );
     }
     const current = warm.at(-1);
     assert(fleetComplete(current, 'ready', fleetIds));
     assert(
-      (await proxyCounts()).counts['native.session.read'] >
-        (initialProxy.counts['native.session.read'] || 0),
+      (await proxyCounts()).counts[Methods.NATIVE_SESSION_SUBSCRIBE] >
+        (initialProxy.counts[Methods.NATIVE_SESSION_SUBSCRIBE] || 0),
       'App must actually traverse the counted proxy, not bypass it',
     );
     await save('warm.json', warm);
     await snapshot('warm-selected');
     const dbWarm = await sqlite(current, 'warm');
-    for (const state of warm.slice(-10)) {
-      const row = dbWarm.rows.find((row) => row.id === state.conversation.history.stored.id);
-      assert.equal(row.observedAt, state.conversation.history.observedAt);
-    }
     const selectedRow = dbWarm.rows.find((row) => row.id === selected.storedId);
     const commands = current.conversation.commands;
     let countsBefore = await proxyCounts();
@@ -600,7 +602,7 @@ async function prove() {
       );
       assert.deepEqual(coldFleet.fleet.data, dbWarm.fleet[0].data.fleet);
       await save('fleet-cold.json', coldFleet);
-      await view('fleet-cold', ...fleetIds, 'Saved fleet,');
+      await view('fleet-cold', ...fleetIds, 'Saved fleet ·');
       await openRoute(plan.fleet.slotRoute);
       await view('slot-cold', plan.fleet.slotId);
       await open(selected);
@@ -624,7 +626,7 @@ async function prove() {
       assert.deepEqual(dbCold.fleet, dbWarm.fleet);
       const screen = await view(
         'cold-disabled-resume',
-        'Saved conversation history,',
+        'Saved conversation history ·',
         plan.resumeLabel,
       );
       const resumeScreenshot = path.join(plan.artifacts, 'cold-disabled-resume.png');

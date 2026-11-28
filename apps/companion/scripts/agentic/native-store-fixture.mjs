@@ -3,11 +3,12 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { NATIVE_CONVERSATION_LIMITS } from '@farmslot/protocol';
+import { nativeConversationStorageId } from '@farmslot/protocol/client-cache';
+
 import { d05RecipeErrors } from './d05-fixture.mjs';
 
 export const sha256 = (value) => createHash('sha256').update(value).digest('hex');
-export const storageId = (id) =>
-  `native.session.read:${JSON.stringify({ executionNodeId: 'local', sessionId: id })}`;
 
 /** Independent complete user/assistant projection for fixture and actual SQLite evidence only. */
 export function messages(events) {
@@ -289,6 +290,8 @@ export async function resolveNativeStoreInputs(env, root) {
   );
   const sessions = [];
   const ids = new Set();
+  // Each fixture turn has six journal events and five projected rows after its two deltas merge.
+  const tailTurns = NATIVE_CONVERSATION_LIMITS.projectionRows / 5;
   for (const [index, entry] of (Array.isArray(fixture?.sessionsA)
     ? fixture.sessionsA
     : []
@@ -332,7 +335,8 @@ export async function resolveNativeStoreInputs(env, root) {
       assert.equal(logical.length, 220);
       assert.equal(logical[0].text, `${entry.prefix}_USER_0`);
       assert.equal(logical.at(-1).text, `${entry.prefix}_ASSISTANT_109_complete_fragment`);
-      assert.equal(logical.slice(-200)[0].text, `${entry.prefix}_USER_10`);
+      const tail = logical.slice(-2 * tailTurns);
+      assert.equal(tail[0].text, `${entry.prefix}_USER_${110 - tailTurns}`);
       sessions.push({
         id: entry.id,
         nodeId: 'local',
@@ -341,9 +345,12 @@ export async function resolveNativeStoreInputs(env, root) {
         cursor: 660,
         journal,
         sha256: entry.sha256,
-        storedId: storageId(entry.id),
-        first: `${entry.prefix}_USER_10`,
-        last: `${entry.prefix}_ASSISTANT_109_complete_fragment`,
+        storedId: nativeConversationStorageId({
+          sessionId: entry.id,
+          executionNodeId: entry.nodeId,
+        }),
+        historyBefore: entry.cursor - 6 * tailTurns,
+        tail,
         route: `${scheme}:///native?sessionId=${entry.id}&executionNodeId=local`,
       });
     } catch {
