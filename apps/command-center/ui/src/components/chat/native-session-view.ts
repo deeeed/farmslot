@@ -341,6 +341,7 @@ export class NativeSessionView extends LitElement {
   };
   private approvalAcknowledgement?: {
     revision: number;
+    subscriptionId?: string;
     observed?: NativeSessionInfo;
     confirmed: NativeSessionInfo;
   };
@@ -621,7 +622,14 @@ export class NativeSessionView extends LitElement {
       if (!this.isConnected || revision !== this.revision) return;
       const before = this.timeline().length;
       const page = state.data;
-      const approval = this.currentApprovalAcknowledgement;
+      // An initial snapshot on a replacement subscription reflects the host at subscribe
+      // time. A cursor or an observer rebind alone does not identify a new subscription.
+      const proposed = this.currentApprovalAcknowledgement;
+      const resubscribed =
+        state.status === 'ready' &&
+        state.subscriptionId &&
+        state.subscriptionId !== proposed?.subscriptionId;
+      const approval = resubscribed ? undefined : proposed;
       if (page && approval && page.session === approval.observed) {
         this.session = approval.confirmed;
         this.historyObservation = { ...state, data: { ...page, session: approval.confirmed } };
@@ -1572,6 +1580,7 @@ ${JSON.stringify(
     this.busy = true;
     this.error = '';
     const revision = this.revision;
+    const subscriptionId = this.historyObservation.subscriptionId;
     try {
       const result = await this.api.request<{ session: NativeSessionInfo }>(
         Methods.NATIVE_SESSION_SET_APPROVAL_MODE,
@@ -1596,6 +1605,7 @@ ${JSON.stringify(
         return;
 
       const currentHistory = this.historyCurrent && history;
+      const currentSubscriptionId = this.historyObservation.subscriptionId;
       if (
         currentHistory &&
         current &&
@@ -1606,9 +1616,14 @@ ${JSON.stringify(
       if (
         !currentHistory ||
         current?.state !== 'idle' ||
+        currentSubscriptionId !== subscriptionId ||
         (current !== session && current.approvalModePending !== approvalMode)
       ) {
-        this.approvalAcknowledgement = { revision, confirmed };
+        this.approvalAcknowledgement = {
+          revision,
+          subscriptionId: currentSubscriptionId ?? subscriptionId,
+          confirmed,
+        };
         return;
       }
 
@@ -1620,6 +1635,7 @@ ${JSON.stringify(
       };
       this.approvalAcknowledgement = {
         revision,
+        subscriptionId,
         observed: current,
         confirmed: updated,
       };
@@ -1665,18 +1681,16 @@ ${JSON.stringify(
           <option value="bypass">Bypass / yolo</option>
         </choice-picker></label
       >
-      ${this.currentApprovalAcknowledgement
-        ? html`<span class="meta">Waiting for approval policy history.</span>`
-        : session && pending
-          ? html`<span class="meta">Approval change unconfirmed. Retry before sending.</span>
-              <button
-                data-testid="native-approval-retry"
-                ?disabled=${!this.canChangeApprovalMode}
-                @click=${() => void this.setApprovalMode(pending)}
-              >
-                Retry approval change
-              </button>`
-          : nothing}
+      ${session && pending && !this.currentApprovalAcknowledgement
+        ? html`<span class="meta">Approval change unconfirmed. Retry before sending.</span>
+            <button
+              data-testid="native-approval-retry"
+              ?disabled=${!this.canChangeApprovalMode}
+              @click=${() => void this.setApprovalMode(pending)}
+            >
+              Retry approval change
+            </button>`
+        : nothing}
       ${session && !session.capabilities.approvals
         ? html`<span class="meta">This runner's native tools do not request approval.</span>`
         : nothing}`;
@@ -2203,7 +2217,9 @@ ${JSON.stringify(
         session,
         connected: this.connected,
         caughtUp: this.caughtUp,
-        refreshingHistory: isSupersededRead(this.historyObservation.error),
+        refreshingHistory:
+          isSupersededRead(this.historyObservation.error) ||
+          Boolean(this.currentApprovalAcknowledgement),
         work: this.work(),
         busy: this.busy,
         workspace: this.workspace,

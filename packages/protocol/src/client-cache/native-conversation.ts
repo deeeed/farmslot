@@ -33,6 +33,8 @@ export interface NativeConversationSnapshot extends NativeConversationReset {
   retainedBytes: number;
 }
 export interface NativeConversationState extends ResourceQueryState<NativeConversationSnapshot> {
+  /** The attached subscription. It changes on a fresh subscribe even at the same cursor. */
+  subscriptionId?: string;
   history?: { after: number; loading: boolean; page?: NativeSessionReadResult; error?: string };
 }
 export interface NativeConversationTransport {
@@ -278,7 +280,7 @@ export function createNativeConversationCache(
     entry.opening = false;
     for (const cancel of entry.paints) cancel();
     entry.paints.clear();
-    const { conversation: _authority, ...held } = entry.state;
+    const { conversation: _authority, subscriptionId: _subscription, ...held } = entry.state;
     entry.state = { ...held, status: held.data ? 'stale' : held.status };
     notify(entry);
     const detachedEpoch = epoch;
@@ -355,6 +357,7 @@ export function createNativeConversationCache(
       history,
       observedAt: Date.now(),
       conversation: data.streamCursor,
+      subscriptionId: entry.subscriptionId,
     };
     if (envelope) options.onEnvelope?.(envelope);
     notify(entry);

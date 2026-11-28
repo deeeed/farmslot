@@ -944,6 +944,7 @@ function approvalComposer(initialMode: NativeApprovalMode) {
   let state: NativeConversationState = {
     status: 'ready',
     conversation: streamCursor,
+    subscriptionId: 'original-subscription',
     data: {
       ...snapshot,
       historyBefore: 0,
@@ -967,9 +968,12 @@ function approvalComposer(initialMode: NativeApprovalMode) {
     dismissHistory: () => undefined,
     retry: () => undefined,
   };
-  const publish = (session: NativeSessionReadResult['session']) => {
+  const publish = (
+    session: NativeSessionReadResult['session'],
+    subscriptionId = state.subscriptionId,
+  ) => {
     assert(state.data);
-    state = { ...state, data: { ...state.data, session } };
+    state = { ...state, subscriptionId, data: { ...state.data, session } };
     changed?.(state);
   };
   let request:
@@ -1141,6 +1145,52 @@ test('a delayed approval confirmation cannot expose Send under an older policy',
     assert.equal(visiblePolicy(), 'bypass');
     assert.equal(sendDisabled(), false);
     assert.equal(pickerDisabled(), false);
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('fresh history restores the composer when it skips an acknowledged approval mode', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await changing;
+    assert.equal(sendDisabled(), false);
+
+    // An older frame on the original stream cannot supersede the acknowledgement.
+    proof.publish({ ...bypass });
+    assert.equal(sendDisabled(), true);
+
+    // Rebinding an observer does not replace the cache's active subscription.
+    proof.observe({
+      status: 'loading',
+      data: undefined,
+      conversation: undefined,
+      subscriptionId: undefined,
+    });
+    proof.publish({ ...bypass });
+    assert.equal(sendDisabled(), true);
+
+    // The cache removes conversation authority before reattaching. The new subscription
+    // can replay the latest policy in the same generation with the same event cursor.
+    proof.observe({ status: 'stale', conversation: undefined, subscriptionId: undefined });
+    assert.equal(sendDisabled(), true);
+    proof.publish({ ...bypass }, 'fresh-subscription');
+    assert.equal(proof.composerDisabled(), false, 'fresh history restores the composer');
+    assert.equal(sendDisabled(), false, 'Send uses the superseding policy');
+    assert.equal(Reflect.get(proof.view, 'session').approvalMode, 'bypass');
+
+    const next = proof.change('ask');
+    assert.equal(proof.requestedMode(), 'ask', 'fresh history unlocks approval changes');
+    proof.acknowledge(ask);
+    await next;
   } finally {
     proof.disconnect();
   }
