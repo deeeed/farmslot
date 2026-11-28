@@ -490,11 +490,28 @@ export class GatewayNativeObservations {
       this.localClient,
       ownerId,
       (receipt) => {
+        if (this.local !== local) return;
         const prev = this.localReceipt
           ? { receipt: this.localReceipt, sessionRevision: this.localSessionRevision }
           : undefined;
         this.localReceipt = receipt;
         this.localSessionRevision = this.nextSessionRevision(prev, receipt);
+        if (
+          receipt.ready &&
+          this.localConfig.desired?.kind === 'valid' &&
+          !this.localConfig.configuring &&
+          !this.localConfig.errorIsPoolResolution &&
+          (this.localConfig.committedEpoch !== this.localConfig.epoch ||
+            this.localConfig.committedDigest !== this.localConfig.desired.digest ||
+            Boolean(this.localConfig.error)) &&
+          local.hasExecutableConfigSample(this.localConfig.desired.digest)
+        ) {
+          this.localConfig.committedEpoch = this.localConfig.epoch;
+          this.localConfig.committedDigest = this.localConfig.desired.digest;
+          this.localConfig.error = undefined;
+          this.localConfig.errorIsPoolResolution = false;
+          this.localConfig.heldProfileNoticeEpoch = undefined;
+        }
         this.publishReceiptFacets(
           receipt.nodeId,
           receipt.ownerId,
@@ -518,7 +535,13 @@ export class GatewayNativeObservations {
     );
     this.local = local;
     await local.start();
-    if (this.local === local && this.localConfig.epoch === epoch && desired.kind === 'valid') {
+    if (
+      this.local === local &&
+      this.localConfig.epoch === epoch &&
+      desired.kind === 'valid' &&
+      (this.localConfig.committedEpoch !== epoch ||
+        this.localConfig.committedDigest !== desired.digest)
+    ) {
       this.localConfig.committedEpoch = epoch;
       this.localConfig.committedDigest = desired.digest;
       this.localConfig.error = undefined;
@@ -1077,9 +1100,10 @@ export class GatewayNativeObservations {
 
   /**
    * Fence a marked read against receipt changes for its own facet:
-   * - `native-session` reads survive profile-only advances (`changed: ['profiles']`) on the same
-   *   ready incarnation while still rejecting on any real session change, unavailability, or
-   *   incarnation replacement.
+   * - Local `native-session` reads survive profile-only advances (`changed: ['profiles']`) on the
+   *   same ready incarnation while still rejecting on any real session change, unavailability, or
+   *   incarnation replacement. Remote reads retain the existing full-receipt envelope check
+   *   without widening the remote wire contract.
    * - `profiles` reads check the full source receipt.
    */
   private assertReceiptFacetCurrent(
@@ -1089,7 +1113,7 @@ export class GatewayNativeObservations {
     beforeSessionRevision: number,
     after: NativeSourceReceipt,
   ): void {
-    if (interest.key.family === 'native-session') {
+    if (nodeId === 'local' && interest.key.family === 'native-session') {
       if (!before.ready || !after.ready || before.incarnation !== after.incarnation) {
         assertNativeSourceCurrent(before, after, 'gateway-read');
         return;
