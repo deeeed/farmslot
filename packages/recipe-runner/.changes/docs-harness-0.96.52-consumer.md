@@ -1,0 +1,1 @@
+- mm-harness 0.96.52 uses the existing recipe-runner 0.52.5 cohort. Updated Core, Mobile and Extension runner shims skip executable paths that point back to the running shim, including symlinks, and continue through the configured runner order.
