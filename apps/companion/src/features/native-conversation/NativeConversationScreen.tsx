@@ -235,6 +235,12 @@ export function NativeConversationScreen({
   );
   const jumpLabel = selected ? nativeFollowLabel(follow) : undefined;
   const [showUnavailable, setShowUnavailable] = useState(false);
+  const readOnlyNotice =
+    !vm.writable && vm.connected ? (
+      <Text testID="companion-native-read-only" style={styles.muted}>
+        Read-only: no live input owner
+      </Text>
+    ) : null;
   return (
     <KeyboardAvoidingView
       testID="companion-screen-native"
@@ -429,39 +435,11 @@ export function NativeConversationScreen({
             contentContainerStyle={styles.list}
             keyboardShouldPersistTaps="handled"
             ListHeaderComponent={
-              vm.session?.profileId || vm.resume.available ? (
+              vm.session?.profileId ? (
                 <View style={styles.listHeader}>
-                  {vm.session?.profileId ? (
-                    <Text testID="companion-native-session-profile" style={styles.muted}>
-                      Configuration: {vm.session.profileId}
-                    </Text>
-                  ) : null}
-                  {vm.resume.available ? (
-                    <>
-                      <NativeProfilePicker
-                        viewModel={vm.resume.profiles}
-                        actions={actions.resume.profiles}
-                        disabled={vm.resume.busy}
-                        locked
-                      />
-                      <Pressable
-                        testID="companion-native-resume"
-                        accessibilityRole="button"
-                        style={styles.button}
-                        accessibilityState={{ disabled: !vm.resume.ready }}
-                        disabled={!vm.resume.ready}
-                        onPress={() => {
-                          void actions.resume.resume().then((session) => {
-                            if (session) onSelect(session);
-                          });
-                        }}
-                      >
-                        <Text style={styles.buttonText}>
-                          {vm.resume.busy ? 'Resuming…' : 'Resume conversation'}
-                        </Text>
-                      </Pressable>
-                    </>
-                  ) : null}
+                  <Text testID="companion-native-session-profile" style={styles.muted}>
+                    Configuration: {vm.session.profileId}
+                  </Text>
                 </View>
               ) : null
             }
@@ -509,14 +487,35 @@ export function NativeConversationScreen({
           </Pressable>
         ) : null}
       </View>
-      {selected ? (
-        <View style={styles.composer}>
-          {/* Offline, the heading already says so. */}
-          {!vm.writable && vm.connected ? (
-            <Text testID="companion-native-read-only" style={styles.muted}>
-              Read-only: no live input owner
+      {selected && vm.resume.available ? (
+        <View testID="companion-native-resume-footer" style={styles.composer}>
+          {readOnlyNotice}
+          <NativeProfilePicker
+            viewModel={vm.resume.profiles}
+            actions={actions.resume.profiles}
+            disabled={vm.resume.busy}
+            locked
+          />
+          <Pressable
+            testID="companion-native-resume"
+            accessibilityRole="button"
+            style={styles.button}
+            accessibilityState={{ disabled: !vm.resume.ready }}
+            disabled={!vm.resume.ready}
+            onPress={() => {
+              void actions.resume.resume().then((session) => {
+                if (session) onSelect(session);
+              });
+            }}
+          >
+            <Text style={styles.buttonText}>
+              {vm.resume.busy ? 'Resuming…' : 'Resume conversation'}
             </Text>
-          ) : null}
+          </Pressable>
+        </View>
+      ) : selected ? (
+        <View style={styles.composer}>
+          {readOnlyNotice}
           <TextInput
             testID="companion-native-draft"
             accessibilityLabel="Message to agent"

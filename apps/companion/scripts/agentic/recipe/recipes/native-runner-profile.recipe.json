@@ -114,9 +114,10 @@
       "resume-ready": {
         "action": "ui.wait_for",
         "test_id": "companion-native-resume",
+        "expected": "visible",
         "timeout_ms": 30000,
         "intent": "The stopped conversation offers continuation through its saved runner session.",
-        "next": "resume-visible"
+        "next": "resume"
       },
       "resume": {
         "action": "ui.press",
@@ -232,12 +233,6 @@
         "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-create",
         "intent": "Reach the start action for the selected configuration and model.",
         "next": "create"
-      },
-      "resume-visible": {
-        "action": "command",
-        "cmd": "node scripts/agentic/native-profile-reveal.mjs companion-native-resume",
-        "intent": "Reach the saved conversation continuation action above its history.",
-        "next": "resume"
       }
     }
   }
