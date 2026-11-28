@@ -384,6 +384,8 @@ const SHARED_STATE_READ_ONLY = {
   'src/methods/run/blocked-worker-resume.test.ts':
     'writes only the isolated per-file fleet status supplied by the test runner',
   'src/core/cleanup-scope.test.ts': 'sets a private mkdtemp status path before state imports',
+  'src/fleet/file-watcher.test.ts':
+    'redirects all farm paths and status to a private mkdtemp root before state imports',
   'src/fleet/stale-publication.test.ts':
     'writes only the private status path supplied per file by the runner',
   'src/fleet/status-bindings.test.ts': 'uses a private mkdtemp farm root and status path',
