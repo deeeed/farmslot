@@ -11,6 +11,7 @@ export * from './held-data.js';
 export * from './keys.js';
 export * from './native-conversation.js';
 export * from './native-history.js';
+export * from './native-profile-read-issue.js';
 export * from './network-cost.js';
 export * from './prefetch.js';
 export { gitSourceAlias, readGitSource, readStoredResource } from './read-stored.js';

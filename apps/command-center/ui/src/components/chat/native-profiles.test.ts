@@ -1,13 +1,30 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
-import type { NativeProfileInfo } from '@farmslot/protocol';
-import type { ResourceQueryState } from '@farmslot/protocol/client-cache';
+import {
+  Methods,
+  type NativeProfileInfo,
+  type NativeProfileStatusResult,
+} from '@farmslot/protocol';
+import type {
+  ResourceQuery,
+  ResourceQueryError,
+  ResourceQueryState,
+} from '@farmslot/protocol/client-cache';
 
 import type { NativeProfileSelection } from './native-profiles.js';
 
 type ListState = ResourceQueryState<{ profiles: NativeProfileInfo[] }>;
 let listChanged: ((state: ListState) => void) | undefined;
+type StatusState = ResourceQueryState<NativeProfileStatusResult>;
+let statusChanged: ((state: StatusState) => void) | undefined;
+const work: NativeProfileInfo = {
+  id: 'work',
+  runner: 'claude',
+  directory: '/profiles/work',
+  accountContextId: 'context',
+  state: 'active',
+};
 
 // The gateway client opens sockets; the picker's reads go through the resource cache.
 mock.module('../../gateway-client.js', { namedExports: { gateway: {} } });
@@ -20,8 +37,9 @@ mock.module('../../resource-cache.js', {
 });
 mock.module('./native-session-observation.js', {
   namedExports: {
-    observeNativeResource: (_query: unknown, changed: (state: ListState) => void) => {
-      listChanged = changed;
+    observeNativeResource: (query: ResourceQuery, changed: (state: ResourceQueryState) => void) => {
+      if (query.method === Methods.NATIVE_PROFILE_LIST) listChanged = changed;
+      else if (query.method === Methods.NATIVE_PROFILE_STATUS) statusChanged = changed;
       return () => undefined;
     },
   },
@@ -32,7 +50,8 @@ const { NativeProfiles } = await import('./native-profiles.js');
 /** The private state and methods the test drives. */
 interface Picker {
   selected: string;
-  error: string;
+  error: string | ResourceQueryError;
+  render: InstanceType<typeof NativeProfiles>['render'];
   refresh(): Promise<void>;
   add(): Promise<void>;
   removeProfile(profile: NativeProfileInfo): Promise<void>;
@@ -55,6 +74,8 @@ function picker() {
     profiles: [],
     selected: '',
     selectedContextId: '',
+    name: '',
+    directory: '',
     revision: 0,
     listCurrent: false,
   });
@@ -71,7 +92,7 @@ test('the node default account is ready while the profile list is loading or fai
     error: { code: 'unavailable', message: 'Native observation source unavailable' },
   });
   assert.equal(selections.at(-1)?.ready, true);
-  assert.equal(view.error, 'Native observation source unavailable');
+  assert.match(JSON.stringify(view.render()), /Native observation source unavailable/);
   // An add in progress keeps the default account unready through stale or failed reads.
   let refuse!: (error: Error) => void;
   Object.assign(view, {
@@ -88,13 +109,6 @@ test('the node default account is ready while the profile list is loading or fai
   await adding;
   assert.equal(selections.at(-1)?.ready, true);
   // Removing the selected profile releases the default only when the removal ends.
-  const work = {
-    id: 'work',
-    runner: 'claude',
-    directory: '/profiles/work',
-    accountContextId: 'context',
-    state: 'active' as const,
-  };
   let removed!: () => void;
   Object.assign(view, {
     selected: 'work',
@@ -113,4 +127,103 @@ test('the node default account is ready while the profile list is loading or fai
     ready: false,
     executionNodeId: 'mini',
   });
+});
+
+test('profile status renders the refresh, blocked reason, and successful read', async () => {
+  const { view, selections } = picker();
+  view.selected = work.id;
+  await view.refresh();
+  listChanged!({ status: 'ready', data: { profiles: [work] } });
+  for (const [message, title, role, retry] of [
+    [
+      'Native account profiles are refreshing for updated runner configuration. Retry shortly.',
+      'Refreshing runner configuration',
+      'status',
+      'Check again',
+    ],
+    [
+      'Native account profiles failed to resolve runner configuration: ambiguous pool settings for mini',
+      'Runner configuration blocked',
+      'alert',
+      'Retry after fixing configuration',
+    ],
+    [
+      'Execution node upgrade required for configured runner executables',
+      'Runner configuration blocked',
+      'alert',
+      'Retry after fixing configuration',
+    ],
+    [
+      'Native account profiles failed to sync runner configuration: Node RPC timed out',
+      'Could not sync runner configuration',
+      'status',
+      'Check again',
+    ],
+  ]) {
+    statusChanged!({
+      status: 'error',
+      error: {
+        code: message.startsWith('Execution node')
+          ? 'NATIVE_SOURCE_UNAVAILABLE'
+          : 'NATIVE_PROFILES_UNAVAILABLE',
+        message,
+      },
+    });
+    const markup = JSON.stringify(view.render());
+    assert.ok(markup.includes(title));
+    assert.ok(markup.includes(message));
+    assert.ok(markup.includes(retry));
+    assert.ok(markup.includes('"' + role + '"'));
+    assert.equal(selections.at(-1)?.ready, false);
+  }
+  const data: NativeProfileStatusResult = {
+    profile: work,
+    loginCommand: 'claude auth login',
+    account: {
+      runner: 'claude',
+      installed: true,
+      login: 'authenticated',
+      mode: 'subscription',
+      identityQuality: 'unavailable',
+      observedAt: '2026-11-28T00:00:00Z',
+    },
+  };
+  statusChanged!({ status: 'ready', data });
+  const currentMarkup = JSON.stringify(view.render());
+  assert.match(currentMarkup, /authenticated · subscription/);
+  assert.match(currentMarkup, /Use this command on the selected node to sign in/);
+  assert.equal(selections.at(-1)?.ready, true);
+  for (const status of ['stale', 'ready'] as const) {
+    listChanged!({ status, data: { profiles: [work] } });
+    const markup = JSON.stringify(view.render());
+    assert.match(markup, /last observed/);
+    assert.match(markup, /claude auth login/);
+    assert.equal(selections.at(-1)?.ready, false);
+  }
+  statusChanged!({
+    status: 'stale',
+    data,
+    error: {
+      code: 'NATIVE_PROFILES_UNAVAILABLE',
+      message:
+        'Native account profiles failed to resolve runner configuration: ambiguous pool settings',
+    },
+  });
+  const staleMarkup = JSON.stringify(view.render());
+  assert.match(staleMarkup, /authenticated · subscription/);
+  assert.match(staleMarkup, /last observed/);
+  assert.match(staleMarkup, /native-profile-login-command/);
+  assert.match(staleMarkup, /claude auth login/);
+  assert.match(staleMarkup, /Wait for a current profile status before signing in/);
+  assert.doesNotMatch(staleMarkup, /Use this command on the selected node to sign in/);
+  assert.equal(selections.at(-1)?.ready, false);
+  statusChanged!({ status: 'ready', data });
+  assert.doesNotMatch(JSON.stringify(view.render()), /last observed|native-profile-read-issue/);
+  assert.equal(selections.at(-1)?.ready, true);
+  listChanged!({
+    status: 'ready',
+    data: { profiles: [{ ...work, accountContextId: 'replacement' }] },
+  });
+  assert.doesNotMatch(JSON.stringify(view.render()), /claude auth login/);
+  assert.equal(selections.at(-1)?.ready, false);
 });
