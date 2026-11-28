@@ -5,7 +5,6 @@ import {
   type NativeProfileListResult,
   type NativeProfileReference,
   type NativeProfileStatusResult,
-  sameNativeProfileReference,
 } from '@farmslot/protocol';
 import { nativeObservationQuery } from '@farmslot/protocol/client-cache';
 
@@ -14,7 +13,6 @@ import {
   nativeProfileLoginReason,
   nativeProfileReference,
   nativeProfileSelectionReady,
-  validateNativeProfileStatus,
 } from '../../lib/native-profile';
 import {
   getResourceCache,
@@ -25,7 +23,7 @@ import { readErrorMessage } from '../../lib/resource-read-status';
 import { useConnectionStore } from '../../store/connection';
 import { heldConnectionCurrent } from '../../store/held-connection';
 
-import { readNativeProfileSelection } from './native-profile-queries';
+import { nativeProfileObservationView, readNativeProfileSelection } from './native-profile-queries';
 
 export function useNativeProfileSelection(input: {
   enabled: boolean;
@@ -90,27 +88,14 @@ export function useNativeProfileSelection(input: {
   const profiles = (listObservation.data?.profiles ?? []).filter(
     (profile) => profile.runner === input.runner,
   );
-  let observedError: string | undefined;
-  const registered = selected && profiles.find((profile) => profile.id === selected.profileId);
-  if (selected) {
-    if (
-      !registered ||
-      !sameNativeProfileReference(selected, nativeProfileReference(input.node, registered))
-    )
-      observedError =
-        'Profile registration changed or is missing. Select a profile explicitly to continue.';
-    else if (statusObservation.data) {
-      try {
-        validateNativeProfileStatus(selected, registered, statusObservation.data);
-      } catch (cause) {
-        observedError = cause instanceof Error ? cause.message : String(cause);
-      }
-    }
-  }
-  const currentSnapshot =
-    listObservation.status === 'ready' && (!selected || statusObservation.status === 'ready')
-      ? { profiles, status: statusObservation.data, error: observedError }
-      : undefined;
+  const observed = nativeProfileObservationView({
+    node: input.node,
+    supported: input.supported,
+    selected,
+    profiles,
+    list: listObservation,
+    status: statusObservation,
+  });
   const current = useCallback(
     (started: string, generation: number | undefined, version: number) =>
       keyRef.current === started &&
@@ -121,18 +106,12 @@ export function useNativeProfileSelection(input: {
       useConnectionStore.getState().authorityEpoch === authorityEpoch,
     [client, principalId, authorityEpoch],
   );
-  const reason = selected
-    ? !input.supported
-      ? 'Profiles are unavailable on this node.'
-      : !currentSnapshot
-        ? 'Checking profile login.'
-        : (currentSnapshot.error ?? nativeProfileLoginReason(currentSnapshot.status))
-    : undefined;
+  const { reason } = observed;
   const ready = nativeProfileSelectionReady({
     enabled: input.enabled,
     connected: connection === 'connected',
     selected: !!selected,
-    current: !!currentSnapshot,
+    current: observed.current,
     reason,
   });
   return {
@@ -140,17 +119,15 @@ export function useNativeProfileSelection(input: {
       visible: input.supported || !!selected,
       profiles,
       selected,
-      status: currentSnapshot?.status,
+      status: observed.status,
+      readIssue: observed.readIssue,
       error:
         refreshError ??
-        currentSnapshot?.error ??
+        observed.error ??
         readErrorMessage(listObservation, heldConnectionCurrent()) ??
         readErrorMessage(statusObservation, heldConnectionCurrent()),
       reason,
-      loading:
-        input.supported &&
-        (listObservation.status === 'loading' ||
-          (!!selected && statusObservation.status === 'loading')),
+      loading: observed.loading,
       ready,
     },
     actions: {

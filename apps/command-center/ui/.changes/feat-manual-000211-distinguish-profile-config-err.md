@@ -1,0 +1,1 @@
+- Distinguish runner configuration refreshes from blocked settings in the native account picker and show the gateway’s reason.

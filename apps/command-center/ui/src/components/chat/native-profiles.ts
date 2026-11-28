@@ -7,7 +7,11 @@ import {
   type NativeProfileListResult,
   type NativeProfileStatusResult,
 } from '@farmslot/protocol';
-import { nativeObservationQuery } from '@farmslot/protocol/client-cache';
+import {
+  nativeObservationQuery,
+  nativeProfileReadIssue,
+  type ResourceQueryError,
+} from '@farmslot/protocol/client-cache';
 
 import '../shared/choice-picker.js';
 
@@ -42,7 +46,7 @@ export class NativeProfiles extends LitElement {
   @state() private directory = '';
   @state() private busy = false;
   @state() private mutating = false;
-  @state() private error = '';
+  @state() private error: string | ResourceQueryError = '';
   private revision = 0;
   private ownerStop?: () => void;
   private listStop?: () => void;
@@ -194,7 +198,7 @@ export class NativeProfiles extends LitElement {
       this.profiles = (state.data?.profiles ?? []).filter(
         (profile) => !this.runnerOnly || profile.runner === this.runner,
       );
-      this.error = state.error?.message ?? '';
+      this.error = state.error ?? '';
       // The node default account needs no profile, so it never waits for this read, only for
       // an add or remove in progress.
       this.selection(
@@ -272,8 +276,7 @@ export class NativeProfiles extends LitElement {
       this.status = matches ? status : undefined;
       this.busy = state.status === 'loading';
       this.error =
-        state.error?.message ??
-        (status && !matches ? 'Profile changed. Select it explicitly again.' : '');
+        state.error ?? (status && !matches ? 'Profile changed. Select it explicitly again.' : '');
       this.selection(
         profile,
         this.listCurrent &&
@@ -349,6 +352,8 @@ export class NativeProfiles extends LitElement {
   render() {
     const profile = this.profiles.find((item) => item.id === this.selected);
     const disabled = this.disabled || this.busy;
+    const error = typeof this.error === 'string' ? this.error : this.error.message;
+    const issue = nativeProfileReadIssue(typeof this.error === 'string' ? undefined : this.error);
     return html` <label
         >Account profile<choice-picker
           overlay
@@ -379,7 +384,7 @@ export class NativeProfiles extends LitElement {
               ?disabled=${disabled}
               @click=${() => void this.retryProfiles()}
             >
-              Retry reading profiles
+              ${issue?.retryLabel ?? 'Retry reading profiles'}
             </button>`
           : nothing}
         ${profile
@@ -392,7 +397,18 @@ export class NativeProfiles extends LitElement {
             </button>`
           : nothing}
       </div>
-      ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
+      ${issue
+        ? html`<p
+            data-testid="native-profile-read-issue"
+            class=${issue.kind === 'blocked' ? 'error' : ''}
+            role=${issue.kind === 'blocked' ? 'alert' : 'status'}
+          >
+            <strong>${issue.title}</strong><br />
+            ${issue.detail}
+          </p>`
+        : error
+          ? html`<p class="error" role="alert">${error}</p>`
+          : nothing}
       ${profile && this.selectedContextId && profile.accountContextId !== this.selectedContextId
         ? html`<p>${profile.directory}</p>
             <button
@@ -403,7 +419,7 @@ export class NativeProfiles extends LitElement {
               Use updated profile
             </button>`
         : nothing}
-      ${this.status
+      ${this.status && !issue
         ? html`<p data-testid="native-profile-status">
               ${this.status.account.installed
                 ? `${this.status.account.login} · ${this.status.account.mode}`

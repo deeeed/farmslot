@@ -22,7 +22,7 @@ import {
   validateNativeProfileStatus,
 } from '../../lib/native-profile';
 
-import { readNativeProfileSelection } from './native-profile-queries';
+import { nativeProfileObservationView, readNativeProfileSelection } from './native-profile-queries';
 
 const profile: NativeProfileInfo = {
   id: 'personal',
@@ -357,4 +357,53 @@ test('the node default account is ready before the profile list is read; a selec
     }),
     false,
   );
+});
+
+test('observed configuration errors take precedence over pending profile login', () => {
+  const input = {
+    node: reference.executionNodeId,
+    supported: true,
+    selected: reference,
+    profiles: [profile],
+    list: { status: 'ready' as const, data: { profiles: [profile] } },
+  };
+  assert.equal(
+    nativeProfileObservationView({ ...input, status: { status: 'loading' } }).reason,
+    'Checking profile login.',
+  );
+  for (const [message, kind, title, retryLabel] of [
+    [
+      'Native account profiles are refreshing for updated runner configuration. Retry shortly.',
+      'refreshing',
+      'Refreshing runner configuration',
+      'Check again',
+    ],
+    [
+      'Native account profiles failed to resolve runner configuration: ambiguous pool settings for private-node',
+      'blocked',
+      'Runner configuration blocked',
+      'Retry after fixing configuration',
+    ],
+  ]) {
+    const observed = nativeProfileObservationView({
+      ...input,
+      list: { ...input.list, status: 'loading' },
+      status: {
+        status: 'stale',
+        data: status(),
+        error: { code: 'NATIVE_PROFILES_UNAVAILABLE', message },
+      },
+    });
+    assert.deepEqual(observed.readIssue, { kind, title, detail: message, retryLabel });
+    assert.equal(observed.reason, title);
+    assert.equal(observed.loading, false);
+    assert.equal(observed.current, false);
+    assert.equal(observed.status, undefined);
+  }
+  const data = status();
+  const observed = nativeProfileObservationView({ ...input, status: { status: 'ready', data } });
+  assert.equal(observed.status, data);
+  assert.equal(observed.current, true);
+  assert.equal(observed.reason, undefined);
+  assert.equal(observed.readIssue, undefined);
 });

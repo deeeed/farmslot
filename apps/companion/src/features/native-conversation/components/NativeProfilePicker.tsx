@@ -65,7 +65,17 @@ export function NativeProfilePicker({
           {vm.status.account.version ?? 'Version unavailable'}
         </Text>
       ) : null}
-      {vm.reason || vm.error ? (
+      {vm.readIssue ? (
+        <Text
+          testID="companion-native-profile-error"
+          accessibilityLiveRegion={vm.readIssue.kind === 'blocked' ? 'assertive' : 'polite'}
+          style={vm.readIssue.kind === 'blocked' ? styles.error : styles.muted}
+        >
+          {vm.readIssue.title}
+          {'\n'}
+          {vm.readIssue.detail}
+        </Text>
+      ) : vm.reason || vm.error ? (
         <Text testID="companion-native-profile-error" style={styles.error}>
           {vm.reason ?? vm.error}
         </Text>
@@ -84,7 +94,7 @@ export function NativeProfilePicker({
         Profiles select configuration directories. Signing in again in the same directory keeps
         saved conversations.
       </Text>
-      {vm.error ? (
+      {vm.readIssue || vm.error ? (
         <Pressable
           testID="companion-native-profile-refresh"
           accessibilityRole="button"
@@ -93,7 +103,8 @@ export function NativeProfilePicker({
           onPress={actions.refresh}
         >
           <Text style={styles.buttonText}>
-            {vm.loading ? 'Checking profiles…' : 'Retry reading profiles'}
+            {vm.readIssue?.retryLabel ??
+              (vm.loading ? 'Checking profiles…' : 'Retry reading profiles')}
           </Text>
         </Pressable>
       ) : null}
