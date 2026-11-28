@@ -21,10 +21,16 @@ mock.module('../core/config.js', {
     },
   },
 });
-mock.module('../core/index.js', { namedExports: { isLocal: () => false } });
-mock.module('../fleet/state.js', {
+const pool = { machine: 'node', slots: [{ id: 'slot', repo: '~/project' }] };
+const pools = [{ file: '/fixture/node.json', pool }];
+mock.module('../fleet/machine-pool-snapshot.js', {
   namedExports: {
-    loadPoolConfigs: async () => [{ machine: 'node', slots: [{ id: 'slot', repo: '~/project' }] }],
+    readMachinePoolSnapshot: () => ({
+      localMachines: [],
+      entriesByMachine: new Map([['node', pools]]),
+      resolvedByMachine: new Map([['node', { ok: true, pool }]]),
+      poolBySlot: new Map([['slot', pools]]),
+    }),
   },
 });
 mock.module('../fleet/node-rpc.js', {

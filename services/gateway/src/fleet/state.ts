@@ -80,6 +80,10 @@ import {
 import { publishWorkerResources } from '../resources/worker-changes.js';
 
 import { rememberPoolFile, resolveMachinePoolConfig } from './machine-pool.js';
+import {
+  invalidateMachinePoolSnapshot,
+  observeMachinePoolSnapshot,
+} from './machine-pool-snapshot.js';
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
 import { getActiveResources, getCachedSlotResources } from './resource-manager.js';
 
@@ -1065,17 +1069,19 @@ export function startFileWatcher() {
 
   // Watch pool config changes — hot-reload without gateway restart
   let poolDebounce: ReturnType<typeof setTimeout> | undefined;
-  const poolWatcher = watch(poolDirectory(), {
+  const watchedPoolDirectory = poolDirectory();
+  const poolWatcher = watch(watchedPoolDirectory, {
     persistent: true,
     ignoreInitial: true,
     depth: 0,
     ignored: (file) =>
-      file !== poolDirectory() &&
+      file !== watchedPoolDirectory &&
       (!file.endsWith('.json') || isIgnoredPoolFile(path.basename(file))),
   });
   const poolHandlers = createPoolWatcherHandlers({
-    directory: poolDirectory(),
+    directory: watchedPoolDirectory,
     onPoolFileChanged: (file) => {
+      invalidateMachinePoolSnapshot(watchedPoolDirectory);
       fileEdits.deliver(file, 'configuration', 'pool-capabilities-and-workers');
       clearTimeout(poolDebounce);
       poolDebounce = setTimeout(async () => {
@@ -1099,6 +1105,17 @@ export function startFileWatcher() {
     onNativePoolChanged: () => {
       nativeCatalogChanges.poolChanged();
     },
+  });
+  let stopPoolSnapshot: (() => void) | undefined;
+  poolWatcher.once('ready', () => {
+    stopPoolSnapshot = observeMachinePoolSnapshot(watchedPoolDirectory);
+  });
+  poolWatcher.on('error', (error) => {
+    stopPoolSnapshot?.();
+    console.error('[state] pool watcher failed:', error);
+  });
+  poolWatcher.on('unlinkDir', (file) => {
+    if (file === watchedPoolDirectory) invalidateMachinePoolSnapshot(watchedPoolDirectory);
   });
   poolWatcher.on('all', poolHandlers.onAll);
   poolWatcher.on('raw', poolHandlers.onRaw);
@@ -1278,6 +1295,7 @@ export function startFileWatcher() {
       clearTimeout(poolDebounce);
       poolHandlers.dispose();
       fileEdits.dispose();
+      stopPoolSnapshot?.();
       storageBindingHandlers.delete(refreshStorageBindings);
       volumesWatcher.close();
       await Promise.all([

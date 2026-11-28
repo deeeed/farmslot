@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 
 import {
   runnerModelCatalogResourceKey,
@@ -7,17 +7,15 @@ import {
   type RunnerVisibleModelsGetResult,
   type RunnerVisibleModelsSetResult,
 } from '@farmslot/protocol';
-import { machinePoolFileName } from '@farmslot/slot-config';
 
-import { loadMachinePool, loadSlotVars } from '../core/config.js';
+import { loadSlotVars } from '../core/config.js';
 import { execOnSlot, isDisconnectedRemote, isLocal } from '../core/exec.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import { withMachineEnv } from '../core/project-env.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
-import { poolConfigId, resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
+import { readMachinePoolSnapshot } from '../fleet/machine-pool-snapshot.js';
 import { usesNodeLink } from '../fleet/node-link-policy.js';
-import { loadPoolConfigs } from '../fleet/state.js';
 import { resolveRemoteFarmCommand } from '../node-support/remote-command.js';
 import { nativeCatalogChanges } from '../resources/native-catalog-changes.js';
 import { resourceRevisions } from '../resources/revisions.js';
@@ -49,9 +47,12 @@ async function selectRunnerModelCatalogSource(
 ): Promise<RunnerModelCatalogSource | undefined> {
   let source = getRunnerDefinition(runner).modelCatalog;
   if (source && 'command' in source && source.poolPathKey) {
-    const localPools = (await loadPoolConfigs()).filter((pool) => isLocal(pool.host, pool.machine));
-    for (const pool of resolveMachinePoolConfigs(localPools).values()) {
-      const configured = (await loadMachinePool(pool.machine))[source.poolPathKey]?.trim();
+    const snapshot = readMachinePoolSnapshot();
+    for (const machine of snapshot.localMachines) {
+      const resolved = snapshot.resolvedByMachine.get(machine);
+      if (!resolved) continue;
+      if (!resolved.ok) throw resolved.error;
+      const configured = resolved.pool[source.poolPathKey]?.trim();
       if (configured) {
         source = {
           ...source,
@@ -70,22 +71,11 @@ const NODE_MODEL_CATALOG_STARTUP_DELAY_MS = 15_000;
 
 /** Every pool machine, local or remote, lists through one of its slots' exec path. */
 export async function modelCatalogNodes(): Promise<ModelCatalogNode[]> {
-  const pools = await loadPoolConfigs();
-  const slots = new Map<string, string>();
-  // The canonical pool/<machine>.json supplies regular slots. Keep auxiliary
-  // capacity as fallback, even when there is no canonical machine-settings pool.
-  for (const pool of pools)
-    if (
-      pool.machine &&
-      pool.slots[0] &&
-      (!slots.has(pool.machine) ||
-        basename(poolConfigId(pool)) === machinePoolFileName(pool.machine))
-    )
-      slots.set(pool.machine, pool.slots[0].id);
-  return [...slots].map(([machine, slot]) => ({
+  const { firstSlotByMachine } = readMachinePoolSnapshot();
+  return [...firstSlotByMachine].map(([machine, slot]) => ({
     machine,
     list: async (source) => {
-      const vars = await loadSlotVars(slot);
+      const vars = await loadSlotVars(slot, readMachinePoolSnapshot().poolBySlot.get(slot) ?? []);
       if (isDisconnectedRemote(vars)) throw new Error('node is not connected');
       const binary = vars[source.slotPathKey]?.trim() || source.nodeCommand;
       let command =

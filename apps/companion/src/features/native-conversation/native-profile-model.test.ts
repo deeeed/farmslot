@@ -8,7 +8,9 @@ import {
   type NativeSessionInfo,
 } from '@farmslot/protocol';
 import {
+  createGatewayResourceCache,
   nativeObservationQuery,
+  type ResourceCacheTransport,
   type ResourceQuery,
   type ResourceQueryState,
 } from '@farmslot/protocol/client-cache';
@@ -22,7 +24,7 @@ import {
   validateNativeProfileStatus,
 } from '../../lib/native-profile';
 
-import { readNativeProfileSelection } from './native-profile-queries';
+import { nativeProfileObservationView, readNativeProfileSelection } from './native-profile-queries';
 
 const profile: NativeProfileInfo = {
   id: 'personal',
@@ -357,4 +359,138 @@ test('the node default account is ready before the profile list is read; a selec
     }),
     false,
   );
+});
+
+test('observed configuration errors take precedence over pending profile login', () => {
+  const input = {
+    node: reference.executionNodeId,
+    supported: true,
+    selected: reference,
+    profiles: [profile],
+    list: { status: 'ready' as const, data: { profiles: [profile] } },
+  };
+  assert.equal(
+    nativeProfileObservationView({ ...input, status: { status: 'loading' } }).reason,
+    'Checking profile login.',
+  );
+  for (const [message, kind, title, retryLabel] of [
+    [
+      'Native account profiles are refreshing for updated runner configuration. Retry shortly.',
+      'refreshing',
+      'Refreshing runner configuration',
+      'Check again',
+    ],
+    [
+      'Native account profiles failed to resolve runner configuration: ambiguous pool settings for private-node',
+      'blocked',
+      'Runner configuration blocked',
+      'Retry after fixing configuration',
+    ],
+    [
+      'Native account profiles failed to sync runner configuration: Node RPC timed out',
+      'retryable',
+      'Could not sync runner configuration',
+      'Check again',
+    ],
+  ]) {
+    const observed = nativeProfileObservationView({
+      ...input,
+      list: { ...input.list, status: 'loading' },
+      status: {
+        status: 'stale',
+        data: status(),
+        error: { code: 'NATIVE_PROFILES_UNAVAILABLE', message },
+      },
+    });
+    assert.deepEqual(observed.readIssue, { kind, title, detail: message, retryLabel });
+    assert.equal(observed.reason, title);
+    assert.equal(observed.loading, false);
+    assert.equal(observed.current, false);
+    assert.equal(observed.status, undefined);
+  }
+  const data = status();
+  const observed = nativeProfileObservationView({ ...input, status: { status: 'ready', data } });
+  assert.equal(observed.status, data);
+  assert.equal(observed.current, true);
+  assert.equal(observed.reason, undefined);
+  assert.equal(observed.readIssue, undefined);
+});
+
+test('the cold configuration blocker remains visible while the cache retries the same profile', async (t) => {
+  const error = Object.assign(
+    new Error(
+      'Native account profiles failed to resolve runner configuration: ambiguous pool settings',
+    ),
+    { code: 'NATIVE_PROFILES_UNAVAILABLE' },
+  );
+  let failRead!: (error: Error) => void;
+  let started!: () => void;
+  const transport: ResourceCacheTransport = {
+    getConnection: () => ({
+      connected: true,
+      id: 1,
+      authMode: 'none',
+      scope: { gatewayUrl: 'ws://127.0.0.1:8812' },
+      capabilities: {
+        httpBearerAuth: false,
+        voiceInstructionFormatting: false,
+        batchedContent: false,
+        resourceChanges: { version: 1, epoch: 'proof', versionLists: false, observedReads: 1 },
+      },
+    }),
+    onConnectionChange: () => () => undefined,
+    onResourceChanged: () => () => undefined,
+    resynchronize: () => undefined,
+    request: () =>
+      new Promise((_resolve, reject) => {
+        failRead = reject;
+        started();
+      }),
+  };
+  const cache = createGatewayResourceCache({ transport });
+  t.after(() => cache.dispose());
+  const query = nativeObservationQuery<NativeProfileStatusResult>(
+    Methods.NATIVE_PROFILE_STATUS,
+    { executionNodeId: reference.executionNodeId, profileId: reference.profileId },
+    'owner',
+  );
+  const view = (
+    previousStatusBlocker?: ReturnType<typeof nativeProfileObservationView>['statusBlocker'],
+  ) =>
+    nativeProfileObservationView({
+      node: reference.executionNodeId,
+      supported: true,
+      selected: reference,
+      profiles: [profile],
+      list: { status: 'ready', data: { profiles: [profile] } },
+      status: cache.read(query),
+      previousStatusBlocker,
+    });
+  const read = async () => {
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const settled = cache.retry(query);
+    await entered;
+    return { settled };
+  };
+  const firstRead = await read();
+  failRead(error);
+  await firstRead.settled;
+  const blocked = view();
+  assert.equal(blocked.statusBlocker?.detail, error.message);
+  assert.equal(blocked.reason, 'Runner configuration blocked');
+
+  const retry = await read();
+  const pending = cache.read(query);
+  assert.equal(pending.status, 'loading');
+  assert.equal(pending.error, undefined);
+  const retrying = view(blocked.statusBlocker);
+  assert.deepEqual(retrying.readIssue, blocked.readIssue);
+  assert.equal(retrying.reason, blocked.reason);
+  assert.equal(retrying.loading, false);
+  assert.equal(retrying.current, false);
+  failRead(error);
+  await retry.settled;
+  assert.deepEqual(view(retrying.statusBlocker).readIssue, blocked.readIssue);
 });

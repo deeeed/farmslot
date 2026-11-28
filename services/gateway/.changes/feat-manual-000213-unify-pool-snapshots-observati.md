@@ -1,0 +1,1 @@
+- Reuse an indexed pool snapshot for native and model lookups, initialize capable nodes at registration, and read Cursor identity through the node account observer.

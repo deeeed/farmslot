@@ -7,7 +7,11 @@ import {
   type NativeProfileListResult,
   type NativeProfileStatusResult,
 } from '@farmslot/protocol';
-import { nativeObservationQuery } from '@farmslot/protocol/client-cache';
+import {
+  nativeObservationQuery,
+  nativeProfileReadIssue,
+  type ResourceQueryError,
+} from '@farmslot/protocol/client-cache';
 
 import '../shared/choice-picker.js';
 
@@ -27,6 +31,20 @@ export interface NativeProfileSelection {
   executionNodeId: string;
 }
 
+function matchesActiveProfile(
+  status: NativeProfileStatusResult | undefined,
+  profile: NativeProfileInfo | undefined,
+): status is NativeProfileStatusResult {
+  return (
+    !!status &&
+    profile?.state === 'active' &&
+    status.profile.id === profile.id &&
+    status.profile.accountContextId === profile.accountContextId &&
+    status.profile.runner === profile.runner &&
+    status.profile.state === 'active'
+  );
+}
+
 @customElement('native-profiles')
 export class NativeProfiles extends LitElement {
   @property({ attribute: false }) api: NativeSessionApi = gateway;
@@ -38,11 +56,12 @@ export class NativeProfiles extends LitElement {
   @state() private profiles: NativeProfileInfo[] = [];
   @state() private selected = '';
   @state() private status?: NativeProfileStatusResult;
+  @state() private statusCurrent = false;
   @state() private name = '';
   @state() private directory = '';
   @state() private busy = false;
   @state() private mutating = false;
-  @state() private error = '';
+  @state() private error: string | ResourceQueryError = '';
   private revision = 0;
   private ownerStop?: () => void;
   private listStop?: () => void;
@@ -89,6 +108,23 @@ export class NativeProfiles extends LitElement {
       gap: 8px;
       align-items: center;
       flex-wrap: wrap;
+    }
+    .read-feedback {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 4px;
+      align-items: start;
+      block-size: 6rem;
+      margin-block: 8px;
+    }
+    .read-feedback button {
+      justify-self: start;
+    }
+    .read-feedback p {
+      align-self: stretch;
+      margin: 0;
+      overflow: auto;
+      overflow-wrap: anywhere;
     }
     .error {
       color: #ff9292;
@@ -176,6 +212,7 @@ export class NativeProfiles extends LitElement {
     const owner = getResourceNativeOwnerId();
     if (!owner) {
       this.profiles = [];
+      this.status = undefined;
       this.selection(undefined, false);
       return;
     }
@@ -189,18 +226,17 @@ export class NativeProfiles extends LitElement {
       if (node !== this.executionNodeId || !this.isConnected) return;
       this.revision++;
       this.statusStop?.();
-      this.status = undefined;
       this.listCurrent = state.status === 'ready';
       this.profiles = (state.data?.profiles ?? []).filter(
         (profile) => !this.runnerOnly || profile.runner === this.runner,
       );
-      this.error = state.error?.message ?? '';
+      const selectedProfile = this.profiles.find((profile) => profile.id === this.selected);
+      this.statusCurrent = false;
+      if (!matchesActiveProfile(this.status, selectedProfile)) this.status = undefined;
+      this.error = state.error ?? '';
       // The node default account needs no profile, so it never waits for this read, only for
       // an add or remove in progress.
-      this.selection(
-        this.profiles.find((profile) => profile.id === this.selected),
-        !this.selected && !this.mutating,
-      );
+      this.selection(selectedProfile, !this.selected && !this.mutating);
       this.busy = state.status === 'loading';
       if (this.listCurrent) void this.choose(this.selected, this.selectedContextId);
     });
@@ -225,9 +261,10 @@ export class NativeProfiles extends LitElement {
   private async choose(id: string, expectedContextId = '') {
     const revision = ++this.revision;
     this.selected = id;
-    this.status = undefined;
+    this.statusCurrent = false;
     this.error = '';
     const profile = this.profiles.find((item) => item.id === id);
+    if (!matchesActiveProfile(this.status, profile)) this.status = undefined;
     this.selection(profile, !id && !this.mutating);
     if (!profile) {
       if (id)
@@ -237,6 +274,7 @@ export class NativeProfiles extends LitElement {
       return;
     }
     if (expectedContextId && profile.accountContextId !== expectedContextId) {
+      this.status = undefined;
       this.error =
         'Profile registration changed. Review its directory before using the updated profile.';
       this.busy = false;
@@ -263,22 +301,17 @@ export class NativeProfiles extends LitElement {
     this.statusStop = observeNativeResource(query, (state) => {
       if (!this.isConnected || revision !== this.revision) return;
       const status = state.data;
-      const matches =
-        status &&
-        status.profile.id === profile.id &&
-        status.profile.accountContextId === profile.accountContextId &&
-        status.profile.runner === profile.runner &&
-        status.profile.state === 'active';
+      const matches = matchesActiveProfile(status, profile);
       this.status = matches ? status : undefined;
+      this.statusCurrent = state.status === 'ready';
       this.busy = state.status === 'loading';
       this.error =
-        state.error?.message ??
-        (status && !matches ? 'Profile changed. Select it explicitly again.' : '');
+        state.error ?? (status && !matches ? 'Profile changed. Select it explicitly again.' : '');
       this.selection(
         profile,
         this.listCurrent &&
-          state.status === 'ready' &&
-          !!matches &&
+          this.statusCurrent &&
+          matches &&
           status.account.login === 'authenticated',
       );
     });
@@ -349,6 +382,8 @@ export class NativeProfiles extends LitElement {
   render() {
     const profile = this.profiles.find((item) => item.id === this.selected);
     const disabled = this.disabled || this.busy;
+    const error = typeof this.error === 'string' ? this.error : this.error.message;
+    const issue = nativeProfileReadIssue(typeof this.error === 'string' ? undefined : this.error);
     return html` <label
         >Account profile<choice-picker
           overlay
@@ -373,15 +408,6 @@ export class NativeProfiles extends LitElement {
         </choice-picker></label
       >
       <div class="row">
-        ${this.error
-          ? html`<button
-              data-testid="native-profile-refresh"
-              ?disabled=${disabled}
-              @click=${() => void this.retryProfiles()}
-            >
-              Retry reading profiles
-            </button>`
-          : nothing}
         ${profile
           ? html`<button
               data-testid="native-profile-remove"
@@ -392,7 +418,30 @@ export class NativeProfiles extends LitElement {
             </button>`
           : nothing}
       </div>
-      ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
+      <div class="read-feedback">
+        ${this.error
+          ? html`<button
+              data-testid="native-profile-refresh"
+              ?disabled=${disabled}
+              @click=${() => void this.retryProfiles()}
+            >
+              ${issue?.retryLabel ?? 'Retry reading profiles'}
+            </button>`
+          : nothing}
+        ${issue
+          ? html`<p
+              data-testid="native-profile-read-issue"
+              class=${issue.kind === 'blocked' ? 'error' : ''}
+              role=${issue.kind === 'blocked' ? 'alert' : 'status'}
+              tabindex="0"
+            >
+              <strong>${issue.title}</strong><br />
+              ${issue.detail}
+            </p>`
+          : error
+            ? html`<p class="error" role="alert" tabindex="0">${error}</p>`
+            : nothing}
+      </div>
       ${profile && this.selectedContextId && profile.accountContextId !== this.selectedContextId
         ? html`<p>${profile.directory}</p>
             <button
@@ -404,19 +453,24 @@ export class NativeProfiles extends LitElement {
             </button>`
         : nothing}
       ${this.status
-        ? html`<p data-testid="native-profile-status">
+        ? html`<p data-testid="native-profile-status" data-stale=${String(!this.statusCurrent)}>
               ${this.status.account.installed
                 ? `${this.status.account.login} · ${this.status.account.mode}`
                 : 'Native runner is not installed'}${this.status.account.identity?.email
                 ? ` · ${this.status.account.identity.email}`
-                : ''}
+                : ''}${this.statusCurrent ? '' : ' · last observed'}
             </p>
             <details>
-              <summary>Native login on ${this.executionNodeId}</summary>
+              <summary>
+                ${this.statusCurrent ? 'Native login' : 'Last observed login command'} on
+                ${this.executionNodeId}
+              </summary>
               <p>
-                Use this command on the selected node to sign in. Switching accounts in the same
-                directory keeps this profile and its saved conversations. Refresh to check the
-                current login.
+                ${this.statusCurrent
+                  ? 'Use this command on the selected node to sign in.'
+                  : 'Wait for a current profile status before signing in.'}
+                Switching accounts in the same directory keeps this profile and its saved
+                conversations. Refresh to check the current login.
               </p>
               <pre data-testid="native-profile-login-command">${this.status.loginCommand}</pre>
             </details>`

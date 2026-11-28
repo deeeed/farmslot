@@ -54,7 +54,9 @@ export class NativeNodeSessions {
         supportsProfiles: true,
         supportsHostRefresh: true,
         supportsSessionArchive: true,
-        ...{ supportsObservations: true, supportsObservationConfiguration: true },
+        supportsObservations: true,
+        supportsObservationConfiguration: true,
+        supportsInitialObservationConfiguration: true,
       };
     }
     // Only fenced idle stops, few enough to finish within the gateway's launch timeout.
@@ -159,21 +161,27 @@ export class NativeNodeSessions {
     return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : undefined;
   }
 
-  private normalizeTrustedExecutables(value: unknown): Record<string, string> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-    const normalized: Record<string, string> = {};
-    for (const [runner, executable] of Object.entries(value as Record<string, unknown>)) {
-      if (typeof executable === 'string' && executable.trim()) {
-        normalized[runner] = executable.trim();
-      }
-    }
-    return normalized;
+  private setTrustedExecutables(value: unknown): void {
+    const entries =
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.entries(value as Record<string, unknown>)
+        : [];
+    this.trustedExecutables = Object.fromEntries(
+      entries.flatMap(([runner, executable]) =>
+        typeof executable === 'string' && executable.trim() ? [[runner, executable.trim()]] : [],
+      ),
+    );
+    this.trustedExecutablesDigest = canonicalTrustedExecutablesDigest(this.trustedExecutables);
   }
 
   /** Called once by the daemon transport owner, never by an RPC or panel. */
-  async startObservation(publish: (receipt: NativeSourceReceipt) => void): Promise<void> {
+  async startObservation(
+    publish: (receipt: NativeSourceReceipt) => void,
+    initialExecutables?: Record<string, string>,
+  ): Promise<void> {
     if (!this.declaration) return;
     this.observation?.stop();
+    if (initialExecutables !== undefined) this.setTrustedExecutables(initialExecutables);
     this.observation = new NativeHostObservation(
       this.client,
       this.declaration.ownerPrincipalId,
@@ -204,10 +212,8 @@ export class NativeNodeSessions {
       throw Object.assign(new Error('Native source unsupported'), {
         code: 'NATIVE_SOURCE_UNAVAILABLE',
       });
-    const next = this.normalizeTrustedExecutables(value.executables);
-    const nextDigest = canonicalTrustedExecutablesDigest(next);
-    this.trustedExecutables = next;
-    this.trustedExecutablesDigest = nextDigest;
+    this.setTrustedExecutables(value.executables);
+    const nextDigest = this.trustedExecutablesDigest;
     if (!this.observation.current().ready) {
       await this.observation.setExecutableConfig(nextDigest);
       await this.observation.retry();

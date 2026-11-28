@@ -1,0 +1,1 @@
+- Apply trusted executables at registration and serve runner account observations in the operator login environment.
