@@ -70,6 +70,7 @@ const profile: NativeProfileInfo = {
 const profileSelection: ScreenProps['viewModel']['resume']['profiles'] = {
   visible: false,
   loading: false,
+  readIssue: undefined,
   error: '',
   reason: undefined,
   status: undefined,
