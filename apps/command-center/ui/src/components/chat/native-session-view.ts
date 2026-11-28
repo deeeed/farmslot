@@ -136,6 +136,15 @@ type LocalCommand = {
   text: string;
 };
 
+interface ApprovalAcknowledgement {
+  revision: number;
+  subscriptionId?: string;
+  observed?: NativeSessionInfo;
+  confirmed: NativeSessionInfo;
+  refreshRequested?: boolean;
+  checkedSubscriptionId?: string;
+}
+
 /** Static preview reads that dev harnesses inject in place of the shared resource cache. */
 export interface NativeSessionFixture {
   catalog(): Promise<NativeSessionCatalogResult>;
@@ -339,13 +348,7 @@ export class NativeSessionView extends LitElement {
   @state() private historyObservation: NativeConversationState = {
     status: 'loading',
   };
-  private approvalAcknowledgement?: {
-    revision: number;
-    subscriptionId?: string;
-    observed?: NativeSessionInfo;
-    confirmed: NativeSessionInfo;
-    refreshRequested?: boolean;
-  };
+  private approvalAcknowledgement?: ApprovalAcknowledgement;
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
   /** Expanded message/command and tool keys, shared with the URL display-choice owner. */
@@ -623,15 +626,13 @@ export class NativeSessionView extends LitElement {
       if (!this.isConnected || revision !== this.revision) return;
       const before = this.timeline().length;
       const page = state.data;
-      // An initial snapshot on a replacement subscription reflects the host at subscribe
-      // time. A cursor or an observer rebind alone does not identify a new subscription.
-      const proposed = this.currentApprovalAcknowledgement;
-      const resubscribed =
-        state.status === 'ready' &&
-        state.subscriptionId &&
-        state.subscriptionId !== proposed?.subscriptionId;
-      const approval = resubscribed ? undefined : proposed;
-      if (page && approval && page.session === approval.observed) {
+      const approval = this.currentApprovalAcknowledgement;
+      if (
+        page &&
+        approval &&
+        state.subscriptionId === approval.subscriptionId &&
+        page.session === approval.observed
+      ) {
         this.session = approval.confirmed;
         this.historyObservation = { ...state, data: { ...page, session: approval.confirmed } };
       } else {
@@ -685,25 +686,75 @@ export class NativeSessionView extends LitElement {
 
   private refreshConflictingApprovalHistory() {
     const approval = this.currentApprovalAcknowledgement;
+    const session = this.session;
+    const subscriptionId = this.historyObservation.subscriptionId;
     if (
       !approval ||
-      approval.refreshRequested ||
+      !session ||
+      !subscriptionId ||
       !this.historyCurrent ||
-      this.session === approval.confirmed
+      session === approval.confirmed
     )
       return;
+    const target = this.historyTarget;
+    const conversations = this.fixture?.conversations ?? getResourceCache()?.conversations;
+    if (!target || !conversations) return;
 
+    // Another viewer can keep the original gateway journal open. A replacement viewer
+    // that disagrees with the acknowledgement needs independent host verification.
+    if (subscriptionId !== approval.subscriptionId) {
+      if (session.approvalModePending || approval.checkedSubscriptionId === subscriptionId) return;
+      approval.checkedSubscriptionId = subscriptionId;
+      void this.reconcileApprovalHistory(approval, subscriptionId, session, conversations, target);
+      return;
+    }
+    if (approval.refreshRequested) return;
     approval.refreshRequested = true;
-    // Retry notifies observers while detaching. Leave the current cache notification first,
-    // then ask for a snapshot that is ordered after the acknowledgement.
+    // Retry notifies observers while detaching. Let the current notification finish first.
     queueMicrotask(() => {
       if (!this.isConnected || this.currentApprovalAcknowledgement !== approval) return;
-      const target = this.historyTarget;
-      const conversations = this.fixture?.conversations ?? getResourceCache()?.conversations;
-      if (target && conversations && this.historyCurrent && this.session !== approval.confirmed)
+      if (
+        this.historyCurrent &&
+        this.historyObservation.subscriptionId === subscriptionId &&
+        this.session !== approval.confirmed
+      )
         conversations.retry(target);
       else approval.refreshRequested = false;
     });
+  }
+
+  private async reconcileApprovalHistory(
+    approval: ApprovalAcknowledgement,
+    subscriptionId: string,
+    replay: NativeSessionInfo,
+    conversations: NativeConversationCache,
+    target: NativeSessionTargetParams,
+  ) {
+    const replayIsCurrent = () =>
+      this.isConnected &&
+      this.currentApprovalAcknowledgement === approval &&
+      this.historyCurrent &&
+      this.historyObservation.subscriptionId === subscriptionId &&
+      this.session?.generation === replay.generation &&
+      this.session.ownerPrincipalId === replay.ownerPrincipalId &&
+      this.session.approvalMode === replay.approvalMode &&
+      !this.session.approvalModePending;
+    try {
+      const host = await conversations.readSessionFromHost(target);
+      if (
+        replayIsCurrent() &&
+        !host.approvalModePending &&
+        host.approvalMode === replay.approvalMode
+      ) {
+        this.approvalAcknowledgement = undefined;
+        this.requestUpdate();
+      }
+    } catch (error) {
+      // The stream can still settle the acknowledgement. The history Retry button
+      // can also attach a new viewer and check the returned policy again.
+      if (replayIsCurrent())
+        this.pollError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   /** Releases the sent message; one the host failed without submitting goes back to the composer. */
@@ -1646,7 +1697,7 @@ ${JSON.stringify(
       ) {
         this.approvalAcknowledgement = {
           revision,
-          subscriptionId: currentSubscriptionId ?? subscriptionId,
+          subscriptionId,
           confirmed,
         };
         this.refreshConflictingApprovalHistory();

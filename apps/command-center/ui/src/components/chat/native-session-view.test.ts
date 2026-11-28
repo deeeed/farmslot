@@ -956,6 +956,10 @@ function approvalComposer(initialMode: NativeApprovalMode) {
   };
   let changed: ((value: NativeConversationState) => void) | undefined;
   const retry = mock.fn<NativeConversationCache['retry']>();
+  const readSessionFromHost = mock.fn(async () => {
+    assert(state.data);
+    return state.data.session;
+  });
   const conversations: NativeConversationCache = {
     observe(_target, listener) {
       changed = listener;
@@ -965,6 +969,7 @@ function approvalComposer(initialMode: NativeApprovalMode) {
       };
     },
     read: () => state,
+    readSessionFromHost,
     readPage: async () => undefined,
     dismissHistory: () => undefined,
     retry,
@@ -1017,6 +1022,7 @@ function approvalComposer(initialMode: NativeApprovalMode) {
     snapshot,
     publish,
     retry,
+    readSessionFromHost,
     observe: (overrides: Partial<NativeConversationState>) => changed?.({ ...state, ...overrides }),
     observedSession: () => state.data?.session,
     change: (mode: NativeApprovalMode): Promise<void> =>
@@ -1185,6 +1191,7 @@ test('fresh history restores the composer when it skips an acknowledged approval
     proof.observe({ status: 'stale', conversation: undefined, subscriptionId: undefined });
     assert.equal(sendDisabled(), true);
     proof.publish({ ...bypass }, 'fresh-subscription');
+    await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(proof.composerDisabled(), false, 'fresh history restores the composer');
     assert.equal(sendDisabled(), false, 'Send uses the superseding policy');
     assert.equal(Reflect.get(proof.view, 'session').approvalMode, 'bypass');
@@ -1229,6 +1236,7 @@ test('a skipped approval confirmation refreshes the conflicting subscription onc
     assert.equal(sendDisabled(), true);
 
     proof.publish({ ...bypass }, 'replacement-subscription');
+    await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(proof.composerDisabled(), false);
     assert.equal(sendDisabled(), false, 'the fresh snapshot authorizes Send');
     assert.equal(Reflect.get(proof.view, 'session').approvalMode, 'bypass');
@@ -1249,7 +1257,47 @@ test('an approval reply requests fresh history if the conflicting frame arrived 
     assert.equal(proof.composerDisabled(), true);
     assert.equal(proof.retry.mock.callCount(), 1);
     proof.publish({ ...bypass }, 'replacement-subscription');
+    await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(proof.composerDisabled(), false);
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('a replacement viewer on a shared stream cannot enable Send using a lagging replay', async () => {
+  const proof = approvalComposer('ask');
+  const ask = proof.snapshot.session;
+  const bypass = { ...ask, approvalMode: 'bypass' } as const;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  proof.readSessionFromHost.mock.mockImplementationOnce(async () => bypass);
+  try {
+    const changing = proof.change('bypass');
+    proof.publish({ ...ask }); // A delayed frame arrives while the mutation is in flight.
+    proof.acknowledge(bypass);
+    await changing;
+    assert.equal(sendDisabled(), true);
+
+    // A second viewer holds the gateway source open. The new viewer replays its old
+    // metadata at the same cursor and generation while the host is already on Bypass.
+    proof.publish({ ...ask }, 'replacement-viewer');
+    assert.equal(sendDisabled(), true, 'the new viewer ID does not authorize Send');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(proof.readSessionFromHost.mock.callCount(), 1);
+    assert.equal(sendDisabled(), true, 'the host policy disagrees with the replay');
+
+    proof.observe({ history: { after: 0, loading: true } });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(
+      proof.readSessionFromHost.mock.callCount(),
+      1,
+      'paging reuses the checked snapshot',
+    );
+
+    proof.publish({ ...bypass }, 'replacement-viewer');
+    assert.equal(sendDisabled(), false, 'the stream now matches the acknowledged policy');
+    assert.equal(Reflect.get(proof.view, 'session').approvalMode, 'bypass');
   } finally {
     proof.disconnect();
   }
