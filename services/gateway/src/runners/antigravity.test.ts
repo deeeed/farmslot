@@ -435,30 +435,28 @@ async function createTypedNodeTransport(
   const ignoreHandshakeTeardownError = () => {
     // Expected ECONNRESET / closed-before-open socket error emitted when terminating a failed handshake.
   };
+  const terminateSocket = async (socket: WebSocket | undefined): Promise<void> => {
+    if (!socket) return;
+    socket.on('error', ignoreHandshakeTeardownError);
+    if (socket.readyState === WebSocket.CLOSED) return;
+    const closedP = new Promise<void>((resolve) => {
+      socket.once('close', () => resolve());
+    });
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      socket.terminate();
+    }
+    await closedP;
+  };
   const closeTransport = async () => {
     if (closed) return;
     closed = true;
-    if (clientSocket) {
-      clientSocket.on('error', ignoreHandshakeTeardownError);
-      if (
-        clientSocket.readyState === WebSocket.OPEN ||
-        clientSocket.readyState === WebSocket.CONNECTING
-      ) {
-        clientSocket.terminate();
-      }
-    }
-    if (serverSocket) {
-      serverSocket.on('error', ignoreHandshakeTeardownError);
-      if (
-        serverSocket.readyState === WebSocket.OPEN ||
-        serverSocket.readyState === WebSocket.CONNECTING
-      ) {
-        serverSocket.terminate();
-      }
-    }
-    await new Promise<void>((resolve) => {
-      wss.close(() => resolve());
-    });
+    await Promise.all([
+      terminateSocket(clientSocket),
+      terminateSocket(serverSocket),
+      new Promise<void>((resolve) => {
+        wss.close(() => resolve());
+      }),
+    ]);
   };
   try {
     await new Promise<void>((resolve, reject) => {
@@ -475,12 +473,11 @@ async function createTypedNodeTransport(
     });
     const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
     clientSocket = client;
-    const clientOpen = new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       client.once('open', () => resolve());
       client.once('error', reject);
+      options?.onClientCreated?.(client, wss);
     });
-    options?.onClientCreated?.(client, wss);
-    await clientOpen;
     const connectedServerSocket = await serverSocketReady;
     client.on('message', (raw) => {
       const frame = JSON.parse(String(raw)) as RequestFrame;
@@ -510,35 +507,87 @@ async function createTypedNodeTransport(
   }
 }
 
-test('createTypedNodeTransport cleans up listener and client socket when client emits error before open', async () => {
-  let capturedClient: WebSocket | undefined;
-  let capturedWss: WebSocketServer | undefined;
-  let sawListeningPort = false;
-  await assert.rejects(
-    createTypedNodeTransport(async () => ({}), {
-      onClientCreated(client, wss) {
-        capturedClient = client;
-        capturedWss = wss;
-        const addr = wss.address();
-        sawListeningPort = Boolean(addr && typeof addr !== 'string' && addr.port > 0);
-        client.emit('error', new Error('injected pre-open client error'));
-      },
-    }),
+test('createTypedNodeTransport cleans up listener and sockets on pre-open client error and throwing setup hook', async () => {
+  const ignoreFallbackError = () => {
+    // Expected socket error during fallback test teardown if helper cleanup regresses.
+  };
+  const runFailureCase = async (
+    inject: (client: WebSocket, wss: WebSocketServer) => void,
+    expectedError: RegExp,
+  ) => {
+    let capturedClient: WebSocket | undefined;
+    let capturedWss: WebSocketServer | undefined;
+    const capturedServerSockets: WebSocket[] = [];
+    let sawListeningPort = false;
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      await assert.rejects(
+        createTypedNodeTransport(async () => ({}), {
+          onClientCreated(client, wss) {
+            capturedClient = client;
+            capturedWss = wss;
+            wss.on('connection', (socket) => {
+              capturedServerSockets.push(socket);
+            });
+            const addr = wss.address();
+            sawListeningPort = Boolean(addr && typeof addr !== 'string' && addr.port > 0);
+            inject(client, wss);
+          },
+        }),
+        expectedError,
+      );
+      for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(
+        sawListeningPort,
+        true,
+        'listener must have been acquired before error injection',
+      );
+      assert.ok(capturedWss);
+      assert.ok(capturedClient);
+      assert.equal(
+        capturedWss.address(),
+        null,
+        'WebSocketServer listener must be closed before acquisition rejects',
+      );
+      assert.equal(
+        capturedClient.readyState,
+        WebSocket.CLOSED,
+        `client socket must be CLOSED before acquisition rejects (readyState=${capturedClient.readyState})`,
+      );
+      assert.deepEqual(
+        unhandledRejections,
+        [],
+        'transport acquisition failure must not leave unhandled rejections',
+      );
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+      if (capturedClient && capturedClient.readyState !== WebSocket.CLOSED) {
+        capturedClient.on('error', ignoreFallbackError);
+        capturedClient.terminate();
+      }
+      for (const socket of capturedServerSockets) {
+        if (socket.readyState !== WebSocket.CLOSED) {
+          socket.on('error', ignoreFallbackError);
+          socket.terminate();
+        }
+      }
+      if (capturedWss && capturedWss.address() !== null) {
+        await new Promise<void>((resolve) => capturedWss!.close(() => resolve()));
+      }
+    }
+  };
+
+  await runFailureCase(
+    (client) => client.emit('error', new Error('injected pre-open client error')),
     /injected pre-open client error/,
   );
-  assert.equal(sawListeningPort, true, 'listener must have been acquired before error injection');
-  assert.ok(capturedWss);
-  assert.ok(capturedClient);
-  assert.equal(
-    capturedWss.address(),
-    null,
-    'WebSocketServer listener must be closed after pre-open client error',
-  );
-  assert.ok(
-    capturedClient.readyState === WebSocket.CLOSING ||
-      capturedClient.readyState === WebSocket.CLOSED,
-    `client socket must be terminated after pre-open error (readyState=${capturedClient.readyState})`,
-  );
+  await runFailureCase(() => {
+    throw new Error('injected onClientCreated hook throw');
+  }, /injected onClientCreated hook throw/);
 });
 
 test('remote Antigravity status runs shared observeAntigravityAccount across node boundary with cleanup and failure isolation', async () => {
