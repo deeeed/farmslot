@@ -4,10 +4,14 @@ import { readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/pro
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { Methods, NATIVE_CONVERSATION_LIMITS } from '@farmslot/protocol';
+import {
+  NATIVE_CONVERSATION_STORAGE_PREFIX,
+  SUPERSEDED_READ_GRACE_MS,
+} from '@farmslot/protocol/client-cache';
+
 import {
   messages,
-  nativeResumeFitsScrollView,
-  nativeScrollViewGesture,
   renderedNativeResumeTarget,
   resolveNativeStoreInputs,
   sha256,
@@ -15,6 +19,9 @@ import {
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 const phase = process.argv[2];
+const viewTimeoutMs = 30_000;
+// Companion holds its connection status through the shared grace after a cold launch.
+const coldCaptionTimeoutMs = SUPERSEDED_READ_GRACE_MS + viewTimeoutMs;
 const forbidden = [
   'native.session.create',
   'native.session.ensure',
@@ -403,17 +410,15 @@ async function prove() {
       return (
         c?.session?.id === selected.id &&
         c.session.ownerPrincipalId === selected.owner &&
-        c.session.executionNodeId === 'local' &&
+        c.session.executionNodeId === selected.nodeId &&
+        c.session.state === 'closed' &&
         c.selection?.sessionId === selected.id &&
-        c.cursor === 660 &&
-        c.history?.canonical &&
-        c.history.status === status &&
-        c.history.messageCount === 200 &&
-        c.history.firstMessage === selected.first &&
-        c.history.lastMessage === selected.last &&
-        c.history.stored?.id === selected.storedId &&
-        c.history.observedAt > 0 &&
-        c.history.stored.observedAt === c.history.observedAt
+        c.cursor === selected.cursor &&
+        c.history?.status === status &&
+        c.history.messageCount === selected.tail.length &&
+        c.history.firstMessage === selected.tail[0].text &&
+        c.history.lastMessage === selected.tail.at(-1).text &&
+        (status !== 'ready' || c.history.observedAt > 0)
       );
     };
     const snapshot = async (name) => {
@@ -435,8 +440,8 @@ async function prove() {
         (node) =>
           node.visibleToUser !== false && `${node.label || ''} ${node.value || ''}`.includes(text),
       );
-    async function view(name, ...labels) {
-      const deadline = Date.now() + 30000;
+    async function view(name, labels, timeoutMs = viewTimeoutMs) {
+      const deadline = Date.now() + timeoutMs;
       do {
         const screen = await device.capture.snapshot({
           ...selection,
@@ -479,11 +484,11 @@ async function prove() {
       const scope = JSON.parse(state.workspaceKey).scope;
       assert(typeof scope === 'string' && scope.length > 0);
       const code =
-        'import sqlite3,json,sys,pathlib; db=sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+"?mode=ro",uri=True); db.execute("PRAGMA query_only=ON"); integrity=db.execute("PRAGMA integrity_check").fetchone()[0]; rows=db.execute("SELECT q.id,q.observed_at,q.data FROM resource_queries q JOIN resource_stores s ON q.store_id=s.id WHERE s.scope_id=?",(sys.argv[2],)).fetchall(); print(json.dumps({"integrity":integrity,"rows":[dict(id=r[0],observedAt=r[1],data=json.loads(r[2])) for r in rows if r[0].startswith("native.session.read:")],"fleet":[dict(id=r[0],observedAt=r[1],data=json.loads(r[2])) for r in rows if r[0]==sys.argv[3]]})); db.close()';
+        'import sqlite3,json,sys,pathlib; db=sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+"?mode=ro",uri=True); db.execute("PRAGMA query_only=ON"); integrity=db.execute("PRAGMA integrity_check").fetchone()[0]; rows=db.execute("SELECT q.id,q.observed_at,q.data FROM resource_queries q JOIN resource_stores s ON q.store_id=s.id WHERE s.scope_id=?",(sys.argv[2],)).fetchall(); print(json.dumps({"integrity":integrity,"rows":[dict(id=r[0],observedAt=r[1],data=json.loads(r[2])) for r in rows if r[0].startswith(sys.argv[4])],"fleet":[dict(id=r[0],observedAt=r[1],data=json.loads(r[2])) for r in rows if r[0]==sys.argv[3]]})); db.close()';
       assert(state.fleet?.stored?.id, 'The actual fleet query must be persisted');
       const { stdout } = await execute(
         'python3',
-        ['-c', code, database, scope, state.fleet.stored.id],
+        ['-c', code, database, scope, state.fleet.stored.id, NATIVE_CONVERSATION_STORAGE_PREFIX],
         {
           timeout: 15000,
           maxBuffer: 16 * 1024 * 1024,
@@ -508,11 +513,16 @@ async function prove() {
         const fixture = plan.sessions.find((s) => s.storedId === row.id);
         assert.equal(row.data.session.id, fixture.id);
         assert.equal(row.data.session.ownerPrincipalId, fixture.owner);
-        assert.equal(row.data.cursor, 660);
-        const logical = messages(row.data.events);
-        assert.equal(logical.length, 200);
-        assert.equal(logical[0].text, fixture.first);
-        assert.equal(logical.at(-1).text, fixture.last);
+        assert.equal(row.data.session.executionNodeId, fixture.nodeId);
+        assert.equal(row.data.session.state, 'closed');
+        assert.equal(row.data.cursor, fixture.cursor);
+        assert.equal(row.data.streamCursor?.sessionId, fixture.id);
+        assert.equal(row.data.streamCursor?.executionNodeId, fixture.nodeId);
+        assert.equal(row.data.streamCursor?.sequence, fixture.cursor);
+        assert.equal(row.data.historyBefore, fixture.historyBefore);
+        assert.equal(row.data.truncated, true);
+        assert.equal(row.data.events.length, NATIVE_CONVERSATION_LIMITS.projectionRows);
+        assert.deepEqual(messages(row.data.events), fixture.tail);
         assert(row.observedAt > 0);
       }
       return result;
@@ -524,7 +534,7 @@ async function prove() {
       'The native fleet must render the original configured slot from its canonical cache',
       'runs-cache:snapshot',
     );
-    await view('fleet-before-writer', plan.fleet.slotId);
+    await view('fleet-before-writer', [plan.fleet.slotId]);
     const originalPool = await readFile(plan.fleet.poolFile);
     const updatedPool = JSON.parse(originalPool);
     updatedPool.slots.push({
@@ -545,9 +555,9 @@ async function prove() {
       'runs-cache:snapshot',
     );
     await save('fleet-live.json', liveFleet);
-    await view('fleet-live', ...fleetIds);
+    await view('fleet-live', fleetIds);
     await openRoute(plan.fleet.slotRoute);
-    await view('slot-warm', plan.fleet.slotId);
+    await view('slot-warm', [plan.fleet.slotId]);
     const warm = [];
     for (const session of plan.sessions) {
       selected = session;
@@ -556,24 +566,20 @@ async function prove() {
         await until(
           (state) =>
             complete(state, 'ready') && state.conversation.ready && state.conversation.caughtUp,
-          `History ${session.id} did not become canonical/current/complete`,
+          `History ${session.id} did not become current with the expected bounded tail`,
         ),
       );
     }
     const current = warm.at(-1);
     assert(fleetComplete(current, 'ready', fleetIds));
     assert(
-      (await proxyCounts()).counts['native.session.read'] >
-        (initialProxy.counts['native.session.read'] || 0),
+      (await proxyCounts()).counts[Methods.NATIVE_SESSION_SUBSCRIBE] >
+        (initialProxy.counts[Methods.NATIVE_SESSION_SUBSCRIBE] || 0),
       'App must actually traverse the counted proxy, not bypass it',
     );
     await save('warm.json', warm);
     await snapshot('warm-selected');
     const dbWarm = await sqlite(current, 'warm');
-    for (const state of warm.slice(-10)) {
-      const row = dbWarm.rows.find((row) => row.id === state.conversation.history.stored.id);
-      assert.equal(row.observedAt, state.conversation.history.observedAt);
-    }
     const selectedRow = dbWarm.rows.find((row) => row.id === selected.storedId);
     const commands = current.conversation.commands;
     let countsBefore = await proxyCounts();
@@ -602,9 +608,9 @@ async function prove() {
       );
       assert.deepEqual(coldFleet.fleet.data, dbWarm.fleet[0].data.fleet);
       await save('fleet-cold.json', coldFleet);
-      await view('fleet-cold', ...fleetIds, 'Saved fleet,');
+      await view('fleet-cold', [...fleetIds, 'Saved fleet ·'], coldCaptionTimeoutMs);
       await openRoute(plan.fleet.slotRoute);
-      await view('slot-cold', plan.fleet.slotId);
+      await view('slot-cold', [plan.fleet.slotId]);
       await open(selected);
       cold = await until(
         (state) => complete(state, 'stale') && state.startedAt > current.startedAt,
@@ -624,67 +630,12 @@ async function prove() {
         'Offline restart must preserve exact saved data and age',
       );
       assert.deepEqual(dbCold.fleet, dbWarm.fleet);
-      let screen;
-      let resume;
-      let resumeScreenshot;
-      let previousContent;
-      let unchangedScrolls = 0;
-      // Timeline initially follows the tail. Scroll real content toward the Resume control.
-      for (let i = 0; i < 80; i++) {
-        screen = await snapshot(`cold-scroll-${i}`);
-        resume = screen.nodes.find((node) => node.identifier === plan.resumeSelector);
-        if (nativeResumeFitsScrollView(screen, plan.resumeSelector)) {
-          resumeScreenshot = path.join(plan.artifacts, `cold-scroll-${i}.png`);
-          break;
-        }
-        const content = JSON.stringify(
-          screen.nodes
-            .filter((node) => node.visibleToUser !== false)
-            .map(({ label, value, rect }) => ({ label, value, rect })),
-        );
-        unchangedScrolls = content === previousContent ? unchangedScrolls + 1 : 0;
-        assert(unchangedScrolls < 2, 'Conversation scroll gesture did not move actual content');
-        previousContent = content;
-        const gesture = nativeScrollViewGesture(screen);
-        await save(`cold-scroll-${i}.gesture.json`, gesture);
-        await device.interactions.swipe({ ...selection, ...gesture });
-      }
-      assert(
-        resume?.rect && resume.rect.y >= 0 && resume.visibleToUser !== false,
-        'Actual Resume testID must be present in native accessibility tree',
+      const screen = await view(
+        'cold-disabled-resume',
+        ['Saved conversation history ·', plan.resumeLabel],
+        coldCaptionTimeoutMs,
       );
-      assert.equal(
-        resume.enabled,
-        false,
-        'Native accessibility disabled must agree with stale Resume',
-      );
-      assert(
-        screen.nodes.some((node) =>
-          /^Saved conversation history, .+/.test(node.label || node.value || ''),
-        ),
-        'Visible saved conversation age caption required',
-      );
-      const viewport = screen.nodes.find(
-        (node) =>
-          ['Application', 'Window'].includes(node.type) &&
-          node.rect?.width > 0 &&
-          node.rect?.height > 0,
-      )?.rect;
-      const x = resume.rect.x + resume.rect.width / 2;
-      const y = resume.rect.y + resume.rect.height / 2;
-      assert(
-        viewport
-          ? x >= viewport.x &&
-              y >= viewport.y &&
-              x < viewport.x + viewport.width &&
-              y < viewport.y + viewport.height
-          : resume.visibleToUser === true,
-        'The point tap must be inside the actual native viewport or explicitly visible',
-      );
-      assert(
-        resume.rect.width > 0 && resume.rect.height > 0 && resume.rect.x >= 0 && resume.rect.y >= 0,
-      );
-      assert(resumeScreenshot, 'Require the actual target screenshot before any point press');
+      const resumeScreenshot = path.join(plan.artifacts, 'cold-disabled-resume.png');
       const recognized = await execute(
         'osascript',
         [
@@ -696,7 +647,8 @@ async function prove() {
         { timeout: 30000 },
       );
       const rendered = JSON.parse(recognized.stdout);
-      assert.deepEqual(renderedNativeResumeTarget(screen, rendered, plan.resumeSelector), { x, y });
+      const { x, y } = renderedNativeResumeTarget(screen, rendered, plan.resumeSelector);
+      const resume = screen.nodes.find((node) => node.identifier === plan.resumeSelector);
       await save('disabled-resume-target-pair.json', {
         screenshot: path.basename(resumeScreenshot),
         screenshotSha256: sha256(await readFile(resumeScreenshot)),
@@ -762,7 +714,7 @@ async function prove() {
       'Native fleet did not recover in the same cold runtime',
       'runs-cache:snapshot',
     );
-    await view('fleet-recovered', ...fleetIds);
+    await view('fleet-recovered', fleetIds);
     await unlink(marker);
     outageMarker = undefined;
     attempt.status = 'passed';

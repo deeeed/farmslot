@@ -574,6 +574,10 @@
           },
           "expected": {
             "type": "string"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Require the exact native test ID target to report this accessibility enabled state."
           }
         },
         "additionalProperties": false
