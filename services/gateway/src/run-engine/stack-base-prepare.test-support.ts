@@ -67,7 +67,20 @@ mock.module('../methods/slot/fixtures.js', {
 
 export const { slotPrepare } = await import('../methods/slot.js');
 
-const gitEnv = ['-c', 'user.name=Farmslot Test', '-c', 'user.email=farmslot-test@example.invalid'];
+const FIXTURE_GIT_USER_NAME = 'Farmslot Test';
+const FIXTURE_GIT_USER_EMAIL = 'farmslot-test@example.invalid';
+const gitEnv = [
+  '-c',
+  `user.name=${FIXTURE_GIT_USER_NAME}`,
+  '-c',
+  `user.email=${FIXTURE_GIT_USER_EMAIL}`,
+];
+
+async function configureFixtureGitIdentity(repo: string): Promise<void> {
+  await git(repo, 'config', '--local', 'user.name', FIXTURE_GIT_USER_NAME);
+  await git(repo, 'config', '--local', 'user.email', FIXTURE_GIT_USER_EMAIL);
+  await git(repo, 'config', '--local', 'commit.gpgsign', 'false');
+}
 
 export async function git(repo: string, ...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', repo, ...gitEnv, ...args]);
@@ -108,6 +121,7 @@ export async function stackFixture(
   });
   await execFileAsync('git', ['init', '--bare', '--initial-branch=main', originRepo]);
   await execFileAsync('git', ['init', '--initial-branch=main', otherSlot]);
+  await configureFixtureGitIdentity(otherSlot);
   await writeFile(path.join(otherSlot, 'README.md'), 'fixture\n');
   await git(otherSlot, 'add', 'README.md');
   await git(otherSlot, 'commit', '-m', 'fixture');
@@ -119,12 +133,14 @@ export async function stackFixture(
     // previous run used, with a stale commit of its own.
     const primary = path.join(fixtureRoot, 'primary');
     await execFileAsync('git', ['clone', originRepo, primary]);
+    await configureFixtureGitIdentity(primary);
     await git(primary, 'worktree', 'add', '-b', options.linkedWorktreeOn, slotRepo, 'origin/main');
     await writeFile(path.join(slotRepo, 'stale.txt'), 'stale\n');
     await git(slotRepo, 'add', 'stale.txt');
     await git(slotRepo, 'commit', '-m', 'stale work from an earlier run');
   } else {
     await execFileAsync('git', ['clone', originRepo, slotRepo]);
+    await configureFixtureGitIdentity(slotRepo);
   }
   await git(otherSlot, 'checkout', '-b', 'feat/upstream');
   await writeFile(path.join(otherSlot, 'upstream.txt'), 'upstream work\n');

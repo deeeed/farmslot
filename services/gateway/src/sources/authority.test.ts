@@ -53,6 +53,52 @@ function unpinRequest<T extends { ref: string }>(request: T): Omit<T, 'ref'> {
   return params;
 }
 
+const POLL_WAIT_TIMEOUT_MS = 5_000;
+const POLL_CHECK_INTERVAL_MS = 25;
+
+/**
+ * Waits for a background reconciliation poll to publish a matching state.
+ * Wakes immediately via `authority.observe` while a bounded unmocked interval enforces
+ * a generous ceiling even when `setTimeout` is mocked, then yields one macrotask so
+ * `startReconciliation` clears its in-flight key before the next tick.
+ */
+async function waitForAuthority(
+  authority: SourceAuthority,
+  predicate: () => boolean,
+  message: string,
+  timeoutMs = POLL_WAIT_TIMEOUT_MS,
+): Promise<void> {
+  if (!predicate()) {
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + timeoutMs;
+      let settled = false;
+      let interval: ReturnType<typeof setInterval> | undefined;
+      let unsubscribe: (() => void) | undefined;
+      const cleanup = () => {
+        unsubscribe?.();
+        if (interval) clearInterval(interval);
+      };
+      const check = () => {
+        if (settled) return;
+        if (predicate()) {
+          settled = true;
+          cleanup();
+          resolve();
+        } else if (Date.now() >= deadline) {
+          settled = true;
+          cleanup();
+          reject(new assert.AssertionError({ message }));
+        }
+      };
+      unsubscribe = authority.observe(check);
+      // Only setTimeout is mocked in these tests; setInterval provides a real-clock ceiling.
+      interval = setInterval(check, POLL_CHECK_INTERVAL_MS);
+      check();
+    });
+  }
+  await setImmediate();
+}
+
 const config: SourceConfiguration = {
   schemaVersion: 1,
   revision: 1,
@@ -419,32 +465,31 @@ test('healthy sources keep polling across intervals while an unrelated fetch rem
   try {
     let now = Date.now();
     const git = new FixtureSources(root);
-    authority = await SourceAuthority.open(config, root, git, () => now);
-    await authority.reconcile();
+    const active = await SourceAuthority.open(config, root, git, () => now);
+    authority = active;
+    await active.reconcile();
     git.held = { id: 'unrelated', completion: held };
-    stop = authority.startReconciliation((_, error) => {
+    stop = active.startReconciliation((_, error) => {
       throw error;
     });
     for (let pass = 1; pass <= 3; pass++) {
       now += 2_001;
       git.commits.set('demo', String(pass).repeat(40));
       t.mock.timers.tick(config.pollIntervalMs);
-      const deadline = Date.now() + 500;
-      while (
-        authority.resolutions().find((record) => record.sourceId === 'demo')?.resolvedAt !==
-        new Date(now).toISOString()
-      ) {
-        assert.ok(Date.now() < deadline, 'healthy polls must continue during the held fetch');
-        await setImmediate();
-      }
+      await waitForAuthority(
+        active,
+        () =>
+          active.resolutions().find((record) => record.sourceId === 'demo')?.resolvedAt ===
+          new Date(now).toISOString(),
+        'healthy polls must continue during the held fetch',
+      );
       assert.equal(
-        (await authority.lock({ project: 'demo' })).entries[0].commit,
+        (await active.lock({ project: 'demo' })).entries[0].commit,
         String(pass).repeat(40),
       );
-      await setImmediate();
     }
     assert.equal(
-      authority.resolutions().find((record) => record.sourceId === 'unrelated')?.status,
+      active.resolutions().find((record) => record.sourceId === 'unrelated')?.status,
       'stale',
     );
   } finally {
@@ -690,24 +735,21 @@ test('polling discovers new pins, advances branches without changing their base 
     git.refs.set('main', 'd'.repeat(40));
     git.refs.set('experiment/farm', 'e'.repeat(40));
     t.mock.timers.tick(config.pollIntervalMs);
-    const waitFor = async (ref: string, status: 'resolved' | 'failed', commit?: string) => {
-      const deadline = Date.now() + 500;
-      while (
-        !authority
-          .resolutions()
-          .some(
-            (row) =>
-              row.sourceId === 'demo' &&
-              row.ref === ref &&
-              row.status === status &&
-              (!commit || row.commit === commit),
-          )
-      ) {
-        assert.ok(Date.now() < deadline, `poll must reconcile ${ref}`);
-        await setImmediate();
-      }
-      await setImmediate();
-    };
+    const waitFor = (ref: string, status: 'resolved' | 'failed', commit?: string) =>
+      waitForAuthority(
+        authority,
+        () =>
+          authority
+            .resolutions()
+            .some(
+              (row) =>
+                row.sourceId === 'demo' &&
+                row.ref === ref &&
+                row.status === status &&
+                (!commit || row.commit === commit),
+            ),
+        `poll must reconcile ${ref}`,
+      );
     await waitFor('experiment/farm', 'resolved', 'e'.repeat(40));
     await waitFor('main', 'resolved', 'd'.repeat(40));
     assert.deepEqual(
