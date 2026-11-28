@@ -58,10 +58,30 @@ interface NativeConversationCacheOptions {
   performance?: PerformanceRecorder;
   afterPaint?: (paint: () => void) => (() => void) | undefined;
 }
+interface StoredNativeConversation {
+  snapshot: NativeConversationSnapshot;
+  observedAt?: number;
+}
 interface ConversationStorage {
-  load(target: NativeSessionTargetParams): Promise<NativeConversationSnapshot | undefined>;
-  save(target: NativeSessionTargetParams, snapshot: NativeConversationSnapshot): Promise<void>;
+  load(
+    target: NativeSessionTargetParams,
+  ): Promise<NativeConversationSnapshot | StoredNativeConversation | undefined>;
+  save(
+    target: NativeSessionTargetParams,
+    snapshot: NativeConversationSnapshot,
+    observedAt?: number,
+  ): Promise<void>;
   forget(target: NativeSessionTargetParams): Promise<void>;
+}
+function unpackStoredConversation(
+  loaded: NativeConversationSnapshot | StoredNativeConversation | undefined,
+): StoredNativeConversation | undefined {
+  if (!loaded || typeof loaded !== 'object') return undefined;
+  if ('session' in loaded && 'events' in loaded) return { snapshot: loaded };
+  if ('snapshot' in loaded && loaded.snapshot && typeof loaded.snapshot === 'object') {
+    return { snapshot: loaded.snapshot, observedAt: loaded.observedAt };
+  }
+  return undefined;
 }
 interface Entry {
   target: NativeSessionTargetParams;
@@ -273,7 +293,9 @@ export function createNativeConversationCache(
   };
   const save = (entry: Entry): Promise<void> =>
     entry.state.data
-      ? storage.save(entry.target, entry.state.data).catch((error) => storageFailed(entry, error))
+      ? storage
+          .save(entry.target, entry.state.data, entry.state.observedAt)
+          .catch((error) => storageFailed(entry, error))
       : Promise.resolve();
   const detach = (entry: Entry) => {
     entry.ticket++;
@@ -490,11 +512,18 @@ export function createNativeConversationCache(
     const ticket = epoch;
     const denialVersion = entry.denialVersion;
     try {
-      const saved = await storage.load(entry.target);
+      const loaded = await storage.load(entry.target);
       if (disposed || ticket !== epoch || denialVersion !== entry.denialVersion) return;
+      const unpacked = unpackStoredConversation(loaded);
+      const saved = unpacked?.snapshot;
+      const observedAt = unpacked?.observedAt;
       if (!entry.state.data && saved && snapshotMatches(entry.target, saved, true)) {
         entry.metricSource = 'stored';
-        entry.state = { status: 'stale', data: saved };
+        entry.state = {
+          status: 'stale',
+          data: saved,
+          ...(observedAt !== undefined ? { observedAt } : {}),
+        };
         notify(entry);
       }
       entry.hydrated = true;
