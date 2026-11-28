@@ -419,49 +419,127 @@ interface TypedNodeTransport {
   close(): Promise<void>;
 }
 
+interface TypedNodeTransportOptions {
+  onClientCreated?: (clientSocket: WebSocket, wss: WebSocketServer) => void;
+}
+
 /** Real loopback WebSocket transport so gateway node-RPC tests inspect actual wire frames without casts. */
 async function createTypedNodeTransport(
   onRequest: (frame: RequestFrame) => Promise<unknown>,
+  options?: TypedNodeTransportOptions,
 ): Promise<TypedNodeTransport> {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-  await new Promise<void>((resolve) => wss.once('listening', resolve));
-  const address = wss.address();
-  assert(address && typeof address !== 'string');
-  const serverSocketReady = new Promise<WebSocket>((resolve) => {
-    wss.once('connection', (socket) => resolve(socket));
-  });
-  const clientSocket = new WebSocket(`ws://127.0.0.1:${address.port}`);
-  await new Promise<void>((resolve, reject) => {
-    clientSocket.once('open', () => resolve());
-    clientSocket.once('error', reject);
-  });
-  const serverSocket = await serverSocketReady;
-  clientSocket.on('message', (raw) => {
-    const frame = JSON.parse(String(raw)) as RequestFrame;
-    void onRequest(frame).then(
-      (payload) => handleNodeResponse(frame.id, true, payload, undefined, undefined, serverSocket),
-      (err: unknown) => {
-        const error = err as Error & { code?: string };
-        handleNodeResponse(
-          frame.id,
-          false,
-          undefined,
-          error instanceof Error ? error.message : String(err),
-          error?.code,
-          serverSocket,
-        );
-      },
-    );
-  });
-  return {
-    ws: serverSocket,
-    async close() {
-      clientSocket.close();
-      serverSocket.close();
-      await new Promise<void>((resolve) => wss.close(() => resolve()));
-    },
+  let clientSocket: WebSocket | undefined;
+  let serverSocket: WebSocket | undefined;
+  let closed = false;
+  const ignoreHandshakeTeardownError = () => {
+    // Expected ECONNRESET / closed-before-open socket error emitted when terminating a failed handshake.
   };
+  const closeTransport = async () => {
+    if (closed) return;
+    closed = true;
+    if (clientSocket) {
+      clientSocket.on('error', ignoreHandshakeTeardownError);
+      if (
+        clientSocket.readyState === WebSocket.OPEN ||
+        clientSocket.readyState === WebSocket.CONNECTING
+      ) {
+        clientSocket.terminate();
+      }
+    }
+    if (serverSocket) {
+      serverSocket.on('error', ignoreHandshakeTeardownError);
+      if (
+        serverSocket.readyState === WebSocket.OPEN ||
+        serverSocket.readyState === WebSocket.CONNECTING
+      ) {
+        serverSocket.terminate();
+      }
+    }
+    await new Promise<void>((resolve) => {
+      wss.close(() => resolve());
+    });
+  };
+  try {
+    await new Promise<void>((resolve, reject) => {
+      wss.once('listening', resolve);
+      wss.once('error', reject);
+    });
+    const address = wss.address();
+    assert(address && typeof address !== 'string');
+    const serverSocketReady = new Promise<WebSocket>((resolve) => {
+      wss.once('connection', (socket) => {
+        serverSocket = socket;
+        resolve(socket);
+      });
+    });
+    const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+    clientSocket = client;
+    const clientOpen = new Promise<void>((resolve, reject) => {
+      client.once('open', () => resolve());
+      client.once('error', reject);
+    });
+    options?.onClientCreated?.(client, wss);
+    await clientOpen;
+    const connectedServerSocket = await serverSocketReady;
+    client.on('message', (raw) => {
+      const frame = JSON.parse(String(raw)) as RequestFrame;
+      void onRequest(frame).then(
+        (payload) =>
+          handleNodeResponse(frame.id, true, payload, undefined, undefined, connectedServerSocket),
+        (err: unknown) => {
+          const error = err as Error & { code?: string };
+          handleNodeResponse(
+            frame.id,
+            false,
+            undefined,
+            error instanceof Error ? error.message : String(err),
+            error?.code,
+            connectedServerSocket,
+          );
+        },
+      );
+    });
+    return {
+      ws: connectedServerSocket,
+      close: closeTransport,
+    };
+  } catch (error) {
+    await closeTransport();
+    throw error;
+  }
 }
+
+test('createTypedNodeTransport cleans up listener and client socket when client emits error before open', async () => {
+  let capturedClient: WebSocket | undefined;
+  let capturedWss: WebSocketServer | undefined;
+  let sawListeningPort = false;
+  await assert.rejects(
+    createTypedNodeTransport(async () => ({}), {
+      onClientCreated(client, wss) {
+        capturedClient = client;
+        capturedWss = wss;
+        const addr = wss.address();
+        sawListeningPort = Boolean(addr && typeof addr !== 'string' && addr.port > 0);
+        client.emit('error', new Error('injected pre-open client error'));
+      },
+    }),
+    /injected pre-open client error/,
+  );
+  assert.equal(sawListeningPort, true, 'listener must have been acquired before error injection');
+  assert.ok(capturedWss);
+  assert.ok(capturedClient);
+  assert.equal(
+    capturedWss.address(),
+    null,
+    'WebSocketServer listener must be closed after pre-open client error',
+  );
+  assert.ok(
+    capturedClient.readyState === WebSocket.CLOSING ||
+      capturedClient.readyState === WebSocket.CLOSED,
+    `client socket must be terminated after pre-open error (readyState=${capturedClient.readyState})`,
+  );
+});
 
 test('remote Antigravity status runs shared observeAntigravityAccount across node boundary with cleanup and failure isolation', async () => {
   const root = mkdtempSync(join(tmpdir(), 'agy-remote-node-status-'));
@@ -2897,7 +2975,7 @@ done
   }
 });
 
-test('automatic local rearm recovers profiles after an early profile-status read failed during downtime', async () => {
+test('automatic local rearm recovers profiles after an early profile-status read failed during downtime', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'agy-local-early-read-rearm-'));
   const farmHome = join(root, 'farm-home');
   const fixturePoolPath = join(root, 'pool');
@@ -3039,33 +3117,46 @@ done
       reason: 'host-identity-invalid',
     });
 
-    // Early profile-status read during downtime starts a background executable sync whose retry
-    // fails on the dead host and records a transient non-pool `localConfig.error`.
-    await assert.rejects(readLocalProfile(), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
-    // Wait for that background sync retry to finish failing so `localConfig.error` is stored
-    // (observable because the next profile-status read reports the stored sync error message).
-    const syncErrDeadline = Date.now() + 2_000;
-    let sawStoredSyncError = false;
-    while (Date.now() < syncErrDeadline && !sawStoredSyncError) {
-      try {
-        await readLocalProfile();
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        if (msg.includes('failed to sync runner configuration')) {
-          sawStoredSyncError = true;
-          break;
-        }
+    // Passively observe the background sync's failure warning (emitted strictly after
+    // `syncLocalExecutables` clears `configuring` and stores `localConfig.error`), without
+    // issuing any second profile-status read that would clear `localConfig.error` or start a
+    // second retry racing `unlinkSync(brokenHostFile)`.
+    let syncFailureSettled!: () => void;
+    const syncFailureSettledP = new Promise<void>((resolve) => {
+      syncFailureSettled = resolve;
+    });
+    let syncFailureCount = 0;
+    const origWarn = console.warn;
+    const warnMock = t.mock.method(console, 'warn', (...args: unknown[]) => {
+      const text = args.map((part) => String(part)).join(' ');
+      if (text.includes('[native-observation] background local executable sync failed:')) {
+        syncFailureCount++;
+        syncFailureSettled();
       }
-      await new Promise((r) => setTimeout(r, 15));
+      return origWarn.apply(console, args);
+    });
+    try {
+      // Single early profile-status read during downtime starts ONE background executable sync
+      // whose retry fails on the dead host and stores a transient non-pool `localConfig.error`.
+      await assert.rejects(readLocalProfile(), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
+      await Promise.race([
+        syncFailureSettledP,
+        new Promise<never>((_resolve, reject) =>
+          setTimeout(
+            () =>
+              reject(new Error('Timed out waiting for background local sync failure to settle')),
+            2_000,
+          ),
+        ),
+      ]);
+      assert.equal(
+        syncFailureCount,
+        1,
+        'expected exactly one read-triggered background retry to fail and store its error',
+      );
+    } finally {
+      warnMock.mock.restore();
     }
-    assert.equal(
-      sawStoredSyncError,
-      true,
-      'expected early profile-status read during downtime to store transient sync error',
-    );
-    // Let the second background retry settle before clearing host.json so no configuring lock
-    // remains active when automatic recovery runs.
-    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 15));
 
     events.length = 0;
     captureRecovery = true;
