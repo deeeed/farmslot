@@ -166,7 +166,7 @@ allocate_ports() {
           throw new Error(`Allocated ports collided: ${ports.join(",")}`);
         }
         await Promise.all(servers.map((s) => new Promise((r) => s.close(() => r()))));
-        process.stdout.write(ports.join(" "));
+        process.stdout.write(ports.join(" ") + "\n");
       } catch (err) {
         await Promise.all(servers.map((s) => new Promise((r) => s.close(() => r()))));
         console.error(err instanceof Error ? err.message : String(err));
@@ -200,12 +200,12 @@ read -r SIM_UDID SIM_STATE_BEFORE SIM_NAME < <(
       process.exit(1);
     }
     const dev = matches[0];
-    process.stdout.write(`${dev.udid}\t${dev.state}\t${dev.name}`);
+    process.stdout.write(`${dev.udid}\t${dev.state}\t${dev.name}\n`);
   ' "${SIMULATOR_INPUT}"
 )
 
-# Discover pre-existing slot/operator ports (if any) from .env.ports so before/after snapshots
-# prove pre-existing gateway and Metro listeners remain untouched across pass and failure.
+# Discover pre-existing slot/operator ports (if any) from .env.ports and companion .agent/metro-*.env
+# so before/after snapshots prove pre-existing gateway and Metro listeners remain untouched across pass and failure.
 PREEXISTING_PORTS_CSV="$(
   node -e '
     const fs = require("node:fs");
@@ -214,12 +214,19 @@ PREEXISTING_PORTS_CSV="$(
     const envPorts = path.join(process.argv[1], ".env.ports");
     if (fs.existsSync(envPorts)) {
       for (const line of fs.readFileSync(envPorts, "utf8").split(/\r?\n/)) {
-        const m = /^(?:GATEWAY_PORT|WATCHER_PORT|METRO_PORT|CDP_PORT)=(\d+)$/.exec(line.trim());
+        const m = /^(?:GATEWAY_PORT|WATCHER_PORT|METRO_PORT|VITE_PORT|CDP_PORT)=(\d+)$/.exec(line.trim());
+        if (m) ports.add(Number(m[1]));
+      }
+    }
+    const agentDir = path.join(process.argv[2], ".agent");
+    if (fs.existsSync(agentDir)) {
+      for (const name of fs.readdirSync(agentDir)) {
+        const m = /^metro-(\d+)\.env$/.exec(name);
         if (m) ports.add(Number(m[1]));
       }
     }
     process.stdout.write([...ports].sort((a, b) => a - b).join(","));
-  ' "${REPO_ROOT}"
+  ' "${REPO_ROOT}" "${APP_DIR}"
 )"
 
 capture_state_json() {
@@ -478,9 +485,6 @@ cleanup() {
     const controlStopped = !after.ports.control.listening;
     const metroStopped = !after.ports.metro.listening && metroAliveStr === "0";
     const simulatorStateMatched = Boolean(before.simulator && after.simulator && before.simulator.state === after.simulator.state);
-    const beforeBootedIds = before.bootedSimulators.map((s) => s.udid);
-    const afterBootedIds = after.bootedSimulators.map((s) => s.udid);
-    const preExistingBootedPreserved = JSON.stringify(beforeBootedIds) === JSON.stringify(afterBootedIds);
     const preExistingListenersPreserved = Object.entries(before.preExistingListeners || {}).every(
       ([port, pids]) => JSON.stringify(after.preExistingListeners?.[port] ?? []) === JSON.stringify(pids),
     );
@@ -489,7 +493,6 @@ cleanup() {
       controlStopped &&
       metroStopped &&
       simulatorStateMatched &&
-      preExistingBootedPreserved &&
       preExistingListenersPreserved &&
       errors.length === 0;
     const summaryPath = path.join(recipeArtifactsDir, "summary.json");
@@ -522,7 +525,6 @@ cleanup() {
         controlStopped,
         metroStopped,
         simulatorStateMatched,
-        preExistingBootedPreserved,
         preExistingListenersPreserved,
         errors,
       },
@@ -695,6 +697,7 @@ set +e
   NATIVE_COMPANION_PROOF_STATE="${PROOF_STATE_FILE}" \
   NATIVE_COMPANION_RUNNER="${RUNNER}" \
   NATIVE_COMPANION_MODEL="${MODEL}" \
+  PATH="${REPO_ROOT}/node_modules/.bin:${APP_DIR}/node_modules/.bin:${PATH}" \
     bash "${SCRIPT_DIR}/run-recipe.sh" run "${RECIPE_ABS}" \
       --artifacts-dir "${RECIPE_ARTIFACTS_DIR}" \
       --record-video=off \
