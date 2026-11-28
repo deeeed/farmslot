@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -33,6 +34,7 @@ test('node native execution rejects other owners and conflicting execution ident
     supportsSessionArchive: true,
     supportsObservations: true,
     supportsObservationConfiguration: true,
+    supportsInitialObservationConfiguration: true,
   });
   await assert.rejects(
     service.route({
@@ -441,4 +443,39 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     params: { profileId: 'work' },
   })) as { value: NativeProfileStatusResult };
   assert.equal(afterClear.value.account.installed, false);
+
+  // The registration map is applied before the newly armed observation samples the profile.
+  await service.startObservation(() => {}, { antigravity: fakeAgyV1 });
+  assert.equal(service.observationReceipt()?.ready, true);
+  const afterRegistration = (await service.routeObserved({
+    owner: 'owner',
+    method: 'native.profile.status',
+    params: { profileId: 'work' },
+  })) as { value: NativeProfileStatusResult };
+  assert.equal(afterRegistration.value.account.version, '1.5.12');
+  assert.equal(afterRegistration.value.account.executable, realpathSync(fakeAgyV1));
+});
+
+test('Cursor account observation resolves login PATH and probes from the host root', async (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'native-cursor-account-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cursor = path.join(root, 'cursor-agent');
+  writeFileSync(
+    cursor,
+    `#!${process.execPath}
+if (process.cwd() !== '/' || process.env.PROOF_LOGIN !== 'present') process.exit(2);
+if (process.argv[2] === '--version') console.log('1.2.3');
+else if (process.argv.slice(2).join(' ') === 'status --format json')
+  console.log(JSON.stringify({ isAuthenticated: true, userInfo: { email: 'cursor@example.invalid' } }));
+else process.exit(2);
+`,
+    { mode: 0o700 },
+  );
+  const result = await observeNodeNativeAccount({ runner: 'cursor' }, async () => ({
+    PATH: root,
+    PROOF_LOGIN: 'present',
+  }));
+  assert.equal(result.login, 'authenticated');
+  assert.equal(result.executable, realpathSync(cursor));
+  assert.equal(result.identity?.email, 'cursor@example.invalid');
 });

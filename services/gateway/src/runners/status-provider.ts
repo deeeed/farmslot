@@ -17,11 +17,11 @@ import type {
 } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
-import { isLocal } from '../core/exec.js';
+import { isLocal } from '../core/locality.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { SSH_INTERACTIVE_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
-import { getNode } from '../fleet/machine-registry.js';
+import { type ConnectedNode, getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 
 import { probeOpenCodeAccounts, probePiAccounts } from './account-inventory.js';
@@ -192,6 +192,7 @@ export interface RunnerStatusProvider {
 async function codexBarFields(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
+  useLoginArgv?: boolean,
 ): Promise<{
   accountEmail: string | null;
   remainingPercent: number | null;
@@ -200,7 +201,7 @@ async function codexBarFields(
   loginMethod: string | null;
   error?: string;
 }> {
-  const probe = await probeCodexBarUsageForRunner({ vars, runner });
+  const probe = await probeCodexBarUsageForRunner({ vars, runner, useLoginArgv });
   return {
     accountEmail: probe.accountEmail,
     remainingPercent: probe.remainingPercent,
@@ -466,9 +467,11 @@ const cursorStatusProvider: RunnerStatusProvider = {
   },
 
   async getActiveSubscription(vars) {
+    const connected = isLocal(vars.host, vars.machine) ? undefined : getNode(vars.machine);
+    const node = connected?.observationCapabilities?.runnerAccounts === 1 ? connected : undefined;
     const [auth, usage] = await Promise.all([
-      probeCursorAuthStatus({ vars }),
-      codexBarFields(vars, 'cursor'),
+      node ? observeCursorHostAccount(node, vars.cursorPath) : probeCursorAuthStatus({ vars }),
+      codexBarFields(vars, 'cursor', node !== undefined),
     ]);
     const accountEmail = auth.email ?? usage.accountEmail;
     const loginMethod = usage.loginMethod ?? formatCursorAuthLoginMethod(auth);
@@ -614,16 +617,67 @@ function mapAntigravityObservationToSubscription(
   };
 }
 
-function isNativeAccountObservation(value: unknown): value is NativeAccountObservation {
+function isNativeAccountObservation(
+  value: unknown,
+  runner: NativeAccountObservation['runner'],
+): value is NativeAccountObservation {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const candidate = value as Partial<NativeAccountObservation>;
   return (
-    candidate.runner === 'antigravity' &&
+    candidate.runner === runner &&
     typeof candidate.installed === 'boolean' &&
     (candidate.login === 'authenticated' ||
       candidate.login === 'signed-out' ||
       candidate.login === 'unavailable')
   );
+}
+
+type RemoteAccountObservation =
+  | { observation: NativeAccountObservation; error?: never }
+  | { observation?: never; error: string };
+
+async function observeRemoteRunnerAccount(
+  node: ConnectedNode,
+  runner: NativeAccountObservation['runner'],
+  executable?: string,
+  env?: Record<string, string>,
+): Promise<RemoteAccountObservation> {
+  let value: unknown;
+  try {
+    value = await sendNodeRequest(
+      node,
+      'native.account.observe',
+      {
+        runner,
+        cwd: '/',
+        ...(executable?.trim() ? { executable: executable.trim() } : {}),
+        ...(env ? { env } : {}),
+      },
+      { timeout: 15_000, requireSameConnection: true },
+    );
+  } catch (error) {
+    // A transport or node failure leaves this runner's retained identity stale for this sample.
+    return { error: error instanceof Error ? error.message : 'status-unavailable' };
+  }
+  return isNativeAccountObservation(value, runner)
+    ? { observation: value }
+    : { error: 'malformed-status' };
+}
+
+async function observeCursorHostAccount(node: ConnectedNode, executable?: string) {
+  const result = await observeRemoteRunnerAccount(node, 'cursor', executable);
+  const observation = result.observation;
+  return {
+    loggedIn: observation?.login === 'authenticated',
+    email: observation?.identity?.email ?? null,
+    displayName: null,
+    error:
+      observation?.login === 'authenticated'
+        ? undefined
+        : observation?.login === 'signed-out'
+          ? 'not-logged-in'
+          : (result.error ?? observation?.reason ?? 'status-unavailable'),
+  };
 }
 
 function antigravityFailedSubscription(error: string): RunnerActiveSubscription {
@@ -670,29 +724,15 @@ const antigravityStatusProvider: RunnerStatusProvider = {
     if (!node) {
       return antigravityFailedSubscription('node-not-connected');
     }
-    let observed: unknown;
-    try {
-      observed = await sendNodeRequest(
-        node,
-        'native.account.observe',
-        {
-          runner: 'antigravity',
-          cwd: '/',
-          ...(vars.antigravityPath ? { executable: vars.antigravityPath } : {}),
-          ...(vars.machineEnv ? { env: vars.machineEnv } : {}),
-        },
-        { timeout: 15_000 },
-      );
-    } catch (err) {
-      // Isolate expected remote node transport/timeout failures so peer runner status stays available
-      // and fleet retention preserves the last observed login (identity: 'failed').
-      const error = err instanceof Error && err.message ? err.message : 'status-unavailable';
-      return antigravityFailedSubscription(error);
-    }
-    if (!isNativeAccountObservation(observed)) {
-      return antigravityFailedSubscription('malformed-status');
-    }
-    return mapAntigravityObservationToSubscription(observed);
+    const result = await observeRemoteRunnerAccount(
+      node,
+      'antigravity',
+      vars.antigravityPath,
+      vars.machineEnv,
+    );
+    return result.observation
+      ? mapAntigravityObservationToSubscription(result.observation)
+      : antigravityFailedSubscription(result.error);
   },
 };
 

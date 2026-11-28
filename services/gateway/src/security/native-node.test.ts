@@ -21,7 +21,7 @@ const principal: Principal = {
 };
 
 test('native node declarations require an issued credential for that exact machine', () => {
-  const declaration = { ownerPrincipalId: 'owner' };
+  const declaration = { ownerPrincipalId: 'owner', supportsInitialObservationConfiguration: true };
   assert.deepEqual([...nativeOwnerAssignedMachines([principal], 'owner')], ['node-a']);
   assert.deepEqual([...nativeOwnerAssignedMachines([principal], 'another-owner')], []);
   assert.deepEqual(
@@ -86,6 +86,7 @@ test('native node declarations keep every declared boolean capability', () => {
     supportsProfiles: true,
     supportsObservations: true,
     supportsObservationConfiguration: true,
+    supportsInitialObservationConfiguration: true,
     supportsStructuredResults: true,
     supportsHostRefresh: true,
     supportsSessionArchive: true,

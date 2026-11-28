@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
+import { nodeExecArgv } from '../fleet/node-rpc.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -221,6 +222,7 @@ export async function probeCodexBarUsageForRunner(options: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
   runner: string;
   timeoutMs?: number;
+  useLoginArgv?: boolean;
 }): Promise<CodexBarUsageIdentity> {
   const provider = RUNNER_TO_CODEXBAR_PROVIDER[options.runner];
   if (!provider) {
@@ -255,8 +257,18 @@ export async function probeCodexBarUsageForRunner(options: {
       return parseCodexBarUsageJson(result.stdout, provider);
     }
 
-    const cmd = `codexbar usage --provider ${shellQuote(provider)} --format json`;
-    const result = await execOnSlot(options.vars, cmd, { timeout: timeoutMs });
+    const argv = ['codexbar', 'usage', '--provider', provider, '--format', 'json'];
+    const result = options.useLoginArgv
+      ? await nodeExecArgv(options.vars.machine, argv, '/', {
+          environment: 'login',
+          noRetry: true,
+          timeout: timeoutMs,
+        })
+      : await execOnSlot(
+          options.vars,
+          `codexbar usage --provider ${shellQuote(provider)} --format json`,
+          { timeout: timeoutMs },
+        );
     if (result.exitCode !== 0 && !result.stdout.trim()) {
       return {
         provider,
@@ -266,7 +278,10 @@ export async function probeCodexBarUsageForRunner(options: {
         resetsAt: null,
         loginMethod: null,
         source: null,
-        error: result.stderr || `exit-${result.exitCode}`,
+        error:
+          result.spawnErrorCode === 'ENOENT'
+            ? 'codexbar not found'
+            : result.stderr || `exit-${result.exitCode}`,
       };
     }
     return parseCodexBarUsageJson(result.stdout, provider);

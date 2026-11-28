@@ -246,6 +246,7 @@ async function handshake(socket: WebSocket): Promise<void> {
         workspace: 1,
         textReads: 1,
         batchReads: 1,
+        runnerAccounts: 1,
       },
     });
     if (ws !== socket) {
@@ -295,7 +296,7 @@ async function handshake(socket: WebSocket): Promise<void> {
           socket.send(
             JSON.stringify({ type: 'event', event: 'node.native.observation', payload: receipt }),
           );
-      });
+      }, registered.nativeObservationExecutables);
     } catch (error) {
       if (
         !(error instanceof Error) ||
@@ -701,6 +702,9 @@ async function handleRequest(
           if (argv.length === 0) throw new Error('exec argv must contain at least one element');
           command = { argv };
         }
+        const environment = params.environment;
+        if (environment !== undefined && environment !== 'login' && environment !== 'service')
+          throw new Error('exec environment must be login or service');
         const cwd = typeof params.cwd === 'string' ? params.cwd : undefined;
         const timeout = typeof params.timeout === 'number' ? params.timeout : undefined;
         const maxBuffer = typeof params.maxBuffer === 'number' ? params.maxBuffer : undefined;
@@ -711,6 +715,7 @@ async function handleRequest(
               cwd,
               timeout,
               maxBuffer,
+              ...(environment ? { environment } : {}),
               ...(typeof closeoutTimeoutMs === 'number' ? { closeoutTimeoutMs } : {}),
               ...(requestScoped ? { requestScoped: true } : {}),
             },
