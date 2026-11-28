@@ -1010,11 +1010,25 @@ test('the native message composer is ready when approvals are acknowledged befor
     await changing;
     assert.equal(state.data?.session, pending, 'the stream has not confirmed the change yet');
     assert.equal(composerDisabled(), false, 'enabled immediately after the mutation');
+
+    changed?.({ ...state, history: { after: 0, loading: true } });
+    assert.equal(composerDisabled(), false, 'enabled when the saved page starts loading');
+    changed?.({ ...state, history: { after: 0, loading: false, page: snapshot } });
+    assert.equal(composerDisabled(), false, 'enabled when the saved page arrives');
+    changed?.({ ...state, status: 'stale' });
+    assert.equal(composerDisabled(), true, 'disabled for stale history even before confirmation');
+    changed?.(state);
+    assert.equal(
+      composerDisabled(),
+      false,
+      'enabled when the saved page closes on current history',
+    );
+
     publish({ ...confirmed });
     assert.equal(composerDisabled(), false, 'enabled after the history refresh');
-    changed?.({ ...state, status: 'stale' });
-    assert.equal(composerDisabled(), true, 'disabled for stale history');
-    changed?.(state);
+    publish({ ...confirmed, approvalModePending: 'ask' });
+    assert.equal(composerDisabled(), true, 'disabled for a newer pending policy');
+    publish({ ...confirmed });
     Reflect.set(view, 'connected', false);
     assert.equal(composerDisabled(), true, 'disabled after disconnect');
   } finally {

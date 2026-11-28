@@ -339,6 +339,11 @@ export class NativeSessionView extends LitElement {
   @state() private historyObservation: NativeConversationState = {
     status: 'loading',
   };
+  private approvalAcknowledgement?: {
+    revision: number;
+    observed: NativeSessionInfo;
+    confirmed: NativeSessionInfo;
+  };
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
   /** Expanded message/command and tool keys, shared with the URL display-choice owner. */
@@ -608,9 +613,16 @@ export class NativeSessionView extends LitElement {
     const changed = (state: NativeConversationState) => {
       if (!this.isConnected || revision !== this.revision) return;
       const before = this.timeline().length;
-      this.historyObservation = state;
       const page = state.data;
-      this.session = page?.session;
+      const approval = this.approvalAcknowledgement;
+      if (page && approval?.revision === revision && page.session === approval.observed) {
+        this.session = approval.confirmed;
+        this.historyObservation = { ...state, data: { ...page, session: approval.confirmed } };
+      } else {
+        this.approvalAcknowledgement = undefined;
+        this.historyObservation = state;
+        this.session = page?.session;
+      }
       this.transcript = { events: page?.events ?? [], cursor: page?.cursor ?? 0 };
       this.historyScope = page?.scope;
       this.receipts = page?.commands ?? [];
@@ -1564,6 +1576,12 @@ ${JSON.stringify(
         ...current,
         approvalMode: confirmed.approvalMode,
         approvalModePending: confirmed.approvalModePending,
+      };
+      const previous = this.approvalAcknowledgement;
+      this.approvalAcknowledgement = {
+        revision,
+        observed: previous?.confirmed === current ? previous.observed : current,
+        confirmed: updated,
       };
       this.historyObservation = {
         ...this.historyObservation,
