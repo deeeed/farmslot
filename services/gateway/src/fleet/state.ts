@@ -1,7 +1,7 @@
 // state.ts — Read/watch .farm-status.json, pool/*.json, projects/*/project.json
 // Transforms raw JSON into protocol types
 import { once } from 'node:events';
-import { statSync } from 'node:fs';
+import { type BigIntStats, statSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -912,6 +912,56 @@ function loadNewestFleetStatus(): Promise<FleetStatus> {
 // 200 ms coalesces paired deliveries into one native snapshot read while staying well below the 2 s fleet debounce.
 export const NATIVE_POOL_CHANGE_COALESCE_MS = 200;
 
+interface RecentFileEdit {
+  stamp: string | undefined;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+type FileEditAction = 'pr-rules' | 'configuration' | 'pool-capabilities-and-workers';
+type FileEditActions = Record<FileEditAction, () => void>;
+
+/** Deliver the first observation immediately, even when Chokidar only emits raw. */
+function createFileEditCoalescer(actions: FileEditActions) {
+  const recent = new Map<string, RecentFileEdit>();
+  return {
+    deliver(file: string, ...edits: FileEditAction[]): void {
+      let stats: BigIntStats | undefined;
+      let readable = true;
+      try {
+        stats = statSync(file, { bigint: true, throwIfNoEntry: false });
+      } catch (error) {
+        if (!(error instanceof Error) || !('syscall' in error) || error.syscall !== 'stat')
+          throw error;
+        // When metadata is unreadable, let the owning reader handle the source failure.
+        readable = false;
+      }
+      // Compare inode for replacements and timestamps for in-place edits.
+      // An absent file is also an observable state, which pairs raw rename with all unlink.
+      const stamp = stats
+        ? `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
+        : undefined;
+      for (const action of edits) {
+        const key = `${action}:${file}`;
+        const previous = recent.get(key);
+        if (readable && previous && previous.stamp === stamp) continue;
+        clearTimeout(previous?.timer);
+        if (readable) {
+          const timer = setTimeout(() => recent.delete(key), NATIVE_POOL_CHANGE_COALESCE_MS);
+          timer.unref();
+          recent.set(key, { stamp, timer });
+        } else {
+          recent.delete(key);
+        }
+        actions[action]();
+      }
+    },
+    dispose(): void {
+      for (const { timer } of recent.values()) clearTimeout(timer);
+      recent.clear();
+    },
+  };
+}
+
 export interface PoolWatcherHandlers {
   onAll: (event: string, file: string) => void;
   onRaw: (_event: string, filename: unknown, details: unknown) => void;
@@ -985,6 +1035,15 @@ export function startFileWatcher() {
       console.error('[state] PR rule source reload failed:', error);
     }
   };
+  const fileEdits = createFileEditCoalescer({
+    'pr-rules': reloadPRRules,
+    configuration: publishConfigurationResources,
+    'pool-capabilities-and-workers': () => {
+      capabilityResourceChanges.catalogChanged();
+      publishWorkerResources();
+    },
+  });
+  const prRulesChanged = () => fileEdits.deliver(prRulesFile, 'pr-rules');
   const watcher = watch(directory, {
     persistent: true,
     ignoreInitial: true,
@@ -994,14 +1053,14 @@ export function startFileWatcher() {
   watcher.on('all', async (event, file) => {
     if (event !== 'change' && event !== 'add' && event !== 'unlink') return;
     if (file === prRulesFile) {
-      await reloadPRRules();
+      prRulesChanged();
       return;
     }
     const fleet = await loadNewestFleetStatus();
     for (const handler of changeHandlers) handler(fleet);
   });
   watcher.on('raw', (_event, filename: unknown, details: unknown) => {
-    if (watchedEventPath(filename, details) === prRulesFile) void reloadPRRules();
+    if (watchedEventPath(filename, details) === prRulesFile) prRulesChanged();
   });
 
   // Watch pool config changes — hot-reload without gateway restart
@@ -1016,10 +1075,8 @@ export function startFileWatcher() {
   });
   const poolHandlers = createPoolWatcherHandlers({
     directory: poolDirectory(),
-    onPoolFileChanged: () => {
-      publishConfigurationResources();
-      capabilityResourceChanges.catalogChanged();
-      publishWorkerResources();
+    onPoolFileChanged: (file) => {
+      fileEdits.deliver(file, 'configuration', 'pool-capabilities-and-workers');
       clearTimeout(poolDebounce);
       poolDebounce = setTimeout(async () => {
         try {
@@ -1058,8 +1115,10 @@ export function startFileWatcher() {
   ].map((name) => path.join(selectedHome, name));
   const triagePilotObservation = new TriagePilotObservation(selectedHome);
   const triagePilotReady = triagePilotObservation.refresh();
-  const registrationFiles = [llmConfigFile, getFarmslotStorePath(), getOpenClawStorePath()];
-  const registrationParent = path.dirname(getOpenClawStorePath());
+  const openClawStoreFile = getOpenClawStorePath();
+  const registrationFiles = [llmConfigFile, getFarmslotStorePath()];
+  const registrationParent = path.dirname(openClawStoreFile);
+  const openClawStoreChanged = () => fileEdits.deliver(openClawStoreFile, 'configuration');
   // A missing optional root can finish Chokidar's multi-root readiness before
   // its other trees are armed. Give it an existing ancestor and its own owner.
   let registrationRoot = registrationParent;
@@ -1070,16 +1129,15 @@ export function startFileWatcher() {
     ignoreInitial: true,
     ignored: (file) =>
       file !== registrationRoot &&
-      file !== getOpenClawStorePath() &&
-      !getOpenClawStorePath().startsWith(`${file}${path.sep}`),
+      file !== openClawStoreFile &&
+      !openClawStoreFile.startsWith(`${file}${path.sep}`),
   });
   registrationWatcher.on('all', (event, file) => {
-    if (file === getOpenClawStorePath() && ['add', 'change', 'unlink'].includes(event))
-      publishConfigurationResources();
+    if (file === openClawStoreFile && ['add', 'change', 'unlink'].includes(event))
+      openClawStoreChanged();
   });
   registrationWatcher.on('raw', (_event, filename: unknown, details: unknown) => {
-    if (watchedEventPath(filename, details) === getOpenClawStorePath())
-      publishConfigurationResources();
+    if (watchedEventPath(filename, details) === openClawStoreFile) openClawStoreChanged();
   });
   const projectWatcher = watch([projectsDirectory(), selectedHome], {
     persistent: true,
@@ -1087,7 +1145,12 @@ export function startFileWatcher() {
     depth: 4,
     ignored: (file, stats) => {
       if (assessmentFiles.includes(file)) return false;
-      if (registrationFiles.includes(file) || file === registrationParent) return false;
+      if (
+        registrationFiles.includes(file) ||
+        file === openClawStoreFile ||
+        file === registrationParent
+      )
+        return false;
       if (file === projectsDirectory() || file === selectedHome || file === runtimeSettingsDir)
         return false;
       // Chokidar follows existing ancestors until a missing settings directory appears.
@@ -1108,6 +1171,10 @@ export function startFileWatcher() {
     },
   });
   const projectChanged = (file: string) => {
+    if (file === openClawStoreFile) {
+      openClawStoreChanged();
+      return;
+    }
     if (assessmentFiles.includes(file)) {
       if (file === path.join(selectedHome, 'triage-policy.json'))
         void triagePilotObservation.refresh();
@@ -1210,6 +1277,7 @@ export function startFileWatcher() {
     async close(): Promise<void> {
       clearTimeout(poolDebounce);
       poolHandlers.dispose();
+      fileEdits.dispose();
       storageBindingHandlers.delete(refreshStorageBindings);
       volumesWatcher.close();
       await Promise.all([
