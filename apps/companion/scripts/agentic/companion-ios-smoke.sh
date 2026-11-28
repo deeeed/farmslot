@@ -244,11 +244,44 @@ IFS=$'\t' read -r SRC_SIM_UDID SRC_SIM_STATE_BEFORE SRC_SIM_DEVICE_TYPE SRC_SIM_
   ' "${SIMULATOR_INPUT}"
 )
 
-# Resolve the installed .app bundle path on the reference simulator without touching its runtime state.
-APP_BUNDLE_PATH="$(xcrun simctl get_app_container "${SRC_SIM_UDID}" "${BUNDLE_ID}" app 2>/dev/null || true)"
+# Resolve the installed .app bundle path on the reference simulator without booting or mutating it.
+APP_BUNDLE_PATH="$(
+  node -e '
+    const { spawnSync } = require("node:child_process");
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const [udid, bundleId] = process.argv.slice(1);
+    const direct = spawnSync("xcrun", ["simctl", "get_app_container", udid, bundleId, "app"], { encoding: "utf8" });
+    if (direct.status === 0 && direct.stdout.trim() && fs.existsSync(direct.stdout.trim())) {
+      process.stdout.write(direct.stdout.trim());
+      process.exit(0);
+    }
+    const base = path.join(os.homedir(), "Library", "Developer", "CoreSimulator", "Devices", udid, "data", "Containers", "Bundle", "Application");
+    if (!fs.existsSync(base)) process.exit(0);
+    const candidates = [];
+    for (const entry of fs.readdirSync(base)) {
+      const containerDir = path.join(base, entry);
+      let stat;
+      try { stat = fs.statSync(containerDir); } catch { continue; }
+      if (!stat.isDirectory()) continue;
+      for (const item of fs.readdirSync(containerDir)) {
+        if (!item.endsWith(".app")) continue;
+        const appPath = path.join(containerDir, item);
+        const infoPlist = path.join(appPath, "Info.plist");
+        if (!fs.existsSync(infoPlist)) continue;
+        const pl = spawnSync("plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", infoPlist], { encoding: "utf8" });
+        if (pl.status === 0 && pl.stdout.trim() === bundleId) {
+          candidates.push({ appPath, mtimeMs: stat.mtimeMs });
+        }
+      }
+    }
+    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    if (candidates[0]) process.stdout.write(candidates[0].appPath);
+  ' "${SRC_SIM_UDID}" "${BUNDLE_ID}"
+)"
 if [[ -z "${APP_BUNDLE_PATH}" || ! -d "${APP_BUNDLE_PATH}" ]]; then
   echo "ERROR: ${BUNDLE_ID} is not installed on reference simulator ${SRC_SIM_NAME} (${SRC_SIM_UDID})." >&2
-  rm -rf "${SCRATCH_DIR}"
   exit 1
 fi
 
@@ -284,6 +317,7 @@ capture_state_json() {
     const { execFileSync, spawnSync } = require("node:child_process");
     const crypto = require("node:crypto");
     const fs = require("node:fs");
+    const os = require("node:os");
     const path = require("node:path");
     const [outFile, srcSimUdid, ephSimUdid, bundleId, gwPort, ctrlPort, metroPort, prePortsCsv] = process.argv.slice(1);
     const lsofPids = (port) => {
@@ -292,9 +326,27 @@ capture_state_json() {
       return [...new Set(r.stdout.trim().split(/\r?\n/).map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0))].sort((a, b) => a - b);
     };
     const appPrefsHash = (udid) => {
+      let dataDir = null;
       const r = spawnSync("xcrun", ["simctl", "get_app_container", udid, bundleId, "data"], { encoding: "utf8" });
-      if (r.status !== 0 || !r.stdout.trim()) return null;
-      const plist = path.join(r.stdout.trim(), "Library", "Preferences", `${bundleId}.plist`);
+      if (r.status === 0 && r.stdout.trim()) {
+        dataDir = r.stdout.trim();
+      } else {
+        const base = path.join(os.homedir(), "Library", "Developer", "CoreSimulator", "Devices", udid, "data", "Containers", "Data", "Application");
+        if (fs.existsSync(base)) {
+          for (const entry of fs.readdirSync(base)) {
+            const candidate = path.join(base, entry);
+            const meta = path.join(candidate, ".com.apple.mobile_container_manager.metadata.plist");
+            if (!fs.existsSync(meta)) continue;
+            const pl = spawnSync("plutil", ["-extract", "MCMMetadataIdentifier", "raw", "-o", "-", meta], { encoding: "utf8" });
+            if (pl.status === 0 && pl.stdout.trim() === bundleId) {
+              dataDir = candidate;
+              break;
+            }
+          }
+        }
+      }
+      if (!dataDir) return null;
+      const plist = path.join(dataDir, "Library", "Preferences", `${bundleId}.plist`);
       if (!fs.existsSync(plist)) return null;
       return crypto.createHash("sha256").update(fs.readFileSync(plist)).digest("hex");
     };
