@@ -51,6 +51,7 @@ import {
 import { saveWithConfigBackup } from '../core/config-backups.js';
 import { type RawPoolSlot, readSlotRow, updateSlotStatus } from '../core/index.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { invalidateMachinePoolSnapshot } from '../fleet/machine-pool-snapshot.js';
 import {
   loadFleetStatus,
   loadPoolConfig,
@@ -404,6 +405,8 @@ export async function configSlotUpdate(
     () => atomicWriteTextFile(poolFilePath, JSON.stringify(raw, null, 2) + '\n'),
   );
 
+  invalidateMachinePoolSnapshot(path.dirname(poolFilePath));
+
   // Sync into .farm-status.json + cache now — server.ts also calls fleetRefresh()
   // after this returns, but that runs SSH/device health checks and can take 30s+,
   // long enough for a follow-up dispatch to read stale state and fail validation.
@@ -462,6 +465,8 @@ export async function configPoolUpdate(
     poolFilePath,
     () => atomicWriteTextFile(poolFilePath, content.endsWith('\n') ? content : content + '\n'),
   );
+
+  invalidateMachinePoolSnapshot(path.dirname(poolFilePath));
 
   // Sync mode/enabled changes into .farm-status.json + cache now — see
   // configSlotUpdate above for why this is needed before fleetRefresh.

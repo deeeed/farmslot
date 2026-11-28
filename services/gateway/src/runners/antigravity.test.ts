@@ -37,6 +37,7 @@ import {
   type RequestFrame,
 } from '@farmslot/protocol';
 
+import { readSlotPools } from '../core/config.js';
 import { computeCandidateStrategyFingerprint } from '../evals/package-store.js';
 import { getNode, registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse, sendNodeRequest } from '../fleet/node-rpc.js';
@@ -51,7 +52,6 @@ import { resolveRunDispatchRunnerModel } from '../run-engine/dispatch-policy.js'
 import { createGatewayAuthRuntime } from '../security/auth.js';
 
 import {
-  loadTrustedNativeExecutableSnapshot,
   resolveTrustedNativeExecutable,
   resolveTrustedNativeExecutablesForNode,
   routeNativeExecution,
@@ -765,43 +765,12 @@ test('gateway observation owner syncs remote executables before fence so first a
   const tempPoolRoot = join(root, 'pool');
   const nodeStateRoot = join(root, 'node-state');
   const profileDir = join(root, 'work-profile');
-  const probeLog = join(root, 'probes.log');
   const fakeAgyV1 = join(root, 'bin-v1', 'agy');
   const fakeAgyV2 = join(root, 'bin-v2', 'agy');
   mkdirSync(farmHome, { recursive: true });
   mkdirSync(tempPoolRoot, { recursive: true });
   mkdirSync(nodeStateRoot, { recursive: true, mode: 0o700 });
-  chmodSync(nodeStateRoot, 0o700);
   mkdirSync(profileDir, { recursive: true });
-  mkdirSync(dirname(fakeAgyV1), { recursive: true });
-  mkdirSync(dirname(fakeAgyV2), { recursive: true });
-
-  const writeFakeAgy = (target: string, version: string) => {
-    writeFileSync(
-      target,
-      `#!/usr/bin/env node
-const fs = require('node:fs');
-if (process.argv.includes('--version')) {
-  fs.appendFileSync(${JSON.stringify(probeLog)}, ${JSON.stringify(`${version}\n`)});
-  console.log(${JSON.stringify(version)});
-  process.exit(0);
-}
-const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
-require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
-  const m = JSON.parse(line);
-  if (m.method === 'initialize') {
-    return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} } } });
-  }
-  if (m.method === 'session/list') {
-    return send({ id: m.id, result: { sessions: [] } });
-  }
-});
-`,
-    );
-    chmodSync(target, 0o700);
-  };
-  writeFakeAgy(fakeAgyV1, '1.5.12');
-  writeFakeAgy(fakeAgyV2, '1.5.13');
 
   const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
   const prevFarmHome = process.env.FARMSLOT_HOME;
@@ -903,12 +872,34 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     undefined,
     () => {
       poolSnapshotReads++;
-      return loadTrustedNativeExecutableSnapshot();
+      return readSlotPools();
     },
   );
   let nodeExecutables: Record<string, string> = {};
   let nodeExecutablesDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST;
+  let accountSamples = 0;
   let configureCalls = 0;
+  const sampleAccount = (executable?: string): NativeProfileStatusResult => ({
+    profile: {
+      id: 'work',
+      runner: 'antigravity',
+      directory: profileDir,
+      accountContextId: '22222222-2222-4222-8222-222222222222',
+      state: 'active',
+    },
+    account: {
+      runner: 'antigravity',
+      installed: Boolean(executable),
+      executable,
+      version:
+        executable === fakeAgyV1 ? '1.5.12' : executable === fakeAgyV2 ? '1.5.13' : undefined,
+      login: executable ? 'authenticated' : 'unavailable',
+      mode: 'unknown',
+      identityQuality: 'unavailable',
+      observedAt: '2026-11-28T00:00:00.000Z',
+    },
+    loginCommand: executable ?? 'agy',
+  });
   const configuredPayloads: Array<Record<string, string>> = [];
   let pendingConfigureGate: { entered: Promise<void>; release: () => void } | undefined;
   let lastReceipt: NativeSourceReceipt | undefined;
@@ -924,7 +915,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
         if (registeredWs) observations.acceptRemote(registeredWs, receipt, () => true);
       },
       undefined,
-      undefined,
+      async () => {
+        accountSamples++;
+        return [sampleAccount(nodeExecutables.antigravity)];
+      },
       (runner) => nodeExecutables[runner],
       nodeExecutablesDigest,
     );
@@ -946,15 +940,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     undefined,
     async () => {
       node2SampleCalls++;
-      return [
-        (await routeNativeProfile(
-          node2Client,
-          ownerRecord.id,
-          Methods.NATIVE_PROFILE_STATUS,
-          { profileId: 'work' },
-          { resolveExecutable: (runner) => node2Executables[runner] },
-        )) as NativeProfileStatusResult,
-      ];
+      return [sampleAccount(node2Executables.antigravity)];
     },
     (runner) => node2Executables[runner],
     node2ExecutablesDigest,
@@ -1020,21 +1006,26 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   registeredWs = activeTransport.ws;
 
   const clientConn = {};
-  registerNode(
-    machine,
-    1,
-    activeTransport.ws,
-    undefined,
-    undefined,
-    {
-      ownerPrincipalId: ownerRecord.id,
-      supportsStandaloneDelegation: true,
-      supportsProfiles: true,
-      supportsObservations: true,
-      supportsObservationConfiguration: true,
-    },
-    { principalId: 'node-fenced', valid: () => true },
-  );
+  const capable = {
+    ownerPrincipalId: ownerRecord.id,
+    supportsStandaloneDelegation: true,
+    supportsProfiles: true,
+    supportsObservations: true,
+    supportsObservationConfiguration: true,
+    supportsInitialObservationConfiguration: true,
+  };
+  registerNode(machine, 1, activeTransport.ws, undefined, undefined, capable, {
+    principalId: 'node-fenced',
+    valid: () => true,
+  });
+  const initial = observations.registrationExecutables(machine, capable);
+  assert.deepStrictEqual(initial, { antigravity: fakeAgyV1 });
+  nodeExecutables = initial;
+  nodeExecutablesDigest = canonicalTrustedExecutablesDigest(initial);
+  observations.registrationChanged(machine, ownerRecord.id, undefined, {
+    connection: activeTransport.ws,
+    executables: initial,
+  });
   registerNode(
     machine2,
     1,
@@ -1142,29 +1133,23 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       'empty-map acknowledgement on a cold node must not repeat the initial account sample',
     );
 
-    // First marked read on configured node succeeds after registration sync with v1.
+    // First marked read uses the v1 sample from the registration map without a configure RPC.
     const first = await waitForReadyRead(machine);
     assert.equal(first.account.installed, true);
     assert.equal(first.account.login, 'authenticated');
     assert.equal(first.account.version, '1.5.12');
     assert.ok(first.loginCommand.includes(fakeAgyV1));
-    assert.equal(configureCalls, 1);
-    const probesAfterFirst = readFileSync(probeLog, 'utf8')
-      .trim()
-      .split('\n')
-      .filter(Boolean).length;
+    assert.equal(configureCalls, 0);
+    const probesAfterFirst = accountSamples;
     assert.equal(probesAfterFirst, 1);
 
     // Second read with unchanged pool config does zero extra configures, zero probes, zero pool scans.
     const poolReadsSteady = poolSnapshotReads;
     const second = await readThroughGateway(machine);
     assert.equal(second.account.version, '1.5.12');
-    assert.equal(configureCalls, 1);
+    assert.equal(configureCalls, 0);
     assert.equal(poolSnapshotReads, poolReadsSteady);
-    assert.equal(
-      readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
-      probesAfterFirst,
-    );
+    assert.equal(accountSamples, probesAfterFirst);
 
     // Model discovery notice refreshes the catalog view and performs ZERO executable/pool scans or configures.
     const invalidationsBeforeDiscovery = invalidatedKeys.length;
@@ -1176,7 +1161,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       'model discovery notice must still invalidate the catalog view',
     );
     assert.equal(poolSnapshotReads, poolReadsSteady, 'discovery must perform zero pool scans');
-    assert.equal(configureCalls, 1, 'discovery must send zero configure RPCs to configured node');
+    assert.equal(configureCalls, 0, 'discovery must send zero configure RPCs to configured node');
     assert.equal(configureCalls2, 1, 'discovery must send zero configure RPCs to clean node');
 
     // Actual pool edit reads ONE shared pool snapshot for all connected nodes, skips unchanged machine2,
@@ -1198,7 +1183,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       1,
       'unchanged connected node must receive zero extra configure RPCs on another node pool edit',
     );
-    await waitUntil(() => configureCalls === 2, 'background configure RPC for changed node');
+    await waitUntil(() => configureCalls === 1, 'background configure RPC for changed node');
     await assert.rejects(
       readThroughGateway(machine),
       { code: 'NATIVE_PROFILES_UNAVAILABLE' },
@@ -1221,11 +1206,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     assert.equal(concurrentB.account.version, '1.5.13');
     assert.ok(concurrentA.loginCommand.includes(fakeAgyV2));
     assert.ok(concurrentB.loginCommand.includes(fakeAgyV2));
-    assert.equal(configureCalls, 2);
-    assert.equal(
-      readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
-      probesAfterFirst + 1,
-    );
+    assert.equal(configureCalls, 1);
+    assert.equal(accountSamples, probesAfterFirst + 1);
 
     // Disconnect the node, remove the antigravity_path override from pool while disconnected,
     // then reconnect the same node (which still holds fakeAgyV2 in memory): gateway must
@@ -1260,7 +1242,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
 
     const afterReconnect = await waitForReadyRead(machine);
     assert.equal(afterReconnect.account.installed, false);
-    assert.equal(configureCalls, 3);
+    assert.equal(configureCalls, 2);
     assert.deepEqual(configuredPayloads.at(-1), {});
 
     // Older node without supportsObservationConfiguration fails closed when a custom path is configured.
@@ -1416,7 +1398,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       localClient,
       () => {
         poolSnapshotReads++;
-        return loadTrustedNativeExecutableSnapshot();
+        return readSlotPools();
       },
     );
 
@@ -1615,7 +1597,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       localClient,
       () => {
         poolSnapshotReads++;
-        return loadTrustedNativeExecutableSnapshot();
+        return readSlotPools();
       },
     );
 

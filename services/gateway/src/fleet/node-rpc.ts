@@ -611,9 +611,13 @@ export async function nodeExecArgv(
   machine: string,
   argv: string[],
   cwd?: string,
-  opts?: NodeExecOpts,
+  opts?: NodeExecOpts & Pick<NodeExecParams, 'environment'>,
 ): Promise<ExecResult> {
-  return nodeExecRequest(machine, { argv, cwd }, opts);
+  return nodeExecRequest(
+    machine,
+    { argv, cwd, ...(opts?.environment ? { environment: opts.environment } : {}) },
+    opts,
+  );
 }
 
 /** Task libraries execute in a child process of the node with the same owned closeout as exec. */

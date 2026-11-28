@@ -9,17 +9,24 @@ import {
   type NativeSourceReceipt,
   NativeSourceUnavailable,
 } from '@farmslot/agent-runtime/native/observation';
-import type { NativeSessionInfo, Principal } from '@farmslot/protocol';
+import type {
+  NativeExecutionNodeDeclaration,
+  NativeSessionInfo,
+  Principal,
+} from '@farmslot/protocol';
 import type { ResourceKey } from '@farmslot/protocol/client-cache';
 
 import type { SlotPools } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import {
+  indexMachinePoolSnapshot,
+  type MachinePoolSnapshot,
+  readMachinePoolSnapshot,
+} from '../fleet/machine-pool-snapshot.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { isNodeTransportUnavailableError, sendNodeRequest } from '../fleet/node-rpc.js';
 import { nativeSessionManager } from '../runners/native/manager.js';
 import {
-  indexTrustedNativePoolSnapshot,
-  loadTrustedNativeExecutableSnapshot,
   resolveNativeExecutionNode,
   resolveTrustedNativeExecutablesFromIndex,
 } from '../runners/native/node.js';
@@ -335,6 +342,11 @@ interface RemoteSource {
   readonly supportsObservationConfiguration: boolean;
   readonly config: SourceConfigState;
 }
+interface RegisteredExecutableConfiguration {
+  connection: object;
+  executables: Record<string, string>;
+}
+
 type CachedNodeExecutables =
   | { readonly ok: true; readonly executables: Record<string, string> | undefined }
   | { readonly ok: false; readonly error: string };
@@ -349,14 +361,14 @@ export interface NativeReadResult<T> {
 export class GatewayNativeObservations {
   private readonly clients = new Map<object, NativeConnection>();
   private readonly remote = new Map<string, RemoteSource>();
+  private readonly registrationDigests = new WeakMap<object, string>();
   private local?: NativeHostObservation;
   private localReceipt?: NativeSourceReceipt;
   private localSessionRevision = 0;
   private localExecutables?: Record<string, string>;
   private localConfig: SourceConfigState = createSourceConfigState();
   private poolCatalogRevision = 0;
-  private poolExecutableRevision = 0;
-  private executableCacheRevision = -1;
+  private executableCacheSnapshot?: MachinePoolSnapshot;
   private readonly executableCache = new Map<string, CachedNodeExecutables>();
 
   private readonly stopCatalogNotices: () => void;
@@ -369,7 +381,7 @@ export class GatewayNativeObservations {
   constructor(
     private readonly invalidate: (key: NativeObservationKey) => void,
     private readonly localClient: NativeSessionClient = nativeSessionManager,
-    private readonly readPoolSnapshot: () => SlotPools = loadTrustedNativeExecutableSnapshot,
+    private readonly readPoolSnapshot?: () => SlotPools,
   ) {
     this.stopCatalogNotices = nativeCatalogChanges.subscribe((change) =>
       this.catalogChanged(change),
@@ -419,7 +431,6 @@ export class GatewayNativeObservations {
     if (change.scope === 'all') {
       this.poolCatalogRevision++;
       if (change.reason === 'pool') {
-        this.poolExecutableRevision++;
         this.syncExecutablesOnPoolChange();
       }
     }
@@ -590,6 +601,21 @@ export class GatewayNativeObservations {
       config,
     };
     this.remote.set(receipt.nodeId, updated);
+    const registrationDigest = this.registrationDigests.get(connection);
+    if (receipt.ready) {
+      const desired = this.syncDesiredForSource(receipt.nodeId, config);
+      this.registrationDigests.delete(connection);
+      // Receipt readiness acknowledges the initial sample on this socket. An edit during
+      // registration must still use the ordinary live-configuration path.
+      if (
+        !config.configuring &&
+        desired.kind === 'valid' &&
+        desired.digest === registrationDigest
+      ) {
+        config.committedEpoch = config.epoch;
+        config.committedDigest = registrationDigest;
+      }
+    }
     if (previous && previous.connection !== connection)
       this.invalidateSource(previous.receipt.nodeId, previous.receipt.ownerId);
     this.publishReceiptFacets(
@@ -614,13 +640,43 @@ export class GatewayNativeObservations {
       this.triggerRemoteExecutableSync(receipt.nodeId, receipt.ownerId);
     }
   }
+  registrationExecutables(
+    nodeId: string,
+    declaration?: NativeExecutionNodeDeclaration,
+  ): Record<string, string> | undefined {
+    if (
+      !declaration?.supportsInitialObservationConfiguration ||
+      !declaration.supportsObservationConfiguration ||
+      !declaration.supportsObservations
+    )
+      return undefined;
+    const owner = readCredentialStoreSnapshot().principals.find(
+      (principal) => principal.id === declaration.ownerPrincipalId,
+    );
+    if (!owner || owner.subject.type === 'node' || (owner.generation ?? 0) !== 0) return undefined;
+    const resolved = this.resolveCachedNodeExecutablesResult(nodeId);
+    // Preserve registration and session reads on a broken pool. The profile gate reports the error.
+    return resolved.ok ? (resolved.executables ?? {}) : undefined;
+  }
+
   /** Existing node registration owner calls this even for old/unsupported replacement nodes. */
-  registrationChanged(nodeId: string, ownerId?: string, previousConnection?: object): void {
+  registrationChanged(
+    nodeId: string,
+    ownerId?: string,
+    previousConnection?: object,
+    initial?: RegisteredExecutableConfiguration,
+  ): void {
     if (previousConnection) this.disconnectRemote(previousConnection);
+    if (initial)
+      this.registrationDigests.set(
+        initial.connection,
+        canonicalTrustedExecutablesDigest(initial.executables),
+      );
     if (ownerId) this.invalidateSource(nodeId, ownerId);
   }
 
   disconnectRemote(connection: object): void {
+    this.registrationDigests.delete(connection);
     for (const [nodeId, source] of this.remote)
       if (source.connection === connection) {
         this.remote.delete(nodeId);
@@ -971,23 +1027,32 @@ export class GatewayNativeObservations {
     this.remote.clear();
   }
 
+  private machinePoolSnapshot() {
+    return this.readPoolSnapshot
+      ? indexMachinePoolSnapshot(this.readPoolSnapshot())
+      : readMachinePoolSnapshot();
+  }
+
   private resolveCachedNodeExecutablesResult(nodeId: string): CachedNodeExecutables {
-    if (this.executableCacheRevision !== this.poolExecutableRevision) {
+    // Production reads share the watcher's current snapshot even before a coalesced
+    // publication. Fixture suppliers refresh when explicitly notified of edits.
+    const index =
+      this.readPoolSnapshot && this.executableCacheSnapshot
+        ? this.executableCacheSnapshot
+        : this.machinePoolSnapshot();
+    if (this.executableCacheSnapshot !== index) {
       this.executableCache.clear();
-      this.executableCacheRevision = this.poolExecutableRevision;
+      this.executableCacheSnapshot = index;
     }
     const cached = this.executableCache.get(nodeId);
     if (cached) return cached;
-    const index = indexTrustedNativePoolSnapshot(this.readPoolSnapshot());
     let entry: CachedNodeExecutables;
     try {
       entry = { ok: true, executables: resolveTrustedNativeExecutablesFromIndex(index, nodeId) };
     } catch (error) {
       entry = { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
-    if (this.executableCacheRevision === this.poolExecutableRevision) {
-      this.executableCache.set(nodeId, entry);
-    }
+    this.executableCache.set(nodeId, entry);
     return entry;
   }
 
@@ -1387,10 +1452,11 @@ export class GatewayNativeObservations {
       if (source.current()) connectedRemotes.push([nodeId, source]);
     }
     this.executableCache.clear();
-    this.executableCacheRevision = this.poolExecutableRevision;
+    this.executableCacheSnapshot = undefined;
     if (!hasLocal && connectedRemotes.length === 0) return;
 
-    const index = indexTrustedNativePoolSnapshot(this.readPoolSnapshot());
+    const index = this.machinePoolSnapshot();
+    this.executableCacheSnapshot = index;
 
     if (hasLocal) {
       let nextDesired: SourceDesiredConfig;
@@ -1565,6 +1631,7 @@ export class GatewayNativeObservations {
         return;
       const parsed = receipt as NativeSourceReceipt;
       validateReceipt(parsed);
+      this.syncDesiredForSource(nodeId, currentSource.config);
       if (currentSource.config.epoch !== epoch) {
         // Keep the receipt current for unaffected session reads without publishing a stale
         // `profiles` invalidation or clearing a newer configuration state.

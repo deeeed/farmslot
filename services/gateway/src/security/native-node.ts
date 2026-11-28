@@ -18,6 +18,7 @@ const BOOLEAN_CAPABILITIES: Record<BooleanCapability, true> = {
   supportsProfiles: true,
   supportsObservations: true,
   supportsObservationConfiguration: true,
+  supportsInitialObservationConfiguration: true,
   supportsStructuredResults: true,
   supportsHostRefresh: true,
   supportsSessionArchive: true,

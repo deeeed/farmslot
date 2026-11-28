@@ -1,0 +1,1 @@
+- Allow capable nodes to receive trusted native executables on registration and advertise shared account observations.

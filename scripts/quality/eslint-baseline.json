@@ -562,10 +562,6 @@
       "count": 1
     },
     {
-      "key": "services/gateway/src/runners/status-provider.ts:@typescript-eslint/no-restricted-imports",
-      "count": 1
-    },
-    {
       "key": "services/gateway/src/runtime/native-proof-fixture.live-support.ts:@typescript-eslint/no-restricted-imports",
       "count": 1
     },

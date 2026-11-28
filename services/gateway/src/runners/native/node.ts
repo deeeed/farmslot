@@ -35,18 +35,13 @@ import {
   type NativeSessionReadResult,
   type NativeSessionRequester,
 } from '@farmslot/protocol';
-import type { PoolFileEntry } from '@farmslot/protocol/node/slot-by-repo';
 
-import {
-  type RawPoolJson,
-  readSlotPools,
-  resolveMachinePoolEntry,
-  SlotConfigError,
-  type SlotPools,
-} from '../../core/config.js';
-import { isLocal } from '../../core/index.js';
 import { lazyImport } from '../../core/lazy-import.js';
 import { GatewayMethodError } from '../../core/method-error.js';
+import {
+  type MachinePoolSnapshot,
+  readMachinePoolSnapshot,
+} from '../../fleet/machine-pool-snapshot.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../../fleet/machine-registry.js';
 import {
   assertNodeReconnectCurrent,
@@ -250,76 +245,11 @@ export async function execNativeNodeArgv(
 }
 
 /**
- * Read the pool directory once into a shared snapshot for trusted executable resolution.
- * Returns an empty snapshot only when the pool directory does not exist yet.
- */
-export function loadTrustedNativeExecutableSnapshot(): SlotPools {
-  try {
-    return readSlotPools();
-  } catch (error) {
-    if (error instanceof SlotConfigError && error.code === 'POOL_DIR_NOT_FOUND') {
-      return [];
-    }
-    throw error;
-  }
-}
-
-type ResolvedMachinePoolResult =
-  | { readonly ok: true; readonly pool: RawPoolJson }
-  | { readonly ok: false; readonly error: unknown };
-
-export interface TrustedNativePoolIndex {
-  readonly resolvedByMachine: ReadonlyMap<string, ResolvedMachinePoolResult>;
-  readonly localMachines: readonly string[];
-}
-
-/**
- * Group a shared pool snapshot by machine once and resolve each machine's canonical pool via
- * `resolveMachinePoolEntry` BEFORE classifying it as local. An auxiliary `host: localhost` entry
- * cannot mark a canonical remote machine as local; an ambiguous machine with any local entry is
- * tracked as local so local resolution fails closed with the ambiguity error instead of falling back.
- */
-export function indexTrustedNativePoolSnapshot(pools: SlotPools): TrustedNativePoolIndex {
-  const entriesByMachine = new Map<string, PoolFileEntry<RawPoolJson>[]>();
-  for (const entry of pools) {
-    const machine = entry.pool.machine;
-    if (typeof machine !== 'string' || !machine) continue;
-    let bucket = entriesByMachine.get(machine);
-    if (!bucket) {
-      bucket = [];
-      entriesByMachine.set(machine, bucket);
-    }
-    bucket.push(entry);
-  }
-  const resolvedByMachine = new Map<string, ResolvedMachinePoolResult>();
-  const localMachines: string[] = [];
-  for (const [machine, entries] of entriesByMachine) {
-    try {
-      const canonicalPool = resolveMachinePoolEntry(entries, machine)?.pool;
-      if (!canonicalPool) continue;
-      resolvedByMachine.set(machine, { ok: true, pool: canonicalPool });
-      if (isLocal(canonicalPool.host, canonicalPool.machine)) {
-        localMachines.push(machine);
-      }
-    } catch (error) {
-      resolvedByMachine.set(machine, { ok: false, error });
-      if (entries.some((entry) => isLocal(entry.pool.host, entry.pool.machine))) {
-        localMachines.push(machine);
-      }
-    }
-  }
-  return {
-    resolvedByMachine,
-    localMachines,
-  };
-}
-
-/**
  * Resolve one execution node's trusted runner executable map from an indexed pool snapshot,
  * reusing `resolveMachinePoolEntry` for canonical `<machine>.json` precedence and ambiguous-pool refusal.
  */
 export function resolveTrustedNativeExecutablesFromIndex(
-  index: TrustedNativePoolIndex,
+  index: MachinePoolSnapshot,
   executionNodeId: string,
 ): Record<string, string> | undefined {
   const targetMachines =
@@ -351,23 +281,17 @@ export function resolveTrustedNativeExecutablesFromIndex(
 export async function resolveTrustedNativeExecutable(
   runner: string,
   executionNodeId: string,
-  snapshot: SlotPools = loadTrustedNativeExecutableSnapshot(),
+  snapshot = readMachinePoolSnapshot(),
 ): Promise<string | undefined> {
   const normalized = normalizeRunner(runner);
-  return resolveTrustedNativeExecutablesFromIndex(
-    indexTrustedNativePoolSnapshot(snapshot),
-    executionNodeId,
-  )?.[normalized];
+  return resolveTrustedNativeExecutablesFromIndex(snapshot, executionNodeId)?.[normalized];
 }
 
 export async function resolveTrustedNativeExecutablesForNode(
   executionNodeId: string,
-  snapshot: SlotPools = loadTrustedNativeExecutableSnapshot(),
+  snapshot = readMachinePoolSnapshot(),
 ): Promise<Record<string, string> | undefined> {
-  return resolveTrustedNativeExecutablesFromIndex(
-    indexTrustedNativePoolSnapshot(snapshot),
-    executionNodeId,
-  );
+  return resolveTrustedNativeExecutablesFromIndex(snapshot, executionNodeId);
 }
 
 export async function routeNativeExecution(

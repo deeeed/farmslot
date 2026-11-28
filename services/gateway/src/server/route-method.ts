@@ -1612,6 +1612,10 @@ async function routeAuthorizedMethod(
       );
       nativeSessions = declareNativeSessions();
       if (nativeSessions) rememberNativeExecutionNode(machine, nativeSessions);
+      const nativeObservationExecutables = nativeObservations.registrationExecutables(
+        machine,
+        nativeSessions,
+      );
       const authentication = state.authentication ? { ...state.authentication } : undefined;
       const registeredClientKind = state.clientKind;
       const principalId = resolved.ok ? resolved.principal.id : undefined;
@@ -1669,6 +1673,7 @@ async function routeAuthorizedMethod(
           ...(observationCapabilities?.workspace === 1 ? { workspace: 1 as const } : {}),
           ...(observationCapabilities?.textReads === 1 ? { textReads: 1 as const } : {}),
           ...(observationCapabilities?.batchReads === 1 ? { batchReads: 1 as const } : {}),
+          ...(observationCapabilities?.runnerAccounts === 1 ? { runnerAccounts: 1 as const } : {}),
         },
         () => {
           if (
@@ -1711,6 +1716,10 @@ async function routeAuthorizedMethod(
         machine,
         nativeSessions?.ownerPrincipalId,
         previousNativeNode?.ws,
+        nativeObservationExecutables && {
+          connection: state.ws,
+          executables: nativeObservationExecutables,
+        },
       );
       markMachineOnline(machine, capabilities);
       const versionMatch = compatibility.compatible;
@@ -1797,7 +1806,12 @@ async function routeAuthorizedMethod(
           `[server] failed to resub screen sessions for ${machine}: ${(err as Error).message}`,
         );
       });
-      return { registered: true, ...gatewayPeerVersions, ...(nodeLink ? { nodeLink } : {}) };
+      return {
+        registered: true,
+        ...gatewayPeerVersions,
+        ...(nodeLink ? { nodeLink } : {}),
+        ...(nativeObservationExecutables ? { nativeObservationExecutables } : {}),
+      };
     }
     case Methods.SOURCES_STATUS: {
       const caller = sourceRpcCaller(authRuntime, state, method);

@@ -5,13 +5,12 @@ import {
   type NativeSessionExecutionNode,
   type Principal,
 } from '@farmslot/protocol';
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { loadSlotVars } from '../core/config.js';
 import { farmslotRoot, isLocal } from '../core/index.js';
 import { lazyImport } from '../core/lazy-import.js';
+import { readMachinePoolSnapshot } from '../fleet/machine-pool-snapshot.js';
 import { getNode } from '../fleet/machine-registry.js';
-import { loadPoolConfigs } from '../fleet/state.js';
 import { nodeModelCatalogs } from '../runners/model-catalog.js';
 import { runnerSupportsReadonlyReviewWorkspace } from '../runners/native/review-workspace.js';
 import {
@@ -57,15 +56,18 @@ export async function nativeCatalog(
     contexts = targets.contexts;
     contextMachines = targets.contextMachines;
     executionNodes = targets.executionNodes;
-  } else
-    for (const pool of await loadPoolConfigs(currentFarmPaths('gateway').pool)) {
-      for (const slot of pool.slots) {
+  } else {
+    const snapshot = readMachinePoolSnapshot();
+    const ownsLocal = ownsLocalNativeProfile(owner);
+    for (const { pool } of snapshot.pools) {
+      const resolved = snapshot.resolvedByMachine.get(pool.machine);
+      if (!resolved?.ok) continue;
+      const machine = resolved.pool;
+      for (const slot of Array.isArray(pool.slots) ? pool.slots : []) {
         if (!slot.repo) continue;
         const executionNodeId =
-          isLocal(pool.host, pool.machine) && ownsLocalNativeProfile(owner)
-            ? 'local'
-            : pool.machine;
-        if (executionNodeId === 'local' && !ownsLocalNativeProfile(owner)) continue;
+          isLocal(machine.host, machine.machine) && ownsLocal ? 'local' : pool.machine;
+        if (executionNodeId === 'local' && !ownsLocal) continue;
         const node = executionNodeId === 'local' ? undefined : getNode(executionNodeId);
         if (
           executionNodeId !== 'local' &&
@@ -75,7 +77,7 @@ export async function nativeCatalog(
             !node.nativeAuthority?.valid())
         )
           continue;
-        const vars = await loadSlotVars(slot.id);
+        const vars = await loadSlotVars(slot.id, snapshot.poolBySlot.get(slot.id) ?? []);
         contextMachines.set(executionNodeId, pool.machine);
         contexts.push({
           executionNodeId,
@@ -88,6 +90,7 @@ export async function nativeCatalog(
         });
       }
     }
+  }
   return {
     runners: Object.values(KNOWN_RUNNERS)
       .sort(
@@ -139,13 +142,12 @@ export async function nativeModelNodeBlocker(
   executionNodeId: string,
 ): Promise<string | null> {
   if (!model) return null;
-  for (const pool of await loadPoolConfigs(currentFarmPaths('gateway').pool))
-    if (
-      pool.machine === executionNodeId ||
-      (executionNodeId === 'local' && isLocal(pool.host, pool.machine))
-    )
-      return runnerModelNodeBlocker(runner, model, pool.machine, 'native');
-  return null;
+  const snapshot = readMachinePoolSnapshot();
+  const machine = executionNodeId === 'local' ? snapshot.localMachines[0] : executionNodeId;
+  if (!machine) return null;
+  const resolved = snapshot.resolvedByMachine.get(machine);
+  if (resolved && !resolved.ok) throw resolved.error;
+  return resolved ? runnerModelNodeBlocker(runner, model, machine, 'native') : null;
 }
 
 /**

@@ -1,0 +1,1 @@
+- Accept Cursor account status responses that report authentication and email at the top level.
