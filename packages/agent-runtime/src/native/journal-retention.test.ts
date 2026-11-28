@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+
+import type { NativeSessionEvent, NativeSessionInfo } from '@farmslot/protocol';
 
 import {
   allEvents,
@@ -24,6 +26,78 @@ async function closedSession(manager: NativeSessionManager, cwd: string) {
   assert.equal(processStopped, true);
   return session.id;
 }
+
+test('one-event reads keep the latest 100 receipts without scanning the command journal', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'native-receipt-window-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const state = join(root, 'state');
+  mkdirSync(state, { mode: 0o700 });
+  const info: NativeSessionInfo = {
+    id: ID,
+    generation: 'receipt-generation',
+    hostPid: process.pid,
+    processStopped: true,
+    runner: 'codex',
+    nativeSessionId: ID,
+    ownerPrincipalId: 'owner',
+    executionNodeId: 'local',
+    accountContextId: 'default',
+    cwd: root,
+    executable: 'codex',
+    version: 'fixture',
+    mode: 'default',
+    accountMode: 'native',
+    capabilities: {
+      modes: ['default'],
+      streaming: true,
+      tools: true,
+      approvals: true,
+      questions: true,
+      interrupt: true,
+      resume: true,
+    },
+    state: 'closed',
+  };
+  const event: NativeSessionEvent = {
+    type: 'session.closed',
+    sessionId: ID,
+    generation: info.generation,
+    sequence: 1,
+    at: new Date().toISOString(),
+  };
+  const receipts = Array.from({ length: 120 }, (_, index) => ({
+    commandId: `command-${index}`,
+    generation: info.generation,
+    text: 'private draft',
+    state: 'completed',
+    submitted: true,
+    accepted: true,
+  }));
+  writeFileSync(
+    join(state, `${ID}.journal`),
+    [
+      { info, context: {}, commands: receipts, event },
+      { commands: [{ ...receipts[0], state: 'failed' }] },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join('\n') + '\n',
+    { mode: 0o600 },
+  );
+
+  const replayed = new NativeSessionManager(state);
+  const record = sessionRecordOf(replayed, ID);
+  assert(record && typeof record === 'object');
+  const commands: unknown = Reflect.get(record, 'commands');
+  assert(commands instanceof Map);
+  t.mock.method(commands, 'values', () => assert.fail('bounded read scanned the full command map'));
+  const page = replayed.read('owner', ID, 0, 1);
+  assert.equal(page.events.length, 1);
+  assert.deepEqual(
+    page.commands,
+    receipts.slice(-100).map(({ text: _text, ...receipt }) => receipt),
+  );
+  assert.equal(replayed.commandStatus('owner', ID, 'command-0').receipt?.state, 'failed');
+});
 
 test('archiving moves a settled journal out of startup replay; live or unknown sessions are not', async () => {
   const fixture = setup();

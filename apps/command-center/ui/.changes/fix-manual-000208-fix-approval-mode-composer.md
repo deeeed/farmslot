@@ -1,0 +1,1 @@
+- Keep the native message composer available after an approval mode change is confirmed, even while chat history catches up.

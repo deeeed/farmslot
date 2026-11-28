@@ -7,6 +7,7 @@ import {
   type NativeConversationReset,
   type NativeConversationUpdate,
   type NativeSessionDeltaPayload,
+  type NativeSessionInfo,
   type NativeSessionReadParams,
   type NativeSessionReadResult,
   type NativeSessionSubscribeParams,
@@ -33,6 +34,8 @@ export interface NativeConversationSnapshot extends NativeConversationReset {
   retainedBytes: number;
 }
 export interface NativeConversationState extends ResourceQueryState<NativeConversationSnapshot> {
+  /** The attached subscription. It changes on a fresh subscribe even at the same cursor. */
+  subscriptionId?: string;
   history?: { after: number; loading: boolean; page?: NativeSessionReadResult; error?: string };
 }
 export interface NativeConversationTransport {
@@ -43,6 +46,7 @@ export interface NativeConversationTransport {
 }
 export interface NativeConversationCache {
   readPage(target: NativeSessionTargetParams, after: number): Promise<void>;
+  readSessionFromHost(target: NativeSessionTargetParams): Promise<NativeSessionInfo>;
   dismissHistory(target: NativeSessionTargetParams): void;
   observe(
     target: NativeSessionTargetParams,
@@ -300,7 +304,7 @@ export function createNativeConversationCache(
     entry.opening = false;
     for (const cancel of entry.paints) cancel();
     entry.paints.clear();
-    const { conversation: _authority, ...held } = entry.state;
+    const { conversation: _authority, subscriptionId: _subscription, ...held } = entry.state;
     entry.state = { ...held, status: held.data ? 'stale' : held.status };
     notify(entry);
     const detachedEpoch = epoch;
@@ -377,6 +381,7 @@ export function createNativeConversationCache(
       history,
       observedAt: Date.now(),
       conversation: data.streamCursor,
+      subscriptionId: entry.subscriptionId,
     };
     if (envelope) options.onEnvelope?.(envelope);
     notify(entry);
@@ -533,6 +538,25 @@ export function createNativeConversationCache(
     }
   }
   const api: NativeConversationCache = {
+    async readSessionFromHost(target) {
+      const entry = entryFor(target);
+      const source = entry.state.data?.session;
+      if (
+        entry.state.status !== 'ready' ||
+        !entry.subscriptionId ||
+        !source ||
+        !transport?.readPage
+      )
+        throw new Error('Wait for the current conversation before checking its host policy');
+      const page = await transport.readPage({ ...target, limit: 1 });
+      if (
+        !storedNativeHistoryMatches(target, page) ||
+        page.session.ownerPrincipalId !== source.ownerPrincipalId ||
+        page.session.generation !== source.generation
+      )
+        throw new Error('Native session source changed while checking its host policy');
+      return page.session;
+    },
     async readPage(target, after) {
       const entry = entryFor(target);
       if (

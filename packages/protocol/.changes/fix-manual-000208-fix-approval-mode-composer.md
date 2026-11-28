@@ -1,0 +1,1 @@
+- Expose the active conversation subscription to clients so they can reconcile pending actions after reconnect.
