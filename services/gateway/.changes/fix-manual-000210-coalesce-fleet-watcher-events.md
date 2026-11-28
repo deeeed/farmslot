@@ -1,0 +1,1 @@
+- Coalesce duplicate filesystem notifications for pool configuration, OpenClaw registrations, and PR rules while still delivering rapid edits to the same file.
