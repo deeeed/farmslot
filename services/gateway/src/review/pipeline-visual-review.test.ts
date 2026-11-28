@@ -20,45 +20,55 @@ import { openRunBundleStore } from '@farmslot/run-bundle';
 
 import '../runtime/mock-pty.test-support.js';
 const directory = await mkdtemp(path.join(os.tmpdir(), 'pipeline-visual-review-'));
+const removeDirectory = () =>
+  rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 const persistedRuns = new Set<Run>();
-let flushRun: ((run: Run, reason: string) => Promise<void>) | undefined;
+let createRun!: (typeof import('../runs/store.js'))['createRun'];
+let persistRunNow!: (typeof import('../runs/store.js'))['persistRunNow'];
+let collectPipelineVisualResult!: (typeof import('./pipeline-visual-review.js'))['collectPipelineVisualResult'];
+let pipelineReviewerBinding!: (typeof import('./pipeline-visual-review.js'))['pipelineReviewerBinding'];
+let stampPipelineVisualReviews!: (typeof import('./pipeline-visual-review.js'))['stampPipelineVisualReviews'];
+let capturePipelineVisualInput!: (typeof import('./pipeline-visual-review.js'))['capturePipelineVisualInput'];
+let pipelineVisualReviewPrompt!: (typeof import('./pipeline-visual-review.js'))['pipelineVisualReviewPrompt'];
+try {
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_HOME = path.join(directory, 'home');
+  process.env.FARMSLOT_RUNS_DIR = path.join(directory, 'runs');
+  process.env.FARMSLOT_POOL_DIR = path.join(directory, 'pool');
+  await openRunBundleStore({
+    runsDir: process.env.FARMSLOT_RUNS_DIR,
+    home: process.env.FARMSLOT_HOME,
+    create: true,
+  });
+  ({ createRun, persistRunNow } = await import('../runs/store.js'));
+  ({
+    collectPipelineVisualResult,
+    pipelineReviewerBinding,
+    stampPipelineVisualReviews,
+    capturePipelineVisualInput,
+    pipelineVisualReviewPrompt,
+  } = await import('./pipeline-visual-review.js'));
+} catch (error) {
+  removeDirectory();
+  throw error;
+}
 after(async () => {
   const failures: unknown[] = [];
   try {
-    if (flushRun) {
-      // Wait for every per-run write queue to settle before deleting the directory.
-      const settled = await Promise.allSettled(
-        [...persistedRuns].map((run) => flushRun!(run, 'test teardown')),
-      );
-      for (const result of settled) {
-        if (result.status === 'rejected') failures.push(result.reason);
-      }
+    // Wait for every per-run write queue to settle before deleting the directory.
+    const settled = await Promise.allSettled(
+      [...persistedRuns].map((run) => persistRunNow(run, 'test teardown')),
+    );
+    for (const result of settled) {
+      if (result.status === 'rejected') failures.push(result.reason);
     }
   } finally {
-    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    removeDirectory();
   }
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1)
     throw new AggregateError(failures, 'Failed to drain run-store writes before teardown');
 });
-process.env.NODE_TEST_CONTEXT = '1';
-process.env.FARMSLOT_HOME = path.join(directory, 'home');
-process.env.FARMSLOT_RUNS_DIR = path.join(directory, 'runs');
-process.env.FARMSLOT_POOL_DIR = path.join(directory, 'pool');
-await openRunBundleStore({
-  runsDir: process.env.FARMSLOT_RUNS_DIR,
-  home: process.env.FARMSLOT_HOME,
-  create: true,
-});
-const { createRun, persistRunNow } = await import('../runs/store.js');
-flushRun = persistRunNow;
-const {
-  collectPipelineVisualResult,
-  pipelineReviewerBinding,
-  stampPipelineVisualReviews,
-  capturePipelineVisualInput,
-  pipelineVisualReviewPrompt,
-} = await import('./pipeline-visual-review.js');
 
 const input: RecordedEvidencePackageInput = JSON.parse(
   readFileSync(
