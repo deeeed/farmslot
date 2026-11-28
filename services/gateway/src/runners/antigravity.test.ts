@@ -1256,6 +1256,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     };
     observations.attachClient(clientConn, () => principal);
 
+    // macOS FSEvents can deliver the preceding provider-accounts.json write asynchronously while
+    // arming; retryable `arming-source-changed` is expected in production and retried once.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         await observations.startLocal(ownerRecord.id);
@@ -1635,7 +1637,6 @@ test('stale in-flight local executable refresh cannot clear newer pool ambiguity
     sleep 0.02
     i=$((i + 1))
   done
-  ${opts.doneMarker ? `: > ${JSON.stringify(opts.doneMarker)}` : ''}
   printf '%s\\n' ${JSON.stringify(version)}
   exit 0
 `
@@ -1653,13 +1654,15 @@ for arg in "$@"; do
   fi
 done
 while IFS= read -r line; do
-  id=$(printf '%s\\n' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+  id=$(printf '%s\\n' "$line" | sed -n 's/.*"id":"\\([^"]*\\)".*/\\1/p')
   case "$line" in
     *'"initialize"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentInfo":{"name":"Antigravity ACP Server","version":"%s"}}}\\n' "$id" ${JSON.stringify(version)}
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":1,"agentInfo":{"name":"Antigravity ACP Server","version":"%s"}}}\\n' "$id" ${JSON.stringify(version)}
       ;;
     *'"session/list"'*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessions":[]}}\\n' "$id"
+      ${opts?.doneMarker ? `: > ${JSON.stringify(opts.doneMarker)}` : ''}
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"sessions":[]}}\\n' "$id"
+      exit 0
       ;;
   esac
 done
@@ -1770,6 +1773,8 @@ done
       return payload;
     };
 
+    // macOS FSEvents can deliver the preceding provider-accounts.json write asynchronously while
+    // arming; retryable `arming-source-changed` is expected in production and retried once.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         await observations.startLocal(ownerRecord.id);
@@ -1779,8 +1784,22 @@ done
         if (reason !== 'arming-source-changed' || attempt === 2) throw error;
       }
     }
+    const readLocalSessionList = async () => {
+      const params = { executionNodeId: 'local' };
+      const interests = nativeReadInterests(Methods.NATIVE_SESSION_LIST, params, ownerRecord.id);
+      assert.ok(interests);
+      const { payload } = await observations!.read(
+        clientConn,
+        interests,
+        async () => ({ sessions: [], unavailableExecutionNodes: [] }),
+        () => null,
+      );
+      return payload;
+    };
+
     const initial = await readLocalProfile();
     assert.equal(initial.account.version, '1.5.19');
+    await readLocalSessionList();
 
     const pollFor = async (predicate: () => boolean, label: string) => {
       const deadline = Date.now() + 3_000;
@@ -1791,32 +1810,111 @@ done
       throw new Error(`Timed out waiting for ${label}`);
     };
 
-    // 1) Start a valid refresh pointing to `heldAgy` and wait until its probe is genuinely in flight.
-    writeCanonical(heldAgy);
-    observations.catalogChanged({ scope: 'all', reason: 'pool' });
-    await pollFor(() => existsSync(holdStartedMarker), 'in-flight held refresh to start');
-
-    // 2) While that valid refresh is still in flight, remove the canonical file so the local pool becomes ambiguous.
+    // 1) A marked `native.profile.status` read admitted before the ambiguity edit and held after
+    //    capturing the cached profile MUST reject once the pool becomes ambiguous, while an
+    //    unaffected `native.session.list` read stays healthy with zero `native-session` invalidations.
+    let readCaptured!: () => void;
+    const readCapturedPromise = new Promise<void>((resolve) => {
+      readCaptured = resolve;
+    });
+    let releaseStraddlingRead!: () => void;
+    const straddlingGate = new Promise<void>((resolve) => {
+      releaseStraddlingRead = resolve;
+    });
+    const sessionInvBeforeAmbig = localInvalidations.filter(
+      (k) => k.family === 'native-session' && k.nodeId === 'local',
+    ).length;
+    const straddlingParams = { executionNodeId: 'local', profileId: 'work' };
+    const straddlingInterests = nativeReadInterests(
+      Methods.NATIVE_PROFILE_STATUS,
+      straddlingParams,
+      ownerRecord.id,
+    );
+    assert.ok(straddlingInterests);
+    const straddlingReadPromise = observations.read(
+      clientConn,
+      straddlingInterests,
+      async () => {
+        const cached = (await observations!.localProfileStatus(
+          ownerRecord.id,
+          'work',
+        )) as NativeProfileStatusResult;
+        readCaptured();
+        await straddlingGate;
+        return cached;
+      },
+      () => null,
+    );
+    await readCapturedPromise;
     unlinkSync(canonicalFile);
     observations.catalogChanged({ scope: 'all', reason: 'pool' });
-    const invalidationsAfterAmbiguity = localInvalidations.length;
-
-    // 3) Release the stale valid refresh and wait for it to finish completely.
-    writeFileSync(holdReleaseMarker, 'release');
-    await pollFor(() => existsSync(holdDoneMarker), 'held refresh process to finish');
-    // Allow the completed refresh promise continuation to settle.
-    await new Promise((r) => setTimeout(r, 80));
-
-    // Stale completion must NOT clear the newer ambiguity error or publish stale profile invalidation.
-    await assert.rejects(readLocalProfile(), (error: unknown) => {
+    releaseStraddlingRead();
+    await assert.rejects(straddlingReadPromise, (error: unknown) => {
       const err = error as { code?: string; message?: string };
       assert.equal(err.code, 'NATIVE_PROFILES_UNAVAILABLE');
       assert.match(err.message ?? '', /ambiguous pool settings/);
       return true;
     });
+    assert.equal(
+      localInvalidations.filter((k) => k.family === 'native-session' && k.nodeId === 'local')
+        .length,
+      sessionInvBeforeAmbig,
+      'pool ambiguity must not invalidate unaffected native-session observers',
+    );
+    await readLocalSessionList();
 
-    // 4) Trigger a real subsequent background profile sample (adding a second active profile causes
-    //    NativeHostObservation to re-arm and invoke observeAccounts -> resolveExecutable).
+    // Recover back to canonical fastAgy before exercising the held refresh race.
+    const invBeforeBaselineRecover = localInvalidations.length;
+    writeCanonical(fastAgy);
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
+    await pollFor(
+      () =>
+        localInvalidations
+          .slice(invBeforeBaselineRecover)
+          .some((k) => k.family === 'profiles' && k.nodeId === 'local'),
+      'baseline canonical pool recovery',
+    );
+    assert.equal((await readLocalProfile()).account.version, '1.5.19');
+
+    // 2) Start a valid refresh pointing to `heldAgy` (B) and wait until its probe is genuinely in flight.
+    writeCanonical(heldAgy);
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
+    await pollFor(() => existsSync(holdStartedMarker), 'in-flight held refresh to start');
+
+    // 3) While B is still in flight, remove the canonical file so the local pool becomes ambiguous.
+    unlinkSync(canonicalFile);
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
+    const invalidationsAfterAmbiguity = localInvalidations.length;
+
+    // 4) Release B and wait until its ACP probe finishes and the inner observer settles.
+    writeFileSync(holdReleaseMarker, 'release');
+    await pollFor(() => existsSync(holdDoneMarker), 'held refresh ACP probe to finish');
+    await new Promise((r) => setTimeout(r, 80));
+
+    // BEFORE any `readLocalProfile()` call can repair state:
+    // - Releasing stale B must NOT publish a stale `profiles` invalidation.
+    // - The inner observer must NOT have cached B.
+    assert.equal(
+      localInvalidations
+        .slice(invalidationsAfterAmbiguity)
+        .filter((k) => k.family === 'profiles' && k.nodeId === 'local').length,
+      0,
+      'stale B refresh finishing after pool ambiguity must not emit a profiles invalidation',
+    );
+    await assert.rejects(
+      async () => observations!.localProfileStatus(ownerRecord.id, 'work'),
+      (error: unknown) => {
+        const err = error as { code?: string };
+        assert.equal(err.code, 'NATIVE_PROFILES_UNAVAILABLE');
+        return true;
+      },
+      'inner observer must not cache stale executable B after pool ambiguity',
+    );
+
+    // 5) Observe the actual next background sample BEFORE any profile read can repair state:
+    //    adding a second active profile forces `NativeHostObservation` to re-arm and publish a
+    //    `native-session` + `profiles` receipt only after its real background sample runs.
+    const invBeforeRearm = localInvalidations.length;
     await routeNativeProfile(localClient, ownerRecord.id, Methods.NATIVE_PROFILE_ADD, {
       profileId: 'work-2',
       runner: 'antigravity',
@@ -1825,17 +1923,17 @@ done
     await pollFor(
       () =>
         localInvalidations
-          .slice(invalidationsAfterAmbiguity)
-          .some((k) => k.family === 'profiles' && k.nodeId === 'local'),
+          .slice(invBeforeRearm)
+          .some((k) => k.family === 'native-session' && k.nodeId === 'local'),
       'post-ambiguity background re-arm sample',
     );
     assert.equal(
       existsSync(pathProbeLog),
       false,
-      'subsequent background profile sample while pool is ambiguous must NEVER fall back to PATH',
+      'actual next background profile sample while pool is ambiguous must NEVER fall back to PATH',
     );
 
-    // Passive reads still fail closed with the ambiguity error until a valid pool edit arrives.
+    // Passive profile reads still fail closed with the ambiguity error.
     await assert.rejects(readLocalProfile(), (error: unknown) => {
       const err = error as { code?: string; message?: string };
       assert.equal(err.code, 'NATIVE_PROFILES_UNAVAILABLE');
@@ -1843,7 +1941,8 @@ done
       return true;
     });
 
-    // 5) Restoring canonical pool recovers cleanly with the configured executable.
+    // 6) First legitimate recovery publication: when the canonical pool is restored, the very
+    //    first `profiles` invalidation must observe a ready state (no "refreshing" error).
     const invBeforeRecover = localInvalidations.length;
     writeCanonical(fastAgy);
     observations.catalogChanged({ scope: 'all', reason: 'pool' });
@@ -1852,10 +1951,11 @@ done
         localInvalidations
           .slice(invBeforeRecover)
           .some((k) => k.family === 'profiles' && k.nodeId === 'local'),
-      'recovery after canonical pool restored',
+      'first legitimate recovery publication',
     );
     const recovered = await readLocalProfile();
     assert.equal(recovered.account.version, '1.5.19');
+    assert.ok(recovered.loginCommand.includes(fastAgy));
     assert.equal(existsSync(pathProbeLog), false);
   } finally {
     observations?.dispose();
@@ -1869,6 +1969,539 @@ done
     else process.env.PATH = prevPath;
     if (prevAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
     else process.env.FARMSLOT_AGY_EXECUTABLE = prevAgyEnv;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('configuration epoch fences controlled resolved/rejected refreshes and remote straddling reads while preserving unaffected nodes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-epoch-remote-'));
+  const farmHome = join(root, 'farm-home');
+  const tempPoolRoot = join(root, 'pool');
+  const localStateRoot = join(root, 'local-state');
+  mkdirSync(farmHome, { recursive: true });
+  mkdirSync(tempPoolRoot, { recursive: true });
+  mkdirSync(localStateRoot, { recursive: true, mode: 0o700 });
+  chmodSync(localStateRoot, 0o700);
+
+  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
+  const prevFarmHome = process.env.FARMSLOT_HOME;
+  const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  const machineA = 'remote-epoch-agy';
+  const machineB = 'remote-unaffected-agy';
+
+  let obs: NativeHostObservation | undefined;
+  let gatewayObs: GatewayNativeObservations | undefined;
+  let transportA: Awaited<ReturnType<typeof createTypedNodeTransport>> | undefined;
+  let transportB: Awaited<ReturnType<typeof createTypedNodeTransport>> | undefined;
+  try {
+    process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
+    process.env.FARMSLOT_HOME = farmHome;
+    const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
+    const ownerRecord = auth.writer.createPrincipal(
+      { type: 'person', displayName: 'Epoch Owner' },
+      [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+      'epoch-owner',
+    );
+    const ownerId = ownerRecord.id;
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerId;
+    auth.writer.createPrincipal(
+      {
+        type: 'node',
+        machine: machineA,
+        displayName: 'Remote Epoch Node A',
+        nativeOwnerPrincipalId: ownerId,
+      },
+      [],
+      'node-epoch-a',
+    );
+    auth.writer.createPrincipal(
+      {
+        type: 'node',
+        machine: machineB,
+        displayName: 'Remote Unaffected Node B',
+        nativeOwnerPrincipalId: ownerId,
+      },
+      [],
+      'node-epoch-b',
+    );
+
+    // Part 1: Controlled deferred settlement on `NativeHostObservation` for resolved AND rejected
+    // held refreshes plus first legitimate recovery publication (zero timers).
+    const makeStatus = (version: string): NativeProfileStatusResult => ({
+      profile: {
+        id: 'work',
+        runner: 'antigravity',
+        directory: join(root, 'profile-work'),
+        accountContextId: '22222222-2222-4222-8222-222222222222',
+        state: 'active',
+      },
+      account: {
+        runner: 'antigravity',
+        installed: true,
+        executable: `/opt/agy-${version}`,
+        version,
+        login: 'authenticated',
+        mode: 'subscription',
+        identityQuality: 'unavailable',
+        observedAt: '2026-11-28T00:00:00.000Z',
+      },
+      loginCommand: `/opt/agy-${version}`,
+    });
+
+    const sampleQueue: Array<() => Promise<NativeProfileStatusResult[]>> = [
+      async () => [makeStatus('1.5.19')],
+    ];
+    const publishedReceipts: NativeSourceReceipt[] = [];
+    const client = new NativeSessionClient(localStateRoot, 'local');
+    obs = new NativeHostObservation(
+      client,
+      ownerId,
+      (receipt) => {
+        publishedReceipts.push(receipt);
+      },
+      farmHome,
+      async () => {
+        const next = sampleQueue.shift();
+        assert.ok(next, 'unexpected background sample without scheduled handler');
+        return next();
+      },
+      undefined,
+      canonicalTrustedExecutablesDigest({ antigravity: '/opt/agy-1.5.19' }),
+    );
+    await obs.start();
+    assert.equal((await obs.profileStatus('work')).account.version, '1.5.19');
+
+    // 1a) Hold a resolved refresh for executable B, invalidate to ambiguous, then resolve B.
+    let resolveSampleB!: (value: NativeProfileStatusResult[]) => void;
+    let sampleBStarted!: () => void;
+    const sampleBStartedPromise = new Promise<void>((resolve) => {
+      sampleBStarted = resolve;
+    });
+    sampleQueue.push(
+      () =>
+        new Promise<NativeProfileStatusResult[]>((resolve) => {
+          resolveSampleB = resolve;
+          sampleBStarted();
+        }),
+    );
+    const setBP = obs.setExecutableConfig(
+      canonicalTrustedExecutablesDigest({ antigravity: '/opt/agy-1.5.20' }),
+    );
+    await sampleBStartedPromise;
+    const receiptsBeforeInvalidate = publishedReceipts.length;
+    obs.invalidateExecutableConfig('invalid:pool-resolution-failed:1');
+    assert.equal(
+      publishedReceipts.length,
+      receiptsBeforeInvalidate + 1,
+      'invalidating executable config must advance receipt once for profiles',
+    );
+    assert.deepEqual(publishedReceipts.at(-1)?.changed, ['profiles']);
+    const revAfterInvalidate = obs.current().revision;
+
+    resolveSampleB([makeStatus('1.5.20')]);
+    await setBP;
+    assert.equal(
+      obs.current().revision,
+      revAfterInvalidate,
+      'stale resolved sample B must not advance the receipt',
+    );
+    assert.equal(
+      publishedReceipts.length,
+      receiptsBeforeInvalidate + 1,
+      'stale resolved sample B must not publish a stale profile invalidation',
+    );
+    await assert.rejects(obs.profileStatus('work'), (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'NATIVE_PROFILES_UNAVAILABLE');
+      return true;
+    });
+
+    // 1b) Hold a REJECTED refresh for executable C, invalidate, then reject C.
+    let rejectSampleC!: (err: Error) => void;
+    let sampleCStarted!: () => void;
+    const sampleCStartedPromise = new Promise<void>((resolve) => {
+      sampleCStarted = resolve;
+    });
+    sampleQueue.push(
+      () =>
+        new Promise<NativeProfileStatusResult[]>((_resolve, reject) => {
+          rejectSampleC = reject;
+          sampleCStarted();
+        }),
+    );
+    const setCP = obs.setExecutableConfig(
+      canonicalTrustedExecutablesDigest({ antigravity: '/opt/agy-1.5.21' }),
+    );
+    await sampleCStartedPromise;
+    obs.invalidateExecutableConfig('invalid:pool-resolution-failed:2');
+    const receiptsAfterSecondInvalidate = publishedReceipts.length;
+    const revAfterSecondInvalidate = obs.current().revision;
+    rejectSampleC(new Error('stale probe failure'));
+    await setCP;
+    assert.equal(obs.current().revision, revAfterSecondInvalidate);
+    assert.equal(publishedReceipts.length, receiptsAfterSecondInvalidate);
+    await assert.rejects(obs.profileStatus('work'), (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'NATIVE_PROFILES_UNAVAILABLE');
+      return true;
+    });
+
+    // 1c) Legitimate recovery back to the original digest publishes once and serves fresh data.
+    sampleQueue.push(async () => [makeStatus('1.5.22')]);
+    const receiptsBeforeRecover = publishedReceipts.length;
+    await obs.setExecutableConfig(
+      canonicalTrustedExecutablesDigest({ antigravity: '/opt/agy-1.5.19' }),
+    );
+    assert.equal(publishedReceipts.length, receiptsBeforeRecover + 1);
+    assert.deepEqual(publishedReceipts.at(-1)?.changed, ['profiles']);
+    assert.equal((await obs.profileStatus('work')).account.version, '1.5.22');
+
+    // 1d) Controlled arming interleaving: invalidating executable config while `start()` is
+    //     awaiting its final `scan()` must reject arming and never publish stale profiles.
+    const armingReceipts: NativeSourceReceipt[] = [];
+    let armingObs: NativeHostObservation | undefined;
+    try {
+      armingObs = new NativeHostObservation(
+        client,
+        ownerId,
+        (receipt) => {
+          armingReceipts.push(receipt);
+        },
+        farmHome,
+        async () => {
+          // Schedule invalidation after `observeAccounts()` resolves so it lands while `start()`
+          // is suspended on its final `await scan()`.
+          queueMicrotask(() => {
+            queueMicrotask(() => {
+              armingObs!.invalidateExecutableConfig('invalid:arming-final-scan');
+            });
+          });
+          return [makeStatus('1.5.19')];
+        },
+        undefined,
+        canonicalTrustedExecutablesDigest({ antigravity: '/opt/agy-1.5.19' }),
+      );
+      await assert.rejects(armingObs.start(), (error: unknown) => {
+        const err = error as { code?: string; reason?: string };
+        assert.equal(err.code, 'NATIVE_SOURCE_UNAVAILABLE');
+        assert.equal(err.reason, 'arming-source-changed');
+        return true;
+      });
+      assert.equal(
+        armingReceipts.some((r) => r.ready),
+        false,
+        'arming invalidated during final scan must never publish a ready receipt',
+      );
+      assert.equal(armingObs.current().ready, false);
+    } finally {
+      armingObs?.stop();
+    }
+
+    // Part 2: Remote sibling — straddling reads, stale resolved/rejected configure RPCs, and
+    // unaffected remote node preservation.
+    const writePool = (fileName: string, machine: string, agyPath: string) => {
+      writeFileSync(
+        join(tempPoolRoot, fileName),
+        JSON.stringify({
+          machine,
+          project: fileName,
+          host: `${machine}.remote.example`,
+          ssh_user: 'operator',
+          os: process.platform,
+          platform: 'cli',
+          antigravity_path: agyPath,
+          slots: [
+            { id: `${machine}-1`, enabled: true, mode: 'dispatch', repo: root, session: 's1' },
+          ],
+        }),
+      );
+    };
+    writePool(`${machineA}-aux-1.json`, machineA, '/opt/agy-aux-1');
+    writePool(`${machineA}-aux-2.json`, machineA, '/opt/agy-aux-2');
+    writePool(`${machineA}.json`, machineA, '/opt/agy-v1');
+    writePool(`${machineB}.json`, machineB, '/opt/agy-b');
+
+    let revA = 0;
+    const incA = 'inc-remote-a';
+    let configureHandlerA: (
+      executables: Record<string, string>,
+    ) => Promise<NativeSourceReceipt> = async () => ({
+      version: 1,
+      nodeId: machineA,
+      ownerId,
+      incarnation: incA,
+      revision: ++revA,
+      ready: true,
+      changed: ['profiles'],
+    });
+
+    transportA = await createTypedNodeTransport(async (frame) => {
+      assert.equal(frame.method, 'native.observation.configure');
+      const params = (frame.params ?? {}) as { executables?: Record<string, string> };
+      return configureHandlerA(params.executables ?? {});
+    });
+    let revB = 0;
+    const incB = 'inc-remote-b';
+    transportB = await createTypedNodeTransport(async (frame) => {
+      assert.equal(frame.method, 'native.observation.configure');
+      return {
+        version: 1,
+        nodeId: machineB,
+        ownerId,
+        incarnation: incB,
+        revision: ++revB,
+        ready: true,
+        changed: ['profiles'],
+      };
+    });
+
+    registerNode(
+      machineA,
+      1,
+      transportA.ws,
+      undefined,
+      undefined,
+      {
+        ownerPrincipalId: ownerId,
+        supportsStandaloneDelegation: true,
+        supportsProfiles: true,
+        supportsObservations: true,
+        supportsObservationConfiguration: true,
+      },
+      { principalId: 'node-a', valid: () => true },
+    );
+    registerNode(
+      machineB,
+      1,
+      transportB.ws,
+      undefined,
+      undefined,
+      {
+        ownerPrincipalId: ownerId,
+        supportsStandaloneDelegation: true,
+        supportsProfiles: true,
+        supportsObservations: true,
+        supportsObservationConfiguration: true,
+      },
+      { principalId: 'node-b', valid: () => true },
+    );
+
+    const remoteInvalidations: Array<{ family: string; nodeId?: string }> = [];
+    gatewayObs = new GatewayNativeObservations((key) => {
+      remoteInvalidations.push({
+        family: key.family,
+        ...('nodeId' in key ? { nodeId: key.nodeId } : {}),
+      });
+    }, client);
+
+    const clientConn = {};
+    const principal: Principal = {
+      id: ownerId,
+      subject: { type: 'person', displayName: 'Epoch Owner' },
+      roles: [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+    };
+    gatewayObs.attachClient(clientConn, () => principal);
+    gatewayObs.acceptRemote(
+      transportA.ws,
+      {
+        version: 1,
+        nodeId: machineA,
+        ownerId,
+        incarnation: incA,
+        revision: 0,
+        ready: true,
+        changed: ['native-session', 'profiles'],
+      },
+      () => true,
+    );
+    gatewayObs.acceptRemote(
+      transportB.ws,
+      {
+        version: 1,
+        nodeId: machineB,
+        ownerId,
+        incarnation: incB,
+        revision: 0,
+        ready: true,
+        changed: ['native-session', 'profiles'],
+      },
+      () => true,
+    );
+
+    const waitMicrotasks = async () => {
+      for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+    };
+    const readRemoteProfile = async (
+      nodeId: string,
+      onEnter?: () => Promise<void>,
+    ): Promise<NativeProfileStatusResult> => {
+      const params = { executionNodeId: nodeId, profileId: 'work' };
+      const interests = nativeReadInterests(Methods.NATIVE_PROFILE_STATUS, params, ownerId);
+      assert.ok(interests);
+      const { payload } = await gatewayObs!.read(
+        clientConn,
+        interests,
+        async () => {
+          if (onEnter) await onEnter();
+          return makeStatus('1.5.19');
+        },
+        () => null,
+      );
+      return payload;
+    };
+
+    // Wait for initial remote executable syncs to finish.
+    const pollUntil = async (predicate: () => boolean, label: string) => {
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if (predicate()) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error(`Timed out waiting for ${label}`);
+    };
+    await pollUntil(() => revA >= 1 && revB >= 1, 'initial remote configure');
+    await waitMicrotasks();
+    assert.equal((await readRemoteProfile(machineA)).account.version, '1.5.19');
+    assert.equal((await readRemoteProfile(machineB)).account.version, '1.5.19');
+
+    // 2a) Straddling remote reads across ambiguity on machineA: machineA rejects, machineB succeeds!
+    let enteredA!: () => void;
+    let enteredB!: () => void;
+    const enteredAP = new Promise<void>((r) => {
+      enteredA = r;
+    });
+    const enteredBP = new Promise<void>((r) => {
+      enteredB = r;
+    });
+    let releaseReads!: () => void;
+    const readsGate = new Promise<void>((r) => {
+      releaseReads = r;
+    });
+    const readAP = readRemoteProfile(machineA, async () => {
+      enteredA();
+      await readsGate;
+    });
+    const readBP = readRemoteProfile(machineB, async () => {
+      enteredB();
+      await readsGate;
+    });
+    await Promise.all([enteredAP, enteredBP]);
+    unlinkSync(join(tempPoolRoot, `${machineA}.json`));
+    gatewayObs.catalogChanged({ scope: 'all', reason: 'pool' });
+    releaseReads();
+    await assert.rejects(readAP, (error: unknown) => {
+      const err = error as { code?: string; message?: string };
+      assert.equal(err.code, 'NATIVE_PROFILES_UNAVAILABLE');
+      assert.match(err.message ?? '', /ambiguous pool settings/);
+      return true;
+    });
+    assert.equal((await readBP).account.version, '1.5.19');
+
+    // 2b) Remote held RESOLVED configure RPC -> pool becomes ambiguous -> resolve stale configure.
+    let resolveStaleConfig!: (receipt: NativeSourceReceipt) => void;
+    let staleConfigStarted!: () => void;
+    const staleConfigStartedP = new Promise<void>((r) => {
+      staleConfigStarted = r;
+    });
+    configureHandlerA = () =>
+      new Promise<NativeSourceReceipt>((resolve) => {
+        resolveStaleConfig = resolve;
+        staleConfigStarted();
+      });
+    writePool(`${machineA}.json`, machineA, '/opt/agy-v2');
+    gatewayObs.catalogChanged({ scope: 'all', reason: 'pool' });
+    await staleConfigStartedP;
+
+    unlinkSync(join(tempPoolRoot, `${machineA}.json`));
+    gatewayObs.catalogChanged({ scope: 'all', reason: 'pool' });
+    const invAfterRemoteAmbig = remoteInvalidations.length;
+    resolveStaleConfig({
+      version: 1,
+      nodeId: machineA,
+      ownerId,
+      incarnation: incA,
+      revision: ++revA,
+      ready: true,
+      changed: ['profiles'],
+    });
+    await waitMicrotasks();
+    assert.equal(
+      remoteInvalidations
+        .slice(invAfterRemoteAmbig)
+        .filter((k) => k.family === 'profiles' && k.nodeId === machineA).length,
+      0,
+      'stale resolved remote configure after ambiguity must not emit a profiles invalidation',
+    );
+    await assert.rejects(readRemoteProfile(machineA), (error: unknown) => {
+      const err = error as { code?: string; message?: string };
+      assert.equal(err.code, 'NATIVE_PROFILES_UNAVAILABLE');
+      assert.match(err.message ?? '', /ambiguous pool settings/);
+      return true;
+    });
+
+    // 2c) Remote held REJECTED configure RPC -> newer valid edit succeeds -> stale rejection ignored.
+    let rejectStaleConfig!: (err: Error) => void;
+    let rejectConfigStarted!: () => void;
+    const rejectConfigStartedP = new Promise<void>((r) => {
+      rejectConfigStarted = r;
+    });
+    let configureCalls = 0;
+    configureHandlerA = async () => {
+      configureCalls++;
+      if (configureCalls === 1) {
+        return new Promise<NativeSourceReceipt>((_resolve, reject) => {
+          rejectStaleConfig = reject;
+          rejectConfigStarted();
+        });
+      }
+      return {
+        version: 1,
+        nodeId: machineA,
+        ownerId,
+        incarnation: incA,
+        revision: ++revA,
+        ready: true,
+        changed: ['profiles'],
+      };
+    };
+    writePool(`${machineA}.json`, machineA, '/opt/agy-v3-stale');
+    gatewayObs.catalogChanged({ scope: 'all', reason: 'pool' });
+    await rejectConfigStartedP;
+
+    const invBeforeV4 = remoteInvalidations.length;
+    writePool(`${machineA}.json`, machineA, '/opt/agy-v4-good');
+    gatewayObs.catalogChanged({ scope: 'all', reason: 'pool' });
+    await pollUntil(
+      () =>
+        remoteInvalidations
+          .slice(invBeforeV4)
+          .some((k) => k.family === 'profiles' && k.nodeId === machineA),
+      'remote v4 recovery publication',
+    );
+    assert.equal((await readRemoteProfile(machineA)).account.version, '1.5.19');
+
+    rejectStaleConfig(new Error('stale remote configure timeout'));
+    await waitMicrotasks();
+    assert.equal(
+      (await readRemoteProfile(machineA)).account.version,
+      '1.5.19',
+      'stale rejected remote configure must not clobber newer valid remote state',
+    );
+  } finally {
+    gatewayObs?.dispose();
+    obs?.stop();
+    if (transportA) {
+      unregisterByWs(transportA.ws);
+      await transportA.close();
+    }
+    if (transportB) {
+      unregisterByWs(transportB.ws);
+      await transportB.close();
+    }
+    if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
     rmSync(root, { recursive: true, force: true });
   }
 });
