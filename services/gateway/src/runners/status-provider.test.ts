@@ -47,7 +47,7 @@ describe('RunnerStatusProvider subscription + bind surface', () => {
   it('fleet inventory includes single and multi-provider runners', () => {
     assert.deepEqual(
       [...FLEET_SUBSCRIPTION_RUNNERS],
-      ['codex', 'claude', 'grok', 'cursor', 'pi', 'opencode'],
+      ['codex', 'claude', 'grok', 'cursor', 'pi', 'opencode', 'antigravity'],
     );
   });
 

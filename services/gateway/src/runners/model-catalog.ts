@@ -38,20 +38,26 @@ export interface RunnerModelCatalogCommandSource {
 export interface NodeModelCatalogListing extends NodeCatalogModels {
   ids: string[];
   configuredProviders: string[];
+  flatCatalog?: boolean;
+  strictAccountCatalog?: boolean;
 }
 
 /** A listing command every execution node runs itself, through its slots' exec path. */
 export interface RunnerModelCatalogNodeSource {
   nodeCommand: string;
   /** Slot var naming the pool's configured executable; `nodeCommand` when unset. */
-  slotPathKey: 'piPath' | 'opencodePath';
+  slotPathKey: 'piPath' | 'opencodePath' | 'antigravityPath';
   args: string[];
-  /** Model ids, `provider/model`. */
+  /** Model ids, `provider/model` or flat account model ids when `flatCatalog` is true. */
   parse: (output: string) => string[] | NodeCatalogModels;
   /** Runner-owned listing command, executed with this node's inherited and pool environment. */
   buildCommand?: (vars: SlotVars, binary: string) => string;
   /** The listed id a requested model launches as, such as Pi's bare `grok-*` as `xai/grok-*`. */
   resolveModel?: (model: string) => string;
+  /** Flat account catalogs do not use `provider/model` prefixes and keep every listed model in the picker. */
+  flatCatalog?: boolean;
+  /** Reject unlisted models against a fresh node listing even when no other node lists them. */
+  strictAccountCatalog?: boolean;
 }
 
 export type RunnerModelCatalogSource =
@@ -328,12 +334,53 @@ export function parseOpenCodeModelList(output: string): string[] {
   return [...new Set(ids)];
 }
 
+/** `agy models`: tab-separated `model-id\tDisplay Name` lines (or two-space aligned on a TTY). */
+export function parseAntigravityModelCatalog(output: string): NodeModelCatalogListing {
+  const ids: string[] = [];
+  const labels: Record<string, string> = {};
+  const seen = new Set<string>();
+  const lines = stripVTControlCharacters(output)
+    .split(/\r?\n/)
+    .map((line) => (line.split('\r').at(-1) ?? '').trim());
+  for (const line of lines) {
+    if (!line) continue;
+    const match =
+      /^([a-z0-9][a-z0-9._/-]*)\t+(.+)$/i.exec(line) ??
+      /^([a-z0-9][a-z0-9._/-]*)\s{2,}(.+)$/i.exec(line);
+    if (!match) continue;
+    const id = match[1].trim();
+    const label = match[2].trim();
+    if (!id || !label || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    labels[id] = label;
+  }
+  if (!ids.length) throw new ModelCatalogFormatError('Antigravity listed no models.');
+  return {
+    ids,
+    nativeIds: ids,
+    labels,
+    configuredProviders: [],
+    flatCatalog: true,
+    strictAccountCatalog: true,
+  };
+}
+
 interface NodeModelListing {
   nativeIds: readonly string[];
   ids: readonly string[];
+  labels: Readonly<Record<string, string>>;
+  flatCatalog: boolean;
+  strictAccountCatalog: boolean;
   observedAt?: number;
   shrink?: { signature: string; repeats: number };
   aliases: Readonly<Record<string, string>>;
+}
+
+interface NodeModelRecordOptions {
+  labels?: Readonly<Record<string, string>>;
+  flatCatalog?: boolean;
+  strictAccountCatalog?: boolean;
 }
 
 /** Last good listing per runner and execution node. Stale data guides placement only. */
@@ -346,6 +393,7 @@ export class NodeModelCatalogs {
     ids: readonly string[],
     aliases: Readonly<Record<string, string>> = {},
     nativeIds: readonly string[] = Object.keys(aliases).length ? [] : ids,
+    options: NodeModelRecordOptions = {},
   ): void {
     let byNode = this.listings.get(runner);
     if (!byNode) this.listings.set(runner, (byNode = new Map()));
@@ -353,6 +401,9 @@ export class NodeModelCatalogs {
       ids: [...ids],
       aliases: { ...aliases },
       nativeIds: [...nativeIds],
+      labels: { ...(options.labels ?? {}) },
+      flatCatalog: options.flatCatalog === true,
+      strictAccountCatalog: options.strictAccountCatalog === true,
       observedAt: Date.now(),
     });
   }
@@ -371,7 +422,11 @@ export class NodeModelCatalogs {
       previous.shrink = { signature, repeats };
       if (repeats < 3) return false;
     }
-    this.record(runner, machine, ids, listing.aliases, listing.nativeIds);
+    this.record(runner, machine, ids, listing.aliases, listing.nativeIds, {
+      labels: listing.labels,
+      flatCatalog: listing.flatCatalog,
+      strictAccountCatalog: listing.strictAccountCatalog,
+    });
     return true;
   }
 
@@ -391,10 +446,28 @@ export class NodeModelCatalogs {
     return this.listings.get(runner)?.get(machine)?.nativeIds;
   }
 
+  /** Display names recorded by nodes for this runner, optionally scoped to specific machines. */
+  labels(runner: string, machines?: string | Iterable<string>): Record<string, string> {
+    const byNode = this.listings.get(runner);
+    if (!byNode) return {};
+    if (typeof machines === 'string') return { ...(byNode.get(machines)?.labels ?? {}) };
+    const allowed = machines ? new Set(machines) : undefined;
+    if (allowed && !allowed.size) return {};
+    const merged: Record<string, string> = {};
+    for (const [machine, entry] of [...byNode].sort(([a], [b]) => a.localeCompare(b))) {
+      if (allowed && !allowed.has(machine)) continue;
+      for (const [id, label] of Object.entries(entry.labels)) {
+        if (!merged[id]) merged[id] = label;
+      }
+    }
+    return merged;
+  }
+
   /** Canonical picker ids, including router ids configured by this node. */
   pickerListing(runner: string, machine: string): readonly string[] | undefined {
     const listing = this.listings.get(runner)?.get(machine);
     if (!listing) return undefined;
+    if (listing.flatCatalog) return [...listing.ids];
     const configured = new Set(Object.values(listing.aliases));
     return listing.ids.filter((id) => isPickerCatalogModel(id) || configured.has(id));
   }
@@ -411,15 +484,21 @@ export class NodeModelCatalogs {
         models: [],
       };
     const listedOn = new Map<string, string[]>();
-    for (const [machine] of nodes)
-      for (const id of this.pickerListing(runner, machine) ?? [])
+    const labelById = new Map<string, string>();
+    for (const [machine, entry] of nodes) {
+      for (const id of this.pickerListing(runner, machine) ?? []) {
         listedOn.set(id, [...(listedOn.get(id) ?? []), machine]);
+        const label = entry.labels[id];
+        if (label && !labelById.has(id)) labelById.set(id, label);
+      }
+    }
     return {
       runner,
       status: 'ready',
       source: 'catalog-command',
       models: [...listedOn].map(([id, machines]) => ({
         id,
+        ...(labelById.has(id) ? { label: labelById.get(id) } : {}),
         reasoningModes: [],
         listed: true,
         ...(machines.length < nodes.length ? { nodes: machines } : {}),
@@ -451,8 +530,11 @@ export class NodeModelCatalogs {
       .filter(([, entry]) => contains(entry))
       .map(([node]) => node)
       .sort();
-    return listedOn.length
-      ? `${runner} model ${model} is not listed on ${machine}; only on ${listedOn.join(', ')}`
+    if (listedOn.length) {
+      return `${runner} model ${model} is not listed on ${machine}; only on ${listedOn.join(', ')}`;
+    }
+    return listing.strictAccountCatalog
+      ? `${runner} model ${model} is not available for the ${machine} account`
       : null;
   }
 }
@@ -464,6 +546,9 @@ export interface NodeCatalogModels {
   ids: string[];
   nativeIds?: readonly string[];
   aliases?: Readonly<Record<string, string>>;
+  labels?: Readonly<Record<string, string>>;
+  flatCatalog?: boolean;
+  strictAccountCatalog?: boolean;
 }
 
 /** One execution node: `list` resolves the source command's stdout or rejects. */
@@ -497,8 +582,18 @@ export async function listNodeModels(
   try {
     const listing = source.parse(await node.list(source));
     return Array.isArray(listing)
-      ? { ids: listing, configuredProviders: [] }
-      : { ...listing, configuredProviders: listing.configuredProviders ?? [] };
+      ? {
+          ids: listing,
+          configuredProviders: [],
+          flatCatalog: source.flatCatalog,
+          strictAccountCatalog: source.strictAccountCatalog,
+        }
+      : {
+          ...listing,
+          configuredProviders: listing.configuredProviders ?? [],
+          flatCatalog: listing.flatCatalog ?? source.flatCatalog,
+          strictAccountCatalog: listing.strictAccountCatalog ?? source.strictAccountCatalog,
+        };
   } catch (error) {
     console.warn(
       `[runner-models] ${runner} model list on ${node.machine} failed; keeping its last listing: ${error instanceof Error ? error.message : String(error)}`,

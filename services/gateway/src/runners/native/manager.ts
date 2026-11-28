@@ -45,17 +45,19 @@ class GatewayNativeSessions extends NativeSessionClient {
     owner: string,
     params: NativeSessionEnsureParams,
     requester?: NativeSessionRequester,
+    executable?: string,
   ) {
     validateNativeRunner(params.runner, params.model, params.effort);
-    return super.ensure(owner, params, requester);
+    return super.ensure(owner, params, requester, executable);
   }
   override create(
     owner: string,
     params: NativeSessionCreateParams,
     requester?: NativeSessionRequester,
+    executable?: string,
   ) {
     validateNativeRunner(params.runner, params.model, params.effort);
-    return super.create(owner, params, requester);
+    return super.create(owner, params, requester, executable);
   }
 }
 export const nativeSessionManager = new GatewayNativeSessions();

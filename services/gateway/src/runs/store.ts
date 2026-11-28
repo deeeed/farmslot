@@ -100,6 +100,7 @@ import { withRunTransition } from '../run-lifecycle/transition-coordinator.js';
 import {
   assertRunnerTransport,
   assertSupportedRunnerSpelling,
+  getRunnerDefinition,
   normalizeRunner,
   runnerDefaultModel,
   runnerDefaultSafetyTier,
@@ -972,11 +973,19 @@ export function buildRunRecord(params: RunCreateParams, options?: RunRecordBuild
   if (options?.reviewQa && options.reviewQa.flowType !== params.flowType)
     throw new Error('Resolved workflow does not match run flow');
   const parent = params.parentRunId ? runs.get(params.parentRunId) : undefined;
-  const transport = params.transport ?? parent?.transport;
-  if (transport !== undefined && transport !== 'tmux' && transport !== 'native')
+  const explicitTransport = params.transport ?? parent?.transport;
+  if (
+    explicitTransport !== undefined &&
+    explicitTransport !== 'tmux' &&
+    explicitTransport !== 'native'
+  )
     throw new Error('Unknown worker transport');
+  const requestedRunner = params.runner ? normalizeRunner(params.runner) : undefined;
+  const transport =
+    explicitTransport ??
+    (requestedRunner && getRunnerDefinition(requestedRunner).nativeOnly ? 'native' : undefined);
   // Refuse before a slot is found or prepared.
-  if (params.runner) assertRunnerTransport(normalizeRunner(params.runner), transport ?? 'tmux');
+  if (requestedRunner) assertRunnerTransport(requestedRunner, transport ?? 'tmux');
   const nativeOwnerPrincipalId =
     transport === 'native' || (transport === 'tmux' && params.reviewWorkspaceTarget)
       ? (params.reviewWorkspaceTarget ? resolveReviewWorkspaceOwner : resolveNativeWorkerOwner)(

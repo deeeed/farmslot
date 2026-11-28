@@ -93,10 +93,12 @@ export function resolveRunDispatchRunnerModel(
   const explicitModel =
     run.metrics.model && run.metrics.model !== 'unknown' ? run.metrics.model : null;
   const previewModel = preview.model && preview.model !== 'unknown' ? preview.model : null;
+  const previewMatchesExplicitRunner =
+    !explicitRunner || explicitRunner === normalizeRunner(preview.runner);
   const model =
     explicitModel ||
     (explicitRunner ? runnerDefaultModel(runner) : null) ||
-    previewModel ||
+    (previewMatchesExplicitRunner ? previewModel : null) ||
     runnerDefaultModel(runner) ||
     'unknown';
   return { runner, model };

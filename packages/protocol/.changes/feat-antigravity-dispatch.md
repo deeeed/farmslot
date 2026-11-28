@@ -1,0 +1,1 @@
+- Register the `agy` runner alias for `antigravity` and add optional `modelLabels` and `nativeOnly` metadata to `NativeRunnerOption`.

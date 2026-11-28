@@ -35,7 +35,16 @@ import {
   type NativeSessionReadResult,
   type NativeSessionRequester,
 } from '@farmslot/protocol';
+import type { PoolFileEntry } from '@farmslot/protocol/node/slot-by-repo';
 
+import {
+  type RawPoolJson,
+  readSlotPools,
+  resolveMachinePoolEntry,
+  SlotConfigError,
+  type SlotPools,
+} from '../../core/config.js';
+import { isLocal } from '../../core/index.js';
 import { lazyImport } from '../../core/lazy-import.js';
 import { GatewayMethodError } from '../../core/method-error.js';
 import { type ConnectedNode, getAllNodes, getNode } from '../../fleet/machine-registry.js';
@@ -53,6 +62,8 @@ import {
   requireGenerationZeroOwner,
 } from '../../security/native-node.js';
 import { ownsLocalNativeProfile } from '../../security/native-owner.js';
+import { MACHINE_RUNNER_PATH_FIELDS, machineRunnerPath } from '../launch-command.js';
+import { normalizeRunner, runnerRequiresAccountResolvedModel } from '../registry.js';
 
 import { knownNativeExecutionNodes } from './execution-nodes.js';
 import { nodeLaunchRelease } from './host-refresh.js';
@@ -238,6 +249,127 @@ export async function execNativeNodeArgv(
   )) as ExecResult;
 }
 
+/**
+ * Read the pool directory once into a shared snapshot for trusted executable resolution.
+ * Returns an empty snapshot only when the pool directory does not exist yet.
+ */
+export function loadTrustedNativeExecutableSnapshot(): SlotPools {
+  try {
+    return readSlotPools();
+  } catch (error) {
+    if (error instanceof SlotConfigError && error.code === 'POOL_DIR_NOT_FOUND') {
+      return [];
+    }
+    throw error;
+  }
+}
+
+type ResolvedMachinePoolResult =
+  | { readonly ok: true; readonly pool: RawPoolJson }
+  | { readonly ok: false; readonly error: unknown };
+
+export interface TrustedNativePoolIndex {
+  readonly resolvedByMachine: ReadonlyMap<string, ResolvedMachinePoolResult>;
+  readonly localMachines: readonly string[];
+}
+
+/**
+ * Group a shared pool snapshot by machine once and resolve each machine's canonical pool via
+ * `resolveMachinePoolEntry` BEFORE classifying it as local. An auxiliary `host: localhost` entry
+ * cannot mark a canonical remote machine as local; an ambiguous machine with any local entry is
+ * tracked as local so local resolution fails closed with the ambiguity error instead of falling back.
+ */
+export function indexTrustedNativePoolSnapshot(pools: SlotPools): TrustedNativePoolIndex {
+  const entriesByMachine = new Map<string, PoolFileEntry<RawPoolJson>[]>();
+  for (const entry of pools) {
+    const machine = entry.pool.machine;
+    if (typeof machine !== 'string' || !machine) continue;
+    let bucket = entriesByMachine.get(machine);
+    if (!bucket) {
+      bucket = [];
+      entriesByMachine.set(machine, bucket);
+    }
+    bucket.push(entry);
+  }
+  const resolvedByMachine = new Map<string, ResolvedMachinePoolResult>();
+  const localMachines: string[] = [];
+  for (const [machine, entries] of entriesByMachine) {
+    try {
+      const canonicalPool = resolveMachinePoolEntry(entries, machine)?.pool;
+      if (!canonicalPool) continue;
+      resolvedByMachine.set(machine, { ok: true, pool: canonicalPool });
+      if (isLocal(canonicalPool.host, canonicalPool.machine)) {
+        localMachines.push(machine);
+      }
+    } catch (error) {
+      resolvedByMachine.set(machine, { ok: false, error });
+      if (entries.some((entry) => isLocal(entry.pool.host, entry.pool.machine))) {
+        localMachines.push(machine);
+      }
+    }
+  }
+  return {
+    resolvedByMachine,
+    localMachines,
+  };
+}
+
+/**
+ * Resolve one execution node's trusted runner executable map from an indexed pool snapshot,
+ * reusing `resolveMachinePoolEntry` for canonical `<machine>.json` precedence and ambiguous-pool refusal.
+ */
+export function resolveTrustedNativeExecutablesFromIndex(
+  index: TrustedNativePoolIndex,
+  executionNodeId: string,
+): Record<string, string> | undefined {
+  const targetMachines =
+    executionNodeId === 'local'
+      ? index.localMachines
+      : index.resolvedByMachine.has(executionNodeId)
+        ? [executionNodeId]
+        : [];
+  if (targetMachines.length === 0) return undefined;
+  const runners = Object.keys(MACHINE_RUNNER_PATH_FIELDS);
+  const resolved: Record<string, string> = {};
+  for (const machine of targetMachines) {
+    const entry = index.resolvedByMachine.get(machine);
+    if (!entry) continue;
+    if (!entry.ok) throw entry.error;
+    for (const runner of runners) {
+      if (resolved[runner]) continue;
+      const configured = machineRunnerPath(runner, entry.pool);
+      if (configured) resolved[runner] = configured;
+    }
+  }
+  return Object.keys(resolved).length ? resolved : undefined;
+}
+
+/**
+ * Resolve a runner's trusted executable path from the execution node's pool config,
+ * matching worker launch and discovery. Never accepts caller-supplied executables.
+ */
+export async function resolveTrustedNativeExecutable(
+  runner: string,
+  executionNodeId: string,
+  snapshot: SlotPools = loadTrustedNativeExecutableSnapshot(),
+): Promise<string | undefined> {
+  const normalized = normalizeRunner(runner);
+  return resolveTrustedNativeExecutablesFromIndex(
+    indexTrustedNativePoolSnapshot(snapshot),
+    executionNodeId,
+  )?.[normalized];
+}
+
+export async function resolveTrustedNativeExecutablesForNode(
+  executionNodeId: string,
+  snapshot: SlotPools = loadTrustedNativeExecutableSnapshot(),
+): Promise<Record<string, string> | undefined> {
+  return resolveTrustedNativeExecutablesFromIndex(
+    indexTrustedNativePoolSnapshot(snapshot),
+    executionNodeId,
+  );
+}
+
 export async function routeNativeExecution(
   owner: string,
   method: string,
@@ -267,9 +399,16 @@ export async function routeNativeExecution(
     )
       throw new GatewayMethodError('INVALID_PARAMS', 'Expected native runner and model strings');
     validateNativeRunner(params.runner, params.model, params.effort);
-    const { nativeModelNodeBlocker } = await loadNativeWorkspace();
-    const blocker = await nativeModelNodeBlocker(params.runner, params.model, executionNodeId);
-    if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
+    // Strict account-catalog runners (Antigravity) validate named-profile models inside
+    // that profile's own launch session rather than against the ambient machine catalog.
+    // Other runners retain their existing placement/ambient model admission.
+    const skipAmbientCatalog =
+      params.profileId !== undefined && runnerRequiresAccountResolvedModel(params.runner);
+    if (!skipAmbientCatalog) {
+      const { nativeModelNodeBlocker } = await loadNativeWorkspace();
+      const blocker = await nativeModelNodeBlocker(params.runner, params.model, executionNodeId);
+      if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
+    }
   }
   if (executionNodeId === 'local') {
     if (!ownsLocalNativeProfile(owner))
@@ -286,7 +425,9 @@ export async function routeNativeExecution(
       }
       return worker
         ? routeNativeWorkerSession(nativeSessionManager, owner, method, params)
-        : routeNativeSession(nativeSessionManager, owner, method, params, requester);
+        : routeNativeSession(nativeSessionManager, owner, method, params, requester, {
+            resolveExecutable: (runner) => resolveTrustedNativeExecutable(runner, 'local'),
+          });
     });
   }
   const resolved = resolveAfterNodeReconnect(executionNodeId, () =>
@@ -325,13 +466,25 @@ export async function routeNativeExecution(
       'NATIVE_SESSION_ERROR',
       'Native execution node upgrade required for worker launch configuration',
     );
+  const remoteExecutable =
+    (method === Methods.NATIVE_SESSION_CREATE || method === Methods.NATIVE_SESSION_ENSURE) &&
+    typeof params.runner === 'string'
+      ? await resolveTrustedNativeExecutable(params.runner, executionNodeId)
+      : undefined;
+  const observe = isNativeObservedRead();
+  const remoteExecutables =
+    !observe && method === Methods.NATIVE_PROFILE_STATUS
+      ? await resolveTrustedNativeExecutablesForNode(executionNodeId)
+      : undefined;
   const send = (hostRelease?: string[]) => {
     const envelope: NativeNodeSessionEnvelope = {
       owner,
       method,
       params,
       ...(requester ? { requester } : {}),
-      ...(isNativeObservedRead() ? { observe: true as const } : {}),
+      ...(remoteExecutable ? { executable: remoteExecutable } : {}),
+      ...(remoteExecutables ? { executables: remoteExecutables } : {}),
+      ...(observe ? { observe: true as const } : {}),
       ...(hostRelease ? { hostRelease } : {}),
     };
     return sendNodeRequest(node, 'native.session', envelope, {
@@ -369,8 +522,7 @@ export async function routeNativeExecution(
     throw error;
   }
   assertNativeConnection(owner, executionNodeId, node);
-  if (isNativeObservedRead())
-    result = nativeObservations.unwrapRemote(node.ws, executionNodeId, result);
+  if (observe) result = nativeObservations.unwrapRemote(node.ws, executionNodeId, result);
   if (method === NATIVE_WORKER_STATE) {
     if (
       !result ||

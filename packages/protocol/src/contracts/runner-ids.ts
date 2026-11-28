@@ -6,6 +6,7 @@ export const DEFAULT_RUNNER = 'claude';
 
 export const RUNNER_ALIASES: Record<string, string> = {
   'claude-code': 'claude',
+  agy: 'antigravity',
 };
 
 export function normalizeRunner(runnerId?: string | null): string {

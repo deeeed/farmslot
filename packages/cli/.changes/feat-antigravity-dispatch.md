@@ -1,0 +1,1 @@
+- Support dispatching Antigravity runs via `--runner antigravity` (or `agy`) and allow optional `antigravity_path` in pool configuration.

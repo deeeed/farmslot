@@ -1535,7 +1535,7 @@ export function registerRunCommand(program: Command): void {
     )
     .option(
       '--runner <name>',
-      'Runner override (claude, codex, opencode, or a runner-aware custom config)',
+      'Runner override (claude, codex, cursor, grok, pi, opencode, antigravity, or a runner-aware custom config)',
     )
     .option('--model <name>', 'Model override')
     .option('--transport <name>', 'Worker transport: tmux (default) or native')

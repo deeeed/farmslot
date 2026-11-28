@@ -97,9 +97,23 @@ export async function nativeCatalog(
         if (!definition.nativeTransport || !definition.nativeChoices) return [];
         const defaultModel = definition.nativeChoices.defaultModel ?? definition.defaultModel;
         const nodeModels = nativeNodeModels(definition.id, defaultModel, contextMachines);
+        const preferences = nativeModelPreferences(
+          definition.id,
+          definition.nativeChoices.models,
+          defaultModel,
+        );
+        const visibleModelSet = new Set<string>([
+          ...preferences.models,
+          ...Object.values(nodeModels ?? {}).flat(),
+        ]);
+        const scopedLabels = nodeModelCatalogs.labels(definition.id, contextMachines.values());
+        const modelLabels = Object.fromEntries(
+          Object.entries(scopedLabels).filter(([id]) => visibleModelSet.has(id)),
+        );
         return [
           {
             runner: definition.id,
+            ...(definition.nativeOnly ? { nativeOnly: true } : {}),
             supportsWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
             supportsQueuedWorkers: allowWorkers && runnerSupportsNativeTaskReuse(definition.id),
             supportsWorkspaceReviews:
@@ -107,8 +121,9 @@ export async function nativeCatalog(
               runnerSupportsNativeTaskReuse(definition.id) &&
               runnerSupportsReadonlyReviewWorkspace(definition.id),
             ...definition.nativeChoices,
-            ...nativeModelPreferences(definition.id, definition.nativeChoices.models, defaultModel),
+            ...preferences,
             ...(nodeModels ? { nodeModels } : {}),
+            ...(Object.keys(modelLabels).length ? { modelLabels } : {}),
           },
         ];
       }),
@@ -148,7 +163,7 @@ export function nativeNodeModels(
   const entries = [...contextMachines].flatMap(([executionNodeId, machine]) => {
     const listing = nodeModelCatalogs.nativeListing(runner, machine);
     if (!listing) return [];
-    const listed = listing.filter(isPickerCatalogModel);
+    const listed = source.flatCatalog ? [...listing] : listing.filter(isPickerCatalogModel);
     return [
       [
         executionNodeId,

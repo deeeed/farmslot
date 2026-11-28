@@ -121,6 +121,8 @@ export interface NativeExecutionNodeDeclaration {
   supportsStandaloneDelegation?: boolean;
   /** Source-backed journal/account receipts on the authenticated node connection. */
   supportsObservations?: boolean;
+  /** Node accepts explicit trusted executable configuration before admitting profile reads. */
+  supportsObservationConfiguration?: boolean;
   ownerPrincipalId: string;
   /** The node routes reserved creation; its retained host is checked separately at invocation. */
   supportsEnsure?: boolean;
@@ -152,6 +154,10 @@ export interface NativeNodeSessionEnvelope {
   method: string;
   params: Record<string, unknown>;
   requester?: NativeSessionRequester;
+  /** Trusted runner executable resolved from pool config on the gateway. */
+  executable?: string;
+  /** Trusted runner executables by runner name for profile status operations. */
+  executables?: Record<string, string>;
   observe?: true;
   /**
    * Sessions a launch may stop to refresh a host on another runtime, sent only to a node that
@@ -269,7 +275,10 @@ export interface NativeSessionInfo extends Partial<NativeProcessExitEvidence> {
   cwd: string;
   executable: string;
   version: string;
+  /** Original requested model configuration; kept stable for idempotent retries. */
   model?: string;
+  /** Effective model confirmed by the runner (e.g. ACP default when model was omitted). */
+  observedModel?: string;
   mode: 'default' | 'plan';
   accountMode: 'native';
   /** Absent on older journals, whose policy is ask. Workers keep their launch policy. */
@@ -429,14 +438,18 @@ export interface NativeRunnerOption {
   runner: string;
   models: string[];
   /**
-   * Per-node catalogs (Pi, OpenCode): the models each execution node lists, keyed like a
+   * Per-node catalogs (Pi, OpenCode, Antigravity): the models each execution node lists, keyed like a
    * context's `executionNodeId`. A node with no entry has not listed yet and uses `models`.
    */
   nodeModels?: Record<string, string[]>;
+  /** Display names keyed by stable model ID, when the runner's catalog supplies them. */
+  modelLabels?: Record<string, string>;
   defaultModel: string;
   efforts?: string[];
   defaultEffort?: string | null;
   modes: Array<'default' | 'plan'>;
+  /** Protocol-only agents cannot launch in terminal (tmux) transport. */
+  nativeOnly?: boolean;
   /** Task dispatch and leased recovery are available in addition to standalone chat. */
   supportsWorkers?: boolean;
   /** Queued creation preserves the authenticated profile owner and transport. */

@@ -31,6 +31,7 @@ const FLOW_OPTIONS: readonly FlowOption[] = [
 export interface DispatchWizardPrimaryControlsRenderContext {
   discoverModels?: boolean;
   transport: 'tmux' | 'native';
+  terminalWorkerAvailable?: boolean;
   nativeWorkerAvailable: boolean;
   nativeCatalogError: string;
   nativeProfileControl: unknown;
@@ -97,6 +98,10 @@ export function renderDispatchWizardPrimaryControls(
               class="pill ${ctx.transport === 'tmux' ? 'selected' : ''}"
               data-transport="tmux"
               aria-pressed=${ctx.transport === 'tmux'}
+              ?disabled=${ctx.terminalWorkerAvailable === false}
+              title=${ctx.terminalWorkerAvailable === false
+                ? 'Terminal transport is not supported for this runner'
+                : 'Run inside an interactive terminal (tmux) session'}
               @click=${() => ctx.setTransport('tmux')}
             >
               Terminal

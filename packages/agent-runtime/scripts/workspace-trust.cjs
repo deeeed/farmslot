@@ -227,6 +227,10 @@ const reviewRuntimeRootsByRunner = {
     path.join(env.XDG_STATE_HOME || path.join(home(env), '.local/state'), 'opencode'),
     path.join(env.XDG_CONFIG_HOME || path.join(home(env), '.config'), 'opencode'),
   ],
+  antigravity: (env) => [
+    path.join(home(env), '.gemini/antigravity-cli'),
+    path.join(home(env), '.gemini'),
+  ],
 };
 const reviewConfigurationRoots = (cwd) =>
   [
@@ -271,6 +275,7 @@ const reviewConfigurationRootsByRunner = {
   cursor: reviewConfigurationRoots,
   pi: reviewConfigurationRoots,
   opencode: reviewConfigurationRoots,
+  antigravity: reviewConfigurationRoots,
 };
 // Claude's Bash cwd-state files use this override, not the child's TMPDIR.
 const reviewTemporaryDirectoryVariablesByRunner = {

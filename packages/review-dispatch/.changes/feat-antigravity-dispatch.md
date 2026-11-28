@@ -1,0 +1,1 @@
+- Add Antigravity to the shared runner dispatch catalog and preserve server-declared model display labels in native runner catalogs.
