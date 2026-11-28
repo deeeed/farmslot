@@ -76,6 +76,14 @@ test('signed-out, malformed, API and missing identity cannot become stable subsc
     'signed-out',
   );
   assert.equal(cursorAccountState({ hasAccessToken: true }).login, 'unavailable');
+  for (const status of [
+    { status: 'unauthenticated', email: 'retained@example.test' },
+    { email: 'retained@example.test' },
+  ]) {
+    const account = cursorAccountState(status);
+    assert.equal(account.login, 'unavailable');
+    assert.equal(account.identity, undefined);
+  }
   assert.equal(codexAccountState({ account: null, requiresOpenaiAuth: true }).login, 'signed-out');
   assert.equal(
     codexAccountState({ account: null, requiresOpenaiAuth: false }).login,

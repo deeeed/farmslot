@@ -33,13 +33,13 @@ export function cursorProfileEnvironment(
 export function cursorAccountState(value: unknown): NativeAccountState {
   const status = accountObject(value);
   if (status.isAuthenticated === false) return signedOutAccount();
+  if (status.isAuthenticated !== true && status.status !== 'authenticated')
+    return { ...unavailableAccount(), reason: 'malformed-status' };
   const user =
     status.userInfo && typeof status.userInfo === 'object' && !Array.isArray(status.userInfo)
       ? accountObject(status.userInfo)
       : status;
   const email = [user.email, status.email].map(accountString).find((value) => value?.includes('@'));
-  if (status.isAuthenticated !== true && status.status !== 'authenticated' && !email)
-    return { ...unavailableAccount(), reason: 'malformed-status' };
   const subjectId = accountId(user.userId);
   const organizationId = accountId(user.teamId);
   return {
