@@ -2443,31 +2443,23 @@ test('combined local rearming recovery defers profiles until commit and supports
     process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerId;
     const rearmClient = new NativeSessionClient(rearmStateRoot, 'local');
     const rearmAgy = join(root, 'rearm-bin', 'agy');
-    mkdirSync(dirname(rearmAgy), { recursive: true });
-    writeFileSync(
-      rearmAgy,
-      `#!/bin/sh
-for arg in "$@"; do
-  if [ "$arg" = "--version" ]; then
-    printf '1.5.25\\n'
-    exit 0
-  fi
-done
-while IFS= read -r line; do
-  id=$(printf '%s\\n' "$line" | sed -n 's/.*"id":"\\([^"]*\\)".*/\\1/p')
-  case "$line" in
-    *'"initialize"'*)
-      printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":1,"agentInfo":{"name":"Antigravity ACP Server","version":"1.5.25"}}}\\n' "$id"
-      ;;
-    *'"session/list"'*)
-      printf '{"jsonrpc":"2.0","id":"%s","result":{"sessions":[]}}\\n' "$id"
-      exit 0
-      ;;
-  esac
-done
-`,
+    t.mock.method(
+      nativeRunnerDefinitions.antigravity.account,
+      'observe',
+      async (options: { cwd: string; executable?: string }): Promise<NativeAccountObservation> => {
+        assert.equal(options.executable, rearmAgy);
+        return {
+          runner: 'antigravity',
+          installed: true,
+          executable: options.executable,
+          version: '1.5.25',
+          login: 'authenticated',
+          mode: 'subscription',
+          identityQuality: 'unavailable',
+          observedAt: new Date().toISOString(),
+        };
+      },
     );
-    chmodSync(rearmAgy, 0o700);
     const rearmProfileDir = join(root, 'rearm-profile');
     mkdirSync(rearmProfileDir, { recursive: true });
     await routeNativeProfile(rearmClient, ownerId, Methods.NATIVE_PROFILE_ADD, {
