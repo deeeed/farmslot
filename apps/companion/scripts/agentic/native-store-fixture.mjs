@@ -3,11 +3,12 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { NATIVE_CONVERSATION_LIMITS } from '@farmslot/protocol';
+import { nativeConversationStorageId } from '@farmslot/protocol/client-cache';
+
 import { d05RecipeErrors } from './d05-fixture.mjs';
 
 export const sha256 = (value) => createHash('sha256').update(value).digest('hex');
-export const storageId = (id) =>
-  `native.session.read:${JSON.stringify({ executionNodeId: 'local', sessionId: id })}`;
 
 /** Independent complete user/assistant projection for fixture and actual SQLite evidence only. */
 export function messages(events) {
@@ -79,32 +80,30 @@ export function nativeScrollViewGesture(screen, direction = 'up') {
   };
 }
 
+function containsRect(container, target) {
+  return (
+    container &&
+    target &&
+    [container, target].every(
+      (rect) =>
+        ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(rect[key])) &&
+        rect.width > 0 &&
+        rect.height > 0,
+    ) &&
+    target.x >= container.x &&
+    target.y >= container.y &&
+    target.x + target.width <= container.x + container.width &&
+    target.y + target.height <= container.y + container.height
+  );
+}
+
 /** A discovered control can still be clipped by its actual scrolling ancestor. */
 export function nativeResumeFitsScrollView(screen, selector) {
   const targets = screen.nodes.filter((node) => node.identifier === selector);
   if (targets.length !== 1) return false;
   const target = targets[0];
-  const rect = target.rect;
-  if (
-    !rect ||
-    !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(rect[key])) ||
-    rect.width <= 0 ||
-    rect.height <= 0 ||
-    target.visibleToUser === false
-  )
-    return false;
   const viewport = screen.nodes.find((node) => ['Application', 'Window'].includes(node.type))?.rect;
-  if (
-    !viewport ||
-    !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(viewport[key])) ||
-    viewport.width <= 0 ||
-    viewport.height <= 0 ||
-    rect.x < viewport.x ||
-    rect.y < viewport.y ||
-    rect.x + rect.width > viewport.x + viewport.width ||
-    rect.y + rect.height > viewport.y + viewport.height
-  )
-    return false;
+  if (target.visibleToUser === false || !containsRect(viewport, target.rect)) return false;
   const nodes = new Map(screen.nodes.map((node) => [node.index, node]));
   const visited = new Set();
   let ancestor = target;
@@ -119,19 +118,8 @@ export function nativeResumeFitsScrollView(screen, selector) {
     ancestor = nodes.get(ancestor.parentIndex);
     if (!ancestor) return false;
     if (ancestor.type === 'ScrollView') {
+      if (!containsRect(ancestor.rect, target.rect)) return false;
       scrollView = true;
-      const clip = ancestor.rect;
-      if (
-        !clip ||
-        !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(clip[key])) ||
-        clip.width <= 0 ||
-        clip.height <= 0 ||
-        rect.x < clip.x ||
-        rect.y < clip.y ||
-        rect.x + rect.width > clip.x + clip.width ||
-        rect.y + rect.height > clip.y + clip.height
-      )
-        return false;
     }
   }
   return scrollView;
@@ -139,31 +127,46 @@ export function nativeResumeFitsScrollView(screen, selector) {
 
 /** Reject a stale accessibility target when its paired screenshot no longer renders Resume. */
 export function renderedNativeResumeTarget(screen, image, selector) {
-  return renderedNativeDisabledTarget(screen, image, selector, 'Resume conversation');
+  const footers = screen.nodes.filter(
+    (node) => node.identifier === 'companion-native-resume-footer',
+  );
+  assert.equal(footers.length, 1, 'Require one actual Resume footer');
+  const footer = footers[0];
+  // XCTest can flatten the footer and its button to siblings in the accessibility tree.
+  return renderedNativeDisabledTarget(
+    screen,
+    image,
+    selector,
+    'Resume conversation',
+    (target) => footer.visibleToUser !== false && containsRect(footer.rect, target.rect),
+  );
 }
 
 /** Same paired AX/image guard for an existing disabled planning control. */
-export function renderedNativeDisabledTarget(screen, image, selector, labelText) {
+export function renderedNativeDisabledTarget(
+  screen,
+  image,
+  selector,
+  labelText,
+  fitsRegion = () => nativeResumeFitsScrollView(screen, selector),
+) {
   const targets = screen.nodes.filter((node) => node.identifier === selector);
-  assert.equal(targets.length, 1, 'Require one actual Resume accessibility target');
+  assert.equal(targets.length, 1, `Require one actual ${labelText} accessibility target`);
   const target = targets[0];
-  assert.equal(target.enabled, false, 'Resume must remain accessibility-disabled');
-  assert(
-    nativeResumeFitsScrollView(screen, selector),
-    'Resume must fit inside its actual ancestor ScrollView before a point press',
-  );
+  assert.equal(target.enabled, false, `${labelText} must remain accessibility-disabled`);
   const rect = target.rect;
   const viewport = screen.nodes.find((node) => ['Application', 'Window'].includes(node.type))?.rect;
-  assert(rect && viewport && target.visibleToUser !== false);
-  assert(['x', 'y', 'width', 'height'].every((key) => Number.isFinite(rect[key])));
-  assert(rect.width > 0 && rect.height > 0);
-  assert(image.width > 0 && image.height > 0 && viewport.width > 0 && viewport.height > 0);
+  assert(
+    target.visibleToUser !== false && containsRect(viewport, rect) && fitsRegion(target),
+    `${labelText} must fit inside its viewport and expected region before a point press`,
+  );
+  assert(image.width > 0 && image.height > 0);
   assert(
     Math.abs(image.width / viewport.width - image.height / viewport.height) < 0.001,
     'Require matching screenshot and native viewport dimensions',
   );
   const labels = image.text.filter((node) => node.text.trim() === labelText);
-  assert.equal(labels.length, 1, 'The paired screenshot must visibly render Resume conversation');
+  assert.equal(labels.length, 1, `The paired screenshot must visibly render ${labelText}`);
   const label = labels[0];
   assert(['x', 'y', 'width', 'height'].every((key) => Number.isFinite(label[key])));
   assert(
@@ -183,7 +186,7 @@ export function renderedNativeDisabledTarget(screen, image, selector, labelText)
       labelRight <= rect.x + rect.width &&
       labelTop >= rect.y &&
       labelBottom <= rect.y + rect.height,
-    'Rendered Resume must match the actual disabled control bounds',
+    `Rendered ${labelText} must match the actual disabled control bounds`,
   );
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
 }
@@ -287,6 +290,8 @@ export async function resolveNativeStoreInputs(env, root) {
   );
   const sessions = [];
   const ids = new Set();
+  // Each fixture turn has six journal events and five projected rows after its two deltas merge.
+  const tailTurns = NATIVE_CONVERSATION_LIMITS.projectionRows / 5;
   for (const [index, entry] of (Array.isArray(fixture?.sessionsA)
     ? fixture.sessionsA
     : []
@@ -330,7 +335,8 @@ export async function resolveNativeStoreInputs(env, root) {
       assert.equal(logical.length, 220);
       assert.equal(logical[0].text, `${entry.prefix}_USER_0`);
       assert.equal(logical.at(-1).text, `${entry.prefix}_ASSISTANT_109_complete_fragment`);
-      assert.equal(logical.slice(-200)[0].text, `${entry.prefix}_USER_10`);
+      const tail = logical.slice(-2 * tailTurns);
+      assert.equal(tail[0].text, `${entry.prefix}_USER_${110 - tailTurns}`);
       sessions.push({
         id: entry.id,
         nodeId: 'local',
@@ -339,9 +345,12 @@ export async function resolveNativeStoreInputs(env, root) {
         cursor: 660,
         journal,
         sha256: entry.sha256,
-        storedId: storageId(entry.id),
-        first: `${entry.prefix}_USER_10`,
-        last: `${entry.prefix}_ASSISTANT_109_complete_fragment`,
+        storedId: nativeConversationStorageId({
+          sessionId: entry.id,
+          executionNodeId: entry.nodeId,
+        }),
+        historyBefore: entry.cursor - 6 * tailTurns,
+        tail,
         route: `${scheme}:///native?sessionId=${entry.id}&executionNodeId=local`,
       });
     } catch {
