@@ -683,6 +683,7 @@ set +e
 (
   cd "${APP_DIR}"
   unset FARMSLOT_SLOT_ID
+  unset RECIPE_TASK_DIR
   PLATFORM=ios \
   IOS_SIMULATOR="${SIM_UDID}" \
   SIMULATOR="${SIM_UDID}" \
