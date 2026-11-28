@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import {
+import fs, {
   chmodSync,
   existsSync,
   mkdirSync,
@@ -2448,14 +2448,15 @@ done
   }
 });
 
-test('held local native.session.list rejects when account refresh consumes session metadata change and survives profile-only refresh', async () => {
+test('held local native.session.list rejects when account refresh consumes session metadata change and survives profile-only refresh', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'agy-local-session-refresh-'));
+  const silentWatchDir = mkdtempSync(join(tmpdir(), 'agy-local-silent-watch-'));
   const farmHome = join(root, 'farm-home');
-  const poolDir = join(root, 'pool');
+  const fixturePoolPath = join(root, 'pool');
   const stateRoot = join(root, 'local-state');
   const sessionsDir = join(stateRoot, 'sessions');
   mkdirSync(farmHome, { recursive: true });
-  mkdirSync(poolDir, { recursive: true });
+  mkdirSync(fixturePoolPath, { recursive: true });
   mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   chmodSync(stateRoot, 0o700);
   mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
@@ -2463,13 +2464,24 @@ test('held local native.session.list rejects when account refresh consumes sessi
   const metadataFile = join(sessionsDir, 'metadata.json');
   writeFileSync(metadataFile, JSON.stringify({ revision: 'rev-1' }), { mode: 0o600 });
 
+  // Silence fs.watch so watcher delivery cannot race ahead of refreshAccounts(); only the
+  // account refresh scan itself can observe and consume the metadata.json revision change.
+  const origWatch = fs.watch;
+  const watchMock = t.mock.method(
+    fs,
+    'watch',
+    (_path: unknown, options: { recursive?: boolean }, listener: never) =>
+      origWatch(silentWatchDir, options, listener),
+  );
+  syncBuiltinESMExports();
+
   const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
   const prevFarmHome = process.env.FARMSLOT_HOME;
   const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   let gatewayObs: GatewayNativeObservations | undefined;
   try {
     process.env.FARMSLOT_HOME = farmHome;
-    process.env.FARMSLOT_POOL_DIR = poolDir;
+    process.env.FARMSLOT_POOL_DIR = fixturePoolPath;
     const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
     const ownerRecord = auth.writer.createPrincipal(
       { type: 'person', displayName: 'Refresh Facet Owner' },
@@ -2480,7 +2492,7 @@ test('held local native.session.list rejects when account refresh consumes sessi
     process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerId;
     const writeLocalPool = (agyPath: string) =>
       writeFileSync(
-        join(poolDir, 'local.json'),
+        join(fixturePoolPath, 'local.json'),
         JSON.stringify({
           machine: 'local-refresh',
           project: 'refresh',
@@ -2612,6 +2624,8 @@ test('held local native.session.list rejects when account refresh consumes sessi
     );
   } finally {
     gatewayObs?.dispose();
+    watchMock.mock.restore();
+    syncBuiltinESMExports();
     if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
     else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
     if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
@@ -2619,17 +2633,18 @@ test('held local native.session.list rejects when account refresh consumes sessi
     if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
     else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
     rmSync(root, { recursive: true, force: true });
+    rmSync(silentWatchDir, { recursive: true, force: true });
   }
 });
 
 test('automatic local rearm after transient startup failure settles executable epoch and serves first profiles callback without pool edit', async () => {
   const root = mkdtempSync(join(tmpdir(), 'agy-local-auto-rearm-'));
   const farmHome = join(root, 'farm-home');
-  const poolDir = join(root, 'pool');
+  const fixturePoolPath = join(root, 'pool');
   const healthyStateRoot = join(root, 'healthy-state');
   const autoRearmStateRoot = join(root, 'auto-rearm-state');
   mkdirSync(farmHome, { recursive: true });
-  mkdirSync(poolDir, { recursive: true });
+  mkdirSync(fixturePoolPath, { recursive: true });
   mkdirSync(healthyStateRoot, { recursive: true, mode: 0o700 });
   chmodSync(healthyStateRoot, 0o700);
   mkdirSync(autoRearmStateRoot, { recursive: true, mode: 0o700 });
@@ -2642,7 +2657,7 @@ test('automatic local rearm after transient startup failure settles executable e
   let autoRearmObs: GatewayNativeObservations | undefined;
   try {
     process.env.FARMSLOT_HOME = farmHome;
-    process.env.FARMSLOT_POOL_DIR = poolDir;
+    process.env.FARMSLOT_POOL_DIR = fixturePoolPath;
     const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
     const ownerRecord = auth.writer.createPrincipal(
       { type: 'person', displayName: 'Auto Rearm Owner' },
@@ -2679,7 +2694,7 @@ done
     );
     chmodSync(fakeAgy, 0o700);
     writeFileSync(
-      join(poolDir, 'auto-local.json'),
+      join(fixturePoolPath, 'auto-local.json'),
       JSON.stringify({
         machine: 'auto-local',
         project: 'auto-rearm',
@@ -2882,6 +2897,222 @@ done
   }
 });
 
+test('automatic local rearm recovers profiles after an early profile-status read failed during downtime', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-local-early-read-rearm-'));
+  const farmHome = join(root, 'farm-home');
+  const fixturePoolPath = join(root, 'pool');
+  const stateRoot = join(root, 'auto-rearm-state');
+  const sessionsDir = join(stateRoot, 'sessions');
+  mkdirSync(farmHome, { recursive: true });
+  mkdirSync(fixturePoolPath, { recursive: true });
+  mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+  chmodSync(stateRoot, 0o700);
+  mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
+  chmodSync(sessionsDir, 0o700);
+  const metadataFile = join(sessionsDir, 'metadata.json');
+  writeFileSync(metadataFile, JSON.stringify({ revision: 'early-rev-0' }), { mode: 0o600 });
+
+  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
+  const prevFarmHome = process.env.FARMSLOT_HOME;
+  const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  let gatewayObs: GatewayNativeObservations | undefined;
+  try {
+    process.env.FARMSLOT_HOME = farmHome;
+    process.env.FARMSLOT_POOL_DIR = fixturePoolPath;
+    const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
+    const ownerRecord = auth.writer.createPrincipal(
+      { type: 'person', displayName: 'Early Read Rearm Owner' },
+      [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+      'early-read-rearm-owner',
+    );
+    const ownerId = ownerRecord.id;
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerId;
+
+    const fakeAgy = join(root, 'bin', 'agy');
+    mkdirSync(dirname(fakeAgy), { recursive: true });
+    writeFileSync(
+      fakeAgy,
+      `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "--version" ]; then
+    printf '1.5.27\\n'
+    exit 0
+  fi
+done
+while IFS= read -r line; do
+  id=$(printf '%s\\n' "$line" | sed -n 's/.*"id":"\\([^"]*\\)".*/\\1/p')
+  case "$line" in
+    *'"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"protocolVersion":1,"agentInfo":{"name":"Antigravity ACP Server","version":"1.5.27"}}}\\n' "$id"
+      ;;
+    *'"session/list"'*)
+      printf '{"jsonrpc":"2.0","id":"%s","result":{"sessions":[]}}\\n' "$id"
+      exit 0
+      ;;
+  esac
+done
+`,
+    );
+    chmodSync(fakeAgy, 0o700);
+    writeFileSync(
+      join(fixturePoolPath, 'early-rearm-local.json'),
+      JSON.stringify({
+        machine: 'early-rearm-local',
+        project: 'early-rearm',
+        host: 'localhost',
+        ssh_user: process.env.USER || 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: fakeAgy,
+        slots: [
+          { id: 'slot-early-rearm', enabled: true, mode: 'dispatch', repo: root, session: 's1' },
+        ],
+      }),
+    );
+
+    const profileDir = join(root, 'profile-early-rearm');
+    mkdirSync(profileDir, { recursive: true });
+    const localClient = new NativeSessionClient(stateRoot, 'local');
+    await routeNativeProfile(localClient, ownerId, Methods.NATIVE_PROFILE_ADD, {
+      profileId: 'early-work',
+      runner: 'antigravity',
+      directory: profileDir,
+    });
+
+    const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+    assert.ok(deadPid);
+    const brokenHostFile = join(stateRoot, 'host.json');
+    writeFileSync(
+      brokenHostFile,
+      JSON.stringify({ pid: deadPid, socket: join(stateRoot, 'gone.sock') }),
+      { mode: 0o600 },
+    );
+
+    const conn = {};
+    const principal: Principal = {
+      id: ownerId,
+      subject: { type: 'person', displayName: 'Early Read Rearm Owner' },
+      roles: [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+    };
+    const readLocalProfile = async (): Promise<NativeProfileStatusResult> => {
+      const interests = nativeReadInterests(
+        Methods.NATIVE_PROFILE_STATUS,
+        { executionNodeId: 'local', profileId: 'early-work' },
+        ownerId,
+      );
+      assert.ok(interests);
+      const { payload } = await gatewayObs!.read(
+        conn,
+        interests,
+        async () =>
+          (await gatewayObs!.localProfileStatus(
+            ownerId,
+            'early-work',
+          )) as NativeProfileStatusResult,
+        () => null,
+      );
+      return payload;
+    };
+
+    let captureRecovery = false;
+    let firstProfileRead: Promise<NativeProfileStatusResult> | undefined;
+    let firstProfileDelivered = false;
+    let firstProfileFired!: () => void;
+    const firstProfileFiredP = new Promise<void>((resolve) => {
+      firstProfileFired = resolve;
+    });
+    const events: string[] = [];
+    gatewayObs = new GatewayNativeObservations((key) => {
+      if ('nodeId' in key && key.nodeId === 'local') {
+        events.push(key.family);
+        if (captureRecovery && key.family === 'profiles' && !firstProfileRead) {
+          firstProfileDelivered = true;
+          firstProfileRead = readLocalProfile();
+          firstProfileFired();
+        }
+      }
+    }, localClient);
+    gatewayObs.attachClient(conn, () => principal);
+
+    await assert.rejects(gatewayObs.startLocal(ownerId), {
+      code: 'NATIVE_SOURCE_UNAVAILABLE',
+      reason: 'host-identity-invalid',
+    });
+
+    // Early profile-status read during downtime starts a background executable sync whose retry
+    // fails on the dead host and records a transient non-pool `localConfig.error`.
+    await assert.rejects(readLocalProfile(), { code: 'NATIVE_PROFILES_UNAVAILABLE' });
+    // Wait for that background sync retry to finish failing so `localConfig.error` is stored
+    // (observable because the next profile-status read reports the stored sync error message).
+    const syncErrDeadline = Date.now() + 2_000;
+    let sawStoredSyncError = false;
+    while (Date.now() < syncErrDeadline && !sawStoredSyncError) {
+      try {
+        await readLocalProfile();
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes('failed to sync runner configuration')) {
+          sawStoredSyncError = true;
+          break;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    assert.equal(
+      sawStoredSyncError,
+      true,
+      'expected early profile-status read during downtime to store transient sync error',
+    );
+    // Let the second background retry settle before clearing host.json so no configuring lock
+    // remains active when automatic recovery runs.
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 15));
+
+    events.length = 0;
+    captureRecovery = true;
+    // Clear the transient host failure WITHOUT any pool edit or manual reread.
+    unlinkSync(brokenHostFile);
+    let nudgeCount = 0;
+    const nudgeTimer = setInterval(() => {
+      if (firstProfileDelivered) return;
+      writeFileSync(metadataFile, JSON.stringify({ revision: `early-rev-${++nudgeCount}` }), {
+        mode: 0o600,
+      });
+    }, 750);
+    try {
+      await Promise.race([
+        firstProfileFiredP,
+        new Promise<never>((_resolve, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Timed out waiting for automatic local rearm after early profile-status failure (events=${JSON.stringify(events)})`,
+                ),
+              ),
+            3_500,
+          ),
+        ),
+      ]);
+    } finally {
+      clearInterval(nudgeTimer);
+    }
+    assert.ok(firstProfileRead);
+    const recovered = await firstProfileRead;
+    assert.equal(recovered.account.version, '1.5.27');
+    assert.ok(recovered.loginCommand.includes(fakeAgy));
+    assert.ok(events.includes('profiles'));
+  } finally {
+    gatewayObs?.dispose();
+    if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 interface RemoteEpochHarness {
   root: string;
   tempPoolRoot: string;
@@ -2913,266 +3144,299 @@ async function setupRemoteEpochHarness(prefix: string): Promise<RemoteEpochHarne
   const farmHome = join(root, 'farm-home');
   const tempPoolRoot = join(root, 'pool');
   const localStateRoot = join(root, 'local-state');
-  mkdirSync(farmHome, { recursive: true });
-  mkdirSync(tempPoolRoot, { recursive: true });
-  mkdirSync(localStateRoot, { recursive: true, mode: 0o700 });
-  chmodSync(localStateRoot, 0o700);
-
   const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
   const prevFarmHome = process.env.FARMSLOT_HOME;
   const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
   const machineA = `${prefix}node-a`;
   const machineB = `${prefix}node-b`;
 
-  process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
-  process.env.FARMSLOT_HOME = farmHome;
-  const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
-  const ownerRecord = auth.writer.createPrincipal(
-    { type: 'person', displayName: 'Remote Epoch Owner' },
-    [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
-    `${prefix}owner`,
-  );
-  const ownerId = ownerRecord.id;
-  process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerId;
-  auth.writer.createPrincipal(
-    {
-      type: 'node',
-      machine: machineA,
-      displayName: 'Remote Epoch Node A',
-      nativeOwnerPrincipalId: ownerId,
-    },
-    [],
-    `${prefix}node-a-cred`,
-  );
-  auth.writer.createPrincipal(
-    {
-      type: 'node',
-      machine: machineB,
-      displayName: 'Remote Unaffected Node B',
-      nativeOwnerPrincipalId: ownerId,
-    },
-    [],
-    `${prefix}node-b-cred`,
-  );
-  const client = new NativeSessionClient(localStateRoot, 'local');
-  const makeStatus = (version: string): NativeProfileStatusResult => ({
-    profile: {
-      id: 'work',
-      runner: 'antigravity',
-      directory: join(root, 'profile-work'),
-      accountContextId: '22222222-2222-4222-8222-222222222222',
-      state: 'active',
-    },
-    account: {
-      runner: 'antigravity',
-      installed: true,
-      executable: `/opt/agy-${version}`,
-      version,
-      login: 'authenticated',
-      mode: 'subscription',
-      identityQuality: 'unavailable',
-      observedAt: '2026-11-28T00:00:00.000Z',
-    },
-    loginCommand: `/opt/agy-${version}`,
-  });
+  let gatewayObs: GatewayNativeObservations | undefined;
+  let transportA: Awaited<ReturnType<typeof createTypedNodeTransport>> | undefined;
+  let transportB: Awaited<ReturnType<typeof createTypedNodeTransport>> | undefined;
+  let registeredA = false;
+  let registeredB = false;
+  let disposed = false;
 
-  const writePool = (fileName: string, machine: string, agyPath: string) => {
-    writeFileSync(
-      join(tempPoolRoot, fileName),
-      JSON.stringify({
-        machine,
-        project: fileName,
-        host: `${machine}.remote.example`,
-        ssh_user: 'operator',
-        os: process.platform,
-        platform: 'cli',
-        antigravity_path: agyPath,
-        slots: [{ id: `${machine}-1`, enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
-      }),
+  const dispose = async () => {
+    if (disposed) return;
+    disposed = true;
+    gatewayObs?.dispose();
+    if (registeredA && transportA) {
+      unregisterByWs(transportA.ws);
+      registeredA = false;
+    }
+    if (transportA) {
+      await transportA.close();
+      transportA = undefined;
+    }
+    if (registeredB && transportB) {
+      unregisterByWs(transportB.ws);
+      registeredB = false;
+    }
+    if (transportB) {
+      await transportB.close();
+      transportB = undefined;
+    }
+    if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
+    rmSync(root, { recursive: true, force: true });
+  };
+
+  try {
+    mkdirSync(farmHome, { recursive: true });
+    mkdirSync(tempPoolRoot, { recursive: true });
+    mkdirSync(localStateRoot, { recursive: true, mode: 0o700 });
+    chmodSync(localStateRoot, 0o700);
+
+    process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
+    process.env.FARMSLOT_HOME = farmHome;
+    const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
+    const ownerRecord = auth.writer.createPrincipal(
+      { type: 'person', displayName: 'Remote Epoch Owner' },
+      [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+      `${prefix}owner`,
     );
-  };
-  writePool(`${machineA}-aux-1.json`, machineA, '/opt/agy-aux-1');
-  writePool(`${machineA}-aux-2.json`, machineA, '/opt/agy-aux-2');
-  writePool(`${machineA}.json`, machineA, '/opt/agy-v1');
-  writePool(`${machineB}.json`, machineB, '/opt/agy-b');
-
-  let revA = 0;
-  const incA = `inc-${prefix}a`;
-  let configureHandlerA: (
-    executables: Record<string, string>,
-  ) => Promise<NativeSourceReceipt> = async () => ({
-    version: 1,
-    nodeId: machineA,
-    ownerId,
-    incarnation: incA,
-    revision: ++revA,
-    ready: true,
-    changed: ['profiles'],
-  });
-
-  const transportA = await createTypedNodeTransport(async (frame) => {
-    assert.equal(frame.method, 'native.observation.configure');
-    const params = (frame.params ?? {}) as { executables?: Record<string, string> };
-    return configureHandlerA(params.executables ?? {});
-  });
-  let revB = 0;
-  const incB = `inc-${prefix}b`;
-  const transportB = await createTypedNodeTransport(async (frame) => {
-    assert.equal(frame.method, 'native.observation.configure');
-    return {
-      version: 1,
-      nodeId: machineB,
-      ownerId,
-      incarnation: incB,
-      revision: ++revB,
-      ready: true,
-      changed: ['profiles'],
-    };
-  });
-
-  registerNode(
-    machineA,
-    1,
-    transportA.ws,
-    undefined,
-    undefined,
-    {
-      ownerPrincipalId: ownerId,
-      supportsStandaloneDelegation: true,
-      supportsProfiles: true,
-      supportsObservations: true,
-      supportsObservationConfiguration: true,
-    },
-    { principalId: `${prefix}node-a`, valid: () => true },
-  );
-  registerNode(
-    machineB,
-    1,
-    transportB.ws,
-    undefined,
-    undefined,
-    {
-      ownerPrincipalId: ownerId,
-      supportsStandaloneDelegation: true,
-      supportsProfiles: true,
-      supportsObservations: true,
-      supportsObservationConfiguration: true,
-    },
-    { principalId: `${prefix}node-b`, valid: () => true },
-  );
-
-  const remoteInvalidations: Array<{ family: string; nodeId?: string }> = [];
-  const gatewayObs = new GatewayNativeObservations((key) => {
-    remoteInvalidations.push({
-      family: key.family,
-      ...('nodeId' in key ? { nodeId: key.nodeId } : {}),
+    const ownerId = ownerRecord.id;
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerId;
+    auth.writer.createPrincipal(
+      {
+        type: 'node',
+        machine: machineA,
+        displayName: 'Remote Epoch Node A',
+        nativeOwnerPrincipalId: ownerId,
+      },
+      [],
+      `${prefix}node-a-cred`,
+    );
+    auth.writer.createPrincipal(
+      {
+        type: 'node',
+        machine: machineB,
+        displayName: 'Remote Unaffected Node B',
+        nativeOwnerPrincipalId: ownerId,
+      },
+      [],
+      `${prefix}node-b-cred`,
+    );
+    const client = new NativeSessionClient(localStateRoot, 'local');
+    const makeStatus = (version: string): NativeProfileStatusResult => ({
+      profile: {
+        id: 'work',
+        runner: 'antigravity',
+        directory: join(root, 'profile-work'),
+        accountContextId: '22222222-2222-4222-8222-222222222222',
+        state: 'active',
+      },
+      account: {
+        runner: 'antigravity',
+        installed: true,
+        executable: `/opt/agy-${version}`,
+        version,
+        login: 'authenticated',
+        mode: 'subscription',
+        identityQuality: 'unavailable',
+        observedAt: '2026-11-28T00:00:00.000Z',
+      },
+      loginCommand: `/opt/agy-${version}`,
     });
-  }, client);
 
-  const clientConn = {};
-  const principal: Principal = {
-    id: ownerId,
-    subject: { type: 'person', displayName: 'Epoch Owner' },
-    roles: [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
-  };
-  gatewayObs.attachClient(clientConn, () => principal);
-  gatewayObs.acceptRemote(
-    transportA.ws,
-    {
+    const writePool = (fileName: string, machine: string, agyPath: string) => {
+      writeFileSync(
+        join(tempPoolRoot, fileName),
+        JSON.stringify({
+          machine,
+          project: fileName,
+          host: `${machine}.remote.example`,
+          ssh_user: 'operator',
+          os: process.platform,
+          platform: 'cli',
+          antigravity_path: agyPath,
+          slots: [
+            { id: `${machine}-1`, enabled: true, mode: 'dispatch', repo: root, session: 's1' },
+          ],
+        }),
+      );
+    };
+    writePool(`${machineA}-aux-1.json`, machineA, '/opt/agy-aux-1');
+    writePool(`${machineA}-aux-2.json`, machineA, '/opt/agy-aux-2');
+    writePool(`${machineA}.json`, machineA, '/opt/agy-v1');
+    writePool(`${machineB}.json`, machineB, '/opt/agy-b');
+
+    let revA = 0;
+    const incA = `inc-${prefix}a`;
+    let configureHandlerA: (
+      executables: Record<string, string>,
+    ) => Promise<NativeSourceReceipt> = async () => ({
       version: 1,
       nodeId: machineA,
       ownerId,
       incarnation: incA,
-      revision: 0,
+      revision: ++revA,
       ready: true,
-      changed: ['native-session', 'profiles'],
-    },
-    () => true,
-  );
-  gatewayObs.acceptRemote(
-    transportB.ws,
-    {
-      version: 1,
-      nodeId: machineB,
-      ownerId,
-      incarnation: incB,
-      revision: 0,
-      ready: true,
-      changed: ['native-session', 'profiles'],
-    },
-    () => true,
-  );
+      changed: ['profiles'],
+    });
 
-  const waitMicrotasks = async () => {
-    for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
-  };
-  const pollUntil = async (predicate: () => boolean, label: string) => {
-    const deadline = Date.now() + 2_000;
-    while (Date.now() < deadline) {
-      if (predicate()) return;
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    throw new Error(`Timed out waiting for ${label}`);
-  };
-  const readRemoteProfile = async (
-    nodeId: string,
-    onEnter?: () => Promise<void>,
-  ): Promise<NativeProfileStatusResult> => {
-    const params = { executionNodeId: nodeId, profileId: 'work' };
-    const interests = nativeReadInterests(Methods.NATIVE_PROFILE_STATUS, params, ownerId);
-    assert.ok(interests);
-    const { payload } = await gatewayObs.read(
-      clientConn,
-      interests,
-      async () => {
-        if (onEnter) await onEnter();
-        return makeStatus('1.5.19');
+    transportA = await createTypedNodeTransport(async (frame) => {
+      assert.equal(frame.method, 'native.observation.configure');
+      const params = (frame.params ?? {}) as { executables?: Record<string, string> };
+      return configureHandlerA(params.executables ?? {});
+    });
+    let revB = 0;
+    const incB = `inc-${prefix}b`;
+    transportB = await createTypedNodeTransport(async (frame) => {
+      assert.equal(frame.method, 'native.observation.configure');
+      return {
+        version: 1,
+        nodeId: machineB,
+        ownerId,
+        incarnation: incB,
+        revision: ++revB,
+        ready: true,
+        changed: ['profiles'],
+      };
+    });
+
+    registerNode(
+      machineA,
+      1,
+      transportA.ws,
+      undefined,
+      undefined,
+      {
+        ownerPrincipalId: ownerId,
+        supportsStandaloneDelegation: true,
+        supportsProfiles: true,
+        supportsObservations: true,
+        supportsObservationConfiguration: true,
       },
-      () => null,
+      { principalId: `${prefix}node-a`, valid: () => true },
     );
-    return payload;
-  };
+    registeredA = true;
+    registerNode(
+      machineB,
+      1,
+      transportB.ws,
+      undefined,
+      undefined,
+      {
+        ownerPrincipalId: ownerId,
+        supportsStandaloneDelegation: true,
+        supportsProfiles: true,
+        supportsObservations: true,
+        supportsObservationConfiguration: true,
+      },
+      { principalId: `${prefix}node-b`, valid: () => true },
+    );
+    registeredB = true;
 
-  await pollUntil(() => revA >= 1 && revB >= 1, 'initial remote configure');
-  await waitMicrotasks();
-  assert.equal((await readRemoteProfile(machineA)).account.version, '1.5.19');
-  assert.equal((await readRemoteProfile(machineB)).account.version, '1.5.19');
+    const remoteInvalidations: Array<{ family: string; nodeId?: string }> = [];
+    gatewayObs = new GatewayNativeObservations((key) => {
+      remoteInvalidations.push({
+        family: key.family,
+        ...('nodeId' in key ? { nodeId: key.nodeId } : {}),
+      });
+    }, client);
 
-  return {
-    root,
-    tempPoolRoot,
-    ownerId,
-    machineA,
-    machineB,
-    incA,
-    incB,
-    nextRevA: () => ++revA,
-    currentRevA: () => revA,
-    setConfigureHandlerA: (handler) => {
-      configureHandlerA = handler;
-    },
-    transportA,
-    gatewayObs,
-    remoteInvalidations,
-    writePool,
-    waitMicrotasks,
-    pollUntil,
-    readRemoteProfile,
-    dispose: async () => {
-      gatewayObs.dispose();
-      unregisterByWs(transportA.ws);
-      await transportA.close();
-      unregisterByWs(transportB.ws);
-      await transportB.close();
-      if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
-      else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
-      if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
-      else process.env.FARMSLOT_HOME = prevFarmHome;
-      if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
-      else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
-      rmSync(root, { recursive: true, force: true });
-    },
-  };
+    const clientConn = {};
+    const principal: Principal = {
+      id: ownerId,
+      subject: { type: 'person', displayName: 'Epoch Owner' },
+      roles: [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+    };
+    gatewayObs.attachClient(clientConn, () => principal);
+    gatewayObs.acceptRemote(
+      transportA.ws,
+      {
+        version: 1,
+        nodeId: machineA,
+        ownerId,
+        incarnation: incA,
+        revision: 0,
+        ready: true,
+        changed: ['native-session', 'profiles'],
+      },
+      () => true,
+    );
+    gatewayObs.acceptRemote(
+      transportB.ws,
+      {
+        version: 1,
+        nodeId: machineB,
+        ownerId,
+        incarnation: incB,
+        revision: 0,
+        ready: true,
+        changed: ['native-session', 'profiles'],
+      },
+      () => true,
+    );
+
+    const waitMicrotasks = async () => {
+      for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+    };
+    const pollUntil = async (predicate: () => boolean, label: string) => {
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if (predicate()) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error(`Timed out waiting for ${label}`);
+    };
+    const obsRef = gatewayObs;
+    const readRemoteProfile = async (
+      nodeId: string,
+      onEnter?: () => Promise<void>,
+    ): Promise<NativeProfileStatusResult> => {
+      const params = { executionNodeId: nodeId, profileId: 'work' };
+      const interests = nativeReadInterests(Methods.NATIVE_PROFILE_STATUS, params, ownerId);
+      assert.ok(interests);
+      const { payload } = await obsRef.read(
+        clientConn,
+        interests,
+        async () => {
+          if (onEnter) await onEnter();
+          return makeStatus('1.5.19');
+        },
+        () => null,
+      );
+      return payload;
+    };
+
+    await pollUntil(() => revA >= 1 && revB >= 1, 'initial remote configure');
+    await waitMicrotasks();
+    assert.equal((await readRemoteProfile(machineA)).account.version, '1.5.19');
+    assert.equal((await readRemoteProfile(machineB)).account.version, '1.5.19');
+
+    return {
+      root,
+      tempPoolRoot,
+      ownerId,
+      machineA,
+      machineB,
+      incA,
+      incB,
+      nextRevA: () => ++revA,
+      currentRevA: () => revA,
+      setConfigureHandlerA: (handler) => {
+        configureHandlerA = handler;
+      },
+      transportA,
+      gatewayObs: obsRef,
+      remoteInvalidations,
+      writePool,
+      waitMicrotasks,
+      pollUntil,
+      readRemoteProfile,
+      dispose,
+    };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
 }
 
 test('remote observation configuration epoch fences stale resolved and rejected configure replies while preserving unaffected nodes', async () => {

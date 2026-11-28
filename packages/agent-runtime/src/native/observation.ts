@@ -184,10 +184,11 @@ export class NativeHostObservation {
     return { ...this.receipt };
   }
 
-  /** True when the observation owner holds an active executable sample matching `digest`. */
+  /** True when the observation owner holds a usable executable sample matching `digest`. */
   hasExecutableConfigSample(digest: string): boolean {
     return (
       !this.executableConfigInvalid &&
+      this.accountsAvailable &&
       this.executableConfigDigest === digest &&
       this.sampledExecutableConfigDigest === digest &&
       this.sampledExecutableConfigEpoch === this.executableConfigEpoch

@@ -332,7 +332,6 @@ interface RemoteSource {
   connection: object;
   current: () => boolean;
   receipt: NativeSourceReceipt;
-  sessionRevision: number;
   readonly supportsObservationConfiguration: boolean;
   readonly config: SourceConfigState;
 }
@@ -522,11 +521,15 @@ export class GatewayNativeObservations {
       undefined,
       undefined,
       (runner) => {
-        if (this.localConfig.desired?.kind === 'error') {
-          throw new Error(this.localConfig.desired.error);
+        if (this.local !== local) {
+          throw new NativeSourceUnavailable('source-stopped');
         }
-        if (this.localConfig.error) {
-          throw new Error(this.localConfig.error);
+        if (this.localConfig.desired?.kind === 'error' || this.localConfig.errorIsPoolResolution) {
+          throw new Error(
+            this.localConfig.desired?.kind === 'error'
+              ? this.localConfig.desired.error
+              : (this.localConfig.error ?? 'Local pool executable resolution failed'),
+          );
         }
         return this.localExecutables?.[normalizeRunner(runner)];
       },
@@ -579,15 +582,10 @@ export class GatewayNativeObservations {
     const isNewConnection = previous?.connection !== connection;
     const supportsConfig = Boolean(registered.nativeSessions.supportsObservationConfiguration);
     const config = isNewConnection ? createSourceConfigState() : previous.config;
-    const sessionRevision = this.nextSessionRevision(
-      isNewConnection ? undefined : previous,
-      receipt,
-    );
     const updated: RemoteSource = {
       connection,
       current,
       receipt: { ...receipt },
-      sessionRevision,
       supportsObservationConfiguration: supportsConfig,
       config,
     };
@@ -675,7 +673,7 @@ export class GatewayNativeObservations {
     client.standaloneAdmin = isStandaloneAdmin(reader);
     let collectionOwners: Readonly<Record<string, string>> | undefined;
     const sources = new Map<string, NativeSourceReceipt>();
-    const sessionRevisions = new Map<string, number>();
+    let localSessionRevisionBefore: number | undefined;
     const admittedProfileEpochs = new Map<string, AdmittedProfileEpoch>();
     let catalogBefore: NativeCatalogSourceReceipt | undefined;
     const poolCatalogBefore = this.poolCatalogRevision;
@@ -751,7 +749,7 @@ export class GatewayNativeObservations {
           if (node === 'local' && this.local && !this.local.current().ready)
             await this.local.retry();
           sources.set(node, await this.fence(node, sourceOwner(authority, node)));
-          sessionRevisions.set(node, this.currentSessionRevision(node));
+          if (node === 'local') localSessionRevisionBefore = this.localSessionRevision;
           if (partialList) admitted!.add(node);
         } catch (error) {
           // Only source/transport unavailability is a partial-inventory outcome.
@@ -826,7 +824,7 @@ export class GatewayNativeObservations {
               interest,
               node,
               before,
-              sessionRevisions.get(node) ?? before.revision,
+              node === 'local' ? (localSessionRevisionBefore ?? before.revision) : before.revision,
               this.cachedFence(node, sourceOwner(authority, node)),
             );
           }
@@ -910,7 +908,7 @@ export class GatewayNativeObservations {
           interest,
           node,
           before,
-          sessionRevisions.get(node) ?? before.revision,
+          node === 'local' ? (localSessionRevisionBefore ?? before.revision) : before.revision,
           await this.fence(node, sourceOwner(authority, node)),
         );
       }
@@ -1092,12 +1090,6 @@ export class GatewayNativeObservations {
     return previous.sessionRevision;
   }
 
-  private currentSessionRevision(nodeId: string): number {
-    if (nodeId === 'local') return this.localSessionRevision;
-    const source = this.remote.get(nodeId);
-    return source ? source.sessionRevision : 0;
-  }
-
   /**
    * Fence a marked read against receipt changes for its own facet:
    * - Local `native-session` reads survive profile-only advances (`changed: ['profiles']`) on the
@@ -1118,7 +1110,7 @@ export class GatewayNativeObservations {
         assertNativeSourceCurrent(before, after, 'gateway-read');
         return;
       }
-      if (this.currentSessionRevision(nodeId) !== beforeSessionRevision) {
+      if (this.localSessionRevision !== beforeSessionRevision) {
         assertNativeSourceCurrent(
           before,
           { ...after, revision: Math.max(after.revision, before.revision + 1) },
@@ -1574,13 +1566,12 @@ export class GatewayNativeObservations {
       const parsed = receipt as NativeSourceReceipt;
       validateReceipt(parsed);
       if (currentSource.config.epoch !== epoch) {
-        // Keep the receipt and session revision current for unaffected session reads without
-        // publishing a stale `profiles` invalidation or clearing a newer configuration state.
+        // Keep the receipt current for unaffected session reads without publishing a stale
+        // `profiles` invalidation or clearing a newer configuration state.
         if (
           parsed.incarnation !== currentSource.receipt.incarnation ||
           parsed.revision >= currentSource.receipt.revision
         ) {
-          currentSource.sessionRevision = this.nextSessionRevision(currentSource, parsed);
           currentSource.receipt = { ...parsed };
           if (!parsed.changed || parsed.changed.includes('native-session')) {
             this.invalidateSource(nodeId, ownerId, ['native-session']);
