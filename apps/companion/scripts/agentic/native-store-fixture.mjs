@@ -79,40 +79,34 @@ export function nativeScrollViewGesture(screen, direction = 'up') {
   };
 }
 
-/** A discovered control can still be clipped by its actual scrolling ancestor. */
-export function nativeResumeFitsScrollView(screen, selector) {
-  return nativeTargetFitsAncestor(screen, selector, (node) => node.type === 'ScrollView');
+function containsRect(container, target) {
+  return (
+    container &&
+    target &&
+    [container, target].every(
+      (rect) =>
+        ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(rect[key])) &&
+        rect.width > 0 &&
+        rect.height > 0,
+    ) &&
+    target.x >= container.x &&
+    target.y >= container.y &&
+    target.x + target.width <= container.x + container.width &&
+    target.y + target.height <= container.y + container.height
+  );
 }
 
-function nativeTargetFitsAncestor(screen, selector, isRequiredAncestor) {
+/** A discovered control can still be clipped by its actual scrolling ancestor. */
+export function nativeResumeFitsScrollView(screen, selector) {
   const targets = screen.nodes.filter((node) => node.identifier === selector);
   if (targets.length !== 1) return false;
   const target = targets[0];
-  const rect = target.rect;
-  if (
-    !rect ||
-    !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(rect[key])) ||
-    rect.width <= 0 ||
-    rect.height <= 0 ||
-    target.visibleToUser === false
-  )
-    return false;
   const viewport = screen.nodes.find((node) => ['Application', 'Window'].includes(node.type))?.rect;
-  if (
-    !viewport ||
-    !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(viewport[key])) ||
-    viewport.width <= 0 ||
-    viewport.height <= 0 ||
-    rect.x < viewport.x ||
-    rect.y < viewport.y ||
-    rect.x + rect.width > viewport.x + viewport.width ||
-    rect.y + rect.height > viewport.y + viewport.height
-  )
-    return false;
+  if (target.visibleToUser === false || !containsRect(viewport, target.rect)) return false;
   const nodes = new Map(screen.nodes.map((node) => [node.index, node]));
   const visited = new Set();
   let ancestor = target;
-  let foundAncestor = false;
+  let scrollView = false;
   while (
     ancestor.parentIndex !== undefined &&
     ancestor.parentIndex !== null &&
@@ -122,34 +116,28 @@ function nativeTargetFitsAncestor(screen, selector, isRequiredAncestor) {
     visited.add(ancestor.parentIndex);
     ancestor = nodes.get(ancestor.parentIndex);
     if (!ancestor) return false;
-    const required = isRequiredAncestor(ancestor);
-    if (required || ancestor.type === 'ScrollView') {
-      foundAncestor ||= required;
-      const clip = ancestor.rect;
-      if (
-        !clip ||
-        !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(clip[key])) ||
-        clip.width <= 0 ||
-        clip.height <= 0 ||
-        rect.x < clip.x ||
-        rect.y < clip.y ||
-        rect.x + rect.width > clip.x + clip.width ||
-        rect.y + rect.height > clip.y + clip.height
-      )
-        return false;
+    if (ancestor.type === 'ScrollView') {
+      if (!containsRect(ancestor.rect, target.rect)) return false;
+      scrollView = true;
     }
   }
-  return foundAncestor;
+  return scrollView;
 }
 
 /** Reject a stale accessibility target when its paired screenshot no longer renders Resume. */
 export function renderedNativeResumeTarget(screen, image, selector) {
-  return renderedNativeDisabledTarget(screen, image, selector, 'Resume conversation', () =>
-    nativeTargetFitsAncestor(
-      screen,
-      selector,
-      (node) => node.identifier === 'companion-native-resume-footer',
-    ),
+  const footers = screen.nodes.filter(
+    (node) => node.identifier === 'companion-native-resume-footer',
+  );
+  assert.equal(footers.length, 1, 'Require one actual Resume footer');
+  const footer = footers[0];
+  // XCTest can flatten the footer and its button to siblings in the accessibility tree.
+  return renderedNativeDisabledTarget(
+    screen,
+    image,
+    selector,
+    'Resume conversation',
+    (target) => footer.visibleToUser !== false && containsRect(footer.rect, target.rect),
   );
 }
 
@@ -165,16 +153,13 @@ export function renderedNativeDisabledTarget(
   assert.equal(targets.length, 1, `Require one actual ${labelText} accessibility target`);
   const target = targets[0];
   assert.equal(target.enabled, false, `${labelText} must remain accessibility-disabled`);
-  assert(
-    fitsRegion(),
-    `${labelText} must fit inside its viewport and ancestor before a point press`,
-  );
   const rect = target.rect;
   const viewport = screen.nodes.find((node) => ['Application', 'Window'].includes(node.type))?.rect;
-  assert(rect && viewport && target.visibleToUser !== false);
-  assert(['x', 'y', 'width', 'height'].every((key) => Number.isFinite(rect[key])));
-  assert(rect.width > 0 && rect.height > 0);
-  assert(image.width > 0 && image.height > 0 && viewport.width > 0 && viewport.height > 0);
+  assert(
+    target.visibleToUser !== false && containsRect(viewport, rect) && fitsRegion(target),
+    `${labelText} must fit inside its viewport and expected region before a point press`,
+  );
+  assert(image.width > 0 && image.height > 0);
   assert(
     Math.abs(image.width / viewport.width - image.height / viewport.height) < 0.001,
     'Require matching screenshot and native viewport dimensions',
