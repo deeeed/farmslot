@@ -56,7 +56,7 @@ interface NativeConversationCacheOptions {
   performance?: PerformanceRecorder;
   afterPaint?: (paint: () => void) => (() => void) | undefined;
 }
-export interface StoredNativeConversation {
+interface StoredNativeConversation {
   snapshot: NativeConversationSnapshot;
   observedAt?: number;
 }
@@ -70,6 +70,16 @@ interface ConversationStorage {
     observedAt?: number,
   ): Promise<void>;
   forget(target: NativeSessionTargetParams): Promise<void>;
+}
+function unpackStoredConversation(
+  loaded: NativeConversationSnapshot | StoredNativeConversation | undefined,
+): StoredNativeConversation | undefined {
+  if (!loaded || typeof loaded !== 'object') return undefined;
+  if ('session' in loaded && 'events' in loaded) return { snapshot: loaded };
+  if ('snapshot' in loaded && loaded.snapshot && typeof loaded.snapshot === 'object') {
+    return { snapshot: loaded.snapshot, observedAt: loaded.observedAt };
+  }
+  return undefined;
 }
 interface Entry {
   target: NativeSessionTargetParams;
@@ -501,8 +511,9 @@ export function createNativeConversationCache(
     try {
       const loaded = await storage.load(entry.target);
       if (disposed || ticket !== epoch || denialVersion !== entry.denialVersion) return;
-      const saved = loaded && 'snapshot' in loaded ? loaded.snapshot : loaded;
-      const observedAt = loaded && 'snapshot' in loaded ? loaded.observedAt : undefined;
+      const unpacked = unpackStoredConversation(loaded);
+      const saved = unpacked?.snapshot;
+      const observedAt = unpacked?.observedAt;
       if (!entry.state.data && saved && snapshotMatches(entry.target, saved, true)) {
         entry.metricSource = 'stored';
         entry.state = {
