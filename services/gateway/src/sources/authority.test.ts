@@ -701,8 +701,9 @@ test('pin target refusal happens before fetch and target changes during fetch re
 test('polling discovers new pins, advances branches without changing their base and isolates failed refs', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const root = await mkdtemp(path.join(os.tmpdir(), 'source-pin-poll-'));
+  let now = Date.now();
   const git = new BranchFixtures(root);
-  const authority = await SourceAuthority.open(config, root, git);
+  const authority = await SourceAuthority.open(config, root, git, () => now);
   await authority.reconcile();
   const original = await authority.lock({ project: 'demo', runId: 'admitted' });
   const stop = authority.startReconciliation((_, error) => {
@@ -734,6 +735,7 @@ test('polling discovers new pins, advances branches without changing their base 
     await authority.reconcile();
     git.refs.set('main', 'd'.repeat(40));
     git.refs.set('experiment/farm', 'e'.repeat(40));
+    now += config.pollIntervalMs;
     t.mock.timers.tick(config.pollIntervalMs);
     const waitFor = (ref: string, status: 'resolved' | 'failed', commit?: string) =>
       waitForAuthority(
@@ -760,6 +762,7 @@ test('polling discovers new pins, advances branches without changing their base 
     assert.equal((await authority.lock({ project: 'demo' })).entries[0].commit, 'e'.repeat(40));
     assert.equal(original.entries[0].commit, 'a'.repeat(40));
     git.refs.delete('experiment/farm');
+    now += config.pollIntervalMs;
     t.mock.timers.tick(config.pollIntervalMs);
     await waitFor('experiment/farm', 'failed');
     await assert.rejects(authority.lock({ project: 'demo' }), /unavailable/);
