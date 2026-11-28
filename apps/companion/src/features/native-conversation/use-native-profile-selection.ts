@@ -23,7 +23,16 @@ import { readErrorMessage } from '../../lib/resource-read-status';
 import { useConnectionStore } from '../../store/connection';
 import { heldConnectionCurrent } from '../../store/held-connection';
 
-import { nativeProfileObservationView, readNativeProfileSelection } from './native-profile-queries';
+import {
+  type NativeProfileBlocker,
+  nativeProfileObservationView,
+  readNativeProfileSelection,
+} from './native-profile-queries';
+
+interface ProfileBlockerSnapshot {
+  scope: string;
+  issue: NativeProfileBlocker;
+}
 
 export function useNativeProfileSelection(input: {
   enabled: boolean;
@@ -88,6 +97,19 @@ export function useNativeProfileSelection(input: {
   const profiles = (listObservation.data?.profiles ?? []).filter(
     (profile) => profile.runner === input.runner,
   );
+  const blockerScope =
+    statusQuery && input.supported && connection === 'connected'
+      ? JSON.stringify([
+          scope,
+          authorityEpoch,
+          connectionGeneration,
+          getResourceWorkspaceKey(),
+          statusQuery.id,
+          selected?.accountContextId,
+        ])
+      : undefined;
+  const [blocker, setBlocker] = useState<ProfileBlockerSnapshot>();
+  const previousStatusBlocker = blocker?.scope === blockerScope ? blocker?.issue : undefined;
   const observed = nativeProfileObservationView({
     node: input.node,
     supported: input.supported,
@@ -95,7 +117,18 @@ export function useNativeProfileSelection(input: {
     profiles,
     list: listObservation,
     status: statusObservation,
+    previousStatusBlocker,
   });
+  // Cold retries clear the cache error until the read settles. Keep only the same profile's blocker.
+  const nextBlocker = blockerScope ? observed.statusBlocker : undefined;
+  if (
+    blocker?.issue.detail !== nextBlocker?.detail ||
+    (blocker && blocker.scope !== blockerScope)
+  ) {
+    setBlocker(
+      nextBlocker && blockerScope ? { scope: blockerScope, issue: nextBlocker } : undefined,
+    );
+  }
   const current = useCallback(
     (started: string, generation: number | undefined, version: number) =>
       keyRef.current === started &&

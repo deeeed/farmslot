@@ -153,6 +153,12 @@ test('profile status renders the refresh, blocked reason, and successful read', 
       'alert',
       'Retry after fixing configuration',
     ],
+    [
+      'Native account profiles failed to sync runner configuration: Node RPC timed out',
+      'Could not sync runner configuration',
+      'status',
+      'Check again',
+    ],
   ]) {
     statusChanged!({
       status: 'error',
@@ -170,23 +176,50 @@ test('profile status renders the refresh, blocked reason, and successful read', 
     assert.ok(markup.includes('"' + role + '"'));
     assert.equal(selections.at(-1)?.ready, false);
   }
+  const data: NativeProfileStatusResult = {
+    profile: work,
+    loginCommand: 'claude auth login',
+    account: {
+      runner: 'claude',
+      installed: true,
+      login: 'authenticated',
+      mode: 'subscription',
+      identityQuality: 'unavailable',
+      observedAt: '2026-11-28T00:00:00Z',
+    },
+  };
+  statusChanged!({ status: 'ready', data });
+  assert.match(JSON.stringify(view.render()), /authenticated · subscription/);
+  assert.equal(selections.at(-1)?.ready, true);
+  for (const status of ['stale', 'ready'] as const) {
+    listChanged!({ status, data: { profiles: [work] } });
+    const markup = JSON.stringify(view.render());
+    assert.match(markup, /last observed/);
+    assert.match(markup, /claude auth login/);
+    assert.equal(selections.at(-1)?.ready, false);
+  }
   statusChanged!({
-    status: 'ready',
-    data: {
-      profile: work,
-      loginCommand: 'claude auth login',
-      account: {
-        runner: 'claude',
-        installed: true,
-        login: 'authenticated',
-        mode: 'subscription',
-        identityQuality: 'unavailable',
-        observedAt: '2026-11-28T00:00:00Z',
-      },
+    status: 'stale',
+    data,
+    error: {
+      code: 'NATIVE_PROFILES_UNAVAILABLE',
+      message:
+        'Native account profiles failed to resolve runner configuration: ambiguous pool settings',
     },
   });
-  const markup = JSON.stringify(view.render());
-  assert.match(markup, /authenticated · subscription/);
-  assert.doesNotMatch(markup, /native-profile-read-issue|Retry after fixing configuration/);
+  const staleMarkup = JSON.stringify(view.render());
+  assert.match(staleMarkup, /authenticated · subscription/);
+  assert.match(staleMarkup, /last observed/);
+  assert.match(staleMarkup, /native-profile-login-command/);
+  assert.match(staleMarkup, /claude auth login/);
+  assert.equal(selections.at(-1)?.ready, false);
+  statusChanged!({ status: 'ready', data });
+  assert.doesNotMatch(JSON.stringify(view.render()), /last observed|native-profile-read-issue/);
   assert.equal(selections.at(-1)?.ready, true);
+  listChanged!({
+    status: 'ready',
+    data: { profiles: [{ ...work, accountContextId: 'replacement' }] },
+  });
+  assert.doesNotMatch(JSON.stringify(view.render()), /claude auth login/);
+  assert.equal(selections.at(-1)?.ready, false);
 });

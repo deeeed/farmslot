@@ -31,6 +31,20 @@ export interface NativeProfileSelection {
   executionNodeId: string;
 }
 
+function matchesActiveProfile(
+  status: NativeProfileStatusResult | undefined,
+  profile: NativeProfileInfo | undefined,
+): status is NativeProfileStatusResult {
+  return (
+    !!status &&
+    profile?.state === 'active' &&
+    status.profile.id === profile.id &&
+    status.profile.accountContextId === profile.accountContextId &&
+    status.profile.runner === profile.runner &&
+    status.profile.state === 'active'
+  );
+}
+
 @customElement('native-profiles')
 export class NativeProfiles extends LitElement {
   @property({ attribute: false }) api: NativeSessionApi = gateway;
@@ -42,6 +56,7 @@ export class NativeProfiles extends LitElement {
   @state() private profiles: NativeProfileInfo[] = [];
   @state() private selected = '';
   @state() private status?: NativeProfileStatusResult;
+  @state() private statusCurrent = false;
   @state() private name = '';
   @state() private directory = '';
   @state() private busy = false;
@@ -180,6 +195,7 @@ export class NativeProfiles extends LitElement {
     const owner = getResourceNativeOwnerId();
     if (!owner) {
       this.profiles = [];
+      this.status = undefined;
       this.selection(undefined, false);
       return;
     }
@@ -193,18 +209,17 @@ export class NativeProfiles extends LitElement {
       if (node !== this.executionNodeId || !this.isConnected) return;
       this.revision++;
       this.statusStop?.();
-      this.status = undefined;
       this.listCurrent = state.status === 'ready';
       this.profiles = (state.data?.profiles ?? []).filter(
         (profile) => !this.runnerOnly || profile.runner === this.runner,
       );
+      const selectedProfile = this.profiles.find((profile) => profile.id === this.selected);
+      this.statusCurrent = false;
+      if (!matchesActiveProfile(this.status, selectedProfile)) this.status = undefined;
       this.error = state.error ?? '';
       // The node default account needs no profile, so it never waits for this read, only for
       // an add or remove in progress.
-      this.selection(
-        this.profiles.find((profile) => profile.id === this.selected),
-        !this.selected && !this.mutating,
-      );
+      this.selection(selectedProfile, !this.selected && !this.mutating);
       this.busy = state.status === 'loading';
       if (this.listCurrent) void this.choose(this.selected, this.selectedContextId);
     });
@@ -229,9 +244,10 @@ export class NativeProfiles extends LitElement {
   private async choose(id: string, expectedContextId = '') {
     const revision = ++this.revision;
     this.selected = id;
-    this.status = undefined;
+    this.statusCurrent = false;
     this.error = '';
     const profile = this.profiles.find((item) => item.id === id);
+    if (!matchesActiveProfile(this.status, profile)) this.status = undefined;
     this.selection(profile, !id && !this.mutating);
     if (!profile) {
       if (id)
@@ -241,6 +257,7 @@ export class NativeProfiles extends LitElement {
       return;
     }
     if (expectedContextId && profile.accountContextId !== expectedContextId) {
+      this.status = undefined;
       this.error =
         'Profile registration changed. Review its directory before using the updated profile.';
       this.busy = false;
@@ -267,21 +284,17 @@ export class NativeProfiles extends LitElement {
     this.statusStop = observeNativeResource(query, (state) => {
       if (!this.isConnected || revision !== this.revision) return;
       const status = state.data;
-      const matches =
-        status &&
-        status.profile.id === profile.id &&
-        status.profile.accountContextId === profile.accountContextId &&
-        status.profile.runner === profile.runner &&
-        status.profile.state === 'active';
+      const matches = matchesActiveProfile(status, profile);
       this.status = matches ? status : undefined;
+      this.statusCurrent = state.status === 'ready';
       this.busy = state.status === 'loading';
       this.error =
         state.error ?? (status && !matches ? 'Profile changed. Select it explicitly again.' : '');
       this.selection(
         profile,
         this.listCurrent &&
-          state.status === 'ready' &&
-          !!matches &&
+          this.statusCurrent &&
+          matches &&
           status.account.login === 'authenticated',
       );
     });
@@ -419,16 +432,19 @@ export class NativeProfiles extends LitElement {
               Use updated profile
             </button>`
         : nothing}
-      ${this.status && !issue
-        ? html`<p data-testid="native-profile-status">
+      ${this.status
+        ? html`<p data-testid="native-profile-status" data-stale=${String(!this.statusCurrent)}>
               ${this.status.account.installed
                 ? `${this.status.account.login} · ${this.status.account.mode}`
                 : 'Native runner is not installed'}${this.status.account.identity?.email
                 ? ` · ${this.status.account.identity.email}`
-                : ''}
+                : ''}${this.statusCurrent ? '' : ' · last observed'}
             </p>
             <details>
-              <summary>Native login on ${this.executionNodeId}</summary>
+              <summary>
+                ${this.statusCurrent ? 'Native login' : 'Last observed login command'} on
+                ${this.executionNodeId}
+              </summary>
               <p>
                 Use this command on the selected node to sign in. Switching accounts in the same
                 directory keeps this profile and its saved conversations. Refresh to check the

@@ -19,6 +19,11 @@ import {
   validateNativeProfileStatus,
 } from '../../lib/native-profile';
 
+export type NativeProfileBlocker = Extract<
+  NonNullable<ReturnType<typeof nativeProfileReadIssue>>,
+  { kind: 'blocked' }
+>;
+
 interface NativeProfileObservationInput {
   node: string;
   supported: boolean;
@@ -26,6 +31,7 @@ interface NativeProfileObservationInput {
   profiles: NativeProfileInfo[];
   list: ResourceQueryState<NativeProfileListResult>;
   status: ResourceQueryState<NativeProfileStatusResult>;
+  previousStatusBlocker?: NativeProfileBlocker;
 }
 
 export function nativeProfileObservationView({
@@ -35,10 +41,17 @@ export function nativeProfileObservationView({
   profiles,
   list,
   status,
+  previousStatusBlocker,
 }: NativeProfileObservationInput) {
+  const statusIssue = supported && selected ? nativeProfileReadIssue(status.error) : undefined;
+  const statusBlocker =
+    statusIssue?.kind === 'blocked'
+      ? statusIssue
+      : supported && selected && status.status === 'loading' && !status.error
+        ? previousStatusBlocker
+        : undefined;
   const readIssue = supported
-    ? (nativeProfileReadIssue(selected ? status.error : undefined) ??
-      nativeProfileReadIssue(list.error))
+    ? (statusIssue ?? statusBlocker ?? nativeProfileReadIssue(list.error))
     : undefined;
   const current = !readIssue && list.status === 'ready' && (!selected || status.status === 'ready');
   const currentStatus = current ? status.data : undefined;
@@ -68,6 +81,7 @@ export function nativeProfileObservationView({
   }
   return {
     readIssue,
+    statusBlocker,
     current,
     status: currentStatus,
     reason,

@@ -16,10 +16,15 @@ export function nativeProfileReadIssue(error: ResourceQueryError | undefined) {
         retryLabel: 'Check again',
       };
     }
-    if (
-      !message.startsWith('Native account profiles failed to resolve runner configuration: ') &&
-      !message.startsWith('Native account profiles failed to sync runner configuration: ')
-    )
+    if (message.startsWith('Native account profiles failed to sync runner configuration: ')) {
+      return {
+        kind: 'retryable' as const,
+        title: 'Could not sync runner configuration',
+        detail: message,
+        retryLabel: 'Check again',
+      };
+    }
+    if (!message.startsWith('Native account profiles failed to resolve runner configuration: '))
       return undefined;
   } else if (
     !(
