@@ -1,4 +1,4 @@
-import { observeAntigravityAccount } from '@farmslot/agent-runtime/native/antigravity';
+import { nativeRunnerDefinitions } from '@farmslot/agent-runtime/native/registry';
 import type { NativeAccountObservation } from '@farmslot/protocol';
 
 import { resolveLoginEnvironment, SHELL_BOOKKEEPING_ENV } from './exec.js';
@@ -12,7 +12,12 @@ export async function observeNodeNativeAccount(
   params: Record<string, unknown>,
   resolveEnv: () => Promise<NodeJS.ProcessEnv> = resolveLoginEnvironment,
 ): Promise<NativeAccountObservation> {
-  if (params.runner !== 'antigravity') {
+  const runner = params.runner;
+  const observer =
+    typeof runner === 'string' && Object.hasOwn(nativeRunnerDefinitions, runner)
+      ? nativeRunnerDefinitions[runner]?.account.observe
+      : undefined;
+  if (!observer) {
     throw Object.assign(
       new Error(`Unsupported native account observer runner: ${String(params.runner)}`),
       {
@@ -33,7 +38,7 @@ export async function observeNodeNativeAccount(
       if (typeof value === 'string') env[key] = value;
     }
   }
-  return observeAntigravityAccount({
+  return observer({
     cwd,
     ...(executable ? { executable } : {}),
     env,

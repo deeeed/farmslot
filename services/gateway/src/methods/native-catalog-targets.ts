@@ -5,14 +5,11 @@ import type {
   NativeSessionExecutionNode,
   Principal,
 } from '@farmslot/protocol';
-import { currentFarmPaths } from '@farmslot/protocol/node/farm-paths';
 
 import { loadSlotVars } from '../core/config.js';
-import { isLocal } from '../core/index.js';
 import { GatewayMethodError } from '../core/method-error.js';
-import { resolveMachinePoolConfigs } from '../fleet/machine-pool.js';
+import { readMachinePoolSnapshot } from '../fleet/machine-pool-snapshot.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
-import { loadPoolConfigs } from '../fleet/state.js';
 import { nativeSessionManager } from '../runners/native/manager.js';
 import { resolveNativeExecutionNode } from '../runners/native/node.js';
 import {
@@ -32,7 +29,6 @@ export async function standaloneCatalogTargets(
   reader: Principal,
 ): Promise<StandaloneCatalogTargets> {
   const assigned = standaloneOwners(reader);
-  const pools = await loadPoolConfigs(currentFarmPaths('gateway').pool);
   // Pools describe fleet workspaces; only issued native targets belong in this catalog.
   const machines = new Set(assigned.keys());
   // Independent target probes run together so one slow node cannot serialize the whole catalog.
@@ -102,19 +98,20 @@ export async function standaloneCatalogTargets(
       }
     }),
   );
+  const snapshot = readMachinePoolSnapshot();
   const contexts: NativeSessionCatalogResult['contexts'] = [];
   const contextMachines = new Map<string, string>();
   for (const { row, supportsProfiles } of targets) {
     const home = row.homeDirectory;
     if (row.unavailableReason || home === undefined) continue;
     const machine = row.executionNodeId;
-    const targetPools = pools.filter((pool) =>
-      machine === 'local' ? isLocal(pool.host, pool.machine) : pool.machine === machine,
+    const modelMachines = (machine === 'local' ? snapshot.localMachines : [machine]).filter(
+      (candidate) => snapshot.resolvedByMachine.get(candidate)?.ok,
     );
-    const modelMachine =
-      machine === 'local'
-        ? resolveMachinePoolConfigs(targetPools).values().next().value?.machine
-        : machine;
+    const targetPools = modelMachines.flatMap(
+      (candidate) => snapshot.entriesByMachine.get(candidate) ?? [],
+    );
+    const modelMachine = machine === 'local' ? modelMachines[0] : machine;
     if (modelMachine) contextMachines.set(machine, modelMachine);
     contexts.push({
       executionNodeId: machine,
@@ -122,10 +119,10 @@ export async function standaloneCatalogTargets(
       label: 'Home directory',
       supportsProfiles,
     });
-    for (const pool of targetPools) {
-      for (const slot of pool.slots) {
+    for (const { pool } of targetPools) {
+      for (const slot of Array.isArray(pool.slots) ? pool.slots : []) {
         if (!slot.repo) continue;
-        const vars = await loadSlotVars(slot.id);
+        const vars = await loadSlotVars(slot.id, snapshot.poolBySlot.get(slot.id) ?? []);
         const cwd =
           slot.repo === '~'
             ? home

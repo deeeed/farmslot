@@ -19,6 +19,7 @@ import { assertCleanupCurrent, cleanupSignal, trackCleanupCommand } from './clea
 import type { SlotVars } from './config.js';
 import { currentSlotCommandExecutor } from './exec-scope.js';
 import { lazyImport } from './lazy-import.js';
+import { isLocal } from './locality.js';
 
 export type { ExecResult };
 
@@ -26,8 +27,6 @@ export type { ExecResult };
 const loadSourcesRuntime = lazyImport(() => import('../sources/runtime.js'));
 const loadRemoteCommand = lazyImport(() => import('../node-support/remote-command.js'));
 const loadNodeLinkProcess = lazyImport(() => import('../fleet/node-link-process.js'));
-
-const LOCAL_HOSTNAME = os.hostname();
 
 // Put asdf shims first in PATH so .tool-versions in cwd is respected.
 const SHIMS_DIR = path.join(os.homedir(), '.asdf', 'shims');
@@ -55,15 +54,7 @@ export function localCommandEnvironment(): NodeJS.ProcessEnv {
   };
 }
 
-// ─── isLocal ───
-// Mirrors bash is_local(): checks if host/machine refers to this machine.
-
-export function isLocal(host: string, machine: string): boolean {
-  if (host === 'localhost' || host === '127.0.0.1') return true;
-  if (machine === LOCAL_HOSTNAME) return true;
-  if (host === `${LOCAL_HOSTNAME}.local`) return true;
-  return false;
-}
+export { isLocal } from './locality.js';
 
 /**
  * Whether a slot's files can be read in-process instead of through a shell: the routing

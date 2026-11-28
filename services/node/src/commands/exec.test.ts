@@ -20,6 +20,12 @@ test('node command exec preserves a cached non-PATH login export', async () => {
     assert.equal(expectedEnvironment[key], 'captured-once');
     assert.equal(result.exitCode, 0);
     assert.equal(result.stdout, 'captured-once');
+    const argvResult = await exec({
+      argv: [process.execPath, '-p', `process.env[${JSON.stringify(key)}]`],
+      environment: 'login',
+    });
+    assert.equal(argvResult.exitCode, 0);
+    assert.equal(argvResult.stdout.trim(), 'captured-once');
   } finally {
     if (previous === undefined) delete process.env[key];
     else process.env[key] = previous;
@@ -47,6 +53,17 @@ test('node argv exec preserves shell metacharacters as one literal argument', as
 
   assert.equal(result.exitCode, 0);
   assert.deepEqual(JSON.parse(result.stdout), [payload]);
+});
+
+test('node argv exec reports a missing executable as a structured spawn error', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'node-exec-missing-'));
+  try {
+    const result = await exec({ argv: [path.join(directory, 'missing')], cwd: '/' });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.spawnErrorCode, 'ENOENT');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('node argv exec uses the login-shell PATH with the system fallback', async () => {

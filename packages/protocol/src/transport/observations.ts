@@ -10,6 +10,8 @@ export interface NodeObservationCapabilities {
   textReads?: 1;
   /** The node answers `fs.readFiles`. */
   batchReads?: 1;
+  /** The node handles native.account.observe through the shared runner registry. */
+  runnerAccounts?: 1;
 }
 
 export type NodeTmuxWorkerObservation =

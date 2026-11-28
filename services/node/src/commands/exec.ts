@@ -302,7 +302,13 @@ export async function exec(
       stopObservingAbort();
       if (timeoutTimer) clearTimeout(timeoutTimer);
       closeout.dispose();
-      resolve({ stdout, stderr: stderr + `\nspawn error: ${err.message}`, exitCode: 1 });
+      const { code } = err as NodeJS.ErrnoException;
+      resolve({
+        stdout,
+        stderr: stderr + `\nspawn error: ${err.message}`,
+        exitCode: 1,
+        ...(code ? { spawnErrorCode: code } : {}),
+      });
     });
 
     const onAbort = () => {

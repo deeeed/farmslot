@@ -35,6 +35,8 @@ export interface NodesListResult {
 
 export interface NodeRegistrationResult extends PeerVersionDeclaration {
   registered: boolean;
+  /** Gateway-owned executable overrides. An empty map explicitly clears overrides. */
+  nativeObservationExecutables?: Record<string, string>;
   nodeLink?: NodeLinkCapabilities;
 }
 
