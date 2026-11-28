@@ -921,3 +921,136 @@ test(
     await cache.dispose('network');
   },
 );
+
+test(
+  'offline hydration preserves stored observedAt for current and legacy native conversation records',
+  { timeout: 2000 },
+  async () => {
+    const scope = {
+      gatewayUrl: 'ws://offline-observed-at',
+      principalId: 'reader',
+      principalGeneration: 0,
+    };
+    const storedAt = 1_795_834_645_039;
+    const snapshot = reduceNativeConversation(undefined, initial);
+
+    for (const kind of ['current', 'legacy'] as const) {
+      const offline = new ResourceCacheConformanceTransport(scope);
+      const store = createMemoryResourceStore();
+      await store.setMetadata({
+        scope,
+        authority: offline.connection.authority!,
+      });
+      const id =
+        kind === 'current'
+          ? nativeConversationStorageId(target)
+          : nativeHistoryStorageId(nativeHistoryQuery(target, 'reader'));
+      const data =
+        kind === 'current'
+          ? snapshot
+          : { ...page, historyRead: { projection: 5, pageReadCount: 0, pageAfters: [] } };
+      await store.putQuery({
+        id,
+        data,
+        bytes: JSON.stringify(data).length,
+        observedAt: storedAt,
+      });
+
+      const cache = createGatewayResourceCache({ transport: offline, store });
+      const stop = cache.conversations!.observe(target, () => undefined);
+      await settle();
+      const hydrated = cache.conversations!.read(target);
+      assert.equal(hydrated.status, 'stale', `${kind} record hydrates as stale`);
+      assert.equal(hydrated.observedAt, storedAt, `${kind} record preserves stored observedAt`);
+      assert.equal(hydrated.data?.cursor, snapshot.cursor, `${kind} record restores conversation`);
+      stop();
+      await cache.dispose('network');
+    }
+  },
+);
+
+test(
+  'bare snapshot storage adapters still hydrate even when an extra snapshot property is undefined',
+  { timeout: 2000 },
+  async () => {
+    const snapshot = reduceNativeConversation(undefined, initial);
+    const bareWithExtraKey = Object.assign({ snapshot: undefined }, snapshot);
+    const controller = createNativeConversationCache(
+      undefined,
+      {
+        load: async () => bareWithExtraKey,
+        save: async () => undefined,
+        forget: async () => undefined,
+      },
+      () => ({
+        id: 'offline',
+        connected: false,
+        foreground: true,
+        authMode: 'none',
+        scope: { gatewayUrl: 'ws://bare-snapshot' },
+      }),
+    );
+    const stop = controller.api.observe(target, () => undefined);
+    await settle();
+    const hydrated = controller.api.read(target);
+    assert.equal(hydrated.status, 'stale');
+    assert.equal(hydrated.observedAt, undefined);
+    assert.equal(hydrated.data?.cursor, snapshot.cursor);
+    stop();
+    await controller.dispose();
+  },
+);
+
+test(
+  'live conversation persistence stores the exact observedAt recorded on the in-memory state',
+  { timeout: 2000 },
+  async (t) => {
+    const scope = {
+      gatewayUrl: 'ws://save-observed-at',
+      principalId: 'reader',
+      principalGeneration: 0,
+    };
+    const base = new ResourceCacheConformanceTransport(scope);
+    base.setConnection({
+      id: 1,
+      connected: true,
+      capabilities: { ...base.connection.capabilities!, conversationStreaming: 1 },
+    });
+    const transport = Object.assign(base, {
+      conversations: {
+        subscribe: async () => ({ ...initial, subscriptionId: 'subscription' }),
+        unsubscribe: async () => undefined,
+        onDelta: () => () => undefined,
+      },
+    });
+    const realDateNow = Date.now;
+    let fakeNow = 1_795_835_000_000;
+    Date.now = () => fakeNow;
+    t.after(() => {
+      Date.now = realDateNow;
+    });
+    const store = createMemoryResourceStore();
+    const originalPutQuery = store.putQuery.bind(store);
+    store.putQuery = async (entry) => {
+      fakeNow += 5_000;
+      return originalPutQuery(entry);
+    };
+    const originalWithWriteLock = store.withWriteLock?.bind(store);
+    store.withWriteLock = async (write) => {
+      fakeNow += 5_000;
+      return originalWithWriteLock ? originalWithWriteLock(write) : write();
+    };
+    const cache = createGatewayResourceCache({ transport, store });
+    const stop = cache.conversations!.observe(target, () => undefined);
+    await settle();
+    const live = cache.conversations!.read(target);
+    assert.equal(live.status, 'ready');
+    assert.equal(live.observedAt, 1_795_835_000_000);
+    const persisted = await store.getQuery(nativeConversationStorageId(target));
+    assert(persisted, 'conversation snapshot persisted to store');
+    assert.equal(persisted.observedAt, live.observedAt);
+    assert.notEqual(persisted.observedAt, fakeNow);
+    stop();
+    await cache.dispose('network');
+  },
+);

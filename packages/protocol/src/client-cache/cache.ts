@@ -1008,7 +1008,7 @@ export function createGatewayResourceCache(
           const saved = await source.getQuery<NativeConversationSnapshot>(
             nativeConversationStorageId(target),
           );
-          if (saved?.data) return saved.data;
+          if (saved?.data) return { snapshot: saved.data, observedAt: saved.observedAt };
           // Old cached native facts have no host cursor. They remain readable offline,
           // but cannot grant action authority or request replay before a live reset.
           const legacyId = nativeHistoryStorageId(
@@ -1017,16 +1017,19 @@ export function createGatewayResourceCache(
           const previous = await source.getQuery<NativeHistorySnapshot>(legacyId);
           if (!previous || !storedNativeHistoryMatches(target, previous.data)) return undefined;
           return {
-            ...previous.data,
-            historyBefore: 0,
-            truncated: false,
-            retainedBytes: previous.data.events.reduce(
-              (total, event) => total + encoder.encode(JSON.stringify(event)).byteLength,
-              0,
-            ),
+            snapshot: {
+              ...previous.data,
+              historyBefore: 0,
+              truncated: false,
+              retainedBytes: previous.data.events.reduce(
+                (total, event) => total + encoder.encode(JSON.stringify(event)).byteLength,
+                0,
+              ),
+            },
+            observedAt: previous.observedAt,
           };
         }),
-      async save(target, snapshot) {
+      async save(target, snapshot, observedAt) {
         const id = nativeConversationStorageId(target);
         const denial = conversationDenials.get(id);
         const owner = hydrationOwnerVersion;
@@ -1063,7 +1066,7 @@ export function createGatewayResourceCache(
               id,
               data: JSON.parse(serialized),
               bytes,
-              observedAt: Date.now(),
+              observedAt: observedAt ?? Date.now(),
               accessedAt: Date.now(),
             });
         });

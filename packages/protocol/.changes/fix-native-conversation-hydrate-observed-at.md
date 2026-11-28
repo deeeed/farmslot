@@ -1,0 +1,1 @@
+- Preserve `observedAt` when persisting and hydrating stored native conversation snapshots so offline saved-age indicators remain accurate after cold restart.
