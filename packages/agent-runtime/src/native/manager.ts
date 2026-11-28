@@ -611,9 +611,19 @@ export class NativeSessionManager {
     params: NativeSessionCreateParams,
     workerLaunch?: NativeWorkerLaunch,
     requester?: NativeSessionRequester,
+    trustedExecutable?: string,
   ): Promise<NativeSessionInfo> {
     return this.admit(() =>
-      this.start(owner, params, undefined, workerLaunch, undefined, undefined, requester),
+      this.start(
+        owner,
+        params,
+        undefined,
+        workerLaunch,
+        undefined,
+        undefined,
+        requester,
+        trustedExecutable,
+      ),
     );
   }
 
@@ -622,6 +632,7 @@ export class NativeSessionManager {
     params: NativeSessionEnsureParams,
     workerLaunch?: NativeWorkerLaunch,
     requester?: NativeSessionRequester,
+    trustedExecutable?: string,
   ): Promise<NativeSessionInfo> {
     if (
       typeof params.sessionId !== 'string' ||
@@ -631,7 +642,16 @@ export class NativeSessionManager {
     if ('resumeSessionId' in params && params.resumeSessionId !== undefined)
       throw new Error('Reserved sessionId is for initial creation, not resume');
     return this.admit(() =>
-      this.start(owner, params, params.sessionId, workerLaunch, undefined, undefined, requester),
+      this.start(
+        owner,
+        params,
+        params.sessionId,
+        workerLaunch,
+        undefined,
+        undefined,
+        requester,
+        trustedExecutable,
+      ),
     );
   }
 
@@ -663,6 +683,7 @@ export class NativeSessionManager {
     assertResumeCurrent?: () => void,
     relocation?: NativeWorkerResumeParams['relocation'],
     requester?: NativeSessionRequester,
+    trustedExecutable?: string,
   ): Promise<NativeSessionInfo> {
     assertResumeCurrent?.();
     if (workerLaunch && params.approvalMode !== undefined)
@@ -772,7 +793,7 @@ export class NativeSessionManager {
       ? nativeProfileEnvironment(profile, baseEnvironment)
       : baseEnvironment;
     const resolved = await resolveNativeExecutable(
-      workerLaunch?.executable ?? transport.binary,
+      workerLaunch?.executable ?? trustedExecutable ?? transport.binary,
       params.cwd,
       environment,
     );
@@ -1019,6 +1040,8 @@ export class NativeSessionManager {
       );
       record.adapter = await record.startup;
       info.nativeSessionId = record.adapter.nativeSessionId;
+      // Preserve info.model as the original requested configuration so idempotent retries match.
+      if (record.adapter.model) info.observedModel = record.adapter.model;
       if (record.adapter.capabilities)
         info.capabilities = {
           ...record.adapter.capabilities,

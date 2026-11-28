@@ -1,0 +1,1 @@
+- Add Antigravity Copilot capability coverage and live native conversation smoke support in Companion.

@@ -9,13 +9,20 @@
  * - Fail-open for optional tools (CodexBar, missing statusline)
  */
 
-import type { RunnerAccountInspection, RunnerAccountInventory } from '@farmslot/protocol';
+import { observeAntigravityAccount } from '@farmslot/agent-runtime/native/antigravity';
+import type {
+  NativeAccountObservation,
+  RunnerAccountInspection,
+  RunnerAccountInventory,
+} from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { SSH_INTERACTIVE_CONNECT_SHELL_OPTIONS } from '../core/ssh-options.js';
 import { shellQuote } from '../core/tmux.js';
+import { getNode } from '../fleet/machine-registry.js';
+import { sendNodeRequest } from '../fleet/node-rpc.js';
 
 import { probeOpenCodeAccounts, probePiAccounts } from './account-inventory.js';
 import { formatClaudeAuthLoginMethod, probeClaudeAuthStatus } from './claude-auth-status.js';
@@ -45,6 +52,7 @@ export type RunnerSubscriptionSource =
   | 'grok-auth'
   | 'codex-auth'
   | 'cursor-auth'
+  | 'antigravity-auth'
   | 'runner-inventory'
   | 'unsupported'
   | 'error';
@@ -62,8 +70,10 @@ const ABSENT_PROBE_ERRORS = new Set([
   'claude not found',
   'codex not found',
   'cursor-agent not found',
+  'agy not found',
   'auth-file-missing',
   'not-logged-in',
+  'not-installed',
   'Runner executable unavailable',
 ]);
 
@@ -536,6 +546,156 @@ function inventoryStatusProvider(
   };
 }
 
+function mapAntigravityObservationToSubscription(
+  obs: NativeAccountObservation,
+): RunnerActiveSubscription {
+  if (obs.login === 'authenticated') {
+    return {
+      runner: 'antigravity',
+      accountLabel: AMBIENT_ACCOUNT_LABEL,
+      accountEmail: obs.identity?.email ?? null,
+      remainingPercent: null,
+      usedPercent: null,
+      resetsAt: null,
+      loginMethod: obs.version ? `agy ${obs.version}` : 'agy',
+      source: 'antigravity-auth',
+      supportsAccountBinding: false,
+      codexBarProviderId: null,
+      outcome: { identity: 'observed', quota: 'absent' },
+    };
+  }
+  if (!obs.installed || obs.reason === 'not-installed') {
+    return {
+      runner: 'antigravity',
+      accountLabel: null,
+      accountEmail: null,
+      remainingPercent: null,
+      usedPercent: null,
+      resetsAt: null,
+      loginMethod: null,
+      source: 'error',
+      supportsAccountBinding: false,
+      codexBarProviderId: null,
+      error: 'agy not found',
+      outcome: { identity: 'absent', quota: 'absent' },
+    };
+  }
+  if (obs.login === 'signed-out') {
+    return {
+      runner: 'antigravity',
+      accountLabel: null,
+      accountEmail: null,
+      remainingPercent: null,
+      usedPercent: null,
+      resetsAt: null,
+      loginMethod: null,
+      source: 'error',
+      supportsAccountBinding: false,
+      codexBarProviderId: null,
+      error: 'not-logged-in',
+      outcome: { identity: 'absent', quota: 'absent' },
+    };
+  }
+  // Launcher/runtime failures, timeouts, malformed responses, and unconfirmed cleanup
+  // never infer signed-out or missing binary: classify as failed so last observed login is retained.
+  return {
+    runner: 'antigravity',
+    accountLabel: null,
+    accountEmail: null,
+    remainingPercent: null,
+    usedPercent: null,
+    resetsAt: null,
+    loginMethod: null,
+    source: 'error',
+    supportsAccountBinding: false,
+    codexBarProviderId: null,
+    error: obs.reason ?? 'status-unavailable',
+    outcome: { identity: 'failed', quota: 'absent' },
+  };
+}
+
+function isNativeAccountObservation(value: unknown): value is NativeAccountObservation {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Partial<NativeAccountObservation>;
+  return (
+    candidate.runner === 'antigravity' &&
+    typeof candidate.installed === 'boolean' &&
+    (candidate.login === 'authenticated' ||
+      candidate.login === 'signed-out' ||
+      candidate.login === 'unavailable')
+  );
+}
+
+function antigravityFailedSubscription(error: string): RunnerActiveSubscription {
+  return {
+    runner: 'antigravity',
+    accountLabel: null,
+    accountEmail: null,
+    remainingPercent: null,
+    usedPercent: null,
+    resetsAt: null,
+    loginMethod: null,
+    source: 'error',
+    supportsAccountBinding: false,
+    codexBarProviderId: null,
+    error,
+    outcome: { identity: 'failed', quota: 'absent' },
+  };
+}
+
+const antigravityStatusProvider: RunnerStatusProvider = {
+  runnerId: 'antigravity',
+  providerId: 'google',
+  accountInspection: (vars) => ({
+    command: `${shellExpressionForRemotePath(vars.antigravityPath || 'agy')} models`,
+    description: 'Antigravity models available to this host login; requires authentication',
+  }),
+  supportsAccountBinding: false,
+  codexBarProviderId: null,
+
+  async getContextPct() {
+    return null;
+  },
+
+  async getActiveSubscription(vars) {
+    if (isLocal(vars.host, vars.machine)) {
+      const obs = await observeAntigravityAccount({
+        cwd: '/',
+        ...(vars.antigravityPath ? { executable: vars.antigravityPath } : {}),
+        env: { ...process.env, ...vars.machineEnv },
+      });
+      return mapAntigravityObservationToSubscription(obs);
+    }
+    const node = getNode(vars.machine);
+    if (!node) {
+      return antigravityFailedSubscription('node-not-connected');
+    }
+    let observed: unknown;
+    try {
+      observed = await sendNodeRequest(
+        node,
+        'native.account.observe',
+        {
+          runner: 'antigravity',
+          cwd: '/',
+          ...(vars.antigravityPath ? { executable: vars.antigravityPath } : {}),
+          ...(vars.machineEnv ? { env: vars.machineEnv } : {}),
+        },
+        { timeout: 15_000 },
+      );
+    } catch (err) {
+      // Isolate expected remote node transport/timeout failures so peer runner status stays available
+      // and fleet retention preserves the last observed login (identity: 'failed').
+      const error = err instanceof Error && err.message ? err.message : 'status-unavailable';
+      return antigravityFailedSubscription(error);
+    }
+    if (!isNativeAccountObservation(observed)) {
+      return antigravityFailedSubscription('malformed-status');
+    }
+    return mapAntigravityObservationToSubscription(observed);
+  },
+};
+
 export const KNOWN_RUNNER_STATUS_PROVIDERS: Record<string, RunnerStatusProvider> = {
   codex: codexStatusProvider,
   claude: claudeStatusProvider,
@@ -560,6 +720,7 @@ export const KNOWN_RUNNER_STATUS_PROVIDERS: Record<string, RunnerStatusProvider>
     description:
       'List saved OpenCode providers; credential presence does not verify account identity',
   })),
+  antigravity: antigravityStatusProvider,
 };
 
 /** Runners shown on the machine Accounts panel (ordered). */

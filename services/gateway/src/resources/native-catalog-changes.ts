@@ -10,7 +10,7 @@ export type NativeCatalogChange =
       ownerGeneration: number;
       reason: 'updated' | 'failed' | 'recovered';
     }
-  | { scope: 'all'; reason: 'catalog' };
+  | { scope: 'all'; reason: 'catalog' | 'pool' };
 
 export class NativeCatalogChanges {
   private readonly listeners = new Set<(change: NativeCatalogChange) => void>();
@@ -31,6 +31,10 @@ export class NativeCatalogChanges {
 
   catalogChanged(): void {
     for (const listener of this.listeners) listener({ scope: 'all', reason: 'catalog' });
+  }
+
+  poolChanged(): void {
+    for (const listener of this.listeners) listener({ scope: 'all', reason: 'pool' });
   }
 }
 

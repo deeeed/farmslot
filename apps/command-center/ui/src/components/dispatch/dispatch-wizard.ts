@@ -461,6 +461,15 @@ export class DispatchWizard extends DispatchWizardState {
           : '';
     if (this._nativeCatalogReady && (!wasReady || result !== previous))
       this._nativeProfileRefreshVersion++;
+    if (this._nativeCatalogReady && this._transport === 'tmux' && this._runnerIsNativeOnly()) {
+      this._setTransport('native');
+    }
+  }
+
+  private _runnerIsNativeOnly(runner = this._runner): boolean {
+    return (
+      this._nativeCatalog?.runners.find((entry) => entry.runner === runner)?.nativeOnly === true
+    );
   }
 
   private async _loadNativeWorkers(refresh = false): Promise<void> {
@@ -1512,6 +1521,9 @@ export class DispatchWizard extends DispatchWizardState {
     const transportReason =
       profileReason ??
       nodeReason ??
+      (this._transport === 'tmux' && this._runnerIsNativeOnly()
+        ? 'The selected runner requires Conversation (native) transport.'
+        : null) ??
       (this._transport === 'native' && !this._nativeWorkerRunners.includes(this._runner)
         ? 'The selected runner does not support native worker dispatch.'
         : null);
@@ -2033,6 +2045,7 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _setTransport(transport: 'tmux' | 'native') {
+    if (transport === 'tmux' && this._runnerIsNativeOnly()) return;
     this._transport = transport;
     if (transport === 'tmux') {
       this._nativeProfileSelection = null;
@@ -2044,7 +2057,9 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _executionChanged() {
-    if (
+    if (this._nativeCatalogReady && this._transport === 'tmux' && this._runnerIsNativeOnly()) {
+      this._setTransport('native');
+    } else if (
       this._nativeCatalogReady &&
       this._transport === 'native' &&
       !this._nativeWorkerRunners.includes(this._runner)
@@ -2090,6 +2105,7 @@ export class DispatchWizard extends DispatchWizardState {
     const view = renderDispatchWizardView({
       discoverModels: !this.mockMode,
       transport: this._transport,
+      terminalWorkerAvailable: !this._runnerIsNativeOnly(),
       nativeWorkerAvailable: this._nativeWorkerRunners.includes(this._runner),
       nativeCatalogError: this._nativeCatalogError,
       nativeProfileControl: keyed(

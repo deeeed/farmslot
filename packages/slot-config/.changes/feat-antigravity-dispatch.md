@@ -1,0 +1,1 @@
+- Support optional `antigravity_path` / `{antigravity_path}` runner executable resolution in slot configuration.

@@ -32,6 +32,10 @@ function sessionStopped(session: NativeSessionInfo): boolean {
   );
 }
 
+export interface NativeProfileRouteOptions {
+  resolveExecutable?: (runner: string) => Promise<string | undefined> | string | undefined;
+}
+
 export function validateNativeProfileParams(params: Record<string, unknown>): void {
   if (
     Object.keys(params).some(
@@ -50,6 +54,7 @@ export async function routeNativeProfile(
   owner: string,
   method: string,
   params: Record<string, unknown>,
+  options?: NativeProfileRouteOptions,
 ): Promise<unknown> {
   validateNativeProfileParams(params);
   if (method === Methods.NATIVE_PROFILE_LIST) return { profiles: listNativeProfiles() };
@@ -65,9 +70,11 @@ export async function routeNativeProfile(
   if (method === Methods.NATIVE_PROFILE_STATUS)
     return inspectNativeProfile(id, async (profile): Promise<NativeProfileStatusResult> => {
       const definition = nativeRunnerDefinitions[profile.runner];
+      const configuredExecutable = (await options?.resolveExecutable?.(profile.runner))?.trim();
+      const executable = configuredExecutable || definition.binary;
       const account = await definition.account.observe({
         cwd: profile.directory,
-        executable: definition.binary,
+        executable,
         env: nativeProfileEnvironment(profile),
       });
       const loginCommand = [
@@ -76,7 +83,7 @@ export async function routeNativeProfile(
         ...Object.entries(definition.account.environment(profile.directory)).map(
           ([key, value]) => `${key}=${value}`,
         ),
-        account.executable ?? definition.binary,
+        account.executable ?? executable,
         ...definition.account.loginArgs,
       ]
         .map(quote)

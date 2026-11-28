@@ -794,15 +794,37 @@ export class NativeSessionClient {
     }
     return result;
   }
-  create(owner: string, params: NativeSessionCreateParams, requester?: NativeSessionRequester) {
+  create(
+    owner: string,
+    params: NativeSessionCreateParams,
+    requester?: NativeSessionRequester,
+    executable?: string,
+  ) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
       throw new Error('Native session targets another execution node');
-    return this.call<NativeSessionInfo>({ method: 'create', owner, params, requester });
+    return this.call<NativeSessionInfo>({
+      method: 'create',
+      owner,
+      params,
+      requester,
+      ...(executable ? { executable } : {}),
+    });
   }
-  ensure(owner: string, params: NativeSessionEnsureParams, requester?: NativeSessionRequester) {
+  ensure(
+    owner: string,
+    params: NativeSessionEnsureParams,
+    requester?: NativeSessionRequester,
+    executable?: string,
+  ) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)
       throw new Error('Native session targets another execution node');
-    return this.call<NativeSessionInfo>({ method: 'ensure', owner, params, requester });
+    return this.call<NativeSessionInfo>({
+      method: 'ensure',
+      owner,
+      params,
+      requester,
+      ...(executable ? { executable } : {}),
+    });
   }
   ensureWorker(owner: string, params: NativeSessionEnsureParams, launch: NativeWorkerLaunch) {
     if (params.executionNodeId !== undefined && params.executionNodeId !== this.executionNodeId)

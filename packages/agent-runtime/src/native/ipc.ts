@@ -94,12 +94,14 @@ export type HostRequest =
       owner: string;
       params: NativeSessionCreateParams;
       requester?: NativeSessionRequester;
+      executable?: string;
     }
   | {
       method: 'ensure';
       owner: string;
       params: NativeSessionEnsureParams;
       requester?: NativeSessionRequester;
+      executable?: string;
     }
   | {
       method: typeof NATIVE_WORKER_ENSURE;
@@ -273,6 +275,7 @@ export function decodeRequest(value: unknown): HostRequest {
         owner,
         params: { ...params, sessionId: string(v, 'sessionId') },
         requester: parseNativeSessionRequester(p.requester),
+        ...(p.executable !== undefined ? { executable: string(p, 'executable') } : {}),
       };
     }
     if (v.resumeSessionId !== undefined) params.resumeSessionId = string(v, 'resumeSessionId');
@@ -292,7 +295,13 @@ export function decodeRequest(value: unknown): HostRequest {
         },
         launch: decodeNativeWorkerLaunch(p.launch),
       };
-    return { method, owner, params, requester: parseNativeSessionRequester(p.requester) };
+    return {
+      method,
+      owner,
+      params,
+      requester: parseNativeSessionRequester(p.requester),
+      ...(p.executable !== undefined ? { executable: string(p, 'executable') } : {}),
+    };
   }
   const id = string(p, 'id');
   if (method === 'commandStatus')

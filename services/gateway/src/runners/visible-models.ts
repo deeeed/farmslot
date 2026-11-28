@@ -27,6 +27,8 @@ import {
   isKnownRunner,
   KNOWN_RUNNERS,
   runnerArgumentValueIsSafe,
+  runnerModelNodeBlocker,
+  runnerRequiresAccountResolvedModel,
 } from './registry.js';
 
 interface VisibleModelFile {
@@ -173,6 +175,37 @@ export function describeVisibleModels(
     ],
     ...(retained ? { retainedModel: retained } : {}),
   };
+}
+
+export function resolveStrictAccountDispatchModel(
+  runner: string | null | undefined,
+  requestedModel: string | null | undefined,
+  options?: { hasNativeProfile?: boolean; machine?: string },
+): string | undefined {
+  const explicit =
+    requestedModel && requestedModel.trim() && requestedModel.trim() !== 'unknown'
+      ? requestedModel.trim()
+      : undefined;
+  if (!runner || !runnerRequiresAccountResolvedModel(runner)) return explicit;
+  if (explicit) return explicit;
+  const normalized = getRunnerDefinition(runner).id;
+  const saved = describeVisibleModels(normalized);
+  if (saved.defaultConfigured && saved.defaultModel) {
+    if (!options?.hasNativeProfile && options?.machine) {
+      const blocker = runnerModelNodeBlocker(
+        normalized,
+        saved.defaultModel,
+        options.machine,
+        'native',
+      );
+      if (blocker) throw new GatewayMethodError('INVALID_PARAMS', blocker);
+    }
+    return saved.defaultModel;
+  }
+  throw new GatewayMethodError(
+    'INVALID_PARAMS',
+    `Select an explicit ${normalized} model available to the selected account before dispatch`,
+  );
 }
 
 /** Models shown before an operator saves a visible set: the same picker defaults clients show. */

@@ -103,6 +103,14 @@ export const DEFAULT_REVIEW_DISPATCH_CATALOG: ReviewDispatchCatalog = {
       efforts: [],
       models: [],
     },
+    {
+      id: 'antigravity',
+      allowCustomModels: true,
+      defaultModel: null,
+      defaultEffort: null,
+      efforts: [],
+      models: [],
+    },
   ],
 };
 
@@ -248,9 +256,14 @@ export function catalogForNativeRunners(
         efforts: native.efforts ?? option?.efforts ?? [],
         models: nativeRunnerModels(native, executionNodeId).map((id) => {
           const group = runnerModelProviderLabel(id);
-          return (
-            option?.models.find((entry) => entry.id === id) ?? (group ? { id, group } : { id })
-          );
+          const label = native.modelLabels?.[id];
+          const existing = option?.models.find((entry) => entry.id === id);
+          if (existing) return label && !existing.label ? { ...existing, label } : existing;
+          return {
+            id,
+            ...(label ? { label } : {}),
+            ...(group ? { group } : {}),
+          };
         }),
       };
     }),

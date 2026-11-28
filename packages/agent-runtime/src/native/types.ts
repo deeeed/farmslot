@@ -39,6 +39,8 @@ export interface NativeAdapterOptions {
 }
 export interface NativeAdapterSession {
   nativeSessionId: string;
+  /** Effective model ID confirmed by the native protocol, when reported. */
+  model?: string;
   capabilities?: NativeSessionCapabilities;
   send(text: string, commandId: string): Promise<void>;
   /** No ordinary turn, task signal or source inspection is permitted during maintenance. */

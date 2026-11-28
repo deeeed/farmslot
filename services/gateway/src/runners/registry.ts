@@ -78,6 +78,7 @@ import { createCursorLogObservability } from './cursor-observability.js';
 import { grokLogObservability } from './grok-observability.js';
 import {
   nodeModelCatalogs,
+  parseAntigravityModelCatalog,
   parseCodexModelCatalog,
   parseCursorModelCatalog,
   parseGrokModelCatalog,
@@ -1005,6 +1006,32 @@ KNOWN_RUNNERS['claude-acp'] = {
   acceptsEffort: (_model, effort) => CLAUDE_ACP_EFFORTS.includes(effort),
 };
 
+KNOWN_RUNNERS.antigravity = {
+  // Terminal capabilities fail closed; the native ACP adapter owns launch, progress, cancellation, and resume.
+  ...KNOWN_RUNNERS.none,
+  id: 'antigravity',
+  reviewResumeEnvironment: () => ['HOME', 'FARMSLOT_AGY_EXECUTABLE'],
+  sessionContinuation: { native: true, terminal: null },
+  nativeTransport: 'acp',
+  nativeOnly: true,
+  nativeChoices: {
+    models: [],
+    modes: ['default', 'plan'],
+  },
+  modelCatalog: {
+    nodeCommand: 'agy',
+    slotPathKey: 'antigravityPath',
+    args: ['models'],
+    parse: parseAntigravityModelCatalog,
+    flatCatalog: true,
+    strictAccountCatalog: true,
+  },
+  processMatchers: ['(^|/)agy($| )'],
+  flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
+  defaultModel: null,
+  acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
+};
+
 // Kept lazy as before; the background-work module imports the registry back.
 const loadClaudePendingQuestion = lazyImport(() => import('./claude-pending-question.js'));
 const loadClaudeBackgroundWork = lazyImport(() => import('./claude-background-work.js'));
@@ -1141,6 +1168,23 @@ export function runnerDefaultSafetyTier(runnerId?: string | null): SafetyTier {
 export function runnerDefaultModel(runnerId?: string | null): string | null {
   if (!isKnownRunner(runnerId)) return null;
   return getRunnerDefinition(runnerId).defaultModel;
+}
+
+/**
+ * Runners with a strict per-account catalog and no static default model (such as Antigravity)
+ * must resolve a concrete model for the selected account rather than falling back to another runner's default.
+ */
+export function runnerRequiresAccountResolvedModel(runnerId?: string | null): boolean {
+  if (!isKnownRunner(runnerId)) return false;
+  const def = getRunnerDefinition(runnerId);
+  return (
+    def.defaultModel === null &&
+    Boolean(
+      def.modelCatalog &&
+      'nodeCommand' in def.modelCatalog &&
+      def.modelCatalog.strictAccountCatalog,
+    )
+  );
 }
 
 export function runnerAppliesOwnSandbox(runnerId: string, tier?: SafetyTier): boolean {

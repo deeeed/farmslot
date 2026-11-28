@@ -360,15 +360,19 @@ try {
     );
     evidence(phase, page);
   } else if (phase === 'prepare-interrupt') {
+    const streamInterrupt = process.env.NATIVE_COMPANION_INTERRUPT_MODE === 'stream';
     await send(
-      'Use the shell tool to run exactly: sleep 120. After it ends reply done. This is a disposable cancellation proof.',
+      streamInterrupt
+        ? 'Write a comprehensive 3000-word treatise explaining the history of distributed consensus algorithms with full examples. Do not use any tools.'
+        : 'Use the shell tool to run exactly: sleep 120. After it ends reply done. This is a disposable cancellation proof.',
     );
+    const expectedEvent = streamInterrupt ? 'text.delta' : 'tool.started';
     const page = await wait(
       (value) =>
         value.events.some(
-          (event) => event.commandId === state.commandId && event.type === 'tool.started',
+          (event) => event.commandId === state.commandId && event.type === expectedEvent,
         ),
-      'sleep tool',
+      streamInterrupt ? 'streaming turn to interrupt' : 'sleep tool',
     );
     evidence(phase, page);
   } else if (phase === 'interrupted') {

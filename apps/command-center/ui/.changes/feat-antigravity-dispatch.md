@@ -1,0 +1,1 @@
+- Add Antigravity (`antigravity` / `agy`) to Command Center runner pickers and node model catalogs, auto-selecting Conversation transport and disabling Terminal transport for native-only runners.
