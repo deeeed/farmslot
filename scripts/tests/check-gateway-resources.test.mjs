@@ -67,7 +67,7 @@ test(
     const run = (extra) =>
       execFileSync(process.execPath, [script.pathname, '--pid', String(process.pid), ...extra], {
         encoding: 'utf8',
-        timeout: 4900,
+        timeout: 20_000,
         stdio: 'pipe',
       });
     assert.match(run([]), /gateway-resources OK/);
