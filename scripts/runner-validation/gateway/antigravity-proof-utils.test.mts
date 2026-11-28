@@ -182,9 +182,15 @@ test('frozen proof checkout isolates tracked bytes, verifies CJS/ESM resolution,
       ['a.txt', 'b.txt'],
     );
     assert.equal(manifest[0].bytes, 6);
-    assert.equal(manifest[0].sha256.length, 64);
+    assert.equal(
+      manifest[0].sha256,
+      'b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060',
+    );
     assert.equal(manifest[1].bytes, 5);
-    assert.equal(manifest[1].sha256.length, 64);
+    assert.equal(
+      manifest[1].sha256,
+      'f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad',
+    );
 
     // 8. If git worktree remove fails on an owned checkout, cleanup reports the error loudly.
     const doomed = createFrozenProofCheckout(origin, sourceSha, sourceTreeSha, {
