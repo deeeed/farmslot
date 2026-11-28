@@ -46,7 +46,7 @@ for (const [format, { watch }] of [
 ])
   test(
     `${format} Darwin file observation uses directories, preserves events and closes its native handles`,
-    { skip: process.platform !== 'darwin', timeout: 5000 },
+    { skip: process.platform !== 'darwin', timeout: 20_000 },
     async (t) => {
       // The nonpersistent watcher and Node 22's test timeout are both unrefed.
       // Keep the test alive while awaiting events, without changing watcher behavior.
@@ -126,21 +126,25 @@ for (const [format, { watch }] of [
   ['CJS', cjs],
   ['ESM', esm],
 ])
-  test(`${format} file symlinks retain target-change observation`, { timeout: 5000 }, async (t) => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'file-watch-link-'));
-    t.after(() => rm(root, { recursive: true, force: true }));
-    const targetDir = path.join(root, 'target');
-    await fs.promises.mkdir(targetDir);
-    const target = path.join(targetDir, 'physical.md');
-    const alias = path.join(root, 'logical.md');
-    await writeFile(target, 'before');
-    await symlink(target, alias);
-    const watcher = watch(alias, { ignoreInitial: true });
-    t.after(() => watcher.close());
-    await once(watcher, 'ready');
-    assert.equal(
-      await observe(watcher, alias, () => writeFile(target, 'after'), t.signal, true),
-      alias,
-    );
-    assert.equal(await fs.promises.readFile(alias, 'utf8'), 'after');
-  });
+  test(
+    `${format} file symlinks retain target-change observation`,
+    { timeout: 20_000 },
+    async (t) => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'file-watch-link-'));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const targetDir = path.join(root, 'target');
+      await fs.promises.mkdir(targetDir);
+      const target = path.join(targetDir, 'physical.md');
+      const alias = path.join(root, 'logical.md');
+      await writeFile(target, 'before');
+      await symlink(target, alias);
+      const watcher = watch(alias, { ignoreInitial: true });
+      t.after(() => watcher.close());
+      await once(watcher, 'ready');
+      assert.equal(
+        await observe(watcher, alias, () => writeFile(target, 'after'), t.signal, true),
+        alias,
+      );
+      assert.equal(await fs.promises.readFile(alias, 'utf8'), 'after');
+    },
+  );

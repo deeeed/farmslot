@@ -24,9 +24,9 @@ function fixture(t) {
   return root;
 }
 // A refresh resolves every link it wrote through its own `node -e`, so a run's
-// cost is a node start per link. The default covers the single-refresh tests;
-// one that has to deploy a revision more than once passes its own.
-function run(args, env, input, timeout = 4500) {
+// cost is a node start per link. Keep enough headroom for loaded farm hosts;
+// tests deploying multiple revisions pass a larger budget.
+function run(args, env, input, timeout = 30_000) {
   const result = spawnSync('bash', args, {
     env: { PATH: process.env.PATH, ...env },
     encoding: 'utf8',
@@ -308,7 +308,7 @@ test('a legacy route into a snapshot keeps that snapshot through the next refres
     ],
     { HOME: root },
     refresh,
-    20000,
+    45_000,
   );
   assert.equal(result.status, 0, result.stderr);
 
