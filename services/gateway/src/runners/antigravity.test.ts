@@ -511,7 +511,21 @@ test('createTypedNodeTransport cleans up listener and sockets on pre-open client
   const ignoreFallbackError = () => {
     // Expected socket error during fallback test teardown if helper cleanup regresses.
   };
+  const withDeadline = async <T>(promise: Promise<T>, label: string): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 2_000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
   const runFailureCase = async (
+    label: string,
     inject: (client: WebSocket, wss: WebSocketServer) => void,
     expectedError: RegExp,
   ) => {
@@ -519,6 +533,7 @@ test('createTypedNodeTransport cleans up listener and sockets on pre-open client
     let capturedWss: WebSocketServer | undefined;
     const capturedServerSockets: WebSocket[] = [];
     let sawListeningPort = false;
+    let serverClosed = false;
     const unhandledRejections: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => {
       unhandledRejections.push(reason);
@@ -526,21 +541,28 @@ test('createTypedNodeTransport cleans up listener and sockets on pre-open client
     process.on('unhandledRejection', onUnhandledRejection);
     try {
       await assert.rejects(
-        createTypedNodeTransport(async () => ({}), {
-          onClientCreated(client, wss) {
-            capturedClient = client;
-            capturedWss = wss;
-            wss.on('connection', (socket) => {
-              capturedServerSockets.push(socket);
-            });
-            const addr = wss.address();
-            sawListeningPort = Boolean(addr && typeof addr !== 'string' && addr.port > 0);
-            inject(client, wss);
-          },
-        }),
+        withDeadline(
+          createTypedNodeTransport(async () => ({}), {
+            onClientCreated(client, wss) {
+              capturedClient = client;
+              capturedWss = wss;
+              wss.once('close', () => {
+                serverClosed = true;
+              });
+              wss.on('connection', (socket) => {
+                capturedServerSockets.push(socket);
+              });
+              const addr = wss.address();
+              sawListeningPort = Boolean(addr && typeof addr !== 'string' && addr.port > 0);
+              inject(client, wss);
+            },
+          }),
+          `${label} acquisition rejection`,
+        ),
         expectedError,
       );
-      for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve));
+      // Assert socket retirement and server close event IMMEDIATELY on rejection — before draining
+      // event-loop turns — so an unawaited cleanup cannot slip past under later turns.
       assert.equal(
         sawListeningPort,
         true,
@@ -548,6 +570,11 @@ test('createTypedNodeTransport cleans up listener and sockets on pre-open client
       );
       assert.ok(capturedWss);
       assert.ok(capturedClient);
+      assert.equal(
+        serverClosed,
+        true,
+        'WebSocketServer close event must have fired before acquisition rejects',
+      );
       assert.equal(
         capturedWss.address(),
         null,
@@ -558,6 +585,12 @@ test('createTypedNodeTransport cleans up listener and sockets on pre-open client
         WebSocket.CLOSED,
         `client socket must be CLOSED before acquisition rejects (readyState=${capturedClient.readyState})`,
       );
+      for (let i = 0; i < 4; i++) {
+        await withDeadline(
+          new Promise<void>((resolve) => setImmediate(resolve)),
+          `${label} unhandled-rejection drain turn ${i + 1}`,
+        );
+      }
       assert.deepEqual(
         unhandledRejections,
         [],
@@ -575,19 +608,27 @@ test('createTypedNodeTransport cleans up listener and sockets on pre-open client
           socket.terminate();
         }
       }
-      if (capturedWss && capturedWss.address() !== null) {
-        await new Promise<void>((resolve) => capturedWss!.close(() => resolve()));
+      if (capturedWss && !serverClosed) {
+        await withDeadline(
+          new Promise<void>((resolve) => capturedWss!.close(() => resolve())),
+          `${label} fallback server close`,
+        );
       }
     }
   };
 
   await runFailureCase(
+    'pre-open client error',
     (client) => client.emit('error', new Error('injected pre-open client error')),
     /injected pre-open client error/,
   );
-  await runFailureCase(() => {
-    throw new Error('injected onClientCreated hook throw');
-  }, /injected onClientCreated hook throw/);
+  await runFailureCase(
+    'throwing setup hook',
+    () => {
+      throw new Error('injected onClientCreated hook throw');
+    },
+    /injected onClientCreated hook throw/,
+  );
 });
 
 test('remote Antigravity status runs shared observeAntigravityAccount across node boundary with cleanup and failure isolation', async () => {
