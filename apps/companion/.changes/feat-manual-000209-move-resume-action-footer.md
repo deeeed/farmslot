@@ -1,0 +1,1 @@
+- Keep Resume conversation and its saved runner configuration in the footer of closed conversations while you scroll the transcript.

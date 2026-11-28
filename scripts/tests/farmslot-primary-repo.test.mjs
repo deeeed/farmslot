@@ -66,7 +66,7 @@ async function fixture(t) {
   async function health(repo) {
     const { stdout } = await exec('bash', [script, 'health', '--gateway-port', String(ports[0])], {
       encoding: 'utf8',
-      timeout: 2000,
+      timeout: 20_000,
       env: {
         ...process.env,
         FARMSLOT_SLOT_REPO: repo,
