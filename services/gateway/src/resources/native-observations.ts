@@ -298,7 +298,7 @@ interface RemoteSource {
   current: () => boolean;
   receipt: NativeSourceReceipt;
   configuredDigest?: string;
-  configuring?: { digest: string; promise: Promise<void> };
+  configuring?: { revision: number; digest: string; promise: Promise<void> };
   lastConfigureError?: string;
 }
 type CachedNodeExecutables =
@@ -319,7 +319,7 @@ export class GatewayNativeObservations {
   private localReceipt?: NativeSourceReceipt;
   private localExecutables?: Record<string, string>;
   private localConfiguredDigest?: string;
-  private localConfiguring?: { digest: string; promise: Promise<void> };
+  private localConfiguring?: { revision: number; digest: string; promise: Promise<void> };
   private localConfigureError?: string;
   private poolCatalogRevision = 0;
   private poolExecutableRevision = 0;
@@ -436,6 +436,9 @@ export class GatewayNativeObservations {
     if (!ownsLocalNativeProfile(ownerId))
       throw new GatewayMethodError('AUTH_FORBIDDEN', 'Native local source is unavailable');
     this.local?.stop();
+    this.localConfiguring = undefined;
+    this.localConfiguredDigest = undefined;
+    const revision = this.poolExecutableRevision;
     const resolved = this.resolveCachedNodeExecutablesResult('local');
     if (resolved.ok) {
       this.localExecutables = resolved.executables ? { ...resolved.executables } : undefined;
@@ -450,7 +453,7 @@ export class GatewayNativeObservations {
     const initialDigest = resolved.ok
       ? canonicalTrustedExecutablesDigest(this.localExecutables)
       : FAILED_EXECUTABLE_CONFIG_DIGEST;
-    this.local = new NativeHostObservation(
+    const local = new NativeHostObservation(
       this.localClient,
       ownerId,
       (receipt) => {
@@ -467,8 +470,11 @@ export class GatewayNativeObservations {
       },
       initialDigest,
     );
-    await this.local.start();
-    this.localConfiguredDigest = resolved.ok ? initialDigest : undefined;
+    this.local = local;
+    await local.start();
+    if (this.local === local && this.poolExecutableRevision === revision) {
+      this.localConfiguredDigest = resolved.ok ? initialDigest : undefined;
+    }
   }
 
   localProfileStatus(ownerId: string, profileId: string): unknown {
@@ -501,7 +507,11 @@ export class GatewayNativeObservations {
       current,
       receipt: { ...receipt },
       ...(!isNewConnection
-        ? { configuredDigest: previous.configuredDigest, configuring: previous.configuring }
+        ? {
+            configuredDigest: previous.configuredDigest,
+            configuring: previous.configuring,
+            lastConfigureError: previous.lastConfigureError,
+          }
         : {}),
     });
     if (previous && previous.connection !== connection)
@@ -936,9 +946,13 @@ export class GatewayNativeObservations {
     preResolved?: Record<string, string> | undefined,
     hasPreResolved = false,
   ): void {
+    const revision = this.poolExecutableRevision;
+    const local = this.local;
     void this.syncLocalExecutables(preResolved, hasPreResolved).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      this.localConfigureError = message;
+      if (this.local === local && this.poolExecutableRevision === revision) {
+        this.localConfigureError = message;
+      }
       console.warn(`[native-observation] background local executable sync failed: ${message}`);
     });
   }
@@ -948,6 +962,8 @@ export class GatewayNativeObservations {
     hasPreResolved = false,
   ): Promise<void> {
     if (!this.local) return;
+    const revision = this.poolExecutableRevision;
+    const local = this.local;
     let executables = preResolved;
     if (!hasPreResolved) {
       const resolved = this.resolveCachedNodeExecutablesResult('local');
@@ -966,18 +982,19 @@ export class GatewayNativeObservations {
       !this.localConfiguring
     )
       return;
-    if (this.localConfiguring?.digest === digest) return this.localConfiguring.promise;
-    const local = this.local;
+    if (this.localConfiguring?.revision === revision && this.localConfiguring.digest === digest)
+      return this.localConfiguring.promise;
     this.localExecutables = executables ? { ...executables } : undefined;
     this.localConfigureError = undefined;
     const run = (async () => {
       if (!local.current().ready) {
         await local.setExecutableConfig(digest);
+        if (this.local !== local || this.poolExecutableRevision !== revision) return;
         await local.retry();
       } else {
         await local.setExecutableConfig(digest);
       }
-      if (this.local === local) {
+      if (this.local === local && this.poolExecutableRevision === revision) {
         this.localConfiguredDigest = digest;
         this.localConfigureError = undefined;
         if (this.localReceipt) {
@@ -987,7 +1004,7 @@ export class GatewayNativeObservations {
     })().finally(() => {
       if (this.localConfiguring?.promise === run) this.localConfiguring = undefined;
     });
-    this.localConfiguring = { digest, promise: run };
+    this.localConfiguring = { revision, digest, promise: run };
     await run;
   }
 
@@ -1014,7 +1031,11 @@ export class GatewayNativeObservations {
         const localMap = resolveTrustedNativeExecutablesFromIndex(index, 'local');
         this.executableCache.set('local', { ok: true, executables: localMap });
         const localDigest = canonicalTrustedExecutablesDigest(localMap);
-        if (this.localConfigureError || this.localConfiguredDigest !== localDigest) {
+        if (
+          this.localConfigureError ||
+          this.localConfiguredDigest !== localDigest ||
+          this.localConfiguring
+        ) {
           this.triggerLocalExecutableSync(localMap, true);
         }
       } catch (error) {
@@ -1060,11 +1081,19 @@ export class GatewayNativeObservations {
     preResolved?: Record<string, string> | undefined,
     hasPreResolved = false,
   ): void {
+    const revision = this.poolExecutableRevision;
+    const connection = this.remote.get(nodeId)?.connection;
     void this.syncRemoteExecutables(nodeId, ownerId, preResolved, hasPreResolved).catch(
       (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         const source = this.remote.get(nodeId);
-        if (source) source.lastConfigureError = message;
+        if (
+          source &&
+          source.connection === connection &&
+          this.poolExecutableRevision === revision
+        ) {
+          source.lastConfigureError = message;
+        }
         console.warn(
           `[native-observation] background remote executable sync failed for ${nodeId}: ${message}`,
         );
@@ -1080,6 +1109,7 @@ export class GatewayNativeObservations {
   ): Promise<void> {
     const source = this.remote.get(nodeId);
     if (!source || !source.current()) return;
+    const revision = this.poolExecutableRevision;
     let executables = preResolved;
     if (!hasPreResolved) {
       const resolved = this.resolveCachedNodeExecutablesResult(nodeId);
@@ -1104,8 +1134,10 @@ export class GatewayNativeObservations {
       source.lastConfigureError = undefined;
       return;
     }
-    if (source.configuredDigest === digest && !source.configuring) return;
-    if (source.configuring?.digest === digest) return source.configuring.promise;
+    if (!source.lastConfigureError && source.configuredDigest === digest && !source.configuring)
+      return;
+    if (source.configuring?.revision === revision && source.configuring.digest === digest)
+      return source.configuring.promise;
     source.lastConfigureError = undefined;
     const run = (async () => {
       const receipt = await sendNodeRequest(
@@ -1129,7 +1161,7 @@ export class GatewayNativeObservations {
         this.acceptRemote(node.ws, parsed, currentSource.current);
       }
       const updated = this.remote.get(nodeId);
-      if (updated && updated.connection === node.ws) {
+      if (updated && updated.connection === node.ws && this.poolExecutableRevision === revision) {
         updated.configuredDigest = digest;
         updated.lastConfigureError = undefined;
         this.invalidateSource(nodeId, ownerId, ['profiles']);
@@ -1139,7 +1171,7 @@ export class GatewayNativeObservations {
       if (latest?.configuring?.promise === run) latest.configuring = undefined;
       if (source.configuring?.promise === run) source.configuring = undefined;
     });
-    source.configuring = { digest, promise: run };
+    source.configuring = { revision, digest, promise: run };
     await run;
   }
 

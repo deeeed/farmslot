@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -35,7 +36,7 @@ import {
 import { computeCandidateStrategyFingerprint } from '../evals/package-store.js';
 import { getNode, registerNode, unregisterByWs } from '../fleet/machine-registry.js';
 import { handleNodeResponse, sendNodeRequest } from '../fleet/node-rpc.js';
-import { createPoolWatcherHandlers } from '../fleet/state.js';
+import { createPoolWatcherHandlers, NATIVE_POOL_CHANGE_COALESCE_MS } from '../fleet/state.js';
 import { resolvePreviewExecution, resolvePreviewModel } from '../methods/dispatch/preview.js';
 import { axesForTrialTransport } from '../methods/eval/candidate-setup.js';
 import {
@@ -1255,7 +1256,15 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     };
     observations.attachClient(clientConn, () => principal);
 
-    await observations.startLocal(ownerRecord.id);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await observations.startLocal(ownerRecord.id);
+        break;
+      } catch (error) {
+        const reason = (error as { reason?: string } | undefined)?.reason;
+        if (reason !== 'arming-source-changed' || attempt === 2) throw error;
+      }
+    }
     // Initial startLocal reads the pool snapshot ONCE even though 3 active local profiles were sampled.
     assert.equal(poolSnapshotReads, 1);
 
@@ -1498,7 +1507,6 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       onNativePoolChanged: () => {
         observations!.catalogChanged({ scope: 'all', reason: 'pool' });
       },
-      coalesceMs: 25,
     });
 
     const canonicalFile = join(tempPoolRoot, 'local-ambig.json');
@@ -1577,6 +1585,357 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     if (prevAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
     else process.env.FARMSLOT_AGY_EXECUTABLE = prevAgyEnv;
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stale in-flight local executable refresh cannot clear newer pool ambiguity error or reopen PATH fallback', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agy-local-fence-race-'));
+  const farmHome = join(root, 'farm-home');
+  const tempPoolRoot = join(root, 'pool');
+  const localStateRoot = join(root, 'local-state');
+  const profileDir1 = join(root, 'profile-work-1');
+  const profileDir2 = join(root, 'profile-work-2');
+  const pathBinDir = join(root, 'path-bin');
+  const pathProbeLog = join(root, 'path-fallback-called.log');
+  const fastAgy = join(root, 'fast-bin', 'agy');
+  const heldAgy = join(root, 'held-bin', 'agy');
+  const holdStartedMarker = join(root, 'hold-started.marker');
+  const holdReleaseMarker = join(root, 'hold-release.marker');
+  const holdDoneMarker = join(root, 'hold-done.marker');
+  for (const dir of [
+    farmHome,
+    tempPoolRoot,
+    localStateRoot,
+    profileDir1,
+    profileDir2,
+    pathBinDir,
+    dirname(fastAgy),
+    dirname(heldAgy),
+  ]) {
+    mkdirSync(dir, { recursive: true });
+  }
+  chmodSync(localStateRoot, 0o700);
+
+  const writeFakeAgy = (
+    target: string,
+    version: string,
+    opts?: {
+      logFile?: string;
+      startedMarker?: string;
+      releaseMarker?: string;
+      doneMarker?: string;
+    },
+  ) => {
+    const holdSnippet =
+      opts?.startedMarker && opts?.releaseMarker
+        ? `
+  : > ${JSON.stringify(opts.startedMarker)}
+  i=0
+  while [ ! -f ${JSON.stringify(opts.releaseMarker)} ] && [ "$i" -lt 200 ]; do
+    sleep 0.02
+    i=$((i + 1))
+  done
+  ${opts.doneMarker ? `: > ${JSON.stringify(opts.doneMarker)}` : ''}
+  printf '%s\\n' ${JSON.stringify(version)}
+  exit 0
+`
+        : `
+  printf '%s\\n' ${JSON.stringify(version)}
+  exit 0
+`;
+    writeFileSync(
+      target,
+      `#!/bin/sh
+${opts?.logFile ? `printf 'called\\n' >> ${JSON.stringify(opts.logFile)}` : ''}
+for arg in "$@"; do
+  if [ "$arg" = "--version" ]; then
+    ${holdSnippet}
+  fi
+done
+while IFS= read -r line; do
+  id=$(printf '%s\\n' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+  case "$line" in
+    *'"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentInfo":{"name":"Antigravity ACP Server","version":"%s"}}}\\n' "$id" ${JSON.stringify(version)}
+      ;;
+    *'"session/list"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessions":[]}}\\n' "$id"
+      ;;
+  esac
+done
+`,
+    );
+    chmodSync(target, 0o700);
+  };
+
+  writeFakeAgy(join(pathBinDir, 'agy'), '0.0.0-path-fallback', { logFile: pathProbeLog });
+  writeFakeAgy(fastAgy, '1.5.19');
+  writeFakeAgy(heldAgy, '1.5.20', {
+    startedMarker: holdStartedMarker,
+    releaseMarker: holdReleaseMarker,
+    doneMarker: holdDoneMarker,
+  });
+
+  // Two auxiliary localhost pools plus a canonical pool file that initially disambiguates them.
+  for (const name of ['aux-local-a.json', 'aux-local-b.json']) {
+    writeFileSync(
+      join(tempPoolRoot, name),
+      JSON.stringify({
+        machine: 'local-fence',
+        project: name,
+        host: 'localhost',
+        ssh_user: process.env.USER || 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: fastAgy,
+        slots: [{ id: `slot-${name}`, enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
+      }),
+    );
+  }
+  const canonicalFile = join(tempPoolRoot, 'local-fence.json');
+  const writeCanonical = (agyPath: string) => {
+    writeFileSync(
+      canonicalFile,
+      JSON.stringify({
+        machine: 'local-fence',
+        project: 'canonical',
+        host: 'localhost',
+        ssh_user: process.env.USER || 'operator',
+        os: process.platform,
+        platform: 'cli',
+        antigravity_path: agyPath,
+        slots: [{ id: 'slot-canon', enabled: true, mode: 'dispatch', repo: root, session: 's1' }],
+      }),
+    );
+  };
+  writeCanonical(fastAgy);
+
+  const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
+  const prevFarmHome = process.env.FARMSLOT_HOME;
+  const prevOwner = process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+  const prevPath = process.env.PATH;
+  const prevAgyEnv = process.env.FARMSLOT_AGY_EXECUTABLE;
+  let observations: GatewayNativeObservations | undefined;
+  try {
+    process.env.FARMSLOT_POOL_DIR = tempPoolRoot;
+    process.env.FARMSLOT_HOME = farmHome;
+    delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    process.env.PATH = `${pathBinDir}:${dirname(process.execPath)}:/usr/bin:/bin`;
+
+    const auth = createGatewayAuthRuntime({ FARMSLOT_HOME: farmHome });
+    const ownerRecord = auth.writer.createPrincipal(
+      { type: 'person', displayName: 'Fence Owner' },
+      [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+      'fence-owner',
+    );
+    process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = ownerRecord.id;
+
+    const localClient = new NativeSessionClient(localStateRoot, 'local');
+    await routeNativeProfile(localClient, ownerRecord.id, Methods.NATIVE_PROFILE_ADD, {
+      profileId: 'work',
+      runner: 'antigravity',
+      directory: profileDir1,
+    });
+
+    const localInvalidations: Array<{ family: string; nodeId?: string }> = [];
+    observations = new GatewayNativeObservations((key) => {
+      localInvalidations.push({
+        family: key.family,
+        ...('nodeId' in key ? { nodeId: key.nodeId } : {}),
+      });
+    }, localClient);
+
+    const clientConn = {};
+    const principal: Principal = {
+      id: ownerRecord.id,
+      subject: { type: 'person', displayName: 'Fence Owner' },
+      roles: [{ role: 'admin' as const, scope: { kind: 'global' as const } }],
+    };
+    observations.attachClient(clientConn, () => principal);
+
+    const readLocalProfile = async (): Promise<NativeProfileStatusResult> => {
+      const params = { executionNodeId: 'local', profileId: 'work' };
+      const interests = nativeReadInterests(Methods.NATIVE_PROFILE_STATUS, params, ownerRecord.id);
+      assert.ok(interests);
+      const { payload } = await observations!.read(
+        clientConn,
+        interests,
+        async () =>
+          (await observations!.localProfileStatus(
+            ownerRecord.id,
+            'work',
+          )) as NativeProfileStatusResult,
+        () => null,
+      );
+      return payload;
+    };
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await observations.startLocal(ownerRecord.id);
+        break;
+      } catch (error) {
+        const reason = (error as { reason?: string } | undefined)?.reason;
+        if (reason !== 'arming-source-changed' || attempt === 2) throw error;
+      }
+    }
+    const initial = await readLocalProfile();
+    assert.equal(initial.account.version, '1.5.19');
+
+    const pollFor = async (predicate: () => boolean, label: string) => {
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline) {
+        if (predicate()) return;
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      throw new Error(`Timed out waiting for ${label}`);
+    };
+
+    // 1) Start a valid refresh pointing to `heldAgy` and wait until its probe is genuinely in flight.
+    writeCanonical(heldAgy);
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
+    await pollFor(() => existsSync(holdStartedMarker), 'in-flight held refresh to start');
+
+    // 2) While that valid refresh is still in flight, remove the canonical file so the local pool becomes ambiguous.
+    unlinkSync(canonicalFile);
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
+    const invalidationsAfterAmbiguity = localInvalidations.length;
+
+    // 3) Release the stale valid refresh and wait for it to finish completely.
+    writeFileSync(holdReleaseMarker, 'release');
+    await pollFor(() => existsSync(holdDoneMarker), 'held refresh process to finish');
+    // Allow the completed refresh promise continuation to settle.
+    await new Promise((r) => setTimeout(r, 80));
+
+    // Stale completion must NOT clear the newer ambiguity error or publish stale profile invalidation.
+    await assert.rejects(readLocalProfile(), (error: unknown) => {
+      const err = error as { code?: string; message?: string };
+      assert.equal(err.code, 'NATIVE_PROFILES_UNAVAILABLE');
+      assert.match(err.message ?? '', /ambiguous pool settings/);
+      return true;
+    });
+
+    // 4) Trigger a real subsequent background profile sample (adding a second active profile causes
+    //    NativeHostObservation to re-arm and invoke observeAccounts -> resolveExecutable).
+    await routeNativeProfile(localClient, ownerRecord.id, Methods.NATIVE_PROFILE_ADD, {
+      profileId: 'work-2',
+      runner: 'antigravity',
+      directory: profileDir2,
+    });
+    await pollFor(
+      () =>
+        localInvalidations
+          .slice(invalidationsAfterAmbiguity)
+          .some((k) => k.family === 'profiles' && k.nodeId === 'local'),
+      'post-ambiguity background re-arm sample',
+    );
+    assert.equal(
+      existsSync(pathProbeLog),
+      false,
+      'subsequent background profile sample while pool is ambiguous must NEVER fall back to PATH',
+    );
+
+    // Passive reads still fail closed with the ambiguity error until a valid pool edit arrives.
+    await assert.rejects(readLocalProfile(), (error: unknown) => {
+      const err = error as { code?: string; message?: string };
+      assert.equal(err.code, 'NATIVE_PROFILES_UNAVAILABLE');
+      assert.match(err.message ?? '', /ambiguous pool settings/);
+      return true;
+    });
+
+    // 5) Restoring canonical pool recovers cleanly with the configured executable.
+    const invBeforeRecover = localInvalidations.length;
+    writeCanonical(fastAgy);
+    observations.catalogChanged({ scope: 'all', reason: 'pool' });
+    await pollFor(
+      () =>
+        localInvalidations
+          .slice(invBeforeRecover)
+          .some((k) => k.family === 'profiles' && k.nodeId === 'local'),
+      'recovery after canonical pool restored',
+    );
+    const recovered = await readLocalProfile();
+    assert.equal(recovered.account.version, '1.5.19');
+    assert.equal(existsSync(pathProbeLog), false);
+  } finally {
+    observations?.dispose();
+    if (prevPoolDir === undefined) delete process.env.FARMSLOT_POOL_DIR;
+    else process.env.FARMSLOT_POOL_DIR = prevPoolDir;
+    if (prevFarmHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = prevFarmHome;
+    if (prevOwner === undefined) delete process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID;
+    else process.env.FARMSLOT_NATIVE_OWNER_PRINCIPAL_ID = prevOwner;
+    if (prevPath === undefined) delete process.env.PATH;
+    else process.env.PATH = prevPath;
+    if (prevAgyEnv === undefined) delete process.env.FARMSLOT_AGY_EXECUTABLE;
+    else process.env.FARMSLOT_AGY_EXECUTABLE = prevAgyEnv;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pool watcher coalesces Chokidar 4.0.3 unlink spacing (raw rename at 0 ms, all unlink at 100 ms), preserves raw-only fallback, and handles a later edit', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const directory = '/tmp/pool-watcher-spacing-test';
+  const file = join(directory, 'local.json');
+  let otherWatcherDeliveries = 0;
+  let nativePoolNotices = 0;
+
+  assert.ok(
+    NATIVE_POOL_CHANGE_COALESCE_MS >= 200,
+    `expected NATIVE_POOL_CHANGE_COALESCE_MS >= 200 to cover Chokidar 100 ms unlink window, got ${NATIVE_POOL_CHANGE_COALESCE_MS}`,
+  );
+
+  const handlers = createPoolWatcherHandlers({
+    directory,
+    onPoolFileChanged: () => {
+      otherWatcherDeliveries++;
+    },
+    onNativePoolChanged: () => {
+      nativePoolNotices++;
+    },
+  });
+  try {
+    // 1) Real Chokidar 4.0.3 unlink spacing: raw rename at 0 ms, all unlink at 100 ms.
+    handlers.onRaw('rename', 'local.json', { watchedPath: directory });
+    assert.equal(otherWatcherDeliveries, 1);
+    assert.equal(nativePoolNotices, 0);
+
+    t.mock.timers.tick(100);
+    assert.equal(nativePoolNotices, 0, 'must not flush before Chokidar 100 ms unlink arrives');
+
+    handlers.onAll('unlink', file);
+    assert.equal(otherWatcherDeliveries, 2, 'other watchers still receive both deliveries');
+    assert.equal(nativePoolNotices, 0);
+
+    t.mock.timers.tick(NATIVE_POOL_CHANGE_COALESCE_MS - 1);
+    assert.equal(nativePoolNotices, 0);
+
+    t.mock.timers.tick(1);
+    assert.equal(
+      nativePoolNotices,
+      1,
+      '0 ms raw rename + 100 ms all unlink must produce exactly ONE native snapshot notice',
+    );
+
+    // 2) macOS raw-only fallback (no matching `all` event).
+    handlers.onRaw('change', 'local.json', { watchedPath: directory });
+    assert.equal(otherWatcherDeliveries, 3);
+    t.mock.timers.tick(NATIVE_POOL_CHANGE_COALESCE_MS);
+    assert.equal(nativePoolNotices, 2, 'raw-only delivery must still trigger one native notice');
+
+    // 3) A later distinct edit after the coalesce window flushes triggers one more native notice.
+    handlers.onRaw('change', 'local.json', { watchedPath: directory });
+    t.mock.timers.tick(100);
+    handlers.onAll('change', file);
+    assert.equal(otherWatcherDeliveries, 5);
+    t.mock.timers.tick(NATIVE_POOL_CHANGE_COALESCE_MS);
+    assert.equal(
+      nativePoolNotices,
+      3,
+      'distinct edit after flush must trigger exactly one additional native notice',
+    );
+  } finally {
+    handlers.dispose();
   }
 });
 

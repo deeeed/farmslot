@@ -908,7 +908,9 @@ function loadNewestFleetStatus(): Promise<FleetStatus> {
   return newestFleetRead;
 }
 
-export const NATIVE_POOL_CHANGE_COALESCE_MS = 50;
+// Chokidar 4.0.3 emits `raw: rename` at 0 ms and `all: unlink` at ~100 ms on macOS;
+// 200 ms coalesces paired deliveries into one native snapshot read while staying well below the 2 s fleet debounce.
+export const NATIVE_POOL_CHANGE_COALESCE_MS = 200;
 
 export interface PoolWatcherHandlers {
   onAll: (event: string, file: string) => void;

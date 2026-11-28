@@ -770,9 +770,15 @@ try {
         { timeoutMs: 30_000 },
       );
     } catch (waitError) {
-      const timeoutDiag = await readComposerDiagnostics(label, 'ready-timeout');
+      let timeoutDiag: ComposerReadinessDiag | null = null;
+      let diagError: string | null = null;
+      try {
+        timeoutDiag = await readComposerDiagnostics(label, 'ready-timeout');
+      } catch (err) {
+        diagError = err instanceof Error ? err.message : String(err);
+      }
       throw new Error(
-        `Composer readiness timed out during ${label}: ${waitError instanceof Error ? waitError.message : String(waitError)} | diag=${JSON.stringify(timeoutDiag)}`,
+        `Composer readiness timed out during ${label}: ${waitError instanceof Error ? waitError.message : String(waitError)} | diag=${JSON.stringify(timeoutDiag)}${diagError ? ` | diagError=${JSON.stringify(diagError)}` : ''}`,
         { cause: waitError },
       );
     }
@@ -785,7 +791,13 @@ try {
     try {
       await page.setInput('[data-testid=native-message]', text);
     } catch (inputError) {
-      const failureDiag = await readComposerDiagnostics(label, 'setInput-failed');
+      let failureDiag: ComposerReadinessDiag | null = null;
+      let failureDiagError: string | null = null;
+      try {
+        failureDiag = await readComposerDiagnostics(label, 'setInput-failed');
+      } catch (err) {
+        failureDiagError = err instanceof Error ? err.message : String(err);
+      }
       let recoveredDiag: ComposerReadinessDiag | null = null;
       let recoveryError: string | null = null;
       try {
@@ -794,7 +806,7 @@ try {
         recoveryError = err instanceof Error ? err.message : String(err);
       }
       throw new Error(
-        `setInput failed during ${label}: ${inputError instanceof Error ? inputError.message : String(inputError)} | diag=${JSON.stringify({ readyDiag, failureDiag, recoveredDiag, recoveryError })}`,
+        `setInput failed during ${label}: ${inputError instanceof Error ? inputError.message : String(inputError)} | diag=${JSON.stringify({ readyDiag, failureDiag, failureDiagError, recoveredDiag, recoveryError })}`,
         { cause: inputError },
       );
     }
