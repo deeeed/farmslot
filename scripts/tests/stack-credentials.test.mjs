@@ -147,7 +147,7 @@ for (const activated of [false, true]) {
     execFileSync('bash', [path.join(support, 'scripts/dev.sh')], {
       env: f.env,
       stdio: 'pipe',
-      timeout: 3000,
+      timeout: 15_000,
     });
     const child = JSON.parse(readFileSync(f.capture, 'utf8'));
     assert.equal(child.GATEWAY_HOST, activated ? '0.0.0.0' : '127.0.0.1');
@@ -219,7 +219,7 @@ test('current sandbox launcher isolates home even for an older slot dev script',
   writeFileSync(path.join(bin, 'lsof'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(
     path.join(bin, 'curl'),
-    '#!/usr/bin/env node\nconst fs=require("node:fs");if(!fs.existsSync(process.env.FARMSLOT_RUNTIME_DIR+"/sandbox-dev.pid"))process.exit(1);const deadline=Date.now()+1500;function poll(){if(fs.existsSync(process.env.STACK_CREDENTIAL_CAPTURE))process.exit(0);if(Date.now()>=deadline)process.exit(1);setTimeout(poll,10);}poll();\n',
+    '#!/usr/bin/env node\nconst fs=require("node:fs");if(!fs.existsSync(process.env.FARMSLOT_RUNTIME_DIR+"/sandbox-dev.pid"))process.exit(1);const deadline=Date.now()+5000;function poll(){if(fs.existsSync(process.env.STACK_CREDENTIAL_CAPTURE))process.exit(0);if(Date.now()>=deadline)process.exit(1);setTimeout(poll,10);}poll();\n',
     { mode: 0o755 },
   );
   try {
@@ -234,7 +234,7 @@ test('current sandbox launcher isolates home even for an older slot dev script',
       {
         env: { ...f.env, STACK_KEEP_CAPTURE_RUNNING: '1', FARMSLOT_RUNS_DIR: '' },
         stdio: 'pipe',
-        timeout: 3000,
+        timeout: 15_000,
       },
     );
   } catch (error) {

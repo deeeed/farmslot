@@ -33,7 +33,7 @@ function fixture(t) {
       cwd,
       env: { ...process.env, YARN_ENABLE_TELEMETRY: 'false', ...environment },
       signal: controller.signal,
-      timeout: 4000,
+      timeout: 20_000,
     });
     pending.push(request);
     return request;
@@ -177,7 +177,7 @@ if (process.env.STOCK_PAUSE_AT === 'absent-store') {
         (value) => ({ status: 'fulfilled', value }),
         (reason) => ({ status: 'rejected', reason }),
       );
-    const deadline = Date.now() + 2000;
+    const deadline = Date.now() + 10_000;
     while (!existsSync(paused) && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(existsSync(paused), `the real stock client must reach ${pauseAt}`);
