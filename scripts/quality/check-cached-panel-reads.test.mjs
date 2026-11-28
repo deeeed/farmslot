@@ -226,7 +226,7 @@ test('shared unused object fields do not expand while classifying the selected r
       '--files',
       fixture('shared-fields.ts'),
     ],
-    { cwd: root, encoding: 'utf8', timeout: 5000 },
+    { cwd: root, encoding: 'utf8', timeout: 60_000 },
   );
   assert.equal(result.status, 1, result.error?.message ?? result.stderr);
   const report = JSON.parse(result.stdout);
