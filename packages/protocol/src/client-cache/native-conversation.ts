@@ -56,9 +56,19 @@ interface NativeConversationCacheOptions {
   performance?: PerformanceRecorder;
   afterPaint?: (paint: () => void) => (() => void) | undefined;
 }
+export interface StoredNativeConversation {
+  snapshot: NativeConversationSnapshot;
+  observedAt?: number;
+}
 interface ConversationStorage {
-  load(target: NativeSessionTargetParams): Promise<NativeConversationSnapshot | undefined>;
-  save(target: NativeSessionTargetParams, snapshot: NativeConversationSnapshot): Promise<void>;
+  load(
+    target: NativeSessionTargetParams,
+  ): Promise<NativeConversationSnapshot | StoredNativeConversation | undefined>;
+  save(
+    target: NativeSessionTargetParams,
+    snapshot: NativeConversationSnapshot,
+    observedAt?: number,
+  ): Promise<void>;
   forget(target: NativeSessionTargetParams): Promise<void>;
 }
 interface Entry {
@@ -271,7 +281,9 @@ export function createNativeConversationCache(
   };
   const save = (entry: Entry): Promise<void> =>
     entry.state.data
-      ? storage.save(entry.target, entry.state.data).catch((error) => storageFailed(entry, error))
+      ? storage
+          .save(entry.target, entry.state.data, entry.state.observedAt)
+          .catch((error) => storageFailed(entry, error))
       : Promise.resolve();
   const detach = (entry: Entry) => {
     entry.ticket++;
@@ -487,11 +499,17 @@ export function createNativeConversationCache(
     const ticket = epoch;
     const denialVersion = entry.denialVersion;
     try {
-      const saved = await storage.load(entry.target);
+      const loaded = await storage.load(entry.target);
       if (disposed || ticket !== epoch || denialVersion !== entry.denialVersion) return;
+      const saved = loaded && 'snapshot' in loaded ? loaded.snapshot : loaded;
+      const observedAt = loaded && 'snapshot' in loaded ? loaded.observedAt : undefined;
       if (!entry.state.data && saved && snapshotMatches(entry.target, saved, true)) {
         entry.metricSource = 'stored';
-        entry.state = { status: 'stale', data: saved };
+        entry.state = {
+          status: 'stale',
+          data: saved,
+          ...(observedAt !== undefined ? { observedAt } : {}),
+        };
         notify(entry);
       }
       entry.hydrated = true;
