@@ -5,7 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Methods, NATIVE_CONVERSATION_LIMITS } from '@farmslot/protocol';
-import { NATIVE_CONVERSATION_STORAGE_PREFIX } from '@farmslot/protocol/client-cache';
+import {
+  NATIVE_CONVERSATION_STORAGE_PREFIX,
+  SUPERSEDED_READ_GRACE_MS,
+} from '@farmslot/protocol/client-cache';
 
 import {
   messages,
@@ -16,6 +19,9 @@ import {
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '');
 const phase = process.argv[2];
+const viewTimeoutMs = 30_000;
+// Companion holds its connection status through the shared grace after a cold launch.
+const coldCaptionTimeoutMs = SUPERSEDED_READ_GRACE_MS + viewTimeoutMs;
 const forbidden = [
   'native.session.create',
   'native.session.ensure',
@@ -434,8 +440,8 @@ async function prove() {
         (node) =>
           node.visibleToUser !== false && `${node.label || ''} ${node.value || ''}`.includes(text),
       );
-    async function view(name, ...labels) {
-      const deadline = Date.now() + 30000;
+    async function view(name, labels, timeoutMs = viewTimeoutMs) {
+      const deadline = Date.now() + timeoutMs;
       do {
         const screen = await device.capture.snapshot({
           ...selection,
@@ -528,7 +534,7 @@ async function prove() {
       'The native fleet must render the original configured slot from its canonical cache',
       'runs-cache:snapshot',
     );
-    await view('fleet-before-writer', plan.fleet.slotId);
+    await view('fleet-before-writer', [plan.fleet.slotId]);
     const originalPool = await readFile(plan.fleet.poolFile);
     const updatedPool = JSON.parse(originalPool);
     updatedPool.slots.push({
@@ -549,9 +555,9 @@ async function prove() {
       'runs-cache:snapshot',
     );
     await save('fleet-live.json', liveFleet);
-    await view('fleet-live', ...fleetIds);
+    await view('fleet-live', fleetIds);
     await openRoute(plan.fleet.slotRoute);
-    await view('slot-warm', plan.fleet.slotId);
+    await view('slot-warm', [plan.fleet.slotId]);
     const warm = [];
     for (const session of plan.sessions) {
       selected = session;
@@ -602,9 +608,9 @@ async function prove() {
       );
       assert.deepEqual(coldFleet.fleet.data, dbWarm.fleet[0].data.fleet);
       await save('fleet-cold.json', coldFleet);
-      await view('fleet-cold', ...fleetIds, 'Saved fleet ·');
+      await view('fleet-cold', [...fleetIds, 'Saved fleet ·'], coldCaptionTimeoutMs);
       await openRoute(plan.fleet.slotRoute);
-      await view('slot-cold', plan.fleet.slotId);
+      await view('slot-cold', [plan.fleet.slotId]);
       await open(selected);
       cold = await until(
         (state) => complete(state, 'stale') && state.startedAt > current.startedAt,
@@ -626,8 +632,8 @@ async function prove() {
       assert.deepEqual(dbCold.fleet, dbWarm.fleet);
       const screen = await view(
         'cold-disabled-resume',
-        'Saved conversation history ·',
-        plan.resumeLabel,
+        ['Saved conversation history ·', plan.resumeLabel],
+        coldCaptionTimeoutMs,
       );
       const resumeScreenshot = path.join(plan.artifacts, 'cold-disabled-resume.png');
       const recognized = await execute(
@@ -708,7 +714,7 @@ async function prove() {
       'Native fleet did not recover in the same cold runtime',
       'runs-cache:snapshot',
     );
-    await view('fleet-recovered', ...fleetIds);
+    await view('fleet-recovered', fleetIds);
     await unlink(marker);
     outageMarker = undefined;
     attempt.status = 'passed';
