@@ -1155,8 +1155,7 @@ fi
 
 echo "[companion-ios-smoke] running recipe ${RECIPE_ABS}"
 RECIPE_RAN=1
-RECIPE_EXIT=0
-run_interruptible_group recipe env \
+if run_interruptible_group recipe env \
   -u FARMSLOT_SLOT_ID \
   -u RECIPE_TASK_DIR \
   PLATFORM=ios \
@@ -1177,7 +1176,10 @@ run_interruptible_group recipe env \
   bash -c 'cd "$1" && shift && exec bash "$@"' _ "${APP_DIR}" "${SCRIPT_DIR}/run-recipe.sh" run "${RECIPE_ABS}" \
     --artifacts-dir "${RECIPE_ARTIFACTS_DIR}" \
     --record-video=off \
-    "--recording-reason=Companion iOS live smoke retains per-step simulator screenshots and protocol receipts." \
-  || RECIPE_EXIT=$?
+    "--recording-reason=Companion iOS live smoke retains per-step simulator screenshots and protocol receipts."; then
+  RECIPE_EXIT=0
+else
+  RECIPE_EXIT=$?
+fi
 
 exit "${RECIPE_EXIT}"
