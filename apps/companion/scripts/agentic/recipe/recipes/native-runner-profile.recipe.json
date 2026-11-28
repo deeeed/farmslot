@@ -115,8 +115,9 @@
         "action": "ui.wait_for",
         "test_id": "companion-native-resume",
         "expected": "visible",
+        "enabled": true,
         "timeout_ms": 30000,
-        "intent": "The stopped conversation offers continuation through its saved runner session.",
+        "intent": "The saved runner configuration is ready to resume the stopped conversation.",
         "next": "resume"
       },
       "resume": {
