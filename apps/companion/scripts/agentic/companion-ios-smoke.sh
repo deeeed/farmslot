@@ -4,10 +4,11 @@
 # Creates a dedicated ephemeral iOS simulator cloned from the reference simulator's
 # device type, runtime, and installed Companion dev client bundle, starts an isolated
 # private gateway (native-stream-stack.mts) and isolated Metro bundler on unused
-# loopback ports, pairs and runs the requested recipe (default:
-# native-conversation.recipe.json), retains source identity plus before/after
-# service and simulator state receipts, and guarantees signal-safe teardown via trap
-# on success, failure, or signal without mutating the reference simulator.
+# loopback ports with strict PID/process-group ownership verification, pairs and runs
+# the requested recipe (default: native-conversation.recipe.json), verifies identical
+# HEAD commit, tree SHA, and clean tracked state at entry and seal, and guarantees
+# verified teardown (recipe group, agent-device daemon, owned gateway + detached native
+# host, Metro group, and ephemeral simulator) via trap on pass, failure, or signal.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -131,12 +132,46 @@ RECIPE_ABS="$(resolve_recipe_path "${RECIPE_INPUT}")"
 mkdir -p "${ARTIFACTS_DIR}"
 ARTIFACTS_ABS="$(cd "${ARTIFACTS_DIR}" && pwd)"
 
-# Record source checkout identity so receipts bind captures to the exact revision and tree state.
-SOURCE_SHA="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
-SOURCE_TREE_SHA="$(git -C "${REPO_ROOT}" rev-parse 'HEAD^{tree}')"
-TRACKED_CLEAN_START=1
-if [[ -n "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=no)" ]]; then
-  TRACKED_CLEAN_START=0
+# Fail-closed Git identity snapshot helper (checked both at entry and right before sealing).
+capture_git_identity() {
+  local out_file="$1"
+  node -e '
+    const { spawnSync } = require("node:child_process");
+    const fs = require("node:fs");
+    const [repoRoot, outFile] = process.argv.slice(1);
+    const runGit = (args) => {
+      const r = spawnSync("git", ["-C", repoRoot, ...args], { encoding: "utf8" });
+      if (r.error || r.status !== 0) {
+        return { ok: false, stdout: "", error: (r.error && r.error.message) || (r.stderr || "").trim() || `git ${args.join(" ")} exited ${r.status}` };
+      }
+      return { ok: true, stdout: r.stdout || "", error: null };
+    };
+    const head = runGit(["rev-parse", "--verify", "HEAD"]);
+    const tree = runGit(["rev-parse", "--verify", "HEAD^{tree}"]);
+    const status = runGit(["status", "--porcelain", "--untracked-files=no"]);
+    const shaRe = /^[0-9a-f]{40}$/i;
+    const sourceSha = head.ok && shaRe.test(head.stdout.trim()) ? head.stdout.trim() : null;
+    const sourceTreeSha = tree.ok && shaRe.test(tree.stdout.trim()) ? tree.stdout.trim() : null;
+    const errors = [];
+    if (!sourceSha) errors.push(head.error || "invalid HEAD SHA");
+    if (!sourceTreeSha) errors.push(tree.error || "invalid HEAD^{tree} SHA");
+    if (!status.ok) errors.push(status.error || "git status failed");
+    const ok = errors.length === 0;
+    const trackedClean = ok && status.stdout.trim() === "";
+    fs.writeFileSync(outFile, JSON.stringify({ ok, sourceSha, sourceTreeSha, trackedClean, errors }, null, 2) + "\n");
+    if (!ok) process.exit(1);
+  ' "${REPO_ROOT}" "${out_file}"
+}
+
+SCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/companion-ios-smoke-XXXXXX")"
+trap 'rm -rf "${SCRATCH_DIR}"' EXIT
+BEFORE_GIT_FILE="${SCRATCH_DIR}/git-before.json"
+AFTER_GIT_FILE="${SCRATCH_DIR}/git-after.json"
+if ! capture_git_identity "${BEFORE_GIT_FILE}"; then
+  echo "ERROR: failed to read Git source identity at ${REPO_ROOT}." >&2
+  cat "${BEFORE_GIT_FILE}" >&2 || true
+  rm -rf "${SCRATCH_DIR}"
+  exit 1
 fi
 
 # Allocate three distinct unused loopback ports unless explicitly provided.
@@ -212,6 +247,7 @@ IFS=$'\t' read -r SRC_SIM_UDID SRC_SIM_STATE_BEFORE SRC_SIM_DEVICE_TYPE SRC_SIM_
 APP_BUNDLE_PATH="$(xcrun simctl get_app_container "${SRC_SIM_UDID}" "${BUNDLE_ID}" app 2>/dev/null || true)"
 if [[ -z "${APP_BUNDLE_PATH}" || ! -d "${APP_BUNDLE_PATH}" ]]; then
   echo "ERROR: ${BUNDLE_ID} is not installed on reference simulator ${SRC_SIM_NAME} (${SRC_SIM_UDID})." >&2
+  rm -rf "${SCRATCH_DIR}"
   exit 1
 fi
 
@@ -319,6 +355,7 @@ AFTER_STATE_FILE="${ARTIFACTS_ABS}/after-state.json"
 RECEIPT_FILE="${ARTIFACTS_ABS}/smoke-receipt.json"
 GATEWAY_LOG="${ARTIFACTS_ABS}/gateway.log"
 METRO_LOG="${ARTIFACTS_ABS}/metro.log"
+AGENT_DEVICE_CLEANUP_LOG="${ARTIFACTS_ABS}/agent-device-cleanup.log"
 RECIPE_ARTIFACTS_DIR="${ARTIFACTS_ABS}/recipe"
 
 capture_state_json "${BEFORE_STATE_FILE}" ""
@@ -334,21 +371,26 @@ node -e '
   }
 ' "${BEFORE_STATE_FILE}"
 
-SCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/companion-ios-smoke-XXXXXX")"
 TOKEN_FILE="${SCRATCH_DIR}/token"
 STREAM_STATE_FILE="${SCRATCH_DIR}/stream-state.json"
 PROOF_STATE_FILE="${SCRATCH_DIR}/proof-state.json"
 AGENT_DEVICE_STATE_DIR="${SCRATCH_DIR}/agent-device"
 
 GATEWAY_PID=""
+GATEWAY_ROOT=""
+GATEWAY_READY=0
+GATEWAY_EXIT_CODE=""
+GATEWAY_FORCE_KILLED=0
+GATEWAY_OWNERSHIP_REFUSED=0
 METRO_PID=""
+METRO_OWNERSHIP_REFUSED=0
 ACTIVE_CHILD_PID=""
 RECIPE_PID=""
 SMOKE_SIM_UDID=""
 SMOKE_SIM_NAME=""
 CLEANUP_DONE=0
 RECIPE_RAN=0
-RECIPE_EXIT=1
+RECIPE_EXIT=""
 EXIT_SIGNAL=""
 
 pid_alive() {
@@ -408,11 +450,57 @@ port_owned_by_pid() {
   [[ -n "${pid}" ]] || return 1
   local pids
   pids="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null || true)"
-  [[ -n "${pids}" ]] && printf '%s\n' "${pids}" | grep -qx "${pid}"
+  [[ -n "${pids}" ]] || return 1
+  local lpid
+  while IFS= read -r lpid; do
+    [[ -n "${lpid}" ]] || continue
+    if [[ "${lpid}" != "${pid}" ]]; then
+      return 1
+    fi
+  done <<< "${pids}"
+  return 0
+}
+
+# Verify every TCP listener on <port> belongs to process group <pgid> (and at least one listener exists).
+port_owned_by_pgid() {
+  local port="$1"
+  local pgid="$2"
+  [[ -n "${pgid}" ]] || return 1
+  local pids
+  pids="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null || true)"
+  [[ -n "${pids}" ]] || return 1
+  local lpid lpgid
+  while IFS= read -r lpid; do
+    [[ -n "${lpid}" ]] || continue
+    lpgid="$(ps -o pgid= -p "${lpid}" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ -z "${lpgid}" || "${lpgid}" != "${pgid}" ]]; then
+      return 1
+    fi
+  done <<< "${pids}"
+  return 0
+}
+
+# Return 0 if <port> has at least one listener whose PGID differs from <pgid>.
+port_has_foreign_listener() {
+  local port="$1"
+  local pgid="$2"
+  local pids
+  pids="$(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null || true)"
+  [[ -n "${pids}" ]] || return 1
+  local lpid lpgid
+  while IFS= read -r lpid; do
+    [[ -n "${lpid}" ]] || continue
+    lpgid="$(ps -o pgid= -p "${lpid}" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ -z "${lpgid}" || "${lpgid}" != "${pgid}" ]]; then
+      return 0
+    fi
+  done <<< "${pids}"
+  return 1
 }
 
 # Run a foreground command in its own process group so Bash `wait` remains immediately
 # interruptible by INT/TERM/HUP traps and cleanup() can terminate the whole subtree.
+# Never toggles global errexit (`set -e`) so callers preserve the exact non-zero exit status.
 run_interruptible_group() {
   local track_as_recipe="$1"
   shift
@@ -423,10 +511,7 @@ run_interruptible_group() {
     RECIPE_PID="${child_pid}"
   fi
   local rc=0
-  set +e
-  wait "${child_pid}"
-  rc=$?
-  set -e
+  wait "${child_pid}" || rc=$?
   if [[ "${ACTIVE_CHILD_PID}" == "${child_pid}" ]]; then
     ACTIVE_CHILD_PID=""
   fi
@@ -454,35 +539,143 @@ cleanup() {
     teardown_errors+=("recipe process group ${RECIPE_PID} still alive")
   fi
 
-  # 1. Close any agent-device sessions owned by this isolated state dir and wait for daemon exit.
-  if [[ -f "${AGENT_DEVICE_STATE_DIR}/daemon.json" ]]; then
+  # 1. Verify private agent-device daemon identity, close sessions, confirm daemon exit, and retain logs.
+  local agent_device_stopped=1
+  if [[ -d "${AGENT_DEVICE_STATE_DIR}" ]]; then
+    local ad_rc=0
     (
       cd "${APP_DIR}"
       node --input-type=module -e '
+        import { execFileSync } from "node:child_process";
         import fs from "node:fs";
         import path from "node:path";
         import { createAgentDeviceClient } from "agent-device";
+
         const stateDir = process.argv[1];
-        const client = createAgentDeviceClient({ stateDir });
-        try {
-          for (const session of await client.sessions.list()) {
-            await client.sessions.close({ session: session.name, shutdown: false });
-          }
-        } catch (err) {
-          console.error("[companion-ios-smoke] agent-device close warning:", err instanceof Error ? err.message : String(err));
-        }
         const daemonFile = path.join(stateDir, "daemon.json");
-        if (fs.existsSync(daemonFile)) {
-          const pid = JSON.parse(fs.readFileSync(daemonFile, "utf8")).pid;
-          const deadline = Date.now() + 15000;
+        const errors = [];
+
+        const inspectDaemon = (pid, expectedStartTime) => {
+          try {
+            process.kill(pid, 0);
+          } catch (err) {
+            if (err && err.code === "ESRCH") return { alive: false, matches: false };
+            throw err;
+          }
+          let cmd = "";
+          try {
+            cmd = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).trim();
+          } catch {
+            return { alive: false, matches: false };
+          }
+          if (!cmd) return { alive: false, matches: false };
+          const norm = cmd.toLowerCase().replaceAll("\\", "/");
+          const isDaemonCmd =
+            norm.includes("agent-device") &&
+            /(^|[\/\s"\x27=])(dist\/src\/(internal\/)?daemon\.js|src\/daemon\.ts)($|[\s"\x27])/.test(norm);
+          if (!isDaemonCmd) return { alive: true, matches: false, cmd };
+          if (expectedStartTime) {
+            let lstart = "";
+            try {
+              lstart = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" }).trim();
+            } catch {
+              return { alive: false, matches: false };
+            }
+            if (!lstart || lstart !== expectedStartTime) {
+              return { alive: true, matches: false, cmd, lstart };
+            }
+          }
+          return { alive: true, matches: true, cmd };
+        };
+
+        const waitUntilGone = async (pid, expectedStartTime, timeoutMs) => {
+          const deadline = Date.now() + timeoutMs;
           while (Date.now() < deadline) {
-            try { process.kill(pid, 0); } catch (e) { if (e.code === "ESRCH") break; }
+            const st = inspectDaemon(pid, expectedStartTime);
+            if (!st.alive || !st.matches) return true;
             await new Promise((r) => setTimeout(r, 150));
           }
-          try { process.kill(pid, "SIGTERM"); } catch (e) { if (e.code !== "ESRCH") throw e; }
+          const st = inspectDaemon(pid, expectedStartTime);
+          return !st.alive || !st.matches;
+        };
+
+        let daemonInfo = null;
+        if (fs.existsSync(daemonFile)) {
+          try {
+            daemonInfo = JSON.parse(fs.readFileSync(daemonFile, "utf8"));
+          } catch (err) {
+            errors.push(`failed to parse daemon.json: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+
+        const pid = daemonInfo && Number.isInteger(daemonInfo.pid) && daemonInfo.pid > 0 ? daemonInfo.pid : null;
+        const expectedStartTime =
+          typeof daemonInfo?.processStartTime === "string" ? daemonInfo.processStartTime.trim() : "";
+
+        if (pid !== null) {
+          const initial = inspectDaemon(pid, expectedStartTime);
+          if (initial.alive && !initial.matches) {
+            errors.push(
+              `daemon.json PID ${pid} does not match an agent-device daemon (${initial.cmd ?? "unknown"})`,
+            );
+          } else if (initial.alive && initial.matches) {
+            let closeErr = null;
+            const client = createAgentDeviceClient({ stateDir });
+            try {
+              for (const session of await client.sessions.list()) {
+                await client.sessions.close({ session: session.name, shutdown: false });
+              }
+            } catch (err) {
+              closeErr = `agent-device session close failed: ${err instanceof Error ? err.message : String(err)}`;
+              console.error(`[companion-ios-smoke] ${closeErr}`);
+            }
+
+            let exited = await waitUntilGone(pid, expectedStartTime, 15000);
+            if (!exited) {
+              if (closeErr) errors.push(closeErr);
+              const beforeTerm = inspectDaemon(pid, expectedStartTime);
+              if (beforeTerm.alive && beforeTerm.matches) {
+                console.log(`[companion-ios-smoke] sending SIGTERM to verified agent-device daemon PID ${pid}`);
+                try {
+                  process.kill(pid, "SIGTERM");
+                } catch (err) {
+                  if (err?.code !== "ESRCH") throw err;
+                }
+                exited = await waitUntilGone(pid, expectedStartTime, 5000);
+              } else {
+                exited = !beforeTerm.alive;
+              }
+            }
+            if (!exited) {
+              const beforeKill = inspectDaemon(pid, expectedStartTime);
+              if (beforeKill.alive && beforeKill.matches) {
+                console.log(`[companion-ios-smoke] sending SIGKILL to verified agent-device daemon PID ${pid}`);
+                try {
+                  process.kill(pid, "SIGKILL");
+                } catch (err) {
+                  if (err?.code !== "ESRCH") throw err;
+                }
+                exited = await waitUntilGone(pid, expectedStartTime, 2000);
+              } else {
+                exited = !beforeKill.alive;
+              }
+            }
+            if (!exited) {
+              errors.push(`verified agent-device daemon PID ${pid} remained alive after SIGTERM and SIGKILL`);
+            }
+          }
+        }
+
+        if (errors.length > 0) {
+          for (const msg of errors) console.error(`[companion-ios-smoke] ${msg}`);
+          process.exit(1);
         }
       ' "${AGENT_DEVICE_STATE_DIR}"
-    ) >/dev/null 2>&1 || teardown_errors+=("agent-device cleanup failed")
+    ) >"${AGENT_DEVICE_CLEANUP_LOG}" 2>&1 || ad_rc=$?
+    if [[ "${ad_rc}" -ne 0 ]]; then
+      agent_device_stopped=0
+      teardown_errors+=("agent-device cleanup failed (see ${AGENT_DEVICE_CLEANUP_LOG})")
+    fi
   fi
 
   # 2. Best-effort close any still-open native proof session ONLY if our owned gateway PID is listening.
@@ -498,26 +691,59 @@ cleanup() {
     ) || true
   fi
 
-  # 3. Stop ONLY our owned private gateway child process via SIGTERM/SIGKILL (never blind HTTP POST by port).
+  # 3. Stop ONLY our owned private gateway child via SIGTERM (45s grace for native-stream-stack's 30s stopHost),
+  #    record its exact exit status, and verify its private root & detached native supervisor exited.
   if [[ -n "${GATEWAY_PID}" ]]; then
     if pid_alive "${GATEWAY_PID}"; then
       kill -TERM "${GATEWAY_PID}" 2>/dev/null || true
-      if ! wait_pid_exit "${GATEWAY_PID}" 150; then
+      if ! wait_pid_exit "${GATEWAY_PID}" 450; then
+        GATEWAY_FORCE_KILLED=1
+        teardown_errors+=("owned gateway PID ${GATEWAY_PID} did not exit within 45s after SIGTERM; sent SIGKILL")
         kill -KILL "${GATEWAY_PID}" 2>/dev/null || true
         wait_pid_exit "${GATEWAY_PID}" 20 || true
       fi
     fi
-    wait "${GATEWAY_PID}" 2>/dev/null || true
+    GATEWAY_EXIT_CODE=0
+    wait "${GATEWAY_PID}" 2>/dev/null || GATEWAY_EXIT_CODE=$?
+    if [[ "${GATEWAY_EXIT_CODE}" -ne 0 ]]; then
+      teardown_errors+=("owned gateway PID ${GATEWAY_PID} exited with status ${GATEWAY_EXIT_CODE}")
+    fi
   fi
 
-  # 4. Stop ONLY our owned private Metro process group.
+  local gateway_root_removed=1
+  local gateway_host_exited=1
+  if [[ -n "${GATEWAY_ROOT}" ]]; then
+    if [[ -e "${GATEWAY_ROOT}" ]]; then
+      gateway_root_removed=0
+      teardown_errors+=("private gateway root still exists after shutdown: ${GATEWAY_ROOT}")
+    fi
+    if ps -axo pid=,command= 2>/dev/null | grep -F "${GATEWAY_ROOT}/native" | grep -qv grep; then
+      gateway_host_exited=0
+      teardown_errors+=("detached private native host process still running for ${GATEWAY_ROOT}")
+    fi
+  elif [[ -n "${GATEWAY_PID}" && "${GATEWAY_READY}" -eq 1 ]]; then
+    gateway_root_removed=0
+    gateway_host_exited=0
+    teardown_errors+=("gateway root path was not recorded despite gateway readiness")
+  fi
+
+  # 4. Stop ONLY our owned private Metro process group (never touch a foreign listener on port collision).
   if [[ -n "${METRO_PID}" ]]; then
     stop_owned_group "${METRO_PID}" 80
   fi
 
   # Wait briefly for sockets owned by this smoke to release after process exit.
   local sock_wait=0
-  while (( sock_wait < 50 )) && (port_listening "${SMOKE_GATEWAY_PORT}" || port_listening "${SMOKE_CONTROL_PORT}" || port_listening "${SMOKE_METRO_PORT}"); do
+  while (( sock_wait < 50 )); do
+    local gw_busy=0
+    local ctrl_busy=0
+    local metro_busy=0
+    [[ "${GATEWAY_OWNERSHIP_REFUSED}" -eq 0 ]] && port_listening "${SMOKE_GATEWAY_PORT}" && gw_busy=1
+    [[ "${GATEWAY_OWNERSHIP_REFUSED}" -eq 0 ]] && port_listening "${SMOKE_CONTROL_PORT}" && ctrl_busy=1
+    [[ "${METRO_OWNERSHIP_REFUSED}" -eq 0 ]] && port_listening "${SMOKE_METRO_PORT}" && metro_busy=1
+    if [[ "${gw_busy}" -eq 0 && "${ctrl_busy}" -eq 0 && "${metro_busy}" -eq 0 ]]; then
+      break
+    fi
     sleep 0.1
     sock_wait=$((sock_wait + 1))
   done
@@ -540,10 +766,10 @@ cleanup() {
     fi
   fi
 
-  # 6. Remove private scratch directory (credentials + transient state).
-  rm -rf "${SCRATCH_DIR}"
+  # 6. Capture seal-time Git source identity before deciding whether scratch dir can be removed.
+  capture_git_identity "${AFTER_GIT_FILE}" >/dev/null 2>&1 || true
 
-  # 7. Capture after-state and write smoke-receipt.json.
+  # 7. Capture after-state and remove private scratch dir ONLY if daemon & gateway host teardown completed cleanly.
   capture_state_json "${AFTER_STATE_FILE}" "${SMOKE_SIM_UDID}"
 
   local recipe_alive=0
@@ -557,13 +783,13 @@ cleanup() {
     metro_alive=1
   fi
 
-  local tracked_clean_end=1
-  if [[ -n "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=no)" ]]; then
-    tracked_clean_end=0
-  fi
-  local tracked_clean=0
-  if [[ "${TRACKED_CLEAN_START}" -eq 1 && "${tracked_clean_end}" -eq 1 ]]; then
-    tracked_clean=1
+  local retained_recovery_dir=""
+  if [[ "${agent_device_stopped}" -eq 0 || "${gateway_host_exited}" -eq 0 ]]; then
+    if [[ "${gateway_alive}" -eq 0 ]]; then
+      rm -f "${TOKEN_FILE}"
+    fi
+    retained_recovery_dir="${SCRATCH_DIR}"
+    teardown_errors+=("retained recovery state directory due to incomplete teardown: ${SCRATCH_DIR}")
   fi
 
   local err_joined=""
@@ -572,7 +798,7 @@ cleanup() {
   fi
 
   local final_status="fail"
-  if [[ "${exit_code}" -eq 0 && "${RECIPE_RAN}" -eq 1 && "${RECIPE_EXIT}" -eq 0 ]]; then
+  if [[ "${exit_code}" -eq 0 && "${RECIPE_RAN}" -eq 1 && "${RECIPE_EXIT}" == "0" ]]; then
     final_status="pass"
   fi
 
@@ -583,32 +809,68 @@ cleanup() {
     const [
       beforePath,
       afterPath,
+      beforeGitPath,
+      afterGitPath,
       receiptPath,
       status,
       exitCodeStr,
       recipeExitStr,
       recipePath,
       recipeArtifactsDir,
-      sourceSha,
-      sourceTreeSha,
-      trackedCleanStr,
       srcSimUdid,
       srcSimName,
       ephSimUdid,
       ephSimName,
       recipeAliveStr,
+      agentDeviceStoppedStr,
+      gwStartedStr,
       gwAliveStr,
+      gwExitCodeStr,
+      gwForceKilledStr,
+      gwRootRemovedStr,
+      gwHostExitedStr,
+      gwOwnershipRefusedStr,
       metroAliveStr,
+      metroOwnershipRefusedStr,
+      retainedRecoveryDir,
       exitSignal,
       errText,
     ] = process.argv.slice(1);
     const before = JSON.parse(fs.readFileSync(beforePath, "utf8"));
     const after = JSON.parse(fs.readFileSync(afterPath, "utf8"));
+    const beforeGit = fs.existsSync(beforeGitPath) ? JSON.parse(fs.readFileSync(beforeGitPath, "utf8")) : { ok: false, sourceSha: null, sourceTreeSha: null, trackedClean: false, errors: ["missing before git identity"] };
+    const afterGit = fs.existsSync(afterGitPath) ? JSON.parse(fs.readFileSync(afterGitPath, "utf8")) : { ok: false, sourceSha: null, sourceTreeSha: null, trackedClean: false, errors: ["missing after git identity"] };
     const errors = errText ? errText.split(/\r?\n/).filter(Boolean) : [];
+    const sourceIdentityMatched = Boolean(
+      beforeGit.ok &&
+      afterGit.ok &&
+      beforeGit.sourceSha &&
+      beforeGit.sourceTreeSha &&
+      beforeGit.sourceSha === afterGit.sourceSha &&
+      beforeGit.sourceTreeSha === afterGit.sourceTreeSha,
+    );
+    if (!sourceIdentityMatched) {
+      errors.push(`source identity check failed (before=${beforeGit.sourceSha}/${beforeGit.sourceTreeSha}, after=${afterGit.sourceSha}/${afterGit.sourceTreeSha})`);
+    }
+    const trackedWorkingTreeClean = Boolean(
+      sourceIdentityMatched && beforeGit.trackedClean && afterGit.trackedClean,
+    );
+    const gwStarted = gwStartedStr === "1";
+    const gatewayExitCode = gwExitCodeStr === "" ? null : Number(gwExitCodeStr);
+    const gatewayForceKilled = gwForceKilledStr === "1";
+    const gatewayRootRemoved = gwRootRemovedStr === "1";
+    const gatewayHostExited = gwHostExitedStr === "1";
+    const gatewayOwnershipRefused = gwOwnershipRefusedStr === "1";
+    const metroOwnershipRefused = metroOwnershipRefusedStr === "1";
     const recipeStopped = recipeAliveStr === "0";
-    const gatewayStopped = !after.ports.gateway.listening && gwAliveStr === "0";
-    const controlStopped = !after.ports.control.listening;
-    const metroStopped = !after.ports.metro.listening && metroAliveStr === "0";
+    const agentDeviceStopped = agentDeviceStoppedStr === "1";
+    const gatewayStopped =
+      gwAliveStr === "0" &&
+      (gatewayOwnershipRefused || !after.ports.gateway.listening) &&
+      (!gwStarted || (gatewayExitCode === 0 && !gatewayForceKilled && gatewayRootRemoved && gatewayHostExited));
+    const controlStopped = gatewayOwnershipRefused || !after.ports.control.listening;
+    const metroStopped =
+      metroAliveStr === "0" && (metroOwnershipRefused || !after.ports.metro.listening);
     const ephemeralSimulatorDeleted = ephSimUdid ? after.ephemeralSimulator?.exists === false : true;
     const sourceSimulatorStateMatched = Boolean(
       before.simulator && after.simulator && before.simulator.state === after.simulator.state,
@@ -623,6 +885,7 @@ cleanup() {
     );
     const clean =
       recipeStopped &&
+      agentDeviceStopped &&
       gatewayStopped &&
       controlStopped &&
       metroStopped &&
@@ -630,16 +893,23 @@ cleanup() {
       sourceSimulatorStateMatched &&
       sourceSimulatorAppPrefsMatched &&
       preExistingListenersPreserved &&
+      sourceIdentityMatched &&
       errors.length === 0;
     const summaryPath = path.join(recipeArtifactsDir, "summary.json");
     const receipt = {
       status: status === "pass" && clean ? "pass" : "fail",
       exitCode: Number(exitCodeStr),
-      recipeExitCode: Number(recipeExitStr),
+      recipeExitCode: recipeExitStr === "" ? null : Number(recipeExitStr),
       exitSignal: exitSignal || null,
-      sourceSha,
-      sourceTreeSha,
-      trackedWorkingTreeClean: trackedCleanStr === "1",
+      sourceSha: beforeGit.sourceSha,
+      sourceTreeSha: beforeGit.sourceTreeSha,
+      sourceShaAfter: afterGit.sourceSha,
+      sourceTreeShaAfter: afterGit.sourceTreeSha,
+      sourceIdentityMatched,
+      trackedWorkingTreeClean,
+      gatewayOwnershipRefused,
+      metroOwnershipRefused,
+      retainedRecoveryDir: retainedRecoveryDir || null,
       recipe: recipePath,
       recipeArtifactsDir,
       recipeSummaryPath: fs.existsSync(summaryPath) ? summaryPath : null,
@@ -669,20 +939,58 @@ cleanup() {
       teardown: {
         clean,
         recipeStopped,
+        agentDeviceStopped,
         gatewayStopped,
+        gatewayExitCode,
+        gatewayForceKilled,
+        gatewayRootRemoved,
+        gatewayHostExited,
         controlStopped,
         metroStopped,
         ephemeralSimulatorDeleted,
         sourceSimulatorStateMatched,
         sourceSimulatorAppPrefsMatched,
         preExistingListenersPreserved,
+        sourceIdentityMatched,
         errors,
       },
     };
     fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
     process.stdout.write(JSON.stringify({ receipt: receiptPath, status: receipt.status, teardown: receipt.teardown }) + "\n");
     if (!clean) process.exit(2);
-  ' "${BEFORE_STATE_FILE}" "${AFTER_STATE_FILE}" "${RECEIPT_FILE}" "${final_status}" "${exit_code}" "${RECIPE_EXIT}" "${RECIPE_ABS}" "${RECIPE_ARTIFACTS_DIR}" "${SOURCE_SHA}" "${SOURCE_TREE_SHA}" "${tracked_clean}" "${SRC_SIM_UDID}" "${SRC_SIM_NAME}" "${SMOKE_SIM_UDID}" "${SMOKE_SIM_NAME}" "${recipe_alive}" "${gateway_alive}" "${metro_alive}" "${EXIT_SIGNAL}" "${err_joined}" && teardown_ok=1
+  ' \
+    "${BEFORE_STATE_FILE}" \
+    "${AFTER_STATE_FILE}" \
+    "${BEFORE_GIT_FILE}" \
+    "${AFTER_GIT_FILE}" \
+    "${RECEIPT_FILE}" \
+    "${final_status}" \
+    "${exit_code}" \
+    "${RECIPE_EXIT}" \
+    "${RECIPE_ABS}" \
+    "${RECIPE_ARTIFACTS_DIR}" \
+    "${SRC_SIM_UDID}" \
+    "${SRC_SIM_NAME}" \
+    "${SMOKE_SIM_UDID}" \
+    "${SMOKE_SIM_NAME}" \
+    "${recipe_alive}" \
+    "${agent_device_stopped}" \
+    "$([[ -n "${GATEWAY_PID}" ]] && echo 1 || echo 0)" \
+    "${gateway_alive}" \
+    "${GATEWAY_EXIT_CODE}" \
+    "${GATEWAY_FORCE_KILLED}" \
+    "${gateway_root_removed}" \
+    "${gateway_host_exited}" \
+    "${GATEWAY_OWNERSHIP_REFUSED}" \
+    "${metro_alive}" \
+    "${METRO_OWNERSHIP_REFUSED}" \
+    "${retained_recovery_dir}" \
+    "${EXIT_SIGNAL}" \
+    "${err_joined}" && teardown_ok=1
+
+  if [[ -z "${retained_recovery_dir}" ]]; then
+    rm -rf "${SCRATCH_DIR}"
+  fi
 
   if [[ "${exit_code}" -ne 0 ]]; then
     exit "${exit_code}"
@@ -721,9 +1029,11 @@ echo "[companion-ios-smoke] starting isolated gateway :${SMOKE_GATEWAY_PORT} (co
 GATEWAY_PID=$!
 
 gw_waited=0
-gw_ready=0
 while (( gw_waited < GATEWAY_READY_TIMEOUT_SECS * 5 )); do
   if ! pid_alive "${GATEWAY_PID}"; then
+    if port_listening "${SMOKE_GATEWAY_PORT}" || port_listening "${SMOKE_CONTROL_PORT}"; then
+      GATEWAY_OWNERSHIP_REFUSED=1
+    fi
     echo "ERROR: isolated gateway exited during startup:" >&2
     cat "${GATEWAY_LOG}" >&2 || true
     exit 1
@@ -733,13 +1043,25 @@ while (( gw_waited < GATEWAY_READY_TIMEOUT_SECS * 5 )); do
     && port_owned_by_pid "${SMOKE_CONTROL_PORT}" "${GATEWAY_PID}" \
     && curl -sf "http://127.0.0.1:${SMOKE_GATEWAY_PORT}/health" >/dev/null 2>&1 \
     && grep -q '"ready":true' "${GATEWAY_LOG}" 2>/dev/null; then
-    gw_ready=1
+    GATEWAY_ROOT="$(node -e 'const fs=require("node:fs"); for (const line of fs.readFileSync(process.argv[1],"utf8").split(/\r?\n/)) { if (!line.includes("\"ready\":true")) continue; try { const j=JSON.parse(line); if (j.ready===true && typeof j.root==="string" && j.root) { process.stdout.write(j.root); process.exit(0); } } catch {} } process.exit(1);' "${GATEWAY_LOG}" 2>/dev/null || true)"
+    if [[ -z "${GATEWAY_ROOT}" ]]; then
+      echo "ERROR: isolated gateway ready output missing private root path:" >&2
+      cat "${GATEWAY_LOG}" >&2 || true
+      exit 1
+    fi
+    GATEWAY_READY=1
     break
   fi
   sleep 0.2
   gw_waited=$((gw_waited + 1))
 done
-if [[ "${gw_ready}" -ne 1 ]]; then
+if [[ "${GATEWAY_READY}" -ne 1 ]]; then
+  if port_listening "${SMOKE_GATEWAY_PORT}" && ! port_owned_by_pid "${SMOKE_GATEWAY_PORT}" "${GATEWAY_PID}"; then
+    GATEWAY_OWNERSHIP_REFUSED=1
+  fi
+  if port_listening "${SMOKE_CONTROL_PORT}" && ! port_owned_by_pid "${SMOKE_CONTROL_PORT}" "${GATEWAY_PID}"; then
+    GATEWAY_OWNERSHIP_REFUSED=1
+  fi
   echo "ERROR: isolated gateway (PID ${GATEWAY_PID}) did not bind owned ports :${SMOKE_GATEWAY_PORT}/:${SMOKE_CONTROL_PORT} within ${GATEWAY_READY_TIMEOUT_SECS}s:" >&2
   cat "${GATEWAY_LOG}" >&2 || true
   exit 1
@@ -762,20 +1084,31 @@ echo "[companion-ios-smoke] starting isolated Metro :${SMOKE_METRO_PORT}"
 METRO_PID=$!
 
 metro_waited=0
+metro_ready=0
 while (( metro_waited < METRO_READY_TIMEOUT_SECS * 2 )); do
+  if port_has_foreign_listener "${SMOKE_METRO_PORT}" "${METRO_PID}"; then
+    METRO_OWNERSHIP_REFUSED=1
+    echo "ERROR: Metro port :${SMOKE_METRO_PORT} is owned by a foreign listener outside Metro PGID ${METRO_PID}; refusing to hand foreign listener to simulator." >&2
+    exit 1
+  fi
   if ! pid_alive "${METRO_PID}"; then
     echo "ERROR: isolated Metro exited during startup:" >&2
     tail -n 40 "${METRO_LOG}" >&2 || true
     exit 1
   fi
-  if curl -sf "http://127.0.0.1:${SMOKE_METRO_PORT}/status" 2>/dev/null | grep -q "packager-status:running"; then
+  if port_owned_by_pgid "${SMOKE_METRO_PORT}" "${METRO_PID}" \
+    && curl -sf "http://127.0.0.1:${SMOKE_METRO_PORT}/status" 2>/dev/null | grep -q "packager-status:running"; then
+    metro_ready=1
     break
   fi
   sleep 0.5
   metro_waited=$((metro_waited + 1))
 done
-if ! curl -sf "http://127.0.0.1:${SMOKE_METRO_PORT}/status" 2>/dev/null | grep -q "packager-status:running"; then
-  echo "ERROR: isolated Metro did not become ready on :${SMOKE_METRO_PORT} within ${METRO_READY_TIMEOUT_SECS}s:" >&2
+if [[ "${metro_ready}" -ne 1 ]]; then
+  if port_has_foreign_listener "${SMOKE_METRO_PORT}" "${METRO_PID}"; then
+    METRO_OWNERSHIP_REFUSED=1
+  fi
+  echo "ERROR: isolated Metro (PGID ${METRO_PID}) did not bind owned port :${SMOKE_METRO_PORT} within ${METRO_READY_TIMEOUT_SECS}s:" >&2
   tail -n 40 "${METRO_LOG}" >&2 || true
   exit 1
 fi
@@ -822,7 +1155,7 @@ fi
 
 echo "[companion-ios-smoke] running recipe ${RECIPE_ABS}"
 RECIPE_RAN=1
-set +e
+RECIPE_EXIT=0
 run_interruptible_group recipe env \
   -u FARMSLOT_SLOT_ID \
   -u RECIPE_TASK_DIR \
@@ -844,8 +1177,7 @@ run_interruptible_group recipe env \
   bash -c 'cd "$1" && shift && exec bash "$@"' _ "${APP_DIR}" "${SCRIPT_DIR}/run-recipe.sh" run "${RECIPE_ABS}" \
     --artifacts-dir "${RECIPE_ARTIFACTS_DIR}" \
     --record-video=off \
-    "--recording-reason=Companion iOS live smoke retains per-step simulator screenshots and protocol receipts."
-RECIPE_EXIT=$?
-set -e
+    "--recording-reason=Companion iOS live smoke retains per-step simulator screenshots and protocol receipts." \
+  || RECIPE_EXIT=$?
 
 exit "${RECIPE_EXIT}"
