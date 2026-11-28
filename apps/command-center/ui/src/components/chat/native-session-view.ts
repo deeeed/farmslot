@@ -136,13 +136,27 @@ type LocalCommand = {
   text: string;
 };
 
+type ApprovalPolicy = Pick<NativeSessionInfo, 'approvalMode' | 'approvalModePending'>;
+
+function sameApprovalPolicy(left: ApprovalPolicy, right: ApprovalPolicy): boolean {
+  return (
+    left.approvalMode === right.approvalMode &&
+    left.approvalModePending === right.approvalModePending
+  );
+}
+
+interface ApprovalReplayCheck {
+  subscriptionId: string;
+  session: NativeSessionInfo;
+}
+
 interface ApprovalAcknowledgement {
   revision: number;
   subscriptionId?: string;
   observed?: NativeSessionInfo;
   confirmed: NativeSessionInfo;
   refreshRequested?: boolean;
-  checkedSubscriptionId?: string;
+  checkedReplay?: ApprovalReplayCheck;
 }
 
 /** Static preview reads that dev harnesses inject in place of the shared resource cache. */
@@ -703,9 +717,15 @@ export class NativeSessionView extends LitElement {
     // Another viewer can keep the original gateway journal open. A replacement viewer
     // that disagrees with the acknowledgement needs independent host verification.
     if (subscriptionId !== approval.subscriptionId) {
-      if (session.approvalModePending || approval.checkedSubscriptionId === subscriptionId) return;
-      approval.checkedSubscriptionId = subscriptionId;
-      void this.reconcileApprovalHistory(approval, subscriptionId, session, conversations, target);
+      const checked = approval.checkedReplay;
+      if (
+        checked?.subscriptionId === subscriptionId &&
+        sameApprovalPolicy(checked.session, session)
+      )
+        return;
+      const check = { subscriptionId, session };
+      approval.checkedReplay = check;
+      void this.reconcileApprovalHistory(approval, check, conversations, target);
       return;
     }
     if (approval.refreshRequested) return;
@@ -725,27 +745,24 @@ export class NativeSessionView extends LitElement {
 
   private async reconcileApprovalHistory(
     approval: ApprovalAcknowledgement,
-    subscriptionId: string,
-    replay: NativeSessionInfo,
+    check: ApprovalReplayCheck,
     conversations: NativeConversationCache,
     target: NativeSessionTargetParams,
   ) {
+    const { subscriptionId, session: replay } = check;
     const replayIsCurrent = () =>
       this.isConnected &&
       this.currentApprovalAcknowledgement === approval &&
+      approval.checkedReplay === check &&
       this.historyCurrent &&
       this.historyObservation.subscriptionId === subscriptionId &&
       this.session?.generation === replay.generation &&
       this.session.ownerPrincipalId === replay.ownerPrincipalId &&
-      this.session.approvalMode === replay.approvalMode &&
-      !this.session.approvalModePending;
+      sameApprovalPolicy(this.session, replay);
     try {
       const host = await conversations.readSessionFromHost(target);
-      if (
-        replayIsCurrent() &&
-        !host.approvalModePending &&
-        host.approvalMode === replay.approvalMode
-      ) {
+      // A verified pending change still fences Send and can now be retried explicitly.
+      if (replayIsCurrent() && sameApprovalPolicy(host, replay)) {
         this.approvalAcknowledgement = undefined;
         this.requestUpdate();
       }

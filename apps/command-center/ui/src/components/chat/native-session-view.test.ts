@@ -1303,6 +1303,61 @@ test('a replacement viewer on a shared stream cannot enable Send using a lagging
   }
 });
 
+test('a coalesced pending approval exposes Retry after host verification', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  const pending = { ...ask, approvalModePending: 'bypass' } as const;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  const retrySelector = /data-testid="native-approval-retry"\s*\?disabled=$/;
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await changing;
+    assert.equal(sendDisabled(), false);
+
+    // A second viewer tried Bypass and the runner rejected it. The stream skipped
+    // the settled Ask frame and published the host's persistent Bypass intent.
+    proof.publish(pending);
+    assert.equal(sendDisabled(), true);
+    await Promise.resolve();
+    assert.equal(proof.retry.mock.callCount(), 1);
+
+    proof.readSessionFromHost.mock.mockImplementationOnce(async () => pending);
+    proof.publish({ ...bypass }, 'replacement-viewer');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(sendDisabled(), true, 'a differing replay remains fenced');
+    proof.publish({ ...pending }, 'replacement-viewer');
+    assert.equal(sendDisabled(), true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(
+      litBinding(proof.view.render(), retrySelector),
+      false,
+      'a host-verified pending policy has an enabled Retry button',
+    );
+    assert.equal(proof.readSessionFromHost.mock.callCount(), 2);
+    assert.equal(proof.composerDisabled(), true);
+    assert.equal(
+      sendDisabled(),
+      true,
+      'host confirmation of the pending intent cannot enable Send',
+    );
+
+    const retrying = proof.change('bypass');
+    assert.equal(proof.requestedMode(), 'bypass');
+    assert.equal(litBinding(proof.view.render(), retrySelector), true);
+    proof.acknowledge(bypass);
+    await retrying;
+    proof.publish({ ...bypass }, 'replacement-viewer');
+    assert.equal(sendDisabled(), false);
+  } finally {
+    proof.disconnect();
+  }
+});
+
 test('a streamed delta computes rows once per render and re-renders only its own message', () => {
   const snapshot = page(receipt(true));
   snapshot.session.state = 'running';
