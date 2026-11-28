@@ -1,0 +1,1 @@
+- Keep native session reads bounded as the command journal grows.

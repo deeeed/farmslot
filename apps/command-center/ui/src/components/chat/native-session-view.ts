@@ -136,6 +136,30 @@ type LocalCommand = {
   text: string;
 };
 
+type ApprovalPolicy = Pick<NativeSessionInfo, 'approvalMode' | 'approvalModePending'>;
+
+function sameApprovalPolicy(left: ApprovalPolicy, right: ApprovalPolicy): boolean {
+  return (
+    left.approvalMode === right.approvalMode &&
+    left.approvalModePending === right.approvalModePending
+  );
+}
+
+interface ApprovalReplayCheck {
+  subscriptionId: string;
+  session: NativeSessionInfo;
+  error?: string;
+}
+
+interface ApprovalAcknowledgement {
+  revision: number;
+  subscriptionId?: string;
+  observed?: NativeSessionInfo;
+  confirmed: NativeSessionInfo;
+  refreshRequested?: boolean;
+  checkedReplay?: ApprovalReplayCheck;
+}
+
 /** Static preview reads that dev harnesses inject in place of the shared resource cache. */
 export interface NativeSessionFixture {
   catalog(): Promise<NativeSessionCatalogResult>;
@@ -339,6 +363,7 @@ export class NativeSessionView extends LitElement {
   @state() private historyObservation: NativeConversationState = {
     status: 'loading',
   };
+  private approvalAcknowledgement?: ApprovalAcknowledgement;
   private timelineEvents?: NativeSessionEvent[];
   private timelineEntries: ReturnType<typeof nativeTimeline> = [];
   /** Expanded message/command and tool keys, shared with the URL display-choice owner. */
@@ -572,15 +597,22 @@ export class NativeSessionView extends LitElement {
   }
 
   private get inputAllowed() {
+    const approval = this.currentApprovalAcknowledgement;
     return (
       this.historyCurrent &&
       !this.session?.approvalModePending &&
+      (!approval || this.session === approval.confirmed) &&
       (!this.worker || Boolean(this.workerControl))
     );
   }
 
+  private get currentApprovalAcknowledgement() {
+    const approval = this.approvalAcknowledgement;
+    return approval?.revision === this.revision ? approval : undefined;
+  }
+
   private get historyCurrent() {
-    if (this.fixture) return this.caughtUp;
+    if (this.fixture && !this.fixture.conversations) return this.caughtUp;
     const state = this.historyObservation;
     return (
       nativeHistoryCanAct(state, this.historyObservation.data, this.connected) &&
@@ -608,9 +640,31 @@ export class NativeSessionView extends LitElement {
     const changed = (state: NativeConversationState) => {
       if (!this.isConnected || revision !== this.revision) return;
       const before = this.timeline().length;
-      this.historyObservation = state;
       const page = state.data;
-      this.session = page?.session;
+      const approval = this.currentApprovalAcknowledgement;
+      if (
+        page &&
+        approval &&
+        state.subscriptionId === approval.subscriptionId &&
+        page.session === approval.observed
+      ) {
+        this.session = approval.confirmed;
+        this.historyObservation = { ...state, data: { ...page, session: approval.confirmed } };
+      } else {
+        // Keep Send fenced across stale or conflicting observations. A same-subscription
+        // frame can be delayed or can skip the confirmed policy during metadata batching.
+        if (
+          !approval ||
+          (page &&
+            (page.session.generation !== approval.confirmed.generation ||
+              (state.status === 'ready' &&
+                !page.session.approvalModePending &&
+                page.session.approvalMode === approval.confirmed.approvalMode)))
+        )
+          this.approvalAcknowledgement = undefined;
+        this.historyObservation = state;
+        this.session = page?.session;
+      }
       this.transcript = { events: page?.events ?? [], cursor: page?.cursor ?? 0 };
       this.historyScope = page?.scope;
       this.receipts = page?.commands ?? [];
@@ -638,10 +692,91 @@ export class NativeSessionView extends LitElement {
           this.releaseLocalCommand(receipt);
       }
       this.followTimeline(before);
+      this.refreshConflictingApprovalHistory();
     };
     this.historyStop = conversations
       ? observeNativeConversation({ conversations }, target, changed)
       : observeNativeConversationResource(target, changed);
+  }
+
+  private refreshConflictingApprovalHistory() {
+    const approval = this.currentApprovalAcknowledgement;
+    const session = this.session;
+    const subscriptionId = this.historyObservation.subscriptionId;
+    if (
+      !approval ||
+      !session ||
+      !subscriptionId ||
+      !this.historyCurrent ||
+      session === approval.confirmed
+    )
+      return;
+    const target = this.historyTarget;
+    const conversations = this.fixture?.conversations ?? getResourceCache()?.conversations;
+    if (!target || !conversations) return;
+
+    // Another viewer can keep the original gateway journal open. A replacement viewer
+    // that disagrees with the acknowledgement needs independent host verification.
+    if (subscriptionId !== approval.subscriptionId) {
+      const checked = approval.checkedReplay;
+      if (
+        checked?.subscriptionId === subscriptionId &&
+        sameApprovalPolicy(checked.session, session)
+      ) {
+        if (!this.pollError && checked.error) this.pollError = checked.error;
+        return;
+      }
+      const check = { subscriptionId, session };
+      approval.checkedReplay = check;
+      void this.reconcileApprovalHistory(approval, check, conversations, target);
+      return;
+    }
+    if (approval.refreshRequested) return;
+    approval.refreshRequested = true;
+    // Retry notifies observers while detaching. Let the current notification finish first.
+    queueMicrotask(() => {
+      if (!this.isConnected || this.currentApprovalAcknowledgement !== approval) return;
+      if (
+        this.historyCurrent &&
+        this.historyObservation.subscriptionId === subscriptionId &&
+        this.session !== approval.confirmed
+      )
+        conversations.retry(target);
+      else approval.refreshRequested = false;
+    });
+  }
+
+  private async reconcileApprovalHistory(
+    approval: ApprovalAcknowledgement,
+    check: ApprovalReplayCheck,
+    conversations: NativeConversationCache,
+    target: NativeSessionTargetParams,
+  ) {
+    const { subscriptionId, session: replay } = check;
+    const replayIsCurrent = () =>
+      this.isConnected &&
+      this.currentApprovalAcknowledgement === approval &&
+      approval.checkedReplay === check &&
+      this.historyCurrent &&
+      this.historyObservation.subscriptionId === subscriptionId &&
+      this.session?.generation === replay.generation &&
+      this.session.ownerPrincipalId === replay.ownerPrincipalId &&
+      sameApprovalPolicy(this.session, replay);
+    try {
+      const host = await conversations.readSessionFromHost(target);
+      // A verified pending change still fences Send and can now be retried explicitly.
+      if (replayIsCurrent() && sameApprovalPolicy(host, replay)) {
+        this.approvalAcknowledgement = undefined;
+        this.requestUpdate();
+      }
+    } catch (error) {
+      // The stream can still settle the acknowledgement. The history Retry button
+      // can also attach a new viewer and check the returned policy again.
+      if (replayIsCurrent()) {
+        check.error = error instanceof Error ? error.message : String(error);
+        this.pollError = check.error;
+      }
+    }
   }
 
   /** Releases the sent message; one the host failed without submitting goes back to the composer. */
@@ -1526,21 +1661,88 @@ ${JSON.stringify(
     this.schedule(0);
   }
 
+  private get canChangeApprovalMode() {
+    // Wait for the ordered stream before issuing a second mutation. The RPC and stream
+    // have no common approval revision that could order two overlapping confirmations.
+    return (
+      !this.busy &&
+      this.historyCurrent &&
+      this.session?.state === 'idle' &&
+      !this.currentApprovalAcknowledgement
+    );
+  }
+
   private async setApprovalMode(approvalMode: NativeApprovalMode) {
     const session = this.session;
-    if (!session || this.worker || this.busy || !this.historyCurrent || session.state !== 'idle')
-      return;
+    if (!session || this.worker || !this.canChangeApprovalMode) return;
     this.busy = true;
     this.error = '';
     const revision = this.revision;
+    const subscriptionId = this.historyObservation.subscriptionId;
     try {
       const result = await this.api.request<{ session: NativeSessionInfo }>(
         Methods.NATIVE_SESSION_SET_APPROVAL_MODE,
         { sessionId: session.id, executionNodeId: session.executionNodeId, approvalMode },
       );
       if (revision !== this.revision) return;
-      this.session = result.session;
-      this.schedule(0);
+      if (this.fixture && !this.fixture.conversations) {
+        this.session = result.session;
+        this.schedule(0);
+        return;
+      }
+      const current = this.session;
+      const history = this.historyObservation.data;
+      const confirmed = result.session;
+      if (
+        confirmed.state !== 'idle' ||
+        session.id !== confirmed.id ||
+        session.executionNodeId !== confirmed.executionNodeId ||
+        session.generation !== confirmed.generation ||
+        (current && current.generation !== confirmed.generation)
+      )
+        return;
+
+      const currentHistory = this.historyCurrent && history;
+      const currentSubscriptionId = this.historyObservation.subscriptionId;
+      if (
+        currentHistory &&
+        current &&
+        !current.approvalModePending &&
+        current.approvalMode === confirmed.approvalMode
+      )
+        return;
+      if (
+        !currentHistory ||
+        current?.state !== 'idle' ||
+        currentSubscriptionId !== subscriptionId ||
+        (current !== session && current.approvalModePending !== approvalMode)
+      ) {
+        this.approvalAcknowledgement = {
+          revision,
+          subscriptionId,
+          confirmed,
+        };
+        this.refreshConflictingApprovalHistory();
+        return;
+      }
+
+      // Keep the rendered history coherent until the active stream delivers the confirmation.
+      const updated = {
+        ...current,
+        approvalMode: confirmed.approvalMode,
+        approvalModePending: confirmed.approvalModePending,
+      };
+      this.approvalAcknowledgement = {
+        revision,
+        subscriptionId,
+        observed: current,
+        confirmed: updated,
+      };
+      this.historyObservation = {
+        ...this.historyObservation,
+        data: { ...currentHistory, session: updated },
+      };
+      this.session = updated;
     } catch (error) {
       if (revision === this.revision) this.error = (error as Error).message;
     } finally {
@@ -1559,11 +1761,9 @@ ${JSON.stringify(
           overlay
           data-testid="native-approval-mode"
           .value=${live(selected)}
-          ?disabled=${this.busy ||
-          (session &&
-            (!this.historyCurrent ||
-              session.state !== 'idle' ||
-              !session.capabilities.approvalModes))}
+          ?disabled=${session
+            ? !this.canChangeApprovalMode || !session.capabilities.approvalModes
+            : this.busy}
           @change=${(event: Event) => {
             const mode: NativeApprovalMode =
               (event.target as HTMLElement & { value: string }).value === 'bypass'
@@ -1580,11 +1780,11 @@ ${JSON.stringify(
           <option value="bypass">Bypass / yolo</option>
         </choice-picker></label
       >
-      ${session && pending
+      ${session && pending && !this.currentApprovalAcknowledgement
         ? html`<span class="meta">Approval change unconfirmed. Retry before sending.</span>
             <button
               data-testid="native-approval-retry"
-              ?disabled=${this.busy || !this.historyCurrent || session.state !== 'idle'}
+              ?disabled=${!this.canChangeApprovalMode}
               @click=${() => void this.setApprovalMode(pending)}
             >
               Retry approval change
@@ -2116,7 +2316,9 @@ ${JSON.stringify(
         session,
         connected: this.connected,
         caughtUp: this.caughtUp,
-        refreshingHistory: isSupersededRead(this.historyObservation.error),
+        refreshingHistory:
+          isSupersededRead(this.historyObservation.error) ||
+          Boolean(this.currentApprovalAcknowledgement),
         work: this.work(),
         busy: this.busy,
         workspace: this.workspace,

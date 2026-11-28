@@ -3,6 +3,7 @@ import { mock, test } from 'node:test';
 
 import {
   Methods,
+  type NativeApprovalMode,
   type NativeCommandReceipt,
   type NativeSessionCatalogResult,
   type NativeSessionEvent,
@@ -12,6 +13,8 @@ import {
   createGatewayResourceCache,
   createMemoryResourceStore,
   type GatewayResourceCache,
+  type NativeConversationCache,
+  type NativeConversationState,
   nativeObservationQuery,
   type NativeTimelineRow,
 } from '@farmslot/protocol/client-cache';
@@ -21,6 +24,10 @@ import { ResourceCacheConformanceTransport } from '../../../../../../packages/pr
 import { GatewayRequestTimeoutError } from '../../gateway-request-timeout.js';
 import { litBinding, litBindings, litText } from '../../testing/lit-text.js';
 
+import {
+  type NativeReadStatusRowContext,
+  renderNativeReadStatus,
+} from './native-read-status-view.js';
 import type { NativeSessionFixture } from './native-session-view.js';
 import type { NativeSessionApi } from './native-workspace.js';
 
@@ -924,6 +931,497 @@ test('an unconfirmed approval mode has an explicit retry for that same selection
       },
     },
   ]);
+});
+
+function approvalComposer(initialMode: NativeApprovalMode) {
+  const snapshot = page(receipt(false));
+  snapshot.session.state = 'idle';
+  snapshot.session.approvalMode = initialMode;
+  snapshot.session.capabilities.approvalModes = ['ask', 'bypass'];
+  const streamCursor = {
+    sessionId: snapshot.session.id,
+    executionNodeId: snapshot.session.executionNodeId,
+    generation: snapshot.session.generation,
+    hostGeneration: 'host',
+    sequence: 0,
+  };
+  let state: NativeConversationState = {
+    status: 'ready',
+    conversation: streamCursor,
+    subscriptionId: 'original-subscription',
+    data: {
+      ...snapshot,
+      historyBefore: 0,
+      truncated: false,
+      streamCursor,
+      historyRead: { pageReadCount: 0, pageAfters: [] },
+      retainedBytes: 0,
+    },
+  };
+  let changed: ((value: NativeConversationState) => void) | undefined;
+  const retry = mock.fn<NativeConversationCache['retry']>();
+  const readSessionFromHost = mock.fn(async () => {
+    assert(state.data);
+    return state.data.session;
+  });
+  const conversations: NativeConversationCache = {
+    observe(_target, listener) {
+      changed = listener;
+      listener(state);
+      return () => {
+        changed = undefined;
+      };
+    },
+    read: () => state,
+    readSessionFromHost,
+    readPage: async () => undefined,
+    dismissHistory: () => undefined,
+    retry,
+  };
+  const publish = (
+    session: NativeSessionReadResult['session'],
+    subscriptionId = state.subscriptionId,
+  ) => {
+    assert(state.data);
+    state = { ...state, subscriptionId, data: { ...state.data, session } };
+    changed?.(state);
+  };
+  let request:
+    | {
+        mode: NativeApprovalMode;
+        acknowledge: (session: NativeSessionReadResult['session']) => void;
+      }
+    | undefined;
+  const view = new NativeSessionView();
+  Object.defineProperty(view, 'isConnected', { value: true });
+  Object.assign(view, {
+    connected: true,
+    followTimeline: () => undefined,
+    selectedId: snapshot.session.id,
+    selectedNodeId: snapshot.session.executionNodeId,
+    fixture: {
+      catalog: async () => ({ runners: [], contexts: [] }),
+      list: async () => ({ sessions: [] }),
+      read: async () => snapshot,
+      conversations,
+    } satisfies NativeSessionFixture,
+    api: {
+      async request<T>(
+        method: Parameters<NativeSessionApi['request']>[0],
+        params: { approvalMode: NativeApprovalMode },
+      ): Promise<T> {
+        assert.equal(method, Methods.NATIVE_SESSION_SET_APPROVAL_MODE);
+        assert.equal(request, undefined, 'the preceding RPC has settled');
+        const session = await new Promise<NativeSessionReadResult['session']>((acknowledge) => {
+          request = { mode: params.approvalMode, acknowledge };
+        });
+        request = undefined;
+        return { session } as T;
+      },
+    } satisfies NativeSessionApi,
+  });
+  Reflect.get(view, 'observeHistory').call(view);
+  return {
+    view,
+    snapshot,
+    conversations,
+    publish,
+    retry,
+    readSessionFromHost,
+    observe: (overrides: Partial<NativeConversationState>) => changed?.({ ...state, ...overrides }),
+    observedSession: () => state.data?.session,
+    change: (mode: NativeApprovalMode): Promise<void> =>
+      Reflect.get(view, 'setApprovalMode').call(view, mode),
+    requestedMode: () => request?.mode,
+    acknowledge: (session: NativeSessionReadResult['session']) => {
+      assert(request);
+      assert.equal(request.mode, session.approvalMode);
+      request.acknowledge(session);
+    },
+    composerDisabled: () =>
+      litBinding(view.render(), /data-testid="native-message"\s*\?disabled=$/),
+    disconnect: () => Reflect.get(view, 'historyStop')?.(),
+  };
+}
+
+test('the native message composer is ready when approvals are acknowledged before history refreshes', async () => {
+  const {
+    view,
+    snapshot,
+    publish,
+    observe,
+    observedSession,
+    change,
+    acknowledge,
+    composerDisabled,
+    disconnect,
+  } = approvalComposer('ask');
+  const pending = { ...snapshot.session, approvalModePending: 'bypass' } as const;
+  const confirmed = { ...snapshot.session, approvalMode: 'bypass' } as const;
+  try {
+    assert.equal(composerDisabled(), false);
+    const changing = change('bypass');
+    publish(pending);
+    assert.equal(composerDisabled(), true, 'disabled while the policy is pending');
+    acknowledge(confirmed);
+    await changing;
+    assert.equal(observedSession(), pending, 'the stream has not confirmed the change yet');
+    assert.equal(composerDisabled(), false, 'enabled immediately after the mutation');
+
+    observe({ history: { after: 0, loading: true } });
+    assert.equal(composerDisabled(), false, 'enabled when the saved page starts loading');
+    observe({ history: { after: 0, loading: false, page: snapshot } });
+    assert.equal(composerDisabled(), false, 'enabled when the saved page arrives');
+    observe({ status: 'stale' });
+    assert.equal(composerDisabled(), true, 'disabled for stale history even before confirmation');
+    observe({});
+    assert.equal(
+      composerDisabled(),
+      false,
+      'enabled when the saved page closes on current history',
+    );
+
+    publish({ ...confirmed });
+    assert.equal(composerDisabled(), false, 'enabled after the history refresh');
+    publish({ ...confirmed, approvalModePending: 'ask' });
+    assert.equal(composerDisabled(), true, 'disabled for a newer pending policy');
+    publish({ ...confirmed });
+    Reflect.set(view, 'connected', false);
+    assert.equal(composerDisabled(), true, 'disabled after disconnect');
+  } finally {
+    disconnect();
+  }
+});
+
+test('a delayed approval confirmation cannot expose Send under an older policy', async () => {
+  const proof = approvalComposer('bypass');
+  const ask = { ...proof.snapshot.session, approvalMode: 'ask' } as const;
+  const bypass = { ...ask, approvalMode: 'bypass' } as const;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  const pickerDisabled = () =>
+    litBinding(
+      Reflect.get(proof.view, 'renderApprovalMode').call(
+        proof.view,
+        Reflect.get(proof.view, 'session'),
+      ),
+      '?disabled=',
+    );
+  const visiblePolicy = () => Reflect.get(proof.view, 'session').approvalMode;
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  try {
+    const first = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await first;
+    assert.equal(visiblePolicy(), 'ask');
+    assert.equal(sendDisabled(), false);
+    const pickerWaiting = pickerDisabled();
+
+    let second = proof.change('bypass');
+    if (proof.requestedMode() === 'bypass') {
+      // On the old view, the second RPC is accepted before history confirms the first.
+      proof.acknowledge(bypass);
+      await second;
+      proof.publish({ ...ask });
+      assert.ok(
+        sendDisabled() === true || visiblePolicy() === 'bypass',
+        'the delayed Ask confirmation cannot expose Send when the host has acknowledged Bypass',
+      );
+    }
+    await second;
+    assert.equal(
+      pickerWaiting,
+      true,
+      'wait for the first history confirmation before changing again',
+    );
+    assert.equal(proof.requestedMode(), undefined);
+    proof.publish({ ...ask });
+    assert.equal(pickerDisabled(), false);
+
+    second = proof.change('bypass');
+    proof.publish({ ...ask, approvalModePending: 'bypass' });
+    assert.equal(sendDisabled(), true);
+    proof.acknowledge(bypass);
+    await second;
+    assert.equal(visiblePolicy(), 'bypass');
+    assert.equal(sendDisabled(), false);
+
+    proof.publish({ ...ask });
+    assert.equal(
+      sendDisabled(),
+      true,
+      'Send stays disabled if the same-generation stream disagrees',
+    );
+    assert.equal(pickerDisabled(), true);
+    proof.publish({ ...bypass });
+    assert.equal(visiblePolicy(), 'bypass');
+    assert.equal(sendDisabled(), false);
+    assert.equal(pickerDisabled(), false);
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('fresh history restores the composer when it skips an acknowledged approval mode', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await changing;
+    assert.equal(sendDisabled(), false);
+
+    // An older frame on the original stream cannot supersede the acknowledgement.
+    proof.publish({ ...bypass });
+    assert.equal(sendDisabled(), true);
+
+    // Rebinding an observer does not replace the cache's active subscription.
+    proof.observe({
+      status: 'loading',
+      data: undefined,
+      conversation: undefined,
+      subscriptionId: undefined,
+    });
+    proof.publish({ ...bypass });
+    assert.equal(sendDisabled(), true);
+
+    // The cache removes conversation authority before reattaching. The new subscription
+    // can replay the latest policy in the same generation with the same event cursor.
+    proof.observe({ status: 'stale', conversation: undefined, subscriptionId: undefined });
+    assert.equal(sendDisabled(), true);
+    proof.publish({ ...bypass }, 'fresh-subscription');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(proof.composerDisabled(), false, 'fresh history restores the composer');
+    assert.equal(sendDisabled(), false, 'Send uses the superseding policy');
+    assert.equal(Reflect.get(proof.view, 'session').approvalMode, 'bypass');
+
+    const next = proof.change('ask');
+    assert.equal(proof.requestedMode(), 'ask', 'fresh history unlocks approval changes');
+    proof.acknowledge(ask);
+    await next;
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('a skipped approval confirmation refreshes the conflicting subscription once', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await changing;
+    assert.equal(sendDisabled(), false, 'the RPC acknowledgement enables Send');
+    assert.equal(proof.retry.mock.callCount(), 0);
+
+    // The same subscription can coalesce away the Ask confirmation and deliver Bypass.
+    proof.publish({ ...bypass });
+    proof.publish({ ...bypass });
+    assert.equal(sendDisabled(), true, 'a conflicting frame alone cannot authorize Send');
+    await Promise.resolve();
+    assert.equal(proof.retry.mock.callCount(), 1, 'request fresh authority without a disconnect');
+    assert.deepEqual(proof.retry.mock.calls[0].arguments, [
+      { sessionId: bypass.id, executionNodeId: bypass.executionNodeId },
+    ]);
+
+    proof.publish({ ...bypass });
+    await Promise.resolve();
+    assert.equal(proof.retry.mock.callCount(), 1, 'subsequent frames do not restart the request');
+    assert.equal(sendDisabled(), true);
+
+    proof.publish({ ...bypass }, 'replacement-subscription');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(proof.composerDisabled(), false);
+    assert.equal(sendDisabled(), false, 'the fresh snapshot authorizes Send');
+    assert.equal(Reflect.get(proof.view, 'session').approvalMode, 'bypass');
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('an approval reply requests fresh history if the conflicting frame arrived first', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass });
+    proof.acknowledge(ask);
+    await changing;
+    assert.equal(proof.composerDisabled(), true);
+    assert.equal(proof.retry.mock.callCount(), 1);
+    proof.publish({ ...bypass }, 'replacement-subscription');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(proof.composerDisabled(), false);
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('a replacement viewer on a shared stream cannot enable Send using a lagging replay', async () => {
+  const proof = approvalComposer('ask');
+  const ask = proof.snapshot.session;
+  const bypass = { ...ask, approvalMode: 'bypass' } as const;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  proof.readSessionFromHost.mock.mockImplementationOnce(async () => bypass);
+  try {
+    const changing = proof.change('bypass');
+    proof.publish({ ...ask }); // A delayed frame arrives while the mutation is in flight.
+    proof.acknowledge(bypass);
+    await changing;
+    assert.equal(sendDisabled(), true);
+
+    // A second viewer holds the gateway source open. The new viewer replays its old
+    // metadata at the same cursor and generation while the host is already on Bypass.
+    proof.publish({ ...ask }, 'replacement-viewer');
+    assert.equal(sendDisabled(), true, 'the new viewer ID does not authorize Send');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(proof.readSessionFromHost.mock.callCount(), 1);
+    assert.equal(sendDisabled(), true, 'the host policy disagrees with the replay');
+
+    proof.observe({ history: { after: 0, loading: true } });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(
+      proof.readSessionFromHost.mock.callCount(),
+      1,
+      'paging reuses the checked snapshot',
+    );
+
+    proof.publish({ ...bypass }, 'replacement-viewer');
+    assert.equal(sendDisabled(), false, 'the stream now matches the acknowledged policy');
+    assert.equal(Reflect.get(proof.view, 'session').approvalMode, 'bypass');
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('a coalesced pending approval exposes Retry after host verification', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  const pending = { ...ask, approvalModePending: 'bypass' } as const;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  const retrySelector = /data-testid="native-approval-retry"\s*\?disabled=$/;
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await changing;
+    assert.equal(sendDisabled(), false);
+
+    // A second viewer tried Bypass and the runner rejected it. The stream skipped
+    // the settled Ask frame and published the host's persistent Bypass intent.
+    proof.publish(pending);
+    assert.equal(sendDisabled(), true);
+    await Promise.resolve();
+    assert.equal(proof.retry.mock.callCount(), 1);
+
+    proof.readSessionFromHost.mock.mockImplementationOnce(async () => pending);
+    proof.publish({ ...bypass }, 'replacement-viewer');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(sendDisabled(), true, 'a differing replay remains fenced');
+    proof.publish({ ...pending }, 'replacement-viewer');
+    assert.equal(sendDisabled(), true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(
+      litBinding(proof.view.render(), retrySelector),
+      false,
+      'a host-verified pending policy has an enabled Retry button',
+    );
+    assert.equal(proof.readSessionFromHost.mock.callCount(), 2);
+    assert.equal(proof.composerDisabled(), true);
+    assert.equal(
+      sendDisabled(),
+      true,
+      'host confirmation of the pending intent cannot enable Send',
+    );
+
+    const retrying = proof.change('bypass');
+    assert.equal(proof.requestedMode(), 'bypass');
+    assert.equal(litBinding(proof.view.render(), retrySelector), true);
+    proof.acknowledge(bypass);
+    await retrying;
+    proof.publish({ ...bypass }, 'replacement-viewer');
+    assert.equal(sendDisabled(), false);
+  } finally {
+    proof.disconnect();
+  }
+});
+
+test('saved history keeps the failed policy check retryable until a new viewer verifies it', async () => {
+  const proof = approvalComposer('bypass');
+  const bypass = proof.snapshot.session;
+  const ask = { ...bypass, approvalMode: 'ask' } as const;
+  const pending = { ...ask, approvalModePending: 'bypass' } as const;
+  const cache = createGatewayResourceCache({
+    transport: new ResourceCacheConformanceTransport({
+      gatewayUrl: 'ws://native-approval-retry.invalid',
+      principalId: 'offline-native-owner',
+      principalGeneration: 0,
+    }),
+    store: createMemoryResourceStore(),
+  });
+  offlineCache = Object.defineProperty(cache, 'conversations', { value: proof.conversations });
+  const status = () => litBinding(proof.view.render(), '.context=') as NativeReadStatusRowContext;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  const retry = () =>
+    litBinding(renderNativeReadStatus(status()), /data-testid="native-refresh"\s*@click=$/);
+  const message = 'Host policy verification timed out';
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  try {
+    const changing = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await changing;
+
+    proof.readSessionFromHost.mock.mockImplementationOnce(async () => {
+      throw new Error(message);
+    });
+    proof.publish(pending, 'replacement-viewer');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(status().readError, message);
+    assert.equal(typeof retry(), 'function');
+
+    proof.observe({ history: { after: 0, loading: false, page: proof.snapshot } });
+    assert.equal(status().readError, message, 'saved paging preserves the active replay error');
+    assert.equal(proof.readSessionFromHost.mock.callCount(), 1);
+    assert.equal(sendDisabled(), true);
+
+    proof.retry.mock.mockImplementationOnce(() => proof.publish({ ...pending }, 'retried-viewer'));
+    const click = retry();
+    assert(typeof click === 'function');
+    click();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(proof.retry.mock.callCount(), 1);
+    assert.equal(proof.readSessionFromHost.mock.callCount(), 2);
+    assert.equal(status().readError, '');
+    assert.equal(retry(), undefined);
+    assert.equal(
+      litBinding(proof.view.render(), /data-testid="native-approval-retry"\s*\?disabled=$/),
+      false,
+    );
+    assert.equal(sendDisabled(), true);
+  } finally {
+    proof.disconnect();
+    offlineCache = undefined;
+    await cache.dispose();
+  }
 });
 
 test('a streamed delta computes rows once per render and re-renders only its own message', () => {

@@ -220,6 +220,28 @@ interface StoredCommand extends NativeCommandReceipt {
   text: string;
   leaseId?: string;
 }
+
+/** Keep idempotency for the full journal and bound the receipt window returned by reads. */
+class NativeCommandReceipts extends Map<string, StoredCommand> {
+  private readonly recent = new Map<string, StoredCommand>();
+
+  override set(id: string, command: StoredCommand): this {
+    // Updates keep their original insertion order, even after a receipt ages out.
+    if (!this.has(id) || this.recent.has(id)) {
+      this.recent.set(id, command);
+      if (this.recent.size > 100) {
+        const oldest = this.recent.keys().next();
+        if (!oldest.done) this.recent.delete(oldest.value);
+      }
+    }
+    return super.set(id, command);
+  }
+
+  recentValues(): IterableIterator<StoredCommand> {
+    return this.recent.values();
+  }
+}
+
 interface JournalEntry {
   processes?: ProcessIdentity[];
   processesAdded?: ProcessIdentity[];
@@ -242,7 +264,7 @@ interface SessionRecord {
   reservationError?: Error;
   workerLeaseError?: Error;
   // Retain receipts for the session lifetime so old command IDs stay idempotent.
-  commands: Map<string, StoredCommand>;
+  commands: NativeCommandReceipts;
   pendingRequests: Map<string, NativeSessionEvent>;
   /** Commands steered into the running turn; they settle with it. */
   steering?: Set<string>;
@@ -479,7 +501,7 @@ export class NativeSessionManager {
       conversations: new Map(),
       info,
       context,
-      commands: new Map(),
+      commands: new NativeCommandReceipts(),
       events: [],
       pendingRequests: new Map(),
       sending: false,
@@ -507,7 +529,7 @@ export class NativeSessionManager {
     let context: Record<string, string> | undefined;
     const processes = journalProcesses(entries);
     let pending: NativeSessionEvent[] = [];
-    const commands = new Map<string, StoredCommand>();
+    const commands = new NativeCommandReceipts();
     const events: NativeSessionEvent[] = [];
     const workerHistory = new NativeWorkerHistory();
     const conversations = new Map<string, NativeConversationJournal>();
@@ -964,7 +986,7 @@ export class NativeSessionManager {
       conversations: previous?.conversations ?? new Map(),
       info,
       events: previous?.events ?? [],
-      commands: previous?.commands ?? new Map(),
+      commands: previous?.commands ?? new NativeCommandReceipts(),
       pendingRequests: new Map(),
       context: executionContext(workerLaunch, params.runner, profile),
       sending: false,
@@ -1769,9 +1791,10 @@ export class NativeSessionManager {
       events,
       cursor: after + events.length,
       hasMore: after + events.length < record.events.length,
-      commands: [...record.commands.values()]
-        .slice(-100)
-        .map(({ text: _text, ...receipt }) => receipt),
+      commands: Array.from(
+        record.commands.recentValues(),
+        ({ text: _text, ...receipt }) => receipt,
+      ),
       pendingRequests: [...record.pendingRequests.values()],
     };
   }
@@ -1976,9 +1999,10 @@ export class NativeSessionManager {
             events: [],
             cursor: record.events.length,
             hasMore: false,
-            commands: [...record.commands.values()]
-              .slice(-100)
-              .map(({ text: _text, leaseId: _lease, ...receipt }) => receipt),
+            commands: Array.from(
+              record.commands.recentValues(),
+              ({ text: _text, leaseId: _lease, ...receipt }) => receipt,
+            ),
             pendingRequests: [...record.pendingRequests.values()],
           };
       page.session = this.snapshot({ info: page.session });
