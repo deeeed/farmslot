@@ -76,10 +76,29 @@ export function assertNativeSourceCurrent(
 /** Recursive fs.watch is native on macOS and Windows; on Linux it is per-file and inode-bound. */
 const REARM_EVERY_EVENT = process.platform === 'linux';
 
-interface SourceSnapshot {
+export interface NativeSourceSnapshot {
   digest: string;
   host: string;
   accounts: string;
+  sessions: string;
+}
+
+/** Canonical digest for an empty trusted executable override map, shared by gateway and node. */
+export const EMPTY_TRUSTED_EXECUTABLES_DIGEST = '[]';
+
+/** Canonical digest for a runner -> trusted executable override map, shared by gateway and node. */
+export function canonicalTrustedExecutablesDigest(
+  executables?: Readonly<Record<string, string>>,
+): string {
+  if (!executables) return EMPTY_TRUSTED_EXECUTABLES_DIGEST;
+  const entries: Array<[string, string]> = [];
+  for (const [runner, executable] of Object.entries(executables)) {
+    if (typeof executable === 'string' && executable.trim()) {
+      entries.push([runner, executable.trim()]);
+    }
+  }
+  entries.sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(entries);
 }
 
 /** One process owner per host. Observes durable journal commits, including other processes. */
@@ -87,8 +106,18 @@ export class NativeHostObservation {
   private watchers: FSWatcher[] = [];
   private armedIdentity = '';
   private receipt: NativeSourceReceipt;
-  private snapshot?: SourceSnapshot;
+  private snapshot?: NativeSourceSnapshot;
   private accountDigest = '';
+  /** Digest of the desired trusted executable configuration. */
+  private executableConfigDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST;
+  /** Monotonic epoch incremented whenever executable configuration changes or is invalidated. */
+  private executableConfigEpoch = 0;
+  /** True while executable configuration is unresolved/invalid (fail-closed, no probing). */
+  private executableConfigInvalid = false;
+  /** Digest of the trusted executable configuration that produced the cached profileStatuses. */
+  private sampledExecutableConfigDigest?: string;
+  /** Configuration epoch that produced the cached profileStatuses. */
+  private sampledExecutableConfigEpoch = -1;
   /** False while the last profile sample failed: sessions stay observable, profile reads don't. */
   private accountsAvailable = false;
   private readonly profileStatuses = new Map<string, NativeProfileStatusResult>();
@@ -96,6 +125,7 @@ export class NativeHostObservation {
   private generation = 0;
   private stopped = true;
   private refreshing = false;
+  private refreshPromise?: Promise<void>;
   private queued = false;
   private changes = 0;
   private failed = false;
@@ -105,7 +135,7 @@ export class NativeHostObservation {
   private arming = false;
   private retrying?: Promise<void>;
   private scanTail: Promise<unknown> = Promise.resolve();
-  private queuedScan?: Promise<SourceSnapshot>;
+  private queuedScan?: Promise<NativeSourceSnapshot>;
   private queuedScanGeneration = -1;
 
   constructor(
@@ -118,14 +148,27 @@ export class NativeHostObservation {
       for (const profile of await listNativeProfilesAsync(home)) {
         if (profile.state === 'active')
           statuses.push(
-            (await routeNativeProfile(client, ownerId, Methods.NATIVE_PROFILE_STATUS, {
-              profileId: profile.id,
-            })) as NativeProfileStatusResult,
+            (await routeNativeProfile(
+              client,
+              ownerId,
+              Methods.NATIVE_PROFILE_STATUS,
+              {
+                profileId: profile.id,
+              },
+              { resolveExecutable: this.resolveExecutable },
+            )) as NativeProfileStatusResult,
           );
       }
       return statuses;
     },
+    private readonly resolveExecutable?: (
+      runner: string,
+    ) => Promise<string | undefined> | string | undefined,
+    initialExecutableConfigDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST,
+    initialExecutableConfigInvalid = false,
   ) {
+    this.executableConfigDigest = initialExecutableConfigDigest;
+    this.executableConfigInvalid = initialExecutableConfigInvalid;
     this.receipt = {
       version: 1,
       nodeId: client.executionNodeId,
@@ -139,6 +182,17 @@ export class NativeHostObservation {
 
   current(): NativeSourceReceipt {
     return { ...this.receipt };
+  }
+
+  /** True when the observation owner holds a usable executable sample matching `digest`. */
+  hasExecutableConfigSample(digest: string): boolean {
+    return (
+      !this.executableConfigInvalid &&
+      this.accountsAvailable &&
+      this.executableConfigDigest === digest &&
+      this.sampledExecutableConfigDigest === digest &&
+      this.sampledExecutableConfigEpoch === this.executableConfigEpoch
+    );
   }
 
   /** Arming is independent of RPC completion and never starts the detached host. */
@@ -161,19 +215,27 @@ export class NativeHostObservation {
       const before = await scan();
       if (generation !== this.generation || this.stopped) return;
       const change = this.changes;
+      const configDigest = this.executableConfigDigest;
+      const configEpoch = this.executableConfigEpoch;
+      const configInvalid = this.executableConfigInvalid;
       // A failed profile sample affects only profile reads (ADR-057 Amendment 11).
-      const accounts = await this.observeAccounts().catch((error: unknown) =>
-        this.sampleFailed(error),
-      );
-      // Watcher delivery fences the account sample; the async scan fences the durable bytes.
-      const sampleChanged = change !== this.changes;
+      const accounts = configInvalid
+        ? undefined
+        : await this.observeAccounts().catch((error: unknown) => this.sampleFailed(error));
       if (generation !== this.generation || this.stopped) return;
       const after = await scan();
       if (generation !== this.generation || this.stopped) return;
+      // Watcher delivery and executable configuration epochs fence the account sample; evaluate
+      // them after the final scan await so no await stands between the fence and publication.
+      const sampleChanged =
+        change !== this.changes ||
+        configDigest !== this.executableConfigDigest ||
+        configEpoch !== this.executableConfigEpoch ||
+        configInvalid !== this.executableConfigInvalid;
       if (this.failed) throw new NativeSourceUnavailable('arming-source-changed');
       if (sampleChanged || before.digest !== after.digest)
         throw new NativeSourceUnavailable('arming-source-changed');
-      this.setAccounts(accounts);
+      this.setAccounts(accounts, configDigest, configEpoch);
       this.snapshot = after;
       this.receipt = {
         ...this.receipt,
@@ -276,7 +338,12 @@ export class NativeHostObservation {
    * Imperative profile/status retains its existing on-demand probe outside this source. */
   async profileStatus(profileId: string): Promise<NativeProfileStatusResult> {
     await this.fence();
-    if (!this.accountsAvailable)
+    if (
+      this.executableConfigInvalid ||
+      !this.accountsAvailable ||
+      this.sampledExecutableConfigDigest !== this.executableConfigDigest ||
+      this.sampledExecutableConfigEpoch !== this.executableConfigEpoch
+    )
       throw Object.assign(
         new Error(
           'Native account profiles are unavailable on this node. Retry after its next sample.',
@@ -290,11 +357,17 @@ export class NativeHostObservation {
       });
     return structuredClone(status);
   }
-  private setAccounts(accounts: NativeProfileStatusResult[] | undefined): void {
+  private setAccounts(
+    accounts: NativeProfileStatusResult[] | undefined,
+    configDigest: string = this.executableConfigDigest,
+    configEpoch: number = this.executableConfigEpoch,
+  ): void {
     this.profileStatuses.clear();
     for (const status of accounts ?? [])
       this.profileStatuses.set(status.profile.id, structuredClone(status));
     this.accountsAvailable = accounts !== undefined;
+    this.sampledExecutableConfigDigest = accounts !== undefined ? configDigest : undefined;
+    this.sampledExecutableConfigEpoch = accounts !== undefined ? configEpoch : -1;
     this.accountDigest = accountsDigest(accounts);
   }
 
@@ -432,6 +505,59 @@ export class NativeHostObservation {
         this.recovering = undefined;
       });
   }
+  /**
+   * Synchronously fence the observation owner to an unresolved/invalid executable configuration
+   * epoch (for example an ambiguous pool) without starting a profile probe.
+   *
+   * Any in-flight account sample started under an earlier epoch is discarded on completion
+   * without caching stale profiles or publishing a stale invalidation. Cached profile statuses
+   * are cleared without advancing the shared source receipt so held local `native-session` reads
+   * survive profile-only configuration changes; callers publish `['profiles']` invalidation and
+   * fence profile reads via their configuration epoch.
+   */
+  invalidateExecutableConfig(digest: string): void {
+    this.executableConfigDigest = digest;
+    this.executableConfigEpoch++;
+    this.executableConfigInvalid = true;
+    this.queued = false;
+    this.setAccounts(undefined, digest, this.executableConfigEpoch);
+  }
+
+  /**
+   * Bind the observation owner to a trusted executable configuration digest and wait for one
+   * coalesced account sample matching that digest before returning the updated source receipt.
+   */
+  async setExecutableConfig(digest: string): Promise<NativeSourceReceipt> {
+    const changed = this.executableConfigInvalid || this.executableConfigDigest !== digest;
+    this.executableConfigInvalid = false;
+    this.executableConfigDigest = digest;
+    if (changed) this.executableConfigEpoch++;
+    const targetEpoch = this.executableConfigEpoch;
+    if (this.stopped || !this.receipt.ready) return this.current();
+    let sampledTarget = false;
+    while (
+      !this.stopped &&
+      this.receipt.ready &&
+      !this.executableConfigInvalid &&
+      this.executableConfigEpoch === targetEpoch &&
+      this.executableConfigDigest === digest &&
+      (this.sampledExecutableConfigDigest !== digest ||
+        this.sampledExecutableConfigEpoch !== targetEpoch)
+    ) {
+      if (this.refreshing) {
+        await this.refreshPromise;
+      } else {
+        sampledTarget = true;
+        this.refreshAccounts();
+        await this.refreshPromise;
+      }
+      if (sampledTarget && !this.accountsAvailable && this.executableConfigEpoch === targetEpoch) {
+        break;
+      }
+    }
+    return this.current();
+  }
+
   private refreshAccounts(): void {
     if (this.refreshing) {
       this.queued = true;
@@ -441,24 +567,39 @@ export class NativeHostObservation {
     const generation = this.generation;
     const wasReady = !this.failed && Boolean(this.snapshot);
     let change: number;
+    let configDigest: string;
+    let configEpoch: number;
+    let configInvalid: boolean;
 
-    let before: SourceSnapshot;
-    void Promise.resolve()
+    let before: NativeSourceSnapshot;
+    const current = Promise.resolve()
       .then(async () => {
         before = await this.scan();
         change = this.changes;
+        configDigest = this.executableConfigDigest;
+        configEpoch = this.executableConfigEpoch;
+        configInvalid = this.executableConfigInvalid;
+        if (configInvalid) return undefined;
         return this.observeAccounts().catch((error: unknown) => this.sampleFailed(error));
       })
       .then(async (accounts) => {
         if (generation !== this.generation || this.stopped) return;
-        if (change !== this.changes) {
-          this.queued = true;
-          return;
-        }
         const digest = accountsDigest(accounts);
         const after = await this.scan();
         if (generation !== this.generation || this.stopped) return;
-        if (after.accounts !== before.accounts) {
+        if (
+          configEpoch !== this.executableConfigEpoch ||
+          configDigest !== this.executableConfigDigest ||
+          configInvalid !== this.executableConfigInvalid
+        ) {
+          if (!this.executableConfigInvalid) this.queued = true;
+          return;
+        }
+        if (this.executableConfigInvalid) return;
+        if (
+          after.accounts !== before.accounts ||
+          (change !== this.changes && after.digest !== before.digest)
+        ) {
           this.queued = true;
           return;
         }
@@ -466,12 +607,19 @@ export class NativeHostObservation {
           this.fail('account-sample-host-changed');
           return;
         }
-        const changed = digest !== this.accountDigest || after.digest !== this.snapshot?.digest;
-        this.setAccounts(accounts);
+        const sessionChanged = !this.snapshot || after.sessions !== this.snapshot.sessions;
+        const changed =
+          digest !== this.accountDigest ||
+          this.sampledExecutableConfigDigest !== configDigest ||
+          this.sampledExecutableConfigEpoch !== configEpoch ||
+          after.digest !== this.snapshot?.digest;
+        this.setAccounts(accounts, configDigest, configEpoch);
         this.snapshot = after;
         // Only a previously armed source can recover here. Watcher errors require start().
         if (wasReady && !this.failed) this.receipt = { ...this.receipt, ready: true };
-        if (changed || this.receipt.ready) this.advance(['profiles']);
+        if (changed || this.receipt.ready) {
+          this.advance(sessionChanged ? ['native-session', 'profiles'] : ['profiles']);
+        }
       })
       .catch(() => {
         if (generation === this.generation) {
@@ -480,12 +628,14 @@ export class NativeHostObservation {
       })
       .finally(() => {
         this.refreshing = false;
+        if (this.refreshPromise === current) this.refreshPromise = undefined;
         if (generation !== this.generation || this.stopped) return;
         if (this.queued) {
           this.queued = false;
-          this.refreshAccounts();
+          if (!this.executableConfigInvalid) this.refreshAccounts();
         }
       });
+    this.refreshPromise = current;
   }
   private scheduleAccounts(): void {
     if (this.timer) clearTimeout(this.timer);
@@ -497,10 +647,10 @@ export class NativeHostObservation {
     this.timer.unref();
   }
   /** At most one active scan and one queued batch. A fence never joins an older active scan. */
-  private scan(): Promise<SourceSnapshot> {
+  protected scan(): Promise<NativeSourceSnapshot> {
     if (!this.queuedScan || this.queuedScanGeneration !== this.generation) {
       const generation = this.generation;
-      let scan: Promise<SourceSnapshot>;
+      let scan: Promise<NativeSourceSnapshot>;
       const run = () => {
         if (this.queuedScan === scan) this.queuedScan = undefined;
         if (generation !== this.generation) throw new NativeSourceUnavailable('source-stopped');
@@ -513,7 +663,7 @@ export class NativeHostObservation {
     }
     return this.queuedScan;
   }
-  private async scanFiles(generation: number): Promise<SourceSnapshot> {
+  private async scanFiles(generation: number): Promise<NativeSourceSnapshot> {
     const deadline = Date.now() + 30_000;
     const check = () => {
       if (generation !== this.generation || this.stopped)
@@ -523,6 +673,7 @@ export class NativeHostObservation {
     check();
     const parts: string[] = [];
     let host = 'absent';
+    let sessionsRevision = 'absent';
     const stat = await statIfPresent(this.client.root);
     if (stat) {
       if (
@@ -565,6 +716,7 @@ export class NativeHostObservation {
         const receipt = await readJsonAsync<{ revision: string }>(join(sessions, 'metadata.json'));
         if (typeof receipt.revision !== 'string' || !receipt.revision)
           throw new NativeSourceUnavailable('invalid-metadata-receipt');
+        sessionsRevision = receipt.revision;
         parts.push(receipt.revision);
       }
     }
@@ -579,7 +731,7 @@ export class NativeHostObservation {
     const accountFiles: string[] = [JSON.stringify(profiles)];
     const accounts = hash(accountFiles.join('\n'));
     parts.push(host, accounts);
-    return { host, accounts, digest: hash(parts.join('\n')) };
+    return { host, accounts, sessions: sessionsRevision, digest: hash(parts.join('\n')) };
   }
 }
 async function statIfPresent(file: string) {

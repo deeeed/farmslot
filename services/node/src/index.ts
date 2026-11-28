@@ -45,6 +45,7 @@ import {
   fsWriteChunk,
   fsWriteFiles,
 } from './commands/fs.js';
+import { observeNodeNativeAccount } from './commands/native-account.js';
 import { NativeNodeSessions } from './commands/native-session.js';
 import {
   getResourceWatchRuntimeStats,
@@ -620,6 +621,28 @@ async function handleRequest(
           params.observe === true
             ? await nativeSessions.routeObserved(params)
             : await nativeSessions.route(params),
+          undefined,
+          undefined,
+          socket,
+        );
+        break;
+      }
+      case 'native.observation.configure': {
+        sendResponse(
+          frame.id,
+          true,
+          await nativeSessions.configureObservation(params),
+          undefined,
+          undefined,
+          socket,
+        );
+        break;
+      }
+      case 'native.account.observe': {
+        sendResponse(
+          frame.id,
+          true,
+          await observeNodeNativeAccount(params),
           undefined,
           undefined,
           socket,

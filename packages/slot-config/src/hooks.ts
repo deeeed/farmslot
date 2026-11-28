@@ -440,6 +440,9 @@ export function resolveRunnerPath(slotVars: SlotVars, runner?: string): string {
     case 'pi':
       runnerPath = slotVars.piPath || '';
       break;
+    case 'antigravity':
+      runnerPath = slotVars.antigravityPath || '';
+      break;
     case 'claude':
       runnerPath = slotVars.claudePath;
       break;
@@ -526,6 +529,7 @@ export function expandDispatchCmd(
     ['{cursor_path}', 'cursor', slotVars.cursorPath],
     ['{grok_path}', 'grok', slotVars.grokPath],
     ['{pi_path}', 'pi', slotVars.piPath ?? ''],
+    ['{antigravity_path}', 'antigravity', slotVars.antigravityPath ?? ''],
   ] as const) {
     cmd = replaceBinary(cmd, placeholder, runner === owner ? runnerPath : fallback);
   }

@@ -8,6 +8,8 @@ import {
 import { NATIVE_NODE_REFRESH_MAX_RUNNERS } from '@farmslot/agent-runtime/native/host-runtime';
 import { isNativeHostUnavailableError } from '@farmslot/agent-runtime/native/host-unavailable';
 import {
+  canonicalTrustedExecutablesDigest,
+  EMPTY_TRUSTED_EXECUTABLES_DIGEST,
   NativeHostObservation,
   type NativeSourceReceipt,
 } from '@farmslot/agent-runtime/native/observation';
@@ -52,7 +54,7 @@ export class NativeNodeSessions {
         supportsProfiles: true,
         supportsHostRefresh: true,
         supportsSessionArchive: true,
-        ...{ supportsObservations: true },
+        ...{ supportsObservations: true, supportsObservationConfiguration: true },
       };
     }
     // Only fenced idle stops, few enough to finish within the gateway's launch timeout.
@@ -149,6 +151,24 @@ export class NativeNodeSessions {
   }
 
   private observation?: NativeHostObservation;
+  private trustedExecutables: Record<string, string> = {};
+  private trustedExecutablesDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST;
+
+  private resolveTrustedExecutable(runner: string): string | undefined {
+    const candidate = this.trustedExecutables[runner];
+    return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : undefined;
+  }
+
+  private normalizeTrustedExecutables(value: unknown): Record<string, string> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const normalized: Record<string, string> = {};
+    for (const [runner, executable] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof executable === 'string' && executable.trim()) {
+        normalized[runner] = executable.trim();
+      }
+    }
+    return normalized;
+  }
 
   /** Called once by the daemon transport owner, never by an RPC or panel. */
   async startObservation(publish: (receipt: NativeSourceReceipt) => void): Promise<void> {
@@ -158,6 +178,10 @@ export class NativeNodeSessions {
       this.client,
       this.declaration.ownerPrincipalId,
       publish,
+      undefined,
+      undefined,
+      (runner) => this.resolveTrustedExecutable(runner),
+      this.trustedExecutablesDigest,
     );
     await this.observation.start();
   }
@@ -168,6 +192,28 @@ export class NativeNodeSessions {
   }
   observationReceipt(): NativeSourceReceipt | undefined {
     return this.observation?.current();
+  }
+
+  /** Apply trusted runner executables at the observation owner before admitting profile reads. */
+  async configureObservation(value: Record<string, unknown>): Promise<NativeSourceReceipt> {
+    if (!this.declaration || value.owner !== this.declaration.ownerPrincipalId)
+      throw Object.assign(new Error('Native profile is not owned by this principal'), {
+        code: 'AUTH_FORBIDDEN',
+      });
+    if (!this.observation)
+      throw Object.assign(new Error('Native source unsupported'), {
+        code: 'NATIVE_SOURCE_UNAVAILABLE',
+      });
+    const next = this.normalizeTrustedExecutables(value.executables);
+    const nextDigest = canonicalTrustedExecutablesDigest(next);
+    this.trustedExecutables = next;
+    this.trustedExecutablesDigest = nextDigest;
+    if (!this.observation.current().ready) {
+      await this.observation.setExecutableConfig(nextDigest);
+      await this.observation.retry();
+      return this.observation.current();
+    }
+    return this.observation.setExecutableConfig(nextDigest);
   }
 
   /** Internal envelope only for marked reads; commands retain the original one-attempt route. */
@@ -202,7 +248,7 @@ export class NativeNodeSessions {
         )
           throw Object.assign(new Error('Native profile ID required'), { code: 'INVALID_PARAMS' });
         validateNativeProfileParams(params);
-        return Promise.resolve(this.observation!.profileStatus(params.profileId));
+        return this.observation!.profileStatus(params.profileId);
       }
       return this.route(value);
     });
@@ -236,6 +282,24 @@ export class NativeNodeSessions {
     const owner = this.declaration.ownerPrincipalId;
     const method = value.method;
     if (method === NATIVE_SESSION_ARCHIVE) return this.archive(value);
+    const executable =
+      typeof value.executable === 'string' && value.executable.trim()
+        ? value.executable.trim()
+        : undefined;
+    const executables =
+      value.executables &&
+      typeof value.executables === 'object' &&
+      !Array.isArray(value.executables)
+        ? (value.executables as Record<string, unknown>)
+        : undefined;
+    const resolveExecutable =
+      executable || executables
+        ? (runner: string) => {
+            if (executable) return executable;
+            const candidate = executables?.[runner];
+            return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : undefined;
+          }
+        : undefined;
     const route = () =>
       NATIVE_WORKER_METHODS.includes(method)
         ? routeNativeWorkerSession(this.client, owner, method, value.params)
@@ -245,6 +309,7 @@ export class NativeNodeSessions {
             method,
             value.params,
             parseNativeSessionRequester(value.requester),
+            executable || resolveExecutable ? { executable, resolveExecutable } : undefined,
           );
     if (value.hostRelease === undefined) return route();
     if (

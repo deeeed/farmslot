@@ -1,0 +1,1 @@
+- Add the Antigravity ACP native adapter, structured account probe (`session/list`), model confirmation, and workspace trust configuration for workers and Copilot sessions.

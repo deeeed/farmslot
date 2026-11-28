@@ -119,7 +119,9 @@ import {
   runnerDefaultSafetyTier,
   runnerModelNodeBlocker,
   runnerModelNodePreference,
+  runnerRequiresAccountResolvedModel,
 } from '../runners/registry.js';
+import { resolveStrictAccountDispatchModel } from '../runners/visible-models.js';
 import { requestedRunSlotId } from '../runs/slot-pin.js';
 import {
   getAllRuns,
@@ -1488,6 +1490,12 @@ async function findSlotAttempt(
       throw new BlockedRunError(error.message, 'review-qa-needs-configuration');
     }
   }
+  const strictModel = resolveStrictAccountDispatchModel(run.metrics.runner, run.metrics.model, {
+    hasNativeProfile: Boolean(run.nativeProfile),
+  });
+  if (strictModel && strictModel !== run.metrics.model) {
+    run = updateRun(runId, { metrics: { ...run.metrics, model: strictModel } });
+  }
   if (run.nativeProfile) {
     await inspectNativeWorkerProfile(run.nativeOwnerPrincipalId!, run.nativeProfile);
     const allowedSlots = await nativeProfileAllowedSlots(
@@ -1575,11 +1583,15 @@ async function findSlotAttempt(
       })
     : undefined;
   const capabilitySelection = { requiredCapabilities, capabilityCatalogs };
-  // Fresh node listings can refuse a model; last successful listings guide placement.
+  // Strict account-catalog runners (Antigravity) validate named-profile models at the
+  // owned launch boundary inside that profile; other runners retain placement-time admission.
+  const skipAmbientModelNodeBlocker = Boolean(
+    run.nativeProfile && runnerRequiresAccountResolvedModel(run.nativeProfile.runner),
+  );
   const modelNodeSelection = {
     ...runExplicitRunnerModel(run),
-    modelNodeBlocker: runnerModelNodeBlocker,
-    modelNodePreference: runnerModelNodePreference,
+    modelNodeBlocker: skipAmbientModelNodeBlocker ? undefined : runnerModelNodeBlocker,
+    modelNodePreference: skipAmbientModelNodeBlocker ? undefined : runnerModelNodePreference,
   };
   const releasableBranchHolderIds = await inspectReleasableBranchHolders(
     branchFleet.slots,

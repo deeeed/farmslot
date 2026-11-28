@@ -5,6 +5,7 @@ export const RUNNER_COLORS: Record<string, string> = {
   cursor: '#8b5cf6',
   grok: '#14b8a6',
   pi: '#6366f1',
+  antigravity: '#4285f4',
   scripted: '#a78bfa',
 };
 

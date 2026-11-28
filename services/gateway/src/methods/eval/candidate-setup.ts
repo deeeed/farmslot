@@ -21,6 +21,12 @@ import { fileExists } from '../../evals/package-store.js';
 import { harnessRoot } from '../../projects/harness-root.js';
 import { assertFetchableHarnessRef } from '../../run-engine/eval-harness-lifecycle.js';
 import {
+  assertRunnerTransport,
+  getRunnerDefinition,
+  isKnownRunner,
+  normalizeRunner,
+} from '../../runners/registry.js';
+import {
   configuredExecutionTemplateOptions,
   projectUsesExecutionTemplateCatalog,
   readConfiguredExecutionTemplateSnapshot,
@@ -51,15 +57,23 @@ export function axesWithExecutionDefaults(
 
 /**
  * The start param owns transport. Omitted and explicit tmux leave the axis
- * unset so they stay one candidate. Native is recorded and does not dedupe
- * with that tmux candidate.
+ * unset for terminal-capable runners so they stay one candidate. Native-only
+ * runners resolve to `native` before strategy hashing so omitted and explicit
+ * `native` share one strategy identity (and explicit `tmux` is refused early).
  */
 export function axesForTrialTransport(
   axes: EvalPackageAxes,
   transport: EvalTrialStartParams['transport'],
 ): EvalPackageAxes {
   const { transport: _callerTransport, ...rest } = axes;
-  return transport === 'native' ? { ...rest, transport: 'native' } : rest;
+  const runnerName = rest.runner?.name?.trim();
+  const normalizedRunner =
+    runnerName && isKnownRunner(runnerName) ? normalizeRunner(runnerName) : undefined;
+  const effectiveTransport =
+    transport ??
+    (normalizedRunner && getRunnerDefinition(normalizedRunner).nativeOnly ? 'native' : undefined);
+  if (normalizedRunner) assertRunnerTransport(normalizedRunner, effectiveTransport ?? 'tmux');
+  return effectiveTransport === 'native' ? { ...rest, transport: 'native' } : rest;
 }
 
 function fullSha(value: string | undefined): string | undefined {

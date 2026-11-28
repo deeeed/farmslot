@@ -202,6 +202,7 @@ import {
   runnerSupportsModel,
 } from '../runners/registry.js';
 import { assertScriptedRunnerConfig } from '../runners/scripted-config.js';
+import { resolveStrictAccountDispatchModel } from '../runners/visible-models.js';
 import {
   createRun,
   getAllRuns,
@@ -795,6 +796,14 @@ export async function planRunCreation(
       `runner '${params.runner}' does not support model '${params.model}' — ` +
         `pick a compatible model in the dispatch UI or fix the call site.`,
     );
+  }
+  if (normalizedRunner) {
+    const strictModel = resolveStrictAccountDispatchModel(normalizedRunner, params.model, {
+      hasNativeProfile: Boolean(params.nativeProfile),
+    });
+    if (strictModel && (!params.model || params.model === 'unknown')) {
+      params = { ...params, model: strictModel };
+    }
   }
   // Auto-link follow-up flows to the prior fix-bug/dev/feature run on the same
   // PR/ticket so materializeInheritedContext can copy artifacts (notably

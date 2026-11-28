@@ -71,6 +71,8 @@ export async function nativeSessionRoute(
         'INVALID_PARAMS',
         'Worker launch settings are supplied by run dispatch',
       );
+    if ('executable' in params)
+      throw new GatewayMethodError('INVALID_PARAMS', 'Runner executable is server-derived');
     // Pinned worker routes validate the stored owner and the caller's supervision authority.
     if (params.worker !== undefined && NATIVE_WORKER_INPUT_METHODS.includes(method))
       return await routeNativeWorkerInput(method, params, emit);

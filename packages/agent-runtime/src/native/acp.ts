@@ -103,7 +103,7 @@ export interface AcpAdapterConfig {
     session: AcpObject,
     requested: string,
     request: (method: string, params: AcpObject) => Promise<unknown>,
-  ) => Promise<void>;
+  ) => Promise<string | void>;
   defaultModeId?: string;
   /** Runner settings that have no CLI flag, added to the session's environment. */
   environment?: (options: NativeAdapterOptions) => Record<string, string>;
@@ -316,6 +316,7 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
         },
       );
       let sessionCapabilities = { ...capabilities };
+      let confirmedModel: string | undefined;
       try {
         const result = acpObject(
           await rpc.request('initialize', {
@@ -382,11 +383,15 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
           configuration = { ...configuration, configOptions };
         };
         if (options.model) {
-          if (config.configureModel)
-            await config.configureModel(nativeSessionId, session, options.model, (method, params) =>
-              rpc.request(method, params),
+          if (config.configureModel) {
+            const configured = await config.configureModel(
+              nativeSessionId,
+              session,
+              options.model,
+              (method, params) => rpc.request(method, params),
             );
-          else {
+            confirmedModel = configured ?? options.model;
+          } else {
             const model =
               config.modelConfiguration === 'legacy'
                 ? undefined
@@ -399,6 +404,15 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
                 sessionId: nativeSessionId,
                 modelId: options.model,
               });
+            confirmedModel = options.model;
+          }
+        } else {
+          const models =
+            session.models && typeof session.models === 'object' && !Array.isArray(session.models)
+              ? (session.models as AcpObject)
+              : undefined;
+          if (typeof models?.currentModelId === 'string' && models.currentModelId.trim()) {
+            confirmedModel = models.currentModelId;
           }
         }
         if (config.effortConfig && options.effort && options.effort !== 'auto') {
@@ -412,7 +426,10 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
         publish({
           type: 'session.started',
           nativeId: nativeSessionId,
-          data: { identityConfirmed: true },
+          data: {
+            identityConfirmed: true,
+            ...(confirmedModel ? { model: confirmedModel } : {}),
+          },
         });
       } catch (error) {
         closing = true;
@@ -421,6 +438,7 @@ export function createAcpAdapter(config: AcpAdapterConfig): NativeAdapter {
       }
       return {
         nativeSessionId,
+        ...(confirmedModel ? { model: confirmedModel } : {}),
         capabilities: sessionCapabilities,
         async setApprovalMode(mode) {
           if (command) throw new Error('Wait for the current turn before changing approvals');

@@ -33,6 +33,7 @@ export async function reviewWorkspaceExecutionVars(run: Run): Promise<SlotVars |
     grokPath: pool.grok_path || 'grok',
     opencodePath: pool.opencode_path || 'opencode',
     piPath: pool.pi_path,
+    antigravityPath: pool.antigravity_path,
     dispatchCmd: '',
     recycleCmd: '',
     repo: workspace.checkoutPath,

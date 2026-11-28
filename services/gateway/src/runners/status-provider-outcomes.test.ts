@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
+import * as antigravityNative from '@farmslot/agent-runtime/native/antigravity';
+
 import * as inventory from './account-inventory.js';
 import * as claudeAuth from './claude-auth-status.js';
 import * as codexAuth from './codex-auth-status.js';
@@ -96,6 +98,19 @@ mock.module('./account-inventory.js', {
     }),
   },
 });
+mock.module('@farmslot/agent-runtime/native/antigravity', {
+  namedExports: {
+    ...antigravityNative,
+    observeAntigravityAccount: async () => ({
+      runner: 'antigravity',
+      installed: false,
+      login: 'unavailable',
+      mode: 'unknown',
+      identityQuality: 'unavailable',
+      reason: 'not-installed',
+    }),
+  },
+});
 mock.module('./provider-account-host.js', {
   namedExports: {
     ...host,
@@ -115,6 +130,7 @@ test('subscriptions separate failed probes from definitive absence per component
     cursorPath: '/nonexistent/cursor-agent',
     opencodePath: '/nonexistent/opencode',
     piPath: '/nonexistent/pi',
+    antigravityPath: '/nonexistent/agy',
   });
   const outcomes = Object.fromEntries(
     (await getHostRunnerSubscriptions(vars)).map((sub) => [sub.runner, sub.outcome]),
@@ -130,5 +146,6 @@ test('subscriptions separate failed probes from definitive absence per component
     // A missing optional runner is absent; a fulfilled inventory error is not success.
     pi: { identity: 'absent', quota: 'absent' },
     opencode: { identity: 'failed', quota: 'absent' },
+    antigravity: { identity: 'absent', quota: 'absent' },
   });
 });

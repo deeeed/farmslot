@@ -164,12 +164,12 @@ export async function observeNativeAccount(
 }
 
 /** Cleanup failure overrides a status result, so a leaked probe never appears ready. */
-export async function accountProtocolProbe(
+export async function accountProtocolProbe<T = NativeAccountState>(
   process: { close(): Promise<void> },
-  probe: () => Promise<NativeAccountState>,
+  probe: () => Promise<T>,
   stopped: () => boolean,
-): Promise<NativeAccountState> {
-  let result: NativeAccountState | undefined;
+): Promise<T> {
+  let result: T | undefined;
   let failure: unknown;
   try {
     result = await probe();

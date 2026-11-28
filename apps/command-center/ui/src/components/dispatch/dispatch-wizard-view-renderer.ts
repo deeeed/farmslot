@@ -40,6 +40,7 @@ import { renderPublicationReviewConfig } from './dispatch-wizard-publication-rev
 interface DispatchWizardViewContext {
   discoverModels?: boolean;
   transport: 'tmux' | 'native';
+  terminalWorkerAvailable?: boolean;
   nativeWorkerAvailable: boolean;
   nativeCatalogError: string;
   nativeProfileControl: unknown;
@@ -200,6 +201,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
             ${renderDispatchWizardPrimaryControls({
               discoverModels: ctx.discoverModels,
               transport: ctx.transport,
+              terminalWorkerAvailable: ctx.terminalWorkerAvailable,
               nativeWorkerAvailable: ctx.nativeWorkerAvailable,
               nativeCatalogError: ctx.nativeCatalogError,
               nativeProfileControl: ctx.nativeProfileControl,
