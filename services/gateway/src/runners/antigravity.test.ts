@@ -765,43 +765,12 @@ test('gateway observation owner syncs remote executables before fence so first a
   const tempPoolRoot = join(root, 'pool');
   const nodeStateRoot = join(root, 'node-state');
   const profileDir = join(root, 'work-profile');
-  const probeLog = join(root, 'probes.log');
   const fakeAgyV1 = join(root, 'bin-v1', 'agy');
   const fakeAgyV2 = join(root, 'bin-v2', 'agy');
   mkdirSync(farmHome, { recursive: true });
   mkdirSync(tempPoolRoot, { recursive: true });
   mkdirSync(nodeStateRoot, { recursive: true, mode: 0o700 });
-  chmodSync(nodeStateRoot, 0o700);
   mkdirSync(profileDir, { recursive: true });
-  mkdirSync(dirname(fakeAgyV1), { recursive: true });
-  mkdirSync(dirname(fakeAgyV2), { recursive: true });
-
-  const writeFakeAgy = (target: string, version: string) => {
-    writeFileSync(
-      target,
-      `#!/usr/bin/env node
-const fs = require('node:fs');
-if (process.argv.includes('--version')) {
-  fs.appendFileSync(${JSON.stringify(probeLog)}, ${JSON.stringify(`${version}\n`)});
-  console.log(${JSON.stringify(version)});
-  process.exit(0);
-}
-const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\\n');
-require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
-  const m = JSON.parse(line);
-  if (m.method === 'initialize') {
-    return send({ id: m.id, result: { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} } } });
-  }
-  if (m.method === 'session/list') {
-    return send({ id: m.id, result: { sessions: [] } });
-  }
-});
-`,
-    );
-    chmodSync(target, 0o700);
-  };
-  writeFakeAgy(fakeAgyV1, '1.5.12');
-  writeFakeAgy(fakeAgyV2, '1.5.13');
 
   const prevPoolDir = process.env.FARMSLOT_POOL_DIR;
   const prevFarmHome = process.env.FARMSLOT_HOME;
@@ -908,7 +877,29 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   );
   let nodeExecutables: Record<string, string> = {};
   let nodeExecutablesDigest = EMPTY_TRUSTED_EXECUTABLES_DIGEST;
+  let accountSamples = 0;
   let configureCalls = 0;
+  const sampleAccount = (executable?: string): NativeProfileStatusResult => ({
+    profile: {
+      id: 'work',
+      runner: 'antigravity',
+      directory: profileDir,
+      accountContextId: '22222222-2222-4222-8222-222222222222',
+      state: 'active',
+    },
+    account: {
+      runner: 'antigravity',
+      installed: Boolean(executable),
+      executable,
+      version:
+        executable === fakeAgyV1 ? '1.5.12' : executable === fakeAgyV2 ? '1.5.13' : undefined,
+      login: executable ? 'authenticated' : 'unavailable',
+      mode: 'unknown',
+      identityQuality: 'unavailable',
+      observedAt: '2026-11-28T00:00:00.000Z',
+    },
+    loginCommand: executable ?? 'agy',
+  });
   const configuredPayloads: Array<Record<string, string>> = [];
   let pendingConfigureGate: { entered: Promise<void>; release: () => void } | undefined;
   let lastReceipt: NativeSourceReceipt | undefined;
@@ -924,7 +915,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
         if (registeredWs) observations.acceptRemote(registeredWs, receipt, () => true);
       },
       undefined,
-      undefined,
+      async () => {
+        accountSamples++;
+        return [sampleAccount(nodeExecutables.antigravity)];
+      },
       (runner) => nodeExecutables[runner],
       nodeExecutablesDigest,
     );
@@ -946,15 +940,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     undefined,
     async () => {
       node2SampleCalls++;
-      return [
-        (await routeNativeProfile(
-          node2Client,
-          ownerRecord.id,
-          Methods.NATIVE_PROFILE_STATUS,
-          { profileId: 'work' },
-          { resolveExecutable: (runner) => node2Executables[runner] },
-        )) as NativeProfileStatusResult,
-      ];
+      return [sampleAccount(node2Executables.antigravity)];
     },
     (runner) => node2Executables[runner],
     node2ExecutablesDigest,
@@ -1154,10 +1140,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     assert.equal(first.account.version, '1.5.12');
     assert.ok(first.loginCommand.includes(fakeAgyV1));
     assert.equal(configureCalls, 0);
-    const probesAfterFirst = readFileSync(probeLog, 'utf8')
-      .trim()
-      .split('\n')
-      .filter(Boolean).length;
+    const probesAfterFirst = accountSamples;
     assert.equal(probesAfterFirst, 1);
 
     // Second read with unchanged pool config does zero extra configures, zero probes, zero pool scans.
@@ -1166,10 +1149,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     assert.equal(second.account.version, '1.5.12');
     assert.equal(configureCalls, 0);
     assert.equal(poolSnapshotReads, poolReadsSteady);
-    assert.equal(
-      readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
-      probesAfterFirst,
-    );
+    assert.equal(accountSamples, probesAfterFirst);
 
     // Model discovery notice refreshes the catalog view and performs ZERO executable/pool scans or configures.
     const invalidationsBeforeDiscovery = invalidatedKeys.length;
@@ -1227,10 +1207,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     assert.ok(concurrentA.loginCommand.includes(fakeAgyV2));
     assert.ok(concurrentB.loginCommand.includes(fakeAgyV2));
     assert.equal(configureCalls, 1);
-    assert.equal(
-      readFileSync(probeLog, 'utf8').trim().split('\n').filter(Boolean).length,
-      probesAfterFirst + 1,
-    );
+    assert.equal(accountSamples, probesAfterFirst + 1);
 
     // Disconnect the node, remove the antigravity_path override from pool while disconnected,
     // then reconnect the same node (which still holds fakeAgyV2 in memory): gateway must

@@ -20,6 +20,7 @@ import type { SlotPools } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
 import {
   indexMachinePoolSnapshot,
+  type MachinePoolSnapshot,
   readMachinePoolSnapshot,
 } from '../fleet/machine-pool-snapshot.js';
 import { getNode } from '../fleet/machine-registry.js';
@@ -367,8 +368,7 @@ export class GatewayNativeObservations {
   private localExecutables?: Record<string, string>;
   private localConfig: SourceConfigState = createSourceConfigState();
   private poolCatalogRevision = 0;
-  private poolExecutableRevision = 0;
-  private executableCacheRevision = -1;
+  private executableCacheSnapshot?: MachinePoolSnapshot;
   private readonly executableCache = new Map<string, CachedNodeExecutables>();
 
   private readonly stopCatalogNotices: () => void;
@@ -431,7 +431,6 @@ export class GatewayNativeObservations {
     if (change.scope === 'all') {
       this.poolCatalogRevision++;
       if (change.reason === 'pool') {
-        this.poolExecutableRevision++;
         this.syncExecutablesOnPoolChange();
       }
     }
@@ -603,9 +602,9 @@ export class GatewayNativeObservations {
     };
     this.remote.set(receipt.nodeId, updated);
     const registrationDigest = this.registrationDigests.get(connection);
-    if (receipt.ready && registrationDigest !== undefined) {
-      this.registrationDigests.delete(connection);
+    if (receipt.ready) {
       const desired = this.syncDesiredForSource(receipt.nodeId, config);
+      this.registrationDigests.delete(connection);
       // Receipt readiness acknowledges the initial sample on this socket. An edit during
       // registration must still use the ordinary live-configuration path.
       if (
@@ -655,8 +654,6 @@ export class GatewayNativeObservations {
       (principal) => principal.id === declaration.ownerPrincipalId,
     );
     if (!owner || owner.subject.type === 'node' || (owner.generation ?? 0) !== 0) return undefined;
-    // Registration reads the current shared snapshot even during the coalesced edit notice.
-    this.executableCache.delete(nodeId);
     const resolved = this.resolveCachedNodeExecutablesResult(nodeId);
     // Preserve registration and session reads on a broken pool. The profile gate reports the error.
     return resolved.ok ? (resolved.executables ?? {}) : undefined;
@@ -1037,22 +1034,25 @@ export class GatewayNativeObservations {
   }
 
   private resolveCachedNodeExecutablesResult(nodeId: string): CachedNodeExecutables {
-    if (this.executableCacheRevision !== this.poolExecutableRevision) {
+    // Production reads share the watcher's current snapshot even before a coalesced
+    // publication. Fixture suppliers refresh when explicitly notified of edits.
+    const index =
+      this.readPoolSnapshot && this.executableCacheSnapshot
+        ? this.executableCacheSnapshot
+        : this.machinePoolSnapshot();
+    if (this.executableCacheSnapshot !== index) {
       this.executableCache.clear();
-      this.executableCacheRevision = this.poolExecutableRevision;
+      this.executableCacheSnapshot = index;
     }
     const cached = this.executableCache.get(nodeId);
     if (cached) return cached;
-    const index = this.machinePoolSnapshot();
     let entry: CachedNodeExecutables;
     try {
       entry = { ok: true, executables: resolveTrustedNativeExecutablesFromIndex(index, nodeId) };
     } catch (error) {
       entry = { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
-    if (this.executableCacheRevision === this.poolExecutableRevision) {
-      this.executableCache.set(nodeId, entry);
-    }
+    this.executableCache.set(nodeId, entry);
     return entry;
   }
 
@@ -1452,10 +1452,11 @@ export class GatewayNativeObservations {
       if (source.current()) connectedRemotes.push([nodeId, source]);
     }
     this.executableCache.clear();
-    this.executableCacheRevision = this.poolExecutableRevision;
+    this.executableCacheSnapshot = undefined;
     if (!hasLocal && connectedRemotes.length === 0) return;
 
     const index = this.machinePoolSnapshot();
+    this.executableCacheSnapshot = index;
 
     if (hasLocal) {
       let nextDesired: SourceDesiredConfig;
@@ -1630,6 +1631,7 @@ export class GatewayNativeObservations {
         return;
       const parsed = receipt as NativeSourceReceipt;
       validateReceipt(parsed);
+      this.syncDesiredForSource(nodeId, currentSource.config);
       if (currentSource.config.epoch !== epoch) {
         // Keep the receipt current for unaffected session reads without publishing a stale
         // `profiles` invalidation or clearing a newer configuration state.

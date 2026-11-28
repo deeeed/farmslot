@@ -33,13 +33,15 @@ export function cursorProfileEnvironment(
 export function cursorAccountState(value: unknown): NativeAccountState {
   const status = accountObject(value);
   if (status.isAuthenticated === false) return signedOutAccount();
-  if (status.isAuthenticated !== true)
-    return { ...unavailableAccount(), reason: 'malformed-status' };
   const user =
-    status.userInfo === undefined || status.userInfo === null ? {} : accountObject(status.userInfo);
+    status.userInfo && typeof status.userInfo === 'object' && !Array.isArray(status.userInfo)
+      ? accountObject(status.userInfo)
+      : status;
+  const email = [user.email, status.email].map(accountString).find((value) => value?.includes('@'));
+  if (status.isAuthenticated !== true && status.status !== 'authenticated' && !email)
+    return { ...unavailableAccount(), reason: 'malformed-status' };
   const subjectId = accountId(user.userId);
   const organizationId = accountId(user.teamId);
-  const email = accountString(user.email);
   return {
     login: 'authenticated',
     // The status command exposes login identity, not an effective billing/auth mode.

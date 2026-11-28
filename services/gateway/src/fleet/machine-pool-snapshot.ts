@@ -31,14 +31,29 @@ export function indexMachinePoolSnapshot(pools: SlotPools): MachinePoolSnapshot 
   const cached = indexed.get(pools);
   if (cached) return cached;
 
+  const inventories: PoolEntry[] = [];
   const entriesByMachine = new Map<string, PoolEntry[]>();
+  const settingsByMachine = new Map<string, PoolEntry[]>();
   const poolBySlot = new Map<string, SlotPools>();
   for (const entry of pools) {
     const { machine, slots } = entry.pool;
+    if (typeof machine !== 'string' || !machine) continue;
+    const settings = settingsByMachine.get(machine);
+    if (settings) settings.push(entry);
+    else settingsByMachine.set(machine, [entry]);
+
+    if (
+      slots &&
+      (!Array.isArray(slots) ||
+        slots.some((slot) => !slot || typeof slot !== 'object' || Array.isArray(slot)))
+    ) {
+      console.error(`[state] pool ${entry.file}: skipped invalid slot inventory`);
+      continue;
+    }
+    inventories.push(entry);
     if (Array.isArray(slots))
       for (const slot of slots)
-        if (slot?.id && !poolBySlot.has(slot.id)) poolBySlot.set(slot.id, [entry]);
-    if (typeof machine !== 'string' || !machine) continue;
+        if (slot.id && !poolBySlot.has(slot.id)) poolBySlot.set(slot.id, [entry]);
     const entries = entriesByMachine.get(machine);
     if (entries) entries.push(entry);
     else entriesByMachine.set(machine, [entry]);
@@ -47,7 +62,7 @@ export function indexMachinePoolSnapshot(pools: SlotPools): MachinePoolSnapshot 
   const resolvedByMachine = new Map<string, MachinePoolResolution>();
   const localMachines: string[] = [];
   const firstSlotByMachine = new Map<string, string>();
-  for (const [machine, entries] of entriesByMachine) {
+  for (const [machine, entries] of settingsByMachine) {
     let canonical: PoolEntry | undefined;
     try {
       canonical = resolveMachinePoolEntry(entries, machine);
@@ -63,14 +78,16 @@ export function indexMachinePoolSnapshot(pools: SlotPools): MachinePoolSnapshot 
 
     // Machine settings and slot inventory have different ownership. Auxiliary slots remain usable
     // even if the canonical pool declares none, or the machine has only auxiliary pools.
-    const canonicalSlot = canonical?.pool.slots?.[0]?.id;
+    const inventory = entriesByMachine.get(machine) ?? [];
+    const canonicalSlot =
+      canonical && inventory.includes(canonical) ? canonical.pool.slots?.[0]?.id : undefined;
     const firstSlot =
-      canonicalSlot ?? entries.find(({ pool }) => pool.slots?.[0]?.id)?.pool.slots[0]?.id;
+      canonicalSlot ?? inventory.find(({ pool }) => pool.slots?.[0]?.id)?.pool.slots[0]?.id;
     if (firstSlot) firstSlotByMachine.set(machine, firstSlot);
   }
 
   const snapshot = {
-    pools,
+    pools: inventories,
     entriesByMachine,
     resolvedByMachine,
     localMachines,
