@@ -81,6 +81,10 @@ export function nativeScrollViewGesture(screen, direction = 'up') {
 
 /** A discovered control can still be clipped by its actual scrolling ancestor. */
 export function nativeResumeFitsScrollView(screen, selector) {
+  return nativeTargetFitsAncestor(screen, selector, (node) => node.type === 'ScrollView');
+}
+
+function nativeTargetFitsAncestor(screen, selector, isRequiredAncestor) {
   const targets = screen.nodes.filter((node) => node.identifier === selector);
   if (targets.length !== 1) return false;
   const target = targets[0];
@@ -108,7 +112,7 @@ export function nativeResumeFitsScrollView(screen, selector) {
   const nodes = new Map(screen.nodes.map((node) => [node.index, node]));
   const visited = new Set();
   let ancestor = target;
-  let scrollView = false;
+  let foundAncestor = false;
   while (
     ancestor.parentIndex !== undefined &&
     ancestor.parentIndex !== null &&
@@ -118,8 +122,9 @@ export function nativeResumeFitsScrollView(screen, selector) {
     visited.add(ancestor.parentIndex);
     ancestor = nodes.get(ancestor.parentIndex);
     if (!ancestor) return false;
-    if (ancestor.type === 'ScrollView') {
-      scrollView = true;
+    const required = isRequiredAncestor(ancestor);
+    if (required || ancestor.type === 'ScrollView') {
+      foundAncestor ||= required;
       const clip = ancestor.rect;
       if (
         !clip ||
@@ -134,23 +139,35 @@ export function nativeResumeFitsScrollView(screen, selector) {
         return false;
     }
   }
-  return scrollView;
+  return foundAncestor;
 }
 
 /** Reject a stale accessibility target when its paired screenshot no longer renders Resume. */
 export function renderedNativeResumeTarget(screen, image, selector) {
-  return renderedNativeDisabledTarget(screen, image, selector, 'Resume conversation');
+  return renderedNativeDisabledTarget(screen, image, selector, 'Resume conversation', () =>
+    nativeTargetFitsAncestor(
+      screen,
+      selector,
+      (node) => node.identifier === 'companion-native-resume-footer',
+    ),
+  );
 }
 
 /** Same paired AX/image guard for an existing disabled planning control. */
-export function renderedNativeDisabledTarget(screen, image, selector, labelText) {
+export function renderedNativeDisabledTarget(
+  screen,
+  image,
+  selector,
+  labelText,
+  fitsRegion = () => nativeResumeFitsScrollView(screen, selector),
+) {
   const targets = screen.nodes.filter((node) => node.identifier === selector);
-  assert.equal(targets.length, 1, 'Require one actual Resume accessibility target');
+  assert.equal(targets.length, 1, `Require one actual ${labelText} accessibility target`);
   const target = targets[0];
-  assert.equal(target.enabled, false, 'Resume must remain accessibility-disabled');
+  assert.equal(target.enabled, false, `${labelText} must remain accessibility-disabled`);
   assert(
-    nativeResumeFitsScrollView(screen, selector),
-    'Resume must fit inside its actual ancestor ScrollView before a point press',
+    fitsRegion(),
+    `${labelText} must fit inside its viewport and ancestor before a point press`,
   );
   const rect = target.rect;
   const viewport = screen.nodes.find((node) => ['Application', 'Window'].includes(node.type))?.rect;
@@ -163,7 +180,7 @@ export function renderedNativeDisabledTarget(screen, image, selector, labelText)
     'Require matching screenshot and native viewport dimensions',
   );
   const labels = image.text.filter((node) => node.text.trim() === labelText);
-  assert.equal(labels.length, 1, 'The paired screenshot must visibly render Resume conversation');
+  assert.equal(labels.length, 1, `The paired screenshot must visibly render ${labelText}`);
   const label = labels[0];
   assert(['x', 'y', 'width', 'height'].every((key) => Number.isFinite(label[key])));
   assert(
@@ -183,7 +200,7 @@ export function renderedNativeDisabledTarget(screen, image, selector, labelText)
       labelRight <= rect.x + rect.width &&
       labelTop >= rect.y &&
       labelBottom <= rect.y + rect.height,
-    'Rendered Resume must match the actual disabled control bounds',
+    `Rendered ${labelText} must match the actual disabled control bounds`,
   );
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
 }

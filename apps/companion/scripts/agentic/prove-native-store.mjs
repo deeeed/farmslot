@@ -6,8 +6,6 @@ import { fileURLToPath } from 'node:url';
 
 import {
   messages,
-  nativeResumeFitsScrollView,
-  nativeScrollViewGesture,
   renderedNativeResumeTarget,
   resolveNativeStoreInputs,
   sha256,
@@ -624,67 +622,12 @@ async function prove() {
         'Offline restart must preserve exact saved data and age',
       );
       assert.deepEqual(dbCold.fleet, dbWarm.fleet);
-      let screen;
-      let resume;
-      let resumeScreenshot;
-      let previousContent;
-      let unchangedScrolls = 0;
-      // Timeline initially follows the tail. Scroll real content toward the Resume control.
-      for (let i = 0; i < 80; i++) {
-        screen = await snapshot(`cold-scroll-${i}`);
-        resume = screen.nodes.find((node) => node.identifier === plan.resumeSelector);
-        if (nativeResumeFitsScrollView(screen, plan.resumeSelector)) {
-          resumeScreenshot = path.join(plan.artifacts, `cold-scroll-${i}.png`);
-          break;
-        }
-        const content = JSON.stringify(
-          screen.nodes
-            .filter((node) => node.visibleToUser !== false)
-            .map(({ label, value, rect }) => ({ label, value, rect })),
-        );
-        unchangedScrolls = content === previousContent ? unchangedScrolls + 1 : 0;
-        assert(unchangedScrolls < 2, 'Conversation scroll gesture did not move actual content');
-        previousContent = content;
-        const gesture = nativeScrollViewGesture(screen);
-        await save(`cold-scroll-${i}.gesture.json`, gesture);
-        await device.interactions.swipe({ ...selection, ...gesture });
-      }
-      assert(
-        resume?.rect && resume.rect.y >= 0 && resume.visibleToUser !== false,
-        'Actual Resume testID must be present in native accessibility tree',
+      const screen = await view(
+        'cold-disabled-resume',
+        'Saved conversation history,',
+        plan.resumeLabel,
       );
-      assert.equal(
-        resume.enabled,
-        false,
-        'Native accessibility disabled must agree with stale Resume',
-      );
-      assert(
-        screen.nodes.some((node) =>
-          /^Saved conversation history, .+/.test(node.label || node.value || ''),
-        ),
-        'Visible saved conversation age caption required',
-      );
-      const viewport = screen.nodes.find(
-        (node) =>
-          ['Application', 'Window'].includes(node.type) &&
-          node.rect?.width > 0 &&
-          node.rect?.height > 0,
-      )?.rect;
-      const x = resume.rect.x + resume.rect.width / 2;
-      const y = resume.rect.y + resume.rect.height / 2;
-      assert(
-        viewport
-          ? x >= viewport.x &&
-              y >= viewport.y &&
-              x < viewport.x + viewport.width &&
-              y < viewport.y + viewport.height
-          : resume.visibleToUser === true,
-        'The point tap must be inside the actual native viewport or explicitly visible',
-      );
-      assert(
-        resume.rect.width > 0 && resume.rect.height > 0 && resume.rect.x >= 0 && resume.rect.y >= 0,
-      );
-      assert(resumeScreenshot, 'Require the actual target screenshot before any point press');
+      const resumeScreenshot = path.join(plan.artifacts, 'cold-disabled-resume.png');
       const recognized = await execute(
         'osascript',
         [
@@ -696,7 +639,8 @@ async function prove() {
         { timeout: 30000 },
       );
       const rendered = JSON.parse(recognized.stdout);
-      assert.deepEqual(renderedNativeResumeTarget(screen, rendered, plan.resumeSelector), { x, y });
+      const { x, y } = renderedNativeResumeTarget(screen, rendered, plan.resumeSelector);
+      const resume = screen.nodes.find((node) => node.identifier === plan.resumeSelector);
       await save('disabled-resume-target-pair.json', {
         screenshot: path.basename(resumeScreenshot),
         screenshotSha256: sha256(await readFile(resumeScreenshot)),
