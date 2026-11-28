@@ -3,6 +3,7 @@ import { mock, test } from 'node:test';
 
 import {
   Methods,
+  type NativeApprovalMode,
   type NativeCommandReceipt,
   type NativeSessionCatalogResult,
   type NativeSessionEvent,
@@ -928,13 +929,11 @@ test('an unconfirmed approval mode has an explicit retry for that same selection
   ]);
 });
 
-test('the native message composer is ready when approvals are acknowledged before history refreshes', async () => {
+function approvalComposer(initialMode: NativeApprovalMode) {
   const snapshot = page(receipt(false));
   snapshot.session.state = 'idle';
-  snapshot.session.approvalMode = 'ask';
+  snapshot.session.approvalMode = initialMode;
   snapshot.session.capabilities.approvalModes = ['ask', 'bypass'];
-  const pending = { ...snapshot.session, approvalModePending: 'bypass' } as const;
-  const confirmed = { ...snapshot.session, approvalMode: 'bypass' } as const;
   const streamCursor = {
     sessionId: snapshot.session.id,
     executionNodeId: snapshot.session.executionNodeId,
@@ -973,10 +972,12 @@ test('the native message composer is ready when approvals are acknowledged befor
     state = { ...state, data: { ...state.data, session } };
     changed?.(state);
   };
-  let acknowledge!: (result: { session: typeof confirmed }) => void;
-  const response = new Promise<{ session: typeof confirmed }>((resolve) => {
-    acknowledge = resolve;
-  });
+  let request:
+    | {
+        mode: NativeApprovalMode;
+        acknowledge: (session: NativeSessionReadResult['session']) => void;
+      }
+    | undefined;
   const view = new NativeSessionView();
   Object.defineProperty(view, 'isConnected', { value: true });
   Object.assign(view, {
@@ -991,33 +992,72 @@ test('the native message composer is ready when approvals are acknowledged befor
       conversations,
     } satisfies NativeSessionFixture,
     api: {
-      async request<T>(method: Parameters<NativeSessionApi['request']>[0]): Promise<T> {
+      async request<T>(
+        method: Parameters<NativeSessionApi['request']>[0],
+        params: { approvalMode: NativeApprovalMode },
+      ): Promise<T> {
         assert.equal(method, Methods.NATIVE_SESSION_SET_APPROVAL_MODE);
-        return (await response) as T;
+        assert.equal(request, undefined, 'the preceding RPC has settled');
+        const session = await new Promise<NativeSessionReadResult['session']>((acknowledge) => {
+          request = { mode: params.approvalMode, acknowledge };
+        });
+        request = undefined;
+        return { session } as T;
       },
     } satisfies NativeSessionApi,
   });
-  const composerDisabled = () =>
-    litBinding(view.render(), 'data-testid="native-message"\n                        ?disabled=');
-
   Reflect.get(view, 'observeHistory').call(view);
+  return {
+    view,
+    snapshot,
+    publish,
+    observe: (overrides: Partial<NativeConversationState>) => changed?.({ ...state, ...overrides }),
+    observedSession: () => state.data?.session,
+    change: (mode: NativeApprovalMode): Promise<void> =>
+      Reflect.get(view, 'setApprovalMode').call(view, mode),
+    requestedMode: () => request?.mode,
+    acknowledge: (session: NativeSessionReadResult['session']) => {
+      assert(request);
+      assert.equal(request.mode, session.approvalMode);
+      request.acknowledge(session);
+    },
+    composerDisabled: () =>
+      litBinding(view.render(), /data-testid="native-message"\s*\?disabled=$/),
+    disconnect: () => Reflect.get(view, 'historyStop')?.(),
+  };
+}
+
+test('the native message composer is ready when approvals are acknowledged before history refreshes', async () => {
+  const {
+    view,
+    snapshot,
+    publish,
+    observe,
+    observedSession,
+    change,
+    acknowledge,
+    composerDisabled,
+    disconnect,
+  } = approvalComposer('ask');
+  const pending = { ...snapshot.session, approvalModePending: 'bypass' } as const;
+  const confirmed = { ...snapshot.session, approvalMode: 'bypass' } as const;
   try {
     assert.equal(composerDisabled(), false);
-    const changing = Reflect.get(view, 'setApprovalMode').call(view, 'bypass');
+    const changing = change('bypass');
     publish(pending);
     assert.equal(composerDisabled(), true, 'disabled while the policy is pending');
-    acknowledge({ session: confirmed });
+    acknowledge(confirmed);
     await changing;
-    assert.equal(state.data?.session, pending, 'the stream has not confirmed the change yet');
+    assert.equal(observedSession(), pending, 'the stream has not confirmed the change yet');
     assert.equal(composerDisabled(), false, 'enabled immediately after the mutation');
 
-    changed?.({ ...state, history: { after: 0, loading: true } });
+    observe({ history: { after: 0, loading: true } });
     assert.equal(composerDisabled(), false, 'enabled when the saved page starts loading');
-    changed?.({ ...state, history: { after: 0, loading: false, page: snapshot } });
+    observe({ history: { after: 0, loading: false, page: snapshot } });
     assert.equal(composerDisabled(), false, 'enabled when the saved page arrives');
-    changed?.({ ...state, status: 'stale' });
+    observe({ status: 'stale' });
     assert.equal(composerDisabled(), true, 'disabled for stale history even before confirmation');
-    changed?.(state);
+    observe({});
     assert.equal(
       composerDisabled(),
       false,
@@ -1032,8 +1072,77 @@ test('the native message composer is ready when approvals are acknowledged befor
     Reflect.set(view, 'connected', false);
     assert.equal(composerDisabled(), true, 'disabled after disconnect');
   } finally {
-    acknowledge({ session: confirmed });
-    Reflect.get(view, 'historyStop')?.();
+    disconnect();
+  }
+});
+
+test('a delayed approval confirmation cannot expose Send under an older policy', async () => {
+  const proof = approvalComposer('bypass');
+  const ask = { ...proof.snapshot.session, approvalMode: 'ask' } as const;
+  const bypass = { ...ask, approvalMode: 'bypass' } as const;
+  const sendDisabled = () =>
+    litBinding(proof.view.render(), /data-testid="native-send"\s*\?disabled=$/);
+  const pickerDisabled = () =>
+    litBinding(
+      Reflect.get(proof.view, 'renderApprovalMode').call(
+        proof.view,
+        Reflect.get(proof.view, 'session'),
+      ),
+      '?disabled=',
+    );
+  const visiblePolicy = () => Reflect.get(proof.view, 'session').approvalMode;
+  Reflect.set(proof.view, 'draft', 'A message ready to send');
+  try {
+    const first = proof.change('ask');
+    proof.publish({ ...bypass, approvalModePending: 'ask' });
+    proof.acknowledge(ask);
+    await first;
+    assert.equal(visiblePolicy(), 'ask');
+    assert.equal(sendDisabled(), false);
+    const pickerWaiting = pickerDisabled();
+
+    let second = proof.change('bypass');
+    if (proof.requestedMode() === 'bypass') {
+      // On the old view, the second RPC is accepted before history confirms the first.
+      proof.acknowledge(bypass);
+      await second;
+      proof.publish({ ...ask });
+      assert.ok(
+        sendDisabled() === true || visiblePolicy() === 'bypass',
+        'the delayed Ask confirmation cannot expose Send when the host has acknowledged Bypass',
+      );
+    }
+    await second;
+    assert.equal(
+      pickerWaiting,
+      true,
+      'wait for the first history confirmation before changing again',
+    );
+    assert.equal(proof.requestedMode(), undefined);
+    proof.publish({ ...ask });
+    assert.equal(pickerDisabled(), false);
+
+    second = proof.change('bypass');
+    proof.publish({ ...ask, approvalModePending: 'bypass' });
+    assert.equal(sendDisabled(), true);
+    proof.acknowledge(bypass);
+    await second;
+    assert.equal(visiblePolicy(), 'bypass');
+    assert.equal(sendDisabled(), false);
+
+    proof.publish({ ...ask });
+    assert.equal(
+      sendDisabled(),
+      true,
+      'Send stays disabled if the same-generation stream disagrees',
+    );
+    assert.equal(pickerDisabled(), true);
+    proof.publish({ ...bypass });
+    assert.equal(visiblePolicy(), 'bypass');
+    assert.equal(sendDisabled(), false);
+    assert.equal(pickerDisabled(), false);
+  } finally {
+    proof.disconnect();
   }
 });
 

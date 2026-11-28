@@ -36,15 +36,18 @@ export function litText(value: unknown): string {
  * a test can assert on bindings that never reach the rendered text. A template's
  * own bindings come before those of the templates nested in it.
  */
-export function litBindings(value: unknown, binding: string): unknown[] {
+export function litBindings(value: unknown, binding: string | RegExp): unknown[] {
   if (Array.isArray(value)) return value.flatMap((entry) => litBindings(entry, binding));
   if (!isTemplateLike(value)) return [];
   const { strings, values } = value;
-  const own = values.filter((_, index) => strings[index]?.trimEnd().endsWith(binding));
+  const own = values.filter((_, index) => {
+    const chunk = strings[index].trimEnd();
+    return typeof binding === 'string' ? chunk.endsWith(binding) : chunk.search(binding) !== -1;
+  });
   return [...own, ...values.flatMap((nested) => litBindings(nested, binding))];
 }
 
 /** The first value bound to a named binding, e.g. `litBinding(result, '?open=')`. */
-export function litBinding(value: unknown, binding: string): unknown {
+export function litBinding(value: unknown, binding: string | RegExp): unknown {
   return litBindings(value, binding).find((found) => found !== undefined);
 }

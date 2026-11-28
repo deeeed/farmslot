@@ -341,7 +341,7 @@ export class NativeSessionView extends LitElement {
   };
   private approvalAcknowledgement?: {
     revision: number;
-    observed: NativeSessionInfo;
+    observed?: NativeSessionInfo;
     confirmed: NativeSessionInfo;
   };
   private timelineEvents?: NativeSessionEvent[];
@@ -577,11 +577,18 @@ export class NativeSessionView extends LitElement {
   }
 
   private get inputAllowed() {
+    const approval = this.currentApprovalAcknowledgement;
     return (
       this.historyCurrent &&
       !this.session?.approvalModePending &&
+      (!approval || this.session === approval.confirmed) &&
       (!this.worker || Boolean(this.workerControl))
     );
+  }
+
+  private get currentApprovalAcknowledgement() {
+    const approval = this.approvalAcknowledgement;
+    return approval?.revision === this.revision ? approval : undefined;
   }
 
   private get historyCurrent() {
@@ -614,12 +621,22 @@ export class NativeSessionView extends LitElement {
       if (!this.isConnected || revision !== this.revision) return;
       const before = this.timeline().length;
       const page = state.data;
-      const approval = this.approvalAcknowledgement;
-      if (page && approval?.revision === revision && page.session === approval.observed) {
+      const approval = this.currentApprovalAcknowledgement;
+      if (page && approval && page.session === approval.observed) {
         this.session = approval.confirmed;
         this.historyObservation = { ...state, data: { ...page, session: approval.confirmed } };
       } else {
-        this.approvalAcknowledgement = undefined;
+        // Keep the acknowledgement across stale or conflicting observations. A different
+        // object from the same generation does not establish which policy the host is using.
+        if (
+          !approval ||
+          (page &&
+            (page.session.generation !== approval.confirmed.generation ||
+              (state.status === 'ready' &&
+                !page.session.approvalModePending &&
+                page.session.approvalMode === approval.confirmed.approvalMode)))
+        )
+          this.approvalAcknowledgement = undefined;
         this.historyObservation = state;
         this.session = page?.session;
       }
@@ -1538,10 +1555,20 @@ ${JSON.stringify(
     this.schedule(0);
   }
 
+  private get canChangeApprovalMode() {
+    // Wait for the ordered stream before issuing a second mutation. The RPC and stream
+    // have no common approval revision that could order two overlapping confirmations.
+    return (
+      !this.busy &&
+      this.historyCurrent &&
+      this.session?.state === 'idle' &&
+      !this.currentApprovalAcknowledgement
+    );
+  }
+
   private async setApprovalMode(approvalMode: NativeApprovalMode) {
     const session = this.session;
-    if (!session || this.worker || this.busy || !this.historyCurrent || session.state !== 'idle')
-      return;
+    if (!session || this.worker || !this.canChangeApprovalMode) return;
     this.busy = true;
     this.error = '';
     const revision = this.revision;
@@ -1560,16 +1587,30 @@ ${JSON.stringify(
       const history = this.historyObservation.data;
       const confirmed = result.session;
       if (
-        !this.historyCurrent ||
-        !history ||
-        current?.state !== 'idle' ||
         confirmed.state !== 'idle' ||
-        current.id !== confirmed.id ||
-        current.executionNodeId !== confirmed.executionNodeId ||
-        current.generation !== confirmed.generation ||
-        (current !== session && current.approvalModePending !== approvalMode)
+        session.id !== confirmed.id ||
+        session.executionNodeId !== confirmed.executionNodeId ||
+        session.generation !== confirmed.generation ||
+        (current && current.generation !== confirmed.generation)
       )
         return;
+
+      const currentHistory = this.historyCurrent && history;
+      if (
+        currentHistory &&
+        current &&
+        !current.approvalModePending &&
+        current.approvalMode === confirmed.approvalMode
+      )
+        return;
+      if (
+        !currentHistory ||
+        current?.state !== 'idle' ||
+        (current !== session && current.approvalModePending !== approvalMode)
+      ) {
+        this.approvalAcknowledgement = { revision, confirmed };
+        return;
+      }
 
       // Keep the rendered history coherent until the active stream delivers the confirmation.
       const updated = {
@@ -1577,15 +1618,14 @@ ${JSON.stringify(
         approvalMode: confirmed.approvalMode,
         approvalModePending: confirmed.approvalModePending,
       };
-      const previous = this.approvalAcknowledgement;
       this.approvalAcknowledgement = {
         revision,
-        observed: previous?.confirmed === current ? previous.observed : current,
+        observed: current,
         confirmed: updated,
       };
       this.historyObservation = {
         ...this.historyObservation,
-        data: { ...history, session: updated },
+        data: { ...currentHistory, session: updated },
       };
       this.session = updated;
     } catch (error) {
@@ -1606,11 +1646,9 @@ ${JSON.stringify(
           overlay
           data-testid="native-approval-mode"
           .value=${live(selected)}
-          ?disabled=${this.busy ||
-          (session &&
-            (!this.historyCurrent ||
-              session.state !== 'idle' ||
-              !session.capabilities.approvalModes))}
+          ?disabled=${session
+            ? !this.canChangeApprovalMode || !session.capabilities.approvalModes
+            : this.busy}
           @change=${(event: Event) => {
             const mode: NativeApprovalMode =
               (event.target as HTMLElement & { value: string }).value === 'bypass'
@@ -1627,16 +1665,18 @@ ${JSON.stringify(
           <option value="bypass">Bypass / yolo</option>
         </choice-picker></label
       >
-      ${session && pending
-        ? html`<span class="meta">Approval change unconfirmed. Retry before sending.</span>
-            <button
-              data-testid="native-approval-retry"
-              ?disabled=${this.busy || !this.historyCurrent || session.state !== 'idle'}
-              @click=${() => void this.setApprovalMode(pending)}
-            >
-              Retry approval change
-            </button>`
-        : nothing}
+      ${this.currentApprovalAcknowledgement
+        ? html`<span class="meta">Waiting for approval policy history.</span>`
+        : session && pending
+          ? html`<span class="meta">Approval change unconfirmed. Retry before sending.</span>
+              <button
+                data-testid="native-approval-retry"
+                ?disabled=${!this.canChangeApprovalMode}
+                @click=${() => void this.setApprovalMode(pending)}
+              >
+                Retry approval change
+              </button>`
+          : nothing}
       ${session && !session.capabilities.approvals
         ? html`<span class="meta">This runner's native tools do not request approval.</span>`
         : nothing}`;
